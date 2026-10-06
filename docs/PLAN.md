@@ -363,15 +363,41 @@ public final class LogSink: Sendable {
 }
 
 public actor LogFileWriter {
-    /// O_EXCL create (throws .fileExists), protection .completeUntilFirstUserAuthentication.
+    /// open(O_WRONLY|O_CREAT|O_EXCL|O_APPEND|O_CLOEXEC) (throws .fileExists),
+    /// protection .completeUntilFirstUserAuthentication. Below minimumFreeBytes it
+    /// still creates the file and writes the header, then reports .lowDiskSpace.
     public init(url: URL, header: LogHeader, flushInterval: Duration = .seconds(2),
-                minimumFreeBytes: Int64 = 200_000_000) throws(LogWriteError)
+                minimumFreeBytes: Int64 = 200_000_000,
+                diskSpace: any DiskSpaceProvider = VolumeDiskSpaceProvider()) throws(LogWriteError)
+    init(handle: sending any LogFileHandle, url:, header:, …)    // internal test seam
     public nonisolated let sink: LogSink
-    public nonisolated let failures: AsyncStream<LogWriteError>   // incl. .lowDiskSpace before ENOSPC
-    public func flush() async throws(LogWriteError)   // failed member truncated away, retried later
-    public func finish() async -> LogFileSummary      // always closes; reports unwrittenEvents + failure
+    public nonisolated let failures: AsyncStream<LogWriteError>   // only channel for .lowDiskSpace
+    public func flush() async throws(LogWriteError)   // failed member truncated away, retried later;
+                                                      // never throws .lowDiskSpace
+    public func finish() async -> LogFileSummary      // final write regardless of free space;
+                                                      // always closes; reports unwrittenEvents + failure
     public var bytesWritten: Int { get }
 }
+
+public protocol DiskSpaceProvider: Sendable { func availableBytes(for url: URL) throws -> Int64 }
+public struct VolumeDiskSpaceProvider: DiskSpaceProvider   // ForImportantUsage, else volumeAvailableCapacity
+
+/// Pure reporting rule, implemented and tested at M0.
+public struct LowDiskSpaceMonitor: Hashable, Sendable {
+    public static let defaultHysteresisBytes: Int64 = 50_000_000
+    public init(minimumFreeBytes: Int64, hysteresisBytes: Int64 = defaultHysteresisBytes)
+    public mutating func observe(availableBytes: Int64) -> LogWriteError?
+}
+
+/// Internal: the writer's only access to the file, so M1 tests can inject faults.
+protocol LogFileHandle: AnyObject {
+    func endOffset() throws(LogFileHandleError) -> Int64   // where the next write lands
+    func write(_ data: Data) throws(LogFileHandleError)    // a prefix may land before an error
+    func truncate(to offset: Int64) throws(LogFileHandleError)
+    func sync() throws(LogFileHandleError)
+    func close() throws(LogFileHandleError)
+}
+final class POSIXLogFileHandle: LogFileHandle   // init(creatingExclusively:) throws(LogWriteError)
 
 public final class LogFileReader: Sequence {        // streaming, member by member
     public init(url: URL, recovery: LogRecovery = .skipMalformedLines) throws
@@ -383,6 +409,38 @@ public enum LogFileName {
     public static func make(for start: Date, timeZone: TimeZone, collisionIndex: Int = 1) -> String
 }
 ```
+
+**Low disk space is advisory.** `.lowDiskSpace` never blocks, delays or fails a
+write; it is delivered only on `failures`. Free space is read after the header
+in `init` and before every flush attempt; `finish()` does not check it. Each
+reading goes through `LowDiskSpaceMonitor`: reported once when free space goes
+strictly below `minimumFreeBytes`, then not again until it has risen strictly
+above `minimumFreeBytes + hysteresisBytes` (default 50 MB) and dropped below
+the threshold again. Exactly at the threshold is not low. A throwing provider
+skips that check without a report.
+
+**File position: `O_APPEND`, one rule.** Every write lands at end of file; the
+writer never seeks. Before a member it records the start offset
+(`endOffset()`); on a failed or short write it `ftruncate`s to that offset and
+the retry appends there, so no zero gap and no partial member can sit between
+members. If `ftruncate` fails, the writer never appends again: it closes the
+file, reports `.writeFailed` on `failures`, later `flush()` calls throw it, and
+`finish()` returns it with the unwritten count. A reader then sees every
+complete member and `truncatedTail == true`.
+
+M1 tests required by this contract (fault-injecting `LogFileHandle` wrapping
+`POSIXLogFileHandle`):
+- short write / `ENOSPC` on member N (some bytes and zero bytes), then a
+  successful retry → file passes `gzip -t`, every member decodes, every event
+  appears once in order, each member starts (`1f 8b`) where the previous one
+  ended and the last ends at EOF (no zero bytes between members);
+- partial write of member N, then `ftruncate` fails → the file never grows
+  again (no member after the partial one), `.writeFailed` on `failures` once,
+  `finish()` reports it with the right `unwrittenEvents`, reader returns
+  members 0..<N with `truncatedTail == true`;
+- fake `DiskSpaceProvider` below the threshold → `init` writes the header and
+  reports once, later flushes still write without re-reporting, `finish()`
+  writes its final member.
 
 One `LogCodec` lives inside `LogFileWriter` and one inside each reader (CLAUDE.md).
 Queue policy: unbounded, because dropping is data loss; depth is reported every
