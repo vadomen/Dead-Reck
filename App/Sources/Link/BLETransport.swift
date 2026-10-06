@@ -22,7 +22,7 @@ final class BLETransport: ELMTransport {
         fatalError("M2: BLETransport.init")
     }
 
-    func send(_ data: Data) async throws -> Double {
+    func send(_ command: ValidatedELMCommand) async throws -> Double {
         fatalError("M2: BLETransport.send")
     }
 }

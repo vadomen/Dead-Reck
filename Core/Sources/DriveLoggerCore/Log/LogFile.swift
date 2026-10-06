@@ -17,7 +17,12 @@ public enum LogFileName {
 
     /// File name for a session starting at `start`, rendered in `timeZone`.
     /// Uses the header's wall clock, the only one in a recording.
-    public static func make(for start: Date, timeZone: TimeZone) -> String {
+    ///
+    /// Names have one-second resolution, so two recordings can collide. Pass
+    /// `collisionIndex` 2, 3, … to get `Drive_<stamp>_2.jsonl.gz` and so on;
+    /// `LogStore` picks the first name that doesn't exist, and
+    /// `LogFileWriter` refuses to overwrite in any case.
+    public static func make(for start: Date, timeZone: TimeZone, collisionIndex: Int = 1) -> String {
         fatalError("M1: LogFileName.make")
     }
 }
@@ -29,6 +34,13 @@ public enum LogFileName {
 /// second and must never block or hop to an actor. The queue behind it is
 /// unbounded on purpose — dropping is data loss — and its depth is reported in
 /// every `stats` row.
+///
+/// Concurrency pattern (the one every Sendable class in this project with
+/// mutable state uses; `Mutex` and atomics need iOS 18, Core may only import
+/// Foundation): the event queue is an `AsyncStream.Continuation`, which is
+/// already thread-safe; counters are `private nonisolated(unsafe) var`
+/// guarded by one `NSLock`, with a comment at the declaration naming the
+/// lock. No `@unchecked Sendable` on the type.
 public final class LogSink: Sendable {
     init() {}
 
@@ -50,6 +62,8 @@ public final class LogSink: Sendable {
 
 /// A failure to persist events. Surfaced, never swallowed.
 public enum LogWriteError: Error, Hashable, Sendable {
+    /// The target already exists. The writer never overwrites a recording.
+    case fileExists(path: String)
     case couldNotCreate(path: String, description: String)
     case writeFailed(description: String)
     case diskFull
@@ -78,6 +92,14 @@ public struct LogFileSummary: Hashable, Sendable {
 /// Writes the header immediately and flushes a gzip member at least every
 /// `flushInterval`, on `flush()` and on `finish()`. A crash loses at most the
 /// unflushed buffer.
+///
+/// On a write failure nothing is discarded. The member that failed is kept
+/// and retried on the next flush, the failure is reported once on `failures`
+/// (again only if it changes or clears), and events keep queuing.
+/// `RecordingSession` reacts to any failure by writing a `lifecycle` `error`
+/// row and stopping the recording with `finish()`, so the queue cannot grow
+/// until the system kills the app. Every member written before the failure
+/// stays readable.
 public actor LogFileWriter {
     /// Where producers enqueue events.
     public nonisolated let sink: LogSink
@@ -85,8 +107,10 @@ public actor LogFileWriter {
     /// Write failures as they happen. Single consumer.
     public nonisolated let failures: AsyncStream<LogWriteError>
 
-    /// Creates the file and writes the header as the first member.
-    public init(url: URL, header: LogHeader, flushInterval: Duration = .seconds(2)) throws {
+    /// Creates the file exclusively — throws `LogWriteError.fileExists` rather
+    /// than truncate an existing recording — and writes the header as the
+    /// first member.
+    public init(url: URL, header: LogHeader, flushInterval: Duration = .seconds(2)) throws(LogWriteError) {
         fatalError("M1: LogFileWriter.init")
     }
 

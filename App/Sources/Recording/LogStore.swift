@@ -22,7 +22,9 @@ struct LogStore: Sendable {
         fatalError("M2: LogStore.documents")
     }
 
-    /// URL for a new recording named with `LogFileName`.
+    /// URL for a new recording named with `LogFileName`, using the first
+    /// `collisionIndex` whose file doesn't exist yet. Never returns an existing
+    /// file.
     func newFileURL(startingAt start: Date, timeZone: TimeZone) -> URL {
         fatalError("M2: LogStore.newFileURL")
     }

@@ -19,13 +19,16 @@ public struct ELMChunk: Hashable, Sendable {
 /// A byte pipe to an ELM327 adapter: BLE in the app, `MockELMAdapter` in tests
 /// and on the simulator.
 ///
-/// Knows nothing about commands or replies — framing, parsing and the
-/// read-only guard all live above it in `ELMSession`.
+/// Knows nothing about replies — framing and parsing live above it in
+/// `ELMSession`. It accepts only `ValidatedELMCommand`, which nothing outside
+/// DriveLoggerCore can create except through `ELMCommandPolicy`, so holding a
+/// transport does not give a way around the read-only guard.
 public protocol ELMTransport: Sendable {
-    /// Writes one complete, CR-terminated command, splitting it to the link's
-    /// maximum write length if needed. Returns the uptime at which the write
-    /// was issued — the OBD request timestamp.
-    func send(_ data: Data) async throws -> Double
+    /// Writes `command.wireData`, splitting it to the link's maximum write
+    /// length if needed. Returns the uptime at which the write was issued —
+    /// the OBD request timestamp — from the same `UptimeSource` timebase as
+    /// the chunks on `incoming`.
+    func send(_ command: ValidatedELMCommand) async throws -> Double
 
     /// Every inbound fragment, in arrival order. Finishes when the link drops.
     /// Single consumer.

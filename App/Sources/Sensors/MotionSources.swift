@@ -5,9 +5,12 @@ import Foundation
 // CoreMotion sources. Each converts into Core types field for field and stamps
 // with `clock.timestamp(uptimeSeconds: item.timestamp)` — CoreMotion's own
 // uptime, never arrival time. Callbacks run on a private OperationQueue, never
-// the main queue, and only call `sink.record`. Implemented in M2.
+// the main queue, and only call `sink.record`; per `SensorSource`, the handler
+// is a `@Sendable` closure that captures `clock` and `sink`, not `self`.
+// Implemented in M2.
 
 /// `CMDeviceMotion` at 100 Hz, reference frame `xArbitraryZVertical` → `motion`.
+@MainActor
 final class DeviceMotionSource: SensorSource {
     let name = "deviceMotion"
     let rateHz: Double
@@ -31,6 +34,7 @@ final class DeviceMotionSource: SensorSource {
 
 /// Raw accelerometer and gyroscope at 100 Hz, magnetometer at 10 Hz →
 /// `accel`, `gyro`, `mag`.
+@MainActor
 final class RawIMUSource: SensorSource {
     let name = "rawIMU"
     let imuRateHz: Double
@@ -55,6 +59,7 @@ final class RawIMUSource: SensorSource {
 }
 
 /// `CMAltimeter` relative altitude and pressure → `baro`.
+@MainActor
 final class AltimeterSource: SensorSource {
     let name = "altimeter"
 

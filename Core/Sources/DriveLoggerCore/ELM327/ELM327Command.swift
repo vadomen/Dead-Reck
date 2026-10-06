@@ -6,6 +6,11 @@ import Foundation
 /// return, then read until the adapter emits its `>` prompt. `AT`-prefixed
 /// commands configure the adapter itself; everything else is forwarded to the
 /// vehicle bus as hex.
+///
+/// Deliberately closed: there is no raw-string or arbitrary-mode case, so
+/// every command this type can express is read-only. It still goes through
+/// `ELMCommandPolicy` on its way out (`validated()`), because the transport
+/// only accepts a `ValidatedELMCommand`.
 public enum ELM327Command: Hashable, Sendable {
     /// `ATZ` — full reset. Takes about a second and discards all AT settings,
     /// so the rest of the handshake has to be re-sent afterwards.
@@ -40,17 +45,19 @@ public enum ELM327Command: Hashable, Sendable {
     /// start getting cut off.
     case adaptiveTiming(Int)
 
-    /// A service/PID request, e.g. mode `0x01` PID `0x0C` for engine speed.
-    case request(mode: UInt8, pid: UInt8)
+    /// `0100` — supported PIDs 01–20 as a bitmask. After `ATSP0` this is also
+    /// what forces the adapter to search for the vehicle's protocol, so it can
+    /// take several seconds the first time.
+    case supportedPIDs
+
+    /// Mode `01` (current data) for one PID, e.g. `010C` for engine speed.
+    case currentData(OBDPID)
 
     /// A mode `01` request for up to six PIDs in one frame, optionally with the
     /// response-count suffix: `.currentDataMany([.vehicleSpeed, .engineSpeed],
     /// responseCount: 1)` → `010D0C1`. The suffix tells the adapter to stop
     /// after that many replies instead of waiting out its timeout.
     case currentDataMany([OBDPID], responseCount: Int?)
-
-    /// Escape hatch for adapter-specific commands; sent verbatim.
-    case raw(String)
 
     /// The command text, without the carriage-return terminator.
     public var wireFormat: String {
@@ -73,40 +80,46 @@ public enum ELM327Command: Hashable, Sendable {
             "ATRV"
         case .adaptiveTiming(let level):
             "ATAT\(level)"
-        case .request(let mode, let pid):
-            Hex.string(mode) + Hex.string(pid)
+        case .supportedPIDs:
+            "0100"
+        case .currentData(let pid):
+            "01" + Hex.string(pid.rawValue)
         case .currentDataMany(let pids, let responseCount):
             "01" + Hex.string(pids.map(\.rawValue)) + (responseCount.map(String.init) ?? "")
-        case .raw(let text):
-            text
         }
     }
 
-    /// Bytes to write to the adapter's characteristic, carriage-return
-    /// terminated.
+    /// Bytes this command would put on the wire, carriage-return terminated.
+    /// Informational: transports only accept `validated()`.
     public var wireData: Data {
         Data((wireFormat + "\r").utf8)
     }
 
-    /// Requests current-data (service 01) for a PID.
-    public static func currentData(_ pid: OBDPID) -> ELM327Command {
-        .request(mode: 0x01, pid: pid.rawValue)
+    /// Passes the command through `ELMCommandPolicy`. Can still throw, e.g. for
+    /// `.adaptiveTiming(7)` or a seven-PID `.currentDataMany`.
+    public func validated() throws(ELMSessionError) -> ValidatedELMCommand {
+        try ELMCommandPolicy.validate(wireFormat)
     }
 }
 
 extension ELM327Command {
-    /// The handshake to run after connecting, in order.
+    /// The init sequence from docs/SPEC_V1.md, in order.
     ///
-    /// Echo, linefeeds and spaces off keeps replies to a single compact line;
-    /// headers off because this logger records decoded PID values rather than
-    /// raw CAN frames; `ATSP0` leaves protocol detection to the adapter, which
-    /// handles the long tail of vehicles better than a hardcoded guess.
+    /// Echo, linefeeds and spaces off keep replies compact; headers **on** so
+    /// replies from different ECUs (`7E8`, `7E9`, …) can be told apart;
+    /// `ATSP0` leaves protocol detection to the adapter and `0100` forces the
+    /// search; `ATDPN` and `ATRV` record what was found. `ELMSession` runs this
+    /// with per-step timeouts (long for `ATZ` and `0100`) and records every
+    /// exchange.
     public static let handshake: [ELM327Command] = [
         .reset,
         .echo(false),
         .lineFeeds(false),
         .spaces(false),
-        .headers(false),
+        .headers(true),
         .autoProtocol,
+        .supportedPIDs,
+        .describeProtocolNumber,
+        .readVoltage,
     ]
 }

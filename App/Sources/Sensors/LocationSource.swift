@@ -14,6 +14,7 @@ import Foundation
 /// together and stamps the event at `receivedT - ageS` — the approved
 /// exception to "no `Date()` per sample" (docs/PLAN.md §3.4). Raw `fixTime` is
 /// kept so the conversion can be redone offline. Implemented in M2.
+@MainActor
 final class LocationSource: SensorSource {
     let name = "location"
 

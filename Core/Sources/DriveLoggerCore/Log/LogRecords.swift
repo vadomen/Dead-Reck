@@ -229,6 +229,33 @@ public struct LinkSample: Hashable, Sendable, Codable {
         self.to = to
         self.reason = reason
     }
+
+    /// `layer` vocabulary. Raw values are on-disk strings: never rename them.
+    public enum Layer: String, Hashable, Sendable, CaseIterable {
+        case ble
+        case elm
+    }
+
+    /// BLE link states written with `layer: ble`. The ELM states are
+    /// `ELMState`. Raw values are on-disk strings: never rename them.
+    public enum BLEState: String, Hashable, Sendable, CaseIterable {
+        /// Bluetooth off, unauthorised or unsupported; `reason` says which.
+        case unavailable
+        /// Powered on, not connected, not scanning.
+        case idle
+        case scanning
+        case connecting
+        /// Connected, discovering services and characteristics.
+        case discovering
+        /// UART pair selected, notifications enabled; the ELM session runs.
+        case connected
+        /// Link lost; `reason` carries the CoreBluetooth error if any.
+        case disconnected
+        /// Waiting to retry a connection after a drop.
+        case reconnecting
+        /// Relaunched by the system with a restored peripheral.
+        case restoring
+    }
 }
 
 /// `lifecycle`: something that happened to the recording or the app.

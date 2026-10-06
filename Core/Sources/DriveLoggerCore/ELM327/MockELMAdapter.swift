@@ -5,7 +5,9 @@ import Foundation
 /// Ships in the library, not only in tests, so the simulator build can run the
 /// whole recording pipeline without hardware. Replies arrive in configurable
 /// fragments after configurable delays, the way BLE notifications do.
-public final class MockELMAdapter: ELMTransport {
+///
+/// An actor, so its mutable script state needs no locks.
+public actor MockELMAdapter: ELMTransport {
     /// One scripted behaviour: when a command matching `command` arrives, reply
     /// with `reply` (which should end with `>`) after `delay`, split into
     /// chunks of `fragmentSizes` bytes (cycled; empty = one chunk).
@@ -39,12 +41,14 @@ public final class MockELMAdapter: ELMTransport {
         fatalError("M1: MockELMAdapter.init")
     }
 
-    public func send(_ data: Data) async throws -> Double {
+    public func send(_ command: ValidatedELMCommand) async throws -> Double {
         fatalError("M1: MockELMAdapter.send")
     }
 
     /// Every command received, in order — for asserting that nothing forbidden
-    /// was ever written.
+    /// was ever written. Also re-checks each one against `ELMCommandPolicy`
+    /// and fails the test run (`preconditionFailure`) if a command slipped
+    /// through, which can only happen if the policy itself regresses.
     public var sentCommands: [String] {
         fatalError("M1: MockELMAdapter.sentCommands")
     }

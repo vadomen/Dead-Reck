@@ -75,16 +75,21 @@ public enum ELMOutcome: String, Hashable, Sendable, CaseIterable {
 /// One command and its reply, verbatim, with both timestamps. Becomes an
 /// `elm` row.
 public struct ELMExchange: Hashable, Sendable {
-    /// Unique per session, increasing.
+    /// Increasing across the whole recording, reconnects included: a new
+    /// session continues from the previous one's `nextSeq` (see
+    /// `ELMSession.init(firstSeq:)`).
     public var seq: Int
     public var phase: ELMPhase
     /// Command as written, without the carriage return.
     public var tx: String
-    /// Uptime when the write was issued (`ELMTransport.send`).
+    /// Uptime when the write was issued (`ELMTransport.send`). For a
+    /// `rejected` exchange, which is never sent, the session's uptime at the
+    /// moment of rejection.
     public var requestUptime: Double
     /// Reply minus the prompt; nil on timeout or rejection.
     public var rx: String?
-    /// Uptime when the reply completed, or when the timeout fired.
+    /// Uptime of the chunk that completed the reply; on timeout, the session's
+    /// uptime when the timeout fired; on rejection, equal to `requestUptime`.
     public var completedUptime: Double
     public var outcome: ELMOutcome
 
@@ -253,16 +258,22 @@ public struct ELMSessionConfiguration: Hashable, Sendable {
 }
 
 /// Everything the session reports, on one stream.
+///
+/// Every case carries the uptime at which it *happened*, read from the
+/// session's `UptimeSource` at that moment, so a consumer that runs late (the
+/// main actor during a stall or a background transition) still writes it at
+/// the right place on the session clock.
 public enum ELMSessionEvent: Hashable, Sendable {
-    case state(from: ELMState, to: ELMState, reason: String?)
+    case state(from: ELMState, to: ELMState, reason: String?, uptime: Double)
     case exchange(ELMExchange)
     case reading(OBDReading)
-    case adapter(ELMAdapterInfo)
-    /// Successful polls per second over the last `rateWindow`.
-    case pollRate(hz: Double)
+    case adapter(ELMAdapterInfo, uptime: Double)
+    /// Successful polls per second over the last `rateWindow`. Display only;
+    /// the recorder's `stats` rows compute their own rate from the file.
+    case pollRate(hz: Double, uptime: Double)
     /// Re-init failed `reinitsBeforeReconnect` times; the owner should drop
-    /// and reconnect the transport.
-    case needsReconnect
+    /// and reconnect the transport. Always preceded by `.state(to: .failed)`.
+    case needsReconnect(uptime: Double)
 }
 
 /// Talks to one adapter over one transport: init, probing, polling.
@@ -274,7 +285,12 @@ public enum ELMSessionEvent: Hashable, Sendable {
 /// Timestamps are uptimes, not session timestamps, so the link can initialise
 /// before a recording (and its `SessionClock`) exists. The recorder converts
 /// with `clock.timestamp(uptimeSeconds:)`, which shares the base of
-/// `clock.now()`.
+/// `clock.now()`. `uptime` must be the same timebase the transport stamps
+/// with — in production both use `SystemUptimeSource`.
+///
+/// One session lives for one transport connection. After a reconnect the owner
+/// creates a new session with `firstSeq: previous.nextSeq` so exchange numbers
+/// stay unique for the whole recording.
 public actor ELMSession {
     /// Single consumer. Finishes after `shutdown()` or when the transport's
     /// stream finishes.
@@ -282,23 +298,37 @@ public actor ELMSession {
 
     private let transport: any ELMTransport
     private let configuration: ELMSessionConfiguration
+    private let uptime: any UptimeSource
     private let clock: any Clock<Duration>
     private let continuation: AsyncStream<ELMSessionEvent>.Continuation
 
-    /// - Parameter clock: drives timeouts and the poll-rate window; inject a
-    ///   test clock to run the state machine without real waits.
+    /// - Parameters:
+    ///   - uptime: stamps state changes, timeouts, rejections and adapter
+    ///     events. Same timebase as the transport's stamps.
+    ///   - clock: drives timeouts and the poll-rate window only (never
+    ///     timestamps); inject a test clock to run the state machine without
+    ///     real waits.
+    ///   - firstSeq: `seq` of the first exchange.
     public init(
         transport: any ELMTransport,
         configuration: ELMSessionConfiguration = .default,
-        clock: any Clock<Duration> = ContinuousClock()
+        uptime: any UptimeSource = SystemUptimeSource(),
+        clock: any Clock<Duration> = ContinuousClock(),
+        firstSeq: Int = 0
     ) {
         self.transport = transport
         self.configuration = configuration
+        self.uptime = uptime
         self.clock = clock
+        self.nextSeq = firstSeq
         (events, continuation) = AsyncStream.makeStream(of: ELMSessionEvent.self)
     }
 
     public private(set) var state: ELMState = .idle
+
+    /// `seq` the next exchange will get. Read it after `shutdown()` to seed the
+    /// session for the next connection.
+    public private(set) var nextSeq: Int
 
     /// `ATZ` → `ATE0` → `ATL0` → `ATS0` → `ATH1` → `ATSP0` → `0100` → `ATDPN`
     /// → `ATRV`, then (if configured) probes multi-PID, the response-count

@@ -8,7 +8,9 @@ Current version: **2** (`LogFormatVersion.current`). Readable: **1, 2**.
 
 ## File
 
-- Name: `Drive_<yyyyMMdd-HHmmss>.jsonl.gz`, local time at start, in the app's
+- Name: `Drive_<yyyyMMdd-HHmmss>.jsonl.gz` (or `…_2.jsonl.gz`, `_3`, … if a
+  file with that name already exists — a recording is never overwritten),
+  local time at start, in the app's
   `Documents/logs` (Files app → On My iPhone → DriveLogger → logs).
 - Encoding: UTF-8 JSON Lines, one object per line, `\n`-terminated.
 - Compression: gzip, written as a **sequence of gzip members**, one per flush
@@ -185,7 +187,7 @@ This is the complete raw traffic.
 
 | Field | Type, unit | Meaning |
 |---|---|---|
-| `seq` | int | Increasing within the recording. |
+| `seq` | int | Increasing within the recording, including across adapter reconnects. |
 | `phase` | string | `init`, `probe`, `poll`, `manual`, `keepalive`. |
 | `tx` | string | Command as written, without CR. |
 | `requestT` | int, ns | Write issued. |
@@ -208,14 +210,14 @@ successful initialisation, including re-inits and reconnects mid-drive.
 | Field | Meaning |
 |---|---|
 | `layer` | `ble` or `elm`. |
-| `from`, `to` | State names. `elm` states: `idle`, `resetting`, `initialising`, `searching`, `probing`, `ready`, `polling`, `retrying`, `reinitialising`, `failed`. `ble` states are defined in M2. |
+| `from`, `to` | State names. `elm` states: `idle`, `resetting`, `initialising`, `searching`, `probing`, `ready`, `polling`, `retrying`, `reinitialising`, `failed`. `ble` states: `unavailable`, `idle`, `scanning`, `connecting`, `discovering`, `connected`, `disconnected`, `reconnecting`, `restoring`. |
 | `reason` | Optional free text, e.g. `timeout`. |
 
 ### `lifecycle`
 
 | Field | Meaning |
 |---|---|
-| `event` | `start`, `stop`, `pause`, `resume`, `background`, `foreground`, `calibrationStart`, `calibrationEnd`, `error`, `memoryWarning`, `thermalState`, `protectedDataUnavailable`. |
+| `event` | `start`, `stop`, `pause`, `resume`, `background`, `foreground`, `calibrationStart`, `calibrationEnd`, `error`, `memoryWarning`, `thermalState`, `protectedDataUnavailable`. Calibration is the first phase of a recording: the samples between `calibrationStart` and `calibrationEnd` were taken with the car and phone still. |
 | `detail` | Optional free text (error description, thermal state name, stop reason). |
 
 ### `stats`

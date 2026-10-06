@@ -142,45 +142,23 @@ struct LogFormatCompatibilityTests {
         }
     }
 
-    @Test("New recordings are written in the current version")
-    func writesCurrentVersion() throws {
-        let header = LogHeader(
-            sessionID: LogFixtures.sessionID,
-            clock: SessionClock(source: FixedUptimeSource(uptimeSeconds: 1)),
-            app: LogFixtures.app,
-            device: LogFixtures.device
-        )
-        #expect(header.formatVersion == .current)
+    // Assertions about the *current* state (newest version, total number of
+    // kinds) live in LogFormatCurrentStateTests, which is expected to change
+    // with every format version. This suite only asserts facts about v1, so it
+    // never needs editing again.
 
-        let line = String(decoding: try codec.line(for: header), as: UTF8.self)
-        #expect(line.contains("\"formatVersion\":2"))
+    @Test("v1 is still a declared, readable version")
+    func version1IsDeclared() {
+        #expect(LogFormatVersion(rawValue: 1) == .v1)
+        #expect(LogFormatVersion.v1 <= .current)
     }
 
-    @Test("Every declared format version is readable")
-    func allVersionsAreReadable() {
-        // A version added to the enum without a reader is the failure mode this
-        // invariant exists to prevent; keep a fixture per case above.
-        #expect(LogFormatVersion.allCases == [.v1, .v2])
-        #expect(LogFormatVersion.current == LogFormatVersion.allCases.max())
-    }
-
-    @Test("Event kind discriminators are part of the format and must not drift")
+    @Test("v1 event kind discriminators are part of the format and must not drift")
     func kindStringsAreStable() {
         #expect(LogEventKind.motion.rawValue == "motion")
         #expect(LogEventKind.location.rawValue == "location")
         #expect(LogEventKind.obd.rawValue == "obd")
         #expect(LogEventKind.marker.rawValue == "marker")
-        // Added in v2.
-        #expect(LogEventKind.accelerometer.rawValue == "accel")
-        #expect(LogEventKind.gyroscope.rawValue == "gyro")
-        #expect(LogEventKind.magnetometer.rawValue == "mag")
-        #expect(LogEventKind.barometer.rawValue == "baro")
-        #expect(LogEventKind.elm.rawValue == "elm")
-        #expect(LogEventKind.adapter.rawValue == "adapter")
-        #expect(LogEventKind.link.rawValue == "link")
-        #expect(LogEventKind.lifecycle.rawValue == "lifecycle")
-        #expect(LogEventKind.stats.rawValue == "stats")
-        #expect(LogEventKind.allCases.count == 13)
     }
 
     @Test("OBD PID and unit encodings are part of the format")
@@ -258,7 +236,10 @@ struct LogFormatCompatibilityV2Tests {
         #expect(events.count == 16)
 
         let kinds = Set(events.map(\.payload.kind))
-        #expect(kinds == Set(LogEventKind.allCases.map(\.rawValue)))
+        #expect(kinds == [
+            "motion", "location", "obd", "marker",
+            "accel", "gyro", "mag", "baro", "elm", "adapter", "link", "lifecycle", "stats",
+        ])
         for event in events {
             if case .unrecognized(let kind, _) = event.payload {
                 Issue.record("\(kind) decoded as unrecognized")
@@ -343,22 +324,63 @@ struct LogFormatCompatibilityV2Tests {
         #expect(rewritten == original + Data("\n".utf8))
     }
 
+    @Test("v2 event kind discriminators are part of the format and must not drift")
+    func kindStringsAreStable() {
+        let kinds: [(LogEventKind, String)] = [
+            (.accelerometer, "accel"), (.gyroscope, "gyro"), (.magnetometer, "mag"),
+            (.barometer, "baro"), (.elm, "elm"), (.adapter, "adapter"), (.link, "link"),
+            (.lifecycle, "lifecycle"), (.stats, "stats"),
+        ]
+        for (kind, string) in kinds {
+            #expect(kind.rawValue == string)
+        }
+    }
+
+    // Open vocabularies: a later build may add values (they're stored as
+    // String), so each existing value is pinned individually rather than the
+    // whole list compared — adding one must not break this frozen suite.
     @Test("v2 vocabularies written by the app are stable on-disk strings")
     func vocabulariesAreStable() {
-        #expect(LifecycleSample.Event.allCases.map(\.rawValue) == [
-            "start", "stop", "pause", "resume", "background", "foreground",
-            "calibrationStart", "calibrationEnd", "error", "memoryWarning",
-            "thermalState", "protectedDataUnavailable",
-        ])
-        #expect(ELMPhase.allCases.map(\.rawValue) == ["init", "probe", "poll", "manual", "keepalive"])
-        #expect(ELMOutcome.allCases.map(\.rawValue) == [
-            "ok", "noData", "timeout", "stopped", "notRecognised", "canError",
-            "busError", "busInitError", "bufferFull", "dataError",
-            "unableToConnect", "adapterError", "malformed", "rejected",
-        ])
-        #expect(ELMState.allCases.map(\.rawValue) == [
-            "idle", "resetting", "initialising", "searching", "probing", "ready",
-            "polling", "retrying", "reinitialising", "failed",
-        ])
+        let lifecycle: [(LifecycleSample.Event, String)] = [
+            (.start, "start"), (.stop, "stop"), (.pause, "pause"), (.resume, "resume"),
+            (.background, "background"), (.foreground, "foreground"),
+            (.calibrationStart, "calibrationStart"), (.calibrationEnd, "calibrationEnd"),
+            (.error, "error"), (.memoryWarning, "memoryWarning"),
+            (.thermalState, "thermalState"), (.protectedDataUnavailable, "protectedDataUnavailable"),
+        ]
+        for (value, string) in lifecycle { #expect(value.rawValue == string) }
+
+        let phases: [(ELMPhase, String)] = [
+            (.initialisation, "init"), (.probe, "probe"), (.poll, "poll"),
+            (.manual, "manual"), (.keepalive, "keepalive"),
+        ]
+        for (value, string) in phases { #expect(value.rawValue == string) }
+
+        let outcomes: [(ELMOutcome, String)] = [
+            (.ok, "ok"), (.noData, "noData"), (.timeout, "timeout"), (.stopped, "stopped"),
+            (.notRecognised, "notRecognised"), (.canError, "canError"), (.busError, "busError"),
+            (.busInitError, "busInitError"), (.bufferFull, "bufferFull"), (.dataError, "dataError"),
+            (.unableToConnect, "unableToConnect"), (.adapterError, "adapterError"),
+            (.malformed, "malformed"), (.rejected, "rejected"),
+        ]
+        for (value, string) in outcomes { #expect(value.rawValue == string) }
+
+        let elmStates: [(ELMState, String)] = [
+            (.idle, "idle"), (.resetting, "resetting"), (.initialising, "initialising"),
+            (.searching, "searching"), (.probing, "probing"), (.ready, "ready"),
+            (.polling, "polling"), (.retrying, "retrying"), (.reinitialising, "reinitialising"),
+            (.failed, "failed"),
+        ]
+        for (value, string) in elmStates { #expect(value.rawValue == string) }
+
+        let bleStates: [(LinkSample.BLEState, String)] = [
+            (.unavailable, "unavailable"), (.idle, "idle"), (.scanning, "scanning"),
+            (.connecting, "connecting"), (.discovering, "discovering"), (.connected, "connected"),
+            (.disconnected, "disconnected"), (.reconnecting, "reconnecting"), (.restoring, "restoring"),
+        ]
+        for (value, string) in bleStates { #expect(value.rawValue == string) }
+
+        let layers: [(LinkSample.Layer, String)] = [(.ble, "ble"), (.elm, "elm")]
+        for (value, string) in layers { #expect(value.rawValue == string) }
     }
 }

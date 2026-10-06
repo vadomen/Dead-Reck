@@ -31,10 +31,41 @@ struct ELM327CommandTests {
         #expect(ELM327Command.currentData(.vehicleSpeed).wireData == Data("010D\r".utf8))
     }
 
-    @Test("Handshake turns off echo, linefeeds, spaces and headers")
-    func handshakeSilencesAdapter() {
+    @Test("Handshake follows the spec sequence with headers on")
+    func handshakeFollowsSpec() {
         let spellings = ELM327Command.handshake.map(\.wireFormat)
-        #expect(spellings == ["ATZ", "ATE0", "ATL0", "ATS0", "ATH0", "ATSP0"])
+        #expect(spellings == ["ATZ", "ATE0", "ATL0", "ATS0", "ATH1", "ATSP0", "0100", "ATDPN", "ATRV"])
+    }
+
+    @Test("New commands render to their documented spellings")
+    func rendersNewCommands() {
+        #expect(ELM327Command.headers(true).wireFormat == "ATH1")
+        #expect(ELM327Command.adaptiveTiming(2).wireFormat == "ATAT2")
+        #expect(ELM327Command.supportedPIDs.wireFormat == "0100")
+        #expect(ELM327Command.currentDataMany([.vehicleSpeed, .engineSpeed], responseCount: nil).wireFormat == "010D0C")
+        #expect(ELM327Command.currentDataMany([.vehicleSpeed], responseCount: 1).wireFormat == "010D1")
+    }
+
+    @Test("Every command the type can build passes the policy, including the handshake")
+    func expressibleCommandsAreAllowed() throws {
+        var commands = ELM327Command.handshake
+        commands += [.echo(true), .lineFeeds(true), .spaces(true), .headers(false)]
+        commands += (0...2).map(ELM327Command.adaptiveTiming)
+        commands += OBDPID.allCases.map(ELM327Command.currentData)
+        commands.append(.currentDataMany([.vehicleSpeed, .engineSpeed], responseCount: 1))
+        for command in commands {
+            let validated = try command.validated()
+            #expect(validated.wireData == command.wireData)
+        }
+    }
+
+    @Test("Out-of-range parameters are caught by the policy, not sent")
+    func outOfRangeParametersRejected() {
+        #expect(throws: ELMSessionError.self) { try ELM327Command.adaptiveTiming(3).validated() }
+        let sevenPIDs = Array(repeating: OBDPID.vehicleSpeed, count: 7)
+        #expect(throws: ELMSessionError.self) {
+            try ELM327Command.currentDataMany(sevenPIDs, responseCount: nil).validated()
+        }
     }
 }
 

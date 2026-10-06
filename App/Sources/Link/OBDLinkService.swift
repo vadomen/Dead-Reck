@@ -48,7 +48,7 @@ final class OBDLinkService: OBDLinkServicing {
         fatalError("M2: OBDLinkService.sendManual")
     }
 
-    func sessionEvents() -> AsyncStream<ELMSessionEvent> {
-        fatalError("M2: OBDLinkService.sessionEvents")
+    func linkEvents() -> AsyncStream<LinkEvent> {
+        fatalError("M2: OBDLinkService.linkEvents")
     }
 }

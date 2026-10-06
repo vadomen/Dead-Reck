@@ -73,7 +73,9 @@ protocol OBDLinkServicing: AnyObject, Observable {
     func forget()
     /// Debug console. Rejected unless `ELMCommandPolicy` allows it.
     func sendManual(_ command: String) async throws(ELMSessionError) -> ELMExchange
-    /// Every ELM session event for the recorder, across reconnects. One
-    /// subscriber at a time; a new call finishes the previous stream.
-    func sessionEvents() -> AsyncStream<ELMSessionEvent>
+    /// BLE transitions and ELM session events for the recorder, in order,
+    /// across reconnects (each new `ELMSession` is seeded with the previous
+    /// one's `nextSeq`). One subscriber at a time; a new call finishes the
+    /// previous stream.
+    func linkEvents() -> AsyncStream<LinkEvent>
 }

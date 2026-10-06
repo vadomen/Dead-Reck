@@ -12,8 +12,34 @@ Small deviations from the sketches below, made while writing the stubs:
 `needsReconnect` stream is folded into `ELMSessionEvent.needsReconnect`;
 `OBDLinkServicing` exposes a merged `adapter: AdapterRecord?` + `plan` instead
 of separate `adapterInfo`/`gatt`, and `sessionEvents()` instead of `events()`;
-`RecordingSession` adds `handleMemoryWarning()`. `ELM327Command.handshake` still
-has the old `ATH0` sequence; M1 replaces it with the spec sequence.
+`RecordingSession` adds `handleMemoryWarning()`.
+
+**Review fixes (commit after "contracts").** The review found ten issues in the
+contracts; all were fixed before M1. Where a sketch in §4 differs from the
+code, **the code is authoritative**. The sketches below have been updated for
+the main points:
+
+1. The read-only guard is an explicit **allowlist** (`ELMCommandPolicy`, now
+   implemented and tested). "Any AT" was unsafe: `ATCAF0` then `0104` puts a
+   service 04 (clear DTCs) frame on the bus.
+2. Transports accept only `ValidatedELMCommand`, which only the policy can
+   create. `ELM327Command.raw` and `.request(mode:pid:)` are gone; the enum
+   can only express read-only commands.
+3. `seq` is unique across reconnects: `ELMSession(firstSeq:)` + `nextSeq`.
+4. `ELMSession` takes an `UptimeSource`. Every `ELMSessionEvent` carries the
+   uptime at which it happened, and rows are stamped from that, not from when
+   they were consumed.
+5. BLE transitions reach the recorder: `LinkEvent` (`.ble` + `.session`), BLE
+   state names frozen in `LinkSample.BLEState`; `linkEvents()` replaces
+   `sessionEvents()`.
+6. `ELM327Command.handshake` is the spec sequence with `ATH1`.
+7. Calibration is the first phase of a started recording, so its samples are
+   in the file.
+8. Concurrency conventions (§4.0).
+9. Frozen fixture suites assert only facts about their own version;
+   "current state" assertions moved to `LogFormatCurrentStateTests`.
+10. `LogFileWriter` creates files exclusively; `LogFileName` takes a
+    `collisionIndex`; write-failure behaviour is defined (§4.3).
 
 Inputs: `CLAUDE.md` (wins on conflict), `docs/SPEC_V1.md`, `WORKFLOW.md`,
 `docs/LOG_FORMAT.md`, `.claude/skills/elm327-protocol/SKILL.md`, all of `Core/`.
@@ -207,7 +233,24 @@ exactly what the invariant forbids.
 
 Placement rule: anything Foundation-only goes in Core so it is tested by `swift
 test`; anything touching CoreBluetooth / CoreMotion / CoreLocation / UIKit lives
-in App. Signatures below are what M0 commits as stubs; names may still be
+in App.
+
+### 4.0 Concurrency conventions (Swift 6, iOS 17)
+
+`Mutex` and the atomics module need iOS 18, and Core may only import
+Foundation, so:
+- Prefer an **actor** when the type's API can be async (`ELMSession`,
+  `LogFileWriter`, `MockELMAdapter`).
+- A `Sendable` final class that must be called synchronously from any thread
+  (`LogSink`, `BLETransport`) keeps its mutable state in
+  `private nonisolated(unsafe) var` properties guarded by one `NSLock`, with a
+  comment at each declaration naming the lock. Thread-safe Foundation and
+  stdlib types (`AsyncStream.Continuation`) need no lock. Never put
+  `@unchecked Sendable` on the whole type.
+- `SensorSource` is `@MainActor`; framework callbacks are explicit `@Sendable`
+  closures capturing only `clock` and `sink`. A non-Sendable closure in a
+  main-actor method is inferred main-actor isolated and traps when CoreMotion
+  calls it off the main thread. Signatures below are what M0 commits as stubs; names may still be
 polished during review of this plan, not after.
 
 ### 4.1 ELM transport (Core, `ELM327/ELMTransport.swift`)
@@ -220,7 +263,7 @@ public struct ELMChunk: Sendable { public var bytes: Data; public var uptime: Do
 public protocol ELMTransport: Sendable {
     /// Writes one complete command (CR-terminated). Splits to the link's max
     /// write length. Returns the uptime at which the write was issued.
-    func send(_ data: Data) async throws -> Double
+    func send(_ command: ValidatedELMCommand) async throws -> Double
     /// Every inbound fragment, in order. Finishes when the link drops.
     var incoming: AsyncStream<ELMChunk> { get }
 }
@@ -234,7 +277,8 @@ where `ELMRawReply { text: String; completedUptime: Double }` — accumulates un
 
 ```swift
 public enum ELMCommandPolicy {
-    /// The read-only guard. Allows `AT…` and mode 01 requests
+    /// The read-only guard: an allowlist of AT commands (ATZ, ATI, AT@1, ATE/L/S/H 0|1,
+    /// ATSP0, ATDP, ATDPN, ATRV, ATAT0-2, ATSThh) and mode 01 requests
     /// (`01` + 1–6 PIDs + optional 1-digit count suffix) and nothing else.
     public static func validate(_ wire: String) throws(ELMSessionError)
 }
@@ -270,7 +314,9 @@ public enum ELMSessionEvent: Sendable {
 public actor ELMSession {
     public init(transport: any ELMTransport,
                 configuration: ELMSessionConfiguration = .default,   // timeouts, retry N, re-init N
-                clock: any Clock<Duration> = ContinuousClock())       // injectable for tests
+                uptime: any UptimeSource = SystemUptimeSource(),     // stamps events
+                clock: any Clock<Duration> = ContinuousClock(),      // timeouts only, injectable
+                firstSeq: Int = 0)                                   // = previous session's nextSeq
     /// Single consumer (AsyncStream). OBDLinkService fans it out.
     public nonisolated var events: AsyncStream<ELMSessionEvent> { get }
     /// ATZ → ATE0 → ATL0 → ATS0 → ATH1 → ATSP0 → 0100 (10 s) → ATDPN → ATRV,
@@ -305,7 +351,8 @@ Parser additions (`ELM327ResponseParser`): `replies(in raw:, headers: Bool) ->
 ### 4.3 Log writer / reader (Core, `Log/`)
 
 ```swift
-/// Nonisolated, lock-free front door for 300+ events/s from sensor callbacks.
+/// Nonisolated, non-blocking front door for 300+ events/s from sensor callbacks
+/// (AsyncStream continuation + NSLock-guarded counters, §4.0).
 /// Never blocks the caller; counts depth and drops (`stats`).
 public final class LogSink: Sendable {
     public func record(_ event: LogEvent)
@@ -337,7 +384,7 @@ Queue policy: unbounded, because dropping is data loss; depth is reported every
 ```swift
 public enum SensorAvailability: Sendable, Hashable { case available, unavailable(reason: String) }
 
-public protocol SensorSource: AnyObject, Sendable {
+@MainActor public protocol SensorSource: AnyObject {
     var name: String { get }
     var availability: SensorAvailability { get }
     /// Starts delivering events stamped with `clock` into `sink`.
@@ -377,7 +424,7 @@ become format types.
     func connect(_ id: UUID); func forget()
     func sendManual(_ command: String) async throws   // guarded by ELMCommandPolicy
     /// Session events for the recorder; one subscriber at a time.
-    func events() -> AsyncStream<ELMSessionEvent>
+    func linkEvents() -> AsyncStream<LinkEvent>       // BLE transitions + ELM session events
 }
 ```
 
@@ -392,7 +439,6 @@ become format types.
          uptime: any UptimeSource = SystemUptimeSource())
     private(set) var state: RecordingState            // idle / calibrating / recording / stopping / failed(String)
     private(set) var live: LiveStatus                 // obdSpeed, gpsSpeed, obdHz, motionHz, elapsed, fileBytes
-    func calibrate() async                            // 5 s keep-still, writes calibrationStart/End
     func start(mount: String, vehicle: String, allowWithoutOBD: Bool) async throws
     func mark(_ text: String)
     func stop() async

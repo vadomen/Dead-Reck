@@ -6,7 +6,10 @@ import SwiftUI
 /// What the recorder is doing.
 enum RecordingState: Hashable, Sendable {
     case idle
-    /// 5 s keep-still calibration before Start.
+    /// First phase of every recording: the clock, writer and sources are
+    /// already running and the user keeps the car and phone still, so the
+    /// samples needed for bias estimation are in the file, bracketed by
+    /// `calibrationStart` / `calibrationEnd` rows.
     case calibrating
     case recording
     case stopping
@@ -60,13 +63,16 @@ final class RecordingSession {
         fatalError("M2: RecordingSession.canStart")
     }
 
-    /// 5 s keep-still calibration. Writes `calibrationStart` and
-    /// `calibrationEnd` into the next recording.
-    func calibrate() async {
-        fatalError("M2: RecordingSession.calibrate")
-    }
-
-    func start(mount: String, vehicle: String, allowWithoutOBD: Bool) async throws {
+    /// Creates the clock, the file and starts every source, then runs the
+    /// keep-still calibration as the recording's first phase (`calibrating`),
+    /// then moves to `recording`. Pass `calibration: .zero` to skip it; the
+    /// rows are still written, back to back, so a reader can tell.
+    func start(
+        mount: String,
+        vehicle: String,
+        allowWithoutOBD: Bool,
+        calibration: Duration = .seconds(5)
+    ) async throws {
         fatalError("M2: RecordingSession.start")
     }
 
