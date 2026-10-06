@@ -217,8 +217,27 @@ successful initialisation, including re-inits and reconnects mid-drive.
 
 | Field | Meaning |
 |---|---|
-| `event` | `start`, `stop`, `pause`, `resume`, `background`, `foreground`, `calibrationStart`, `calibrationEnd`, `error`, `memoryWarning`, `thermalState`, `protectedDataUnavailable`. Calibration is the first phase of a recording: the samples between `calibrationStart` and `calibrationEnd` were taken with the car and phone still. |
+| `event` | `start`, `stop`, `pause`, `resume`, `background`, `foreground`, `calibrationStart`, `calibrationEnd`, `error`, `memoryWarning`, `thermalState`, `protectedDataUnavailable`, `lowDiskSpace`. Calibration is the first phase of a recording: the samples between `calibrationStart` and `calibrationEnd` were taken with the car and phone still. |
 | `detail` | Optional free text (error description, thermal state name, stop reason). |
+
+Stop reasons (`detail` of `stop`): `user` (the user stopped the recording) or
+`lowDiskSpace` (free space fell below the stop floor). A recording that ends
+on a write failure has an `error` row instead — if that row reached the disk
+at all — and no `stop` row.
+
+Low disk space ("warn, then stop at a floor"; thresholds default to 200 MB and
+50 MB free):
+
+| Row | `detail` | Meaning |
+|---|---|---|
+| `lowDiskSpace` | `warning: <bytes> free` | Free space fell below the warning threshold. Recording continued. Written again only if space recovered well above the threshold and fell again. |
+| `lowDiskSpace` | `floor: <bytes> free` | Free space fell below the stop floor. Immediately followed by the final rows of a normal stop. |
+| `stop` | `lowDiskSpace` | The clean stop caused by the floor. The final `stats` row is still written. |
+
+`<bytes>` is the free-space reading, in bytes, that crossed the threshold. A
+reading that drops below both thresholds at once produces both `lowDiskSpace`
+rows, `warning` first. Like all `detail` text this is for humans and
+`inspect_log`; a reader should not depend on more than the prefix.
 
 ### `stats`
 

@@ -196,7 +196,7 @@ reconnects mid-drive are captured too.
 | `elm` | reply complete / timeout fired | `seq` Int, `phase` (`init`/`probe`/`poll`/`manual`/`keepalive`), `tx` String, `requestT` ns, `rx` String? (absent on timeout), `outcome` (below) | every exchange |
 | `adapter` | init finished | Same shape as header `adapter` + `polling`; written after every successful (re-)init | rare |
 | `link` | transition | `layer` (`ble`/`elm`), `from`, `to` (state names, §4.2), `reason` String? | rare |
-| `lifecycle` | event | `event` (`start`, `stop`, `background`, `foreground`, `calibrationStart`, `calibrationEnd`, `pause`, `resume`, `error`, `memoryWarning`, `thermalState`, `protectedDataUnavailable`), `detail` String? | rare |
+| `lifecycle` | event | `event` (`start`, `stop`, `background`, `foreground`, `calibrationStart`, `calibrationEnd`, `pause`, `resume`, `error`, `memoryWarning`, `thermalState`, `protectedDataUnavailable`, `lowDiskSpace`), `detail` String? | rare |
 | `stats` | end of window | `windowS` s, `counts` {kind: Int}, `obdHz`, `motionHz`, `gaps` {`motion`/`accel`/`gyro`: count of intervals > 50 ms}, `maxGapMs` {same keys}, `timeouts` Int, `queueDepthMax` Int, `dropped` Int, `bytesWritten` Int | 0.1 Hz |
 | `marker` *(v1)* | tap | String, unchanged | user |
 
@@ -364,16 +364,19 @@ public final class LogSink: Sendable {
 
 public actor LogFileWriter {
     /// open(O_WRONLY|O_CREAT|O_EXCL|O_APPEND|O_CLOEXEC) (throws .fileExists),
-    /// protection .completeUntilFirstUserAuthentication. Below minimumFreeBytes it
-    /// still creates the file and writes the header, then reports .lowDiskSpace.
+    /// protection .completeUntilFirstUserAuthentication. Below either threshold it
+    /// still creates the file and writes the header, then delivers its notices.
+    /// Precondition: stopFreeBytes < warningFreeBytes.
     public init(url: URL, header: LogHeader, flushInterval: Duration = .seconds(2),
-                minimumFreeBytes: Int64 = 200_000_000,
+                warningFreeBytes: Int64 = DiskSpacePolicy.defaultWarningFreeBytes,  // 200 MB
+                stopFreeBytes: Int64 = DiskSpacePolicy.defaultStopFreeBytes,        // 50 MB
                 diskSpace: any DiskSpaceProvider = VolumeDiskSpaceProvider()) throws(LogWriteError)
     init(handle: sending any LogFileHandle, url:, header:, …)    // internal test seam
     public nonisolated let sink: LogSink
-    public nonisolated let failures: AsyncStream<LogWriteError>   // only channel for .lowDiskSpace
+    public nonisolated let failures: AsyncStream<LogWriteError>          // write failures only
+    public nonisolated let diskSpaceNotices: AsyncStream<DiskSpaceNotice> // advisory, single consumer
     public func flush() async throws(LogWriteError)   // failed member truncated away, retried later;
-                                                      // never throws .lowDiskSpace
+                                                      // free space never makes it throw
     public func finish() async -> LogFileSummary      // final write regardless of free space;
                                                       // always closes; reports unwrittenEvents + failure
     public var bytesWritten: Int { get }
@@ -382,11 +385,24 @@ public actor LogFileWriter {
 public protocol DiskSpaceProvider: Sendable { func availableBytes(for url: URL) throws -> Int64 }
 public struct VolumeDiskSpaceProvider: DiskSpaceProvider   // ForImportantUsage, else volumeAvailableCapacity
 
-/// Pure reporting rule, implemented and tested at M0.
-public struct LowDiskSpaceMonitor: Hashable, Sendable {
+public enum DiskSpaceNotice: Hashable, Sendable {
+    case low(availableBytes: Int64)        // below warningFreeBytes: warn, keep recording
+    case critical(availableBytes: Int64)   // below stopFreeBytes: clean stop
+}
+
+/// Pure reporting rule, implemented and tested at M0: two edge-triggered monitors.
+public struct DiskSpacePolicy: Hashable, Sendable {
+    public static let defaultWarningFreeBytes: Int64 = 200_000_000
+    public static let defaultStopFreeBytes: Int64 = 50_000_000
+    public init(warningFreeBytes: Int64 = …, stopFreeBytes: Int64 = …,   // precondition stop < warning
+                hysteresisBytes: Int64 = LowDiskSpaceMonitor.defaultHysteresisBytes)
+    public mutating func observe(availableBytes: Int64) -> [DiskSpaceNotice]   // [.low, .critical] order
+    public static func canStart(availableBytes: Int64, warningFreeBytes: Int64 = …) -> Bool  // >= warning
+}
+public struct LowDiskSpaceMonitor: Hashable, Sendable {   // one threshold, used twice by the policy
     public static let defaultHysteresisBytes: Int64 = 50_000_000
-    public init(minimumFreeBytes: Int64, hysteresisBytes: Int64 = defaultHysteresisBytes)
-    public mutating func observe(availableBytes: Int64) -> LogWriteError?
+    public init(thresholdBytes: Int64, hysteresisBytes: Int64 = defaultHysteresisBytes)
+    public mutating func observe(availableBytes: Int64) -> Bool   // true on a crossing
 }
 
 /// Internal: the writer's only access to the file, so M1 tests can inject faults.
@@ -410,14 +426,18 @@ public enum LogFileName {
 }
 ```
 
-**Low disk space is advisory.** `.lowDiskSpace` never blocks, delays or fails a
-write; it is delivered only on `failures`. Free space is read after the header
-in `init` and before every flush attempt; `finish()` does not check it. Each
-reading goes through `LowDiskSpaceMonitor`: reported once when free space goes
-strictly below `minimumFreeBytes`, then not again until it has risen strictly
-above `minimumFreeBytes + hysteresisBytes` (default 50 MB) and dropped below
-the threshold again. Exactly at the threshold is not low. A throwing provider
-skips that check without a report.
+**Low disk space is advisory and separate from failures.** A `DiskSpaceNotice`
+never blocks, delays or fails a write, and is delivered only on
+`diskSpaceNotices`; `failures` carries real write failures only. Free space is
+read after the header in `init` and before every flush attempt; `finish()` does
+not check it. Each reading goes through one `DiskSpacePolicy`: `.low` once when
+free space goes strictly below `warningFreeBytes`, `.critical` once when it
+goes strictly below `stopFreeBytes` (both, `.low` first, from a single reading
+below both). Each threshold re-arms independently, only after free space has
+risen strictly above that threshold + `hysteresisBytes` (default 50 MB).
+Exactly at a threshold is not below it. A throwing provider skips that check
+without a report. The writer only reports; the policy that acts on notices is
+`RecordingSession`'s (§4.6).
 
 **File position: `O_APPEND`, one rule.** Every write lands at end of file; the
 writer never seeks. Before a member it records the start offset
@@ -438,16 +458,17 @@ M1 tests required by this contract (fault-injecting `LogFileHandle` wrapping
   again (no member after the partial one), `.writeFailed` on `failures` once,
   `finish()` reports it with the right `unwrittenEvents`, reader returns
   members 0..<N with `truncatedTail == true`;
-- fake `DiskSpaceProvider` below the threshold → `init` writes the header and
-  reports once, later flushes still write without re-reporting, `finish()`
-  writes its final member.
+- fake `DiskSpaceProvider` → `init` below the warning threshold writes the
+  header and delivers `.low` once; a later reading below the floor delivers
+  `.critical` once; `init` below both delivers `[.low, .critical]`; later
+  flushes still write without re-reporting; `finish()` below the floor writes
+  its final member; nothing appears on `failures`.
 
 One `LogCodec` lives inside `LogFileWriter` and one inside each reader (CLAUDE.md).
 Queue policy: unbounded, because dropping is data loss; depth is reported every
 10 s and a warning `lifecycle` row is written if it exceeds 2 s of data.
-On any write failure `RecordingSession` writes a `lifecycle` `error` row, calls
-`finish()` and enters `failed(reason:unwrittenEvents:)`, so the user sees it
-even if the row never reached the disk.
+What `RecordingSession` does with disk-space notices and write failures is
+stated once, in §4.6 ("warn, then stop at a floor").
 
 ### 4.4 Sensor sources (protocol in Core `Recording/`, real ones in App)
 
@@ -512,21 +533,45 @@ simulator). Only `BLETransport.send` may call `writeValue`
 @MainActor @Observable final class RecordingSession {
     init(link: any OBDLinkServicing, sources: [any SensorSource], store: LogStore,
          uptime: any UptimeSource = SystemUptimeSource())
+    // init also takes diskSpace: any DiskSpaceProvider, warningFreeBytes (200 MB),
+    // stopFreeBytes (50 MB); the thresholds are passed unchanged to LogFileWriter.
     private(set) var state: RecordingState    // idle / calibrating / recording / stopping / failed(reason:unwrittenEvents:)
-    private(set) var live: LiveStatus         // obdSpeed, gpsSpeed, obdHz, motionHz, elapsed, fileBytes
-    var canStart: Bool { get }
+    private(set) var live: LiveStatus         // obdSpeed, gpsSpeed, obdHz, motionHz, elapsed, fileBytes,
+                                              // lowDiskSpaceWarning, availableDiskBytes
+    private(set) var lastStopReason: RecordingStopReason?   // .user / .lowDiskSpace
+    var canStart: Bool { get }                // startBlocker == nil
+    var startBlocker: RecordingStartBlocker? { get }   // .lowDiskSpace(availableBytes:requiredBytes:) / .obdNotReady
     /// Starts clock, file and sources, then runs calibration as the first phase.
+    /// Throws RecordingStartBlocker.lowDiskSpace below the warning threshold.
     func start(mount: String, vehicle: String, allowWithoutOBD: Bool,
                calibration: Duration = .seconds(5)) async throws
     func mark(_ text: String)
-    func stop() async
+    func stop(reason: RecordingStopReason = .user) async
     func handleScenePhase(_ phase: ScenePhase)   // background/foreground rows + flush
     func handleMemoryWarning()                   // row + flush
 }
 ```
 
 Owns the single `SessionClock` per recording, the `LogFileWriter`, the stats
-timer, and the `isIdleTimerDisabled` toggle. `LogStore` lists, sizes and deletes
+timer, and the `isIdleTimerDisabled` toggle.
+
+**Disk space: warn, then stop at a floor** — the recorder's one low-disk
+policy (the doc comment on `RecordingSession` is authoritative):
+1. `.low` (below 200 MB): `lifecycle` `lowDiskSpace` row, detail
+   `"warning: <bytes> free"`; UI warning via `live.lowDiskSpaceWarning`; keep
+   recording.
+2. `.critical` (below 50 MB): `lifecycle` `lowDiskSpace` row, detail
+   `"floor: <bytes> free"`, then `stop(reason: .lowDiskSpace)` — the normal
+   stop path, not `failed`: `stop` row with detail `"lowDiskSpace"`, final
+   `stats` row, `finish()`, back to `idle`, `lastStopReason = .lowDiskSpace`.
+3. Start is refused below the warning threshold (`DiskSpacePolicy.canStart`):
+   `canStart == false`, `startBlocker == .lowDiskSpace(…)`; `start` re-checks
+   and throws it before creating anything. An unreadable volume does not
+   block start.
+4. A write failure on `failures` (`ENOSPC`, I/O error): `lifecycle` `error`
+   row, `finish()`, `failed(reason:unwrittenEvents:)` — so the user sees it
+   even if the row never reached the disk. The only way into `failed`,
+   including when the final `finish()` of a rule-2 stop fails. `LogStore` lists, sizes and deletes
 files in `Documents/logs`, and picks a file name that doesn't exist yet.
 
 ### 4.7 `inspect_log` (Core package, executable target)

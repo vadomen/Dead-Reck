@@ -39,7 +39,7 @@ struct LogFormatCurrentStateTests {
         // Raise these only after adding the new strings to the frozen suite of
         // the version that introduces them.
         #expect(LogEventKind.allCases.count == 13)
-        #expect(LifecycleSample.Event.allCases.count == 12)
+        #expect(LifecycleSample.Event.allCases.count == 13)
         #expect(ELMPhase.allCases.count == 5)
         #expect(ELMOutcome.allCases.count == 14)
         #expect(ELMState.allCases.count == 10)

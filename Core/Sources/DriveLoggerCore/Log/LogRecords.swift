@@ -289,6 +289,11 @@ public struct LifecycleSample: Hashable, Sendable, Codable {
         case memoryWarning
         case thermalState
         case protectedDataUnavailable
+        /// Free space crossed a `DiskSpacePolicy` threshold. `detail` is
+        /// `"warning: <bytes> free"` (recording continues) or
+        /// `"floor: <bytes> free"` (written immediately before the `stop` row
+        /// whose detail is `"lowDiskSpace"`).
+        case lowDiskSpace
     }
 }
 

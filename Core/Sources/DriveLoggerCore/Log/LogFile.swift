@@ -61,6 +61,10 @@ public final class LogSink: Sendable {
 }
 
 /// A failure to persist events. Surfaced, never swallowed.
+///
+/// Only real failures live here. Low free space is not a failure — the write
+/// still succeeds — so it is a separate, advisory `DiskSpaceNotice` on
+/// `LogFileWriter.diskSpaceNotices`.
 public enum LogWriteError: Error, Hashable, Sendable {
     /// The target already exists. The writer never overwrites a recording.
     case fileExists(path: String)
@@ -70,14 +74,6 @@ public enum LogWriteError: Error, Hashable, Sendable {
     case writeFailed(description: String)
     /// A write failed with `ENOSPC`.
     case diskFull
-    /// Free space fell below `minimumFreeBytes`. **Advisory only**: it never
-    /// blocks, delays or fails a write, `init` and `flush()` never throw it,
-    /// and it is delivered only on `LogFileWriter.failures`. Reported *before*
-    /// the disk is full, so the recording can still be stopped cleanly with
-    /// its final rows written. Reported once per crossing, under the rule
-    /// implemented by `LowDiskSpaceMonitor`; `availableBytes` is the reading
-    /// that crossed.
-    case lowDiskSpace(availableBytes: Int64)
     case encodingFailed(kind: String, description: String)
     case alreadyFinished
 }
@@ -150,31 +146,42 @@ public struct LogFileSummary: Hashable, Sendable {
 /// the complete members before the partial one. A reader sees those members
 /// and `truncatedTail == true`.
 ///
-/// **Low disk space is advisory.** Free space is read through `diskSpace` once
-/// in `init`, after the header is written, and before every flush attempt
-/// (timer, `flush()`); each reading goes through a `LowDiskSpaceMonitor`
-/// (`minimumFreeBytes`, default hysteresis of
-/// `LowDiskSpaceMonitor.defaultHysteresisBytes`). A reading strictly below
-/// `minimumFreeBytes` reports `.lowDiskSpace` on `failures` once; it is
-/// reported again only after free space has risen strictly above
-/// `minimumFreeBytes` plus the hysteresis and then dropped below the
-/// threshold again, so a payload that changes every flush is not re-reported
-/// every flush. The report never blocks, delays or fails a write: `flush()`
-/// writes and never throws `.lowDiskSpace`, and `finish()` always attempts
-/// its final write regardless of free space and does not consult the
-/// monitor. An `init` below the threshold still creates the file and writes
-/// the header normally, then reports `.lowDiskSpace` on `failures`; it does
-/// not refuse to start — `RecordingSession` decides. A provider that throws
-/// is not a write failure: that check is skipped, nothing is reported and the
-/// monitor's state is unchanged.
+/// **Low disk space is advisory, and separate from failures.** Free space is
+/// read through `diskSpace` once in `init`, after the header is written, and
+/// before every flush attempt (timer, `flush()`). Each reading goes through
+/// one `DiskSpacePolicy(warningFreeBytes:stopFreeBytes:)` (default hysteresis
+/// `LowDiskSpaceMonitor.defaultHysteresisBytes`), and every notice it returns
+/// is delivered, in order, on `diskSpaceNotices` — never on `failures`:
+/// - `.low` once when free space goes strictly below `warningFreeBytes`;
+/// - `.critical` once when it goes strictly below `stopFreeBytes`;
+/// - both, `.low` first, when one reading drops below both;
+/// - each again only after free space has risen strictly above that
+///   threshold plus the hysteresis and dropped below it again.
 ///
-/// **Failures.** Nothing queued is discarded while a retry can still succeed.
-/// Each distinct write failure is reported once on `failures` (again only if
-/// it changes or clears); `.lowDiskSpace` follows the monitor's rule above
-/// instead. `RecordingSession` reacts to any failure by writing a `lifecycle`
-/// `error` row, calling `finish()`, and showing the failure in its own state,
-/// because the row may not reach a failing disk. Every member written before
-/// the failure stays readable.
+/// The writer only reports; it never acts on a notice. A notice never blocks,
+/// delays or fails a write: `flush()` writes and never throws because of free
+/// space, and `finish()` always attempts its final write regardless of free
+/// space and does not read it. An `init` below either threshold still creates
+/// the file and writes the header normally, then delivers its notices; the
+/// writer does not refuse to start. A provider that throws is not a write
+/// failure: that check is skipped, nothing is reported and the policy's state
+/// is unchanged.
+///
+/// What happens next is `RecordingSession`'s policy, stated once on that
+/// type: `.low` writes a `lifecycle` `lowDiskSpace` row and warns in the UI
+/// while recording continues; `.critical` writes another `lowDiskSpace` row
+/// and stops the recording through the normal stop path (not `failed`), so
+/// the final rows are written and the file is closed normally. Start is
+/// refused below `warningFreeBytes` before any writer exists.
+///
+/// **Failures.** Only real write failures (`ENOSPC`, I/O errors, a failed
+/// truncate) appear on `failures`. Nothing queued is discarded while a retry
+/// can still succeed. Each distinct write failure is reported once on
+/// `failures` (again only if it changes or clears). `RecordingSession` reacts
+/// to every write failure by writing a `lifecycle` `error` row, calling
+/// `finish()` and entering `failed(reason:unwrittenEvents:)`, because the row
+/// may not reach a failing disk. Every member written before the failure
+/// stays readable.
 ///
 /// **Tests M1 must add** (through the internal `LogFileHandle` seam, with a
 /// fault-injecting handle wrapping `POSIXLogFileHandle`):
@@ -189,32 +196,46 @@ public struct LogFileSummary: Hashable, Sendable {
 ///   later `flush()` calls throw `.writeFailed`, `failures` delivers it once,
 ///   `finish()` reports it with the right `unwrittenEvents`, and a reader
 ///   returns members 0..<N with `truncatedTail == true`.
-/// - With a fake `DiskSpaceProvider`: `init` below the threshold writes the
-///   header and reports `.lowDiskSpace` once; later flushes below the
-///   threshold still write and don't re-report; `finish()` below the
-///   threshold writes its final member.
+/// - With a fake `DiskSpaceProvider`: `init` below `warningFreeBytes` writes
+///   the header and delivers `.low` once; a later reading below
+///   `stopFreeBytes` delivers `.critical` once; an `init` below both delivers
+///   `[.low, .critical]` in that order; later flushes below either threshold
+///   still write and don't re-report; `finish()` below the floor writes its
+///   final member; `failures` receives nothing throughout.
 public actor LogFileWriter {
     /// Where producers enqueue events.
     public nonisolated let sink: LogSink
 
-    /// Write failures as they happen. Single consumer.
+    /// Write failures as they happen — `ENOSPC`, I/O errors, a failed
+    /// truncate. Never a free-space notice. Single consumer.
     public nonisolated let failures: AsyncStream<LogWriteError>
+
+    /// Advisory free-space notices from `DiskSpacePolicy`, in the order
+    /// readings produced them. Never a failure, never a reason the writer
+    /// stops writing. Single consumer.
+    public nonisolated let diskSpaceNotices: AsyncStream<DiskSpaceNotice>
 
     /// Creates the file exclusively — throws `LogWriteError.fileExists` rather
     /// than truncate an existing recording — and writes the header as the
     /// first member.
     ///
-    /// Free space below this does not stop `init`: the file is created and
-    /// the header written, then `.lowDiskSpace` is reported on `failures`.
+    /// Free space below either threshold does not stop `init`: the file is
+    /// created and the header written, then the notices are delivered on
+    /// `diskSpaceNotices`.
     ///
-    /// - Parameter minimumFreeBytes: free-space floor that triggers
-    ///   `.lowDiskSpace`. The default leaves several minutes of recording.
+    /// - Parameter warningFreeBytes: free space strictly below this delivers
+    ///   `.low`. The default leaves several minutes of recording.
+    /// - Parameter stopFreeBytes: free space strictly below this delivers
+    ///   `.critical`, leaving room for a clean stop.
     /// - Parameter diskSpace: free-space source; injectable for tests.
+    /// - Precondition: `stopFreeBytes < warningFreeBytes` (checked by
+    ///   `DiskSpacePolicy.init`).
     public init(
         url: URL,
         header: LogHeader,
         flushInterval: Duration = .seconds(2),
-        minimumFreeBytes: Int64 = 200_000_000,
+        warningFreeBytes: Int64 = DiskSpacePolicy.defaultWarningFreeBytes,
+        stopFreeBytes: Int64 = DiskSpacePolicy.defaultStopFreeBytes,
         diskSpace: any DiskSpaceProvider = VolumeDiskSpaceProvider()
     ) throws(LogWriteError) {
         fatalError("M1: LogFileWriter.init")
@@ -228,7 +249,8 @@ public actor LogFileWriter {
         url: URL,
         header: LogHeader,
         flushInterval: Duration = .seconds(2),
-        minimumFreeBytes: Int64 = 200_000_000,
+        warningFreeBytes: Int64 = DiskSpacePolicy.defaultWarningFreeBytes,
+        stopFreeBytes: Int64 = DiskSpacePolicy.defaultStopFreeBytes,
         diskSpace: any DiskSpaceProvider = VolumeDiskSpaceProvider()
     ) throws(LogWriteError) {
         fatalError("M1: LogFileWriter.init(handle:)")
@@ -236,8 +258,8 @@ public actor LogFileWriter {
 
     /// Encodes and writes everything queued so far as one gzip member. Call on
     /// entering background and on memory warnings. On failure the member is
-    /// truncated away and kept for the next attempt. Never throws
-    /// `.lowDiskSpace`; that goes to `failures` only.
+    /// truncated away and kept for the next attempt. Free space never makes
+    /// it throw; notices go to `diskSpaceNotices` only.
     public func flush() async throws(LogWriteError) {
         fatalError("M1: LogFileWriter.flush")
     }

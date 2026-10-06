@@ -50,3 +50,52 @@ Fix: R1-1 and R1-2 by `sensors-logging-engineer` (owns log/writer).
 Verification: `swift test` 101/101 green (16 suites); simulator build 0
 errors/warnings; Core imports Foundation only; frozen fixtures untouched.
 Committed as "review round 1: writer low-disk and file-position contract".
+
+### Round 2
+
+Range `80e0161..HEAD` (7acfa9a + c26f293). Reviewer: fresh `reviewer` agent.
+Result: 0 BLOCKER / 2 MAJOR / 6 MINOR. R1-2 fix verified sound (O_APPEND +
+ftruncate probed empirically). Tests at review time: 101/101 green, simulator
+build-for-testing green, fixtures byte-identical.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R2-1 | MAJOR | `VolumeDiskSpaceProvider` reads resource values on the caller's `URL`; Foundation caches them until a run-loop turn, which never happens on the writer actor, so every per-flush reading after `init` returns the start-of-drive value and `.lowDiskSpace` never fires. | CONFIRMED | `DiskSpace.swift:30-36` uses the passed `url` directly. Caching is documented Foundation behaviour; reviewer reproduced it (2 GiB written, same-instance reading unchanged). New bug introduced by the R1-1 fix, not a recurrence. |
+| R2-2 | MAJOR | Nothing defines what `RecordingSession` does on `.lowDiskSpace`: `LogFile.swift:167` says "RecordingSession decides", `:174` and PLAN:448 say it finishes on "any failure", `failures` is documented as "Write failures". Either the drive ends at 200 MB free as `failed`, or it records until ENOSPC. | CONFIRMED | Contradiction verified in `LogFile.swift:167,174,200` and `docs/PLAN.md:448`. Remaining half of R1-1 (consumer side). Product decision — asked the user. |
+| R2-3 | MINOR | `LogFileHandleError` maps ENOSPC → `.diskFull` for any operation, conflicting with "ftruncate failure is always `.writeFailed`". | DEFERRED | BACKLOG |
+| R2-4 | MINOR | fsync timing/failure, `endOffset()` failure and `bytesWritten` after a truncate failure unspecified. | DEFERRED | BACKLOG |
+| R2-5 | MINOR | `POSIXLogFileHandle`'s own short-write / EINTR loop is never exercised by the listed tests. | DEFERRED | BACKLOG |
+| R2-6 | MINOR | `handle: sending` stops a test from driving the injector after hand-over; contract should say faults are scheduled up front or via a lock-guarded plan. | DEFERRED | BACKLOG |
+| R2-7 | MINOR | If the header write in `init` fails, the exclusively created file is left behind. | DEFERRED | BACKLOG |
+| R2-8 | MINOR | `volumeAvailableCapacityForImportantUsage` includes purgeable space; ENOSPC may arrive while the reading is far above the floor. | DEFERRED | BACKLOG |
+
+Fix: R2-1 and R2-2 by `sensors-logging-engineer`.
+
+- R2-1 → `VolumeDiskSpaceProvider` builds a fresh URL and clears cached
+  resource values on every reading. Regression test
+  `VolumeDiskSpaceProviderFreshnessTests.secondReadingIsNotCached` (same URL
+  instance, 512 MiB written and synced, read from an actor): **failed on the
+  old code** ("dropped 0 bytes after writing 536870912"), passes after.
+- R2-2 → user chose "warn, then stop at a floor". Advisory signals split from
+  failures: `DiskSpaceNotice` (`.low` / `.critical`) on
+  `LogFileWriter.diskSpaceNotices`; `LogWriteError.lowDiskSpace` removed.
+  Pure `DiskSpacePolicy` (two edge-triggered monitors, 200 MB warning /
+  50 MB floor, `canStart`). `RecordingSession` contract: warn row + UI flag
+  at `.low`, `lowDiskSpace` row then `stop(reason: .lowDiskSpace)` at
+  `.critical` (normal stop, not `failed`), start refused below 200 MB,
+  `failed` only for real write failures. New lifecycle value
+  `lowDiskSpace` pinned in the v2 vocabulary test (added assertion; fixture
+  strings unchanged) and current-state count 13. Regression tests:
+  `DiskSpacePolicyTests` (new type — "before" is a compile failure).
+
+Verification: `swift test` 115/115 green (18 suites); simulator build 0
+errors/warnings; fixtures byte-identical to e712d29; Core imports Foundation
+only. Not included: `App/Resources/Info.plist`, `project.pbxproj` and the
+shared scheme were rewritten by the open Xcode.app during build runs
+(plist comments stripped, scheme version 1.7→1.3); left uncommitted for the
+user to decide. Committed as "review round 2: fresh disk-space readings,
+warn-then-stop low-disk policy".
+
+### Round 3
+
+_Pending reviewer._ Range `80e0161..HEAD`.

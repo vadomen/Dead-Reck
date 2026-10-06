@@ -347,6 +347,8 @@ struct LogFormatCompatibilityV2Tests {
             (.calibrationStart, "calibrationStart"), (.calibrationEnd, "calibrationEnd"),
             (.error, "error"), (.memoryWarning, "memoryWarning"),
             (.thermalState, "thermalState"), (.protectedDataUnavailable, "protectedDataUnavailable"),
+            // Added before any v2 recording was written (review R2-2).
+            (.lowDiskSpace, "lowDiskSpace"),
         ]
         for (value, string) in lifecycle { #expect(value.rawValue == string) }
 
