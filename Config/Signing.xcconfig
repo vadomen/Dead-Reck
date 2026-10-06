@@ -1,0 +1,20 @@
+// Shared signing configuration. Committed, and contains no secrets.
+//
+// Per-developer values (team ID, your own bundle identifier) belong in
+// Config/Local.xcconfig, which is git-ignored and included at the bottom of this
+// file so its assignments win. Copy Config/Local.xcconfig.example to get started.
+//
+// Never write a DEVELOPMENT_TEAM into this file, into project.yml, or into the
+// generated .xcodeproj.
+
+PRODUCT_BUNDLE_IDENTIFIER = com.example.drivelogger
+
+CODE_SIGN_STYLE = Automatic
+
+// Simulator builds are intentionally left unsigned so the project builds and
+// tests on a machine with no signing identity at all. Only device builds need a
+// real identity and team.
+CODE_SIGN_IDENTITY[sdk=iphoneos*] = Apple Development
+DEVELOPMENT_TEAM =
+
+#include? "Local.xcconfig"

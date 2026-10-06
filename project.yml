@@ -1,0 +1,118 @@
+# Source of truth for DriveLogger.xcodeproj.
+#
+# Edit this file, then run `xcodegen generate`. Never edit the .xcodeproj
+# directly — it is generated and regeneration will discard your changes.
+# Adding or removing a source file also needs a regenerate, because XcodeGen
+# expands the `sources` globs at generation time.
+
+name: DriveLogger
+
+options:
+  minimumXcodeGenVersion: "2.38"
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+  generateEmptyDirectories: false
+  defaultConfig: Debug
+  # Bundle identifiers come from Config/Signing.xcconfig, not from a prefix
+  # XcodeGen would bake into the project file.
+  xcodeVersion: "27.0"
+
+configs:
+  Debug: debug
+  Release: release
+
+# Project-level base configuration. Signing.xcconfig optionally includes the
+# git-ignored Config/Local.xcconfig, which is the only place a team ID lives.
+configFiles:
+  Debug: Config/Signing.xcconfig
+  Release: Config/Signing.xcconfig
+
+settings:
+  base:
+    # Swift 6 language mode. Strict concurrency is implied by the language mode;
+    # set explicitly so the intent survives a future mode change.
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    CLANG_ENABLE_OBJC_WEAK: YES
+    GCC_WARN_UNDECLARED_SELECTOR: YES
+    CLANG_WARN_DOCUMENTATION_COMMENTS: YES
+  configs:
+    Debug:
+      SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+      SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+      ONLY_ACTIVE_ARCH: YES
+    Release:
+      SWIFT_COMPILATION_MODE: wholemodule
+      SWIFT_OPTIMIZATION_LEVEL: "-O"
+
+packages:
+  DriveLoggerCore:
+    path: Core
+
+targets:
+  DriveLogger:
+    type: application
+    platform: iOS
+    sources:
+      - path: App/Sources
+      # Listed explicitly rather than globbing App/Resources so Info.plist is
+      # not also copied in as a bundle resource.
+      - path: App/Resources/Assets.xcassets
+    dependencies:
+      - package: DriveLoggerCore
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: App/Resources/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_EMIT_LOC_STRINGS: YES
+        # iPhone only. Must be set per-target: XcodeGen writes a default of
+        # "1,2" onto every iOS target, which would override a project-level
+        # value and ship an iPad binary.
+        TARGETED_DEVICE_FAMILY: "1"
+        # iPhone app, not a Catalyst or "designed for iPad" build.
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+        SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: NO
+
+  DriveLoggerAppTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: AppTests
+    dependencies:
+      - target: DriveLogger
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        TARGETED_DEVICE_FAMILY: "1"
+        # Inherits the app's identifier from Config/Signing.xcconfig, so a
+        # developer overriding it in Local.xcconfig gets both targets renamed.
+        PRODUCT_BUNDLE_IDENTIFIER: $(inherited).AppTests
+
+schemes:
+  DriveLogger:
+    build:
+      targets:
+        DriveLogger: all
+        DriveLoggerAppTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      gatherCoverageData: true
+      targets:
+        - DriveLoggerAppTests
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release

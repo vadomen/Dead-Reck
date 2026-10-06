@@ -1,0 +1,499 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		3694EB7DA52ABEFA3E9F4C58 /* DriveLoggerCore in Frameworks */ = {isa = PBXBuildFile; productRef = A3ADC0CF90EB1C47CE68194B /* DriveLoggerCore */; };
+		4E301479F940B6C5F374BAC0 /* AppInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7085FAEE943E57E7A189FF74 /* AppInfo.swift */; };
+		6A100EA473833AB5B83E6974 /* AppInfoTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90AC7FA4AD498307B3C7D5C3 /* AppInfoTests.swift */; };
+		740AC40C242C54E79F09B42D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2EE4B1A7D0924DC9EBEBA99C /* Assets.xcassets */; };
+		9703F9AAE2A112783A148671 /* DriveLoggerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38660F590E620FC9E95617BC /* DriveLoggerApp.swift */; };
+		9FA3198C111CA9BCE762F2B4 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5487E70F68E5078A7332C59 /* RootView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		4DA35B5205F2AB058FD06313 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 510A19CC12064018E02C39AD /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 1BBEED779F3C38295EC09E18;
+			remoteInfo = DriveLogger;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		2EE4B1A7D0924DC9EBEBA99C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		34003681B191F41CE9CCAF3E /* Core */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Core; path = Core; sourceTree = SOURCE_ROOT; };
+		38660F590E620FC9E95617BC /* DriveLoggerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DriveLoggerApp.swift; sourceTree = "<group>"; };
+		3B4CFB2197F8A96D56C50C74 /* DriveLoggerAppTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = DriveLoggerAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		404284ED2ADA7C27E439CC77 /* DriveLogger.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = DriveLogger.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		7085FAEE943E57E7A189FF74 /* AppInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppInfo.swift; sourceTree = "<group>"; };
+		90AC7FA4AD498307B3C7D5C3 /* AppInfoTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppInfoTests.swift; sourceTree = "<group>"; };
+		A258E57C132D921130E6EC80 /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
+		B5487E70F68E5078A7332C59 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		AE37B53A6385967228C65E7B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3694EB7DA52ABEFA3E9F4C58 /* DriveLoggerCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		11FEED041AB49418ABD33FAE /* AppTests */ = {
+			isa = PBXGroup;
+			children = (
+				90AC7FA4AD498307B3C7D5C3 /* AppInfoTests.swift */,
+			);
+			path = AppTests;
+			sourceTree = "<group>";
+		};
+		19A6E040FF71E18CA3B0C398 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				A258E57C132D921130E6EC80 /* Signing.xcconfig */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+		1EE5B2A46FC4D10ACF10990D /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				34003681B191F41CE9CCAF3E /* Core */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
+		57FC3430BD081C5F71D65887 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				7085FAEE943E57E7A189FF74 /* AppInfo.swift */,
+				38660F590E620FC9E95617BC /* DriveLoggerApp.swift */,
+				B5487E70F68E5078A7332C59 /* RootView.swift */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		85D84EC6B19BB7C02B3F5F96 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				404284ED2ADA7C27E439CC77 /* DriveLogger.app */,
+				3B4CFB2197F8A96D56C50C74 /* DriveLoggerAppTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		A4B73C90161B22EF9DB1DEE7 = {
+			isa = PBXGroup;
+			children = (
+				F93EE950B9F3E29F6D8E113E /* App */,
+				11FEED041AB49418ABD33FAE /* AppTests */,
+				19A6E040FF71E18CA3B0C398 /* Config */,
+				1EE5B2A46FC4D10ACF10990D /* Packages */,
+				85D84EC6B19BB7C02B3F5F96 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		F418D58440E8F154F17EE857 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				2EE4B1A7D0924DC9EBEBA99C /* Assets.xcassets */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		F93EE950B9F3E29F6D8E113E /* App */ = {
+			isa = PBXGroup;
+			children = (
+				F418D58440E8F154F17EE857 /* Resources */,
+				57FC3430BD081C5F71D65887 /* Sources */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		1BBEED779F3C38295EC09E18 /* DriveLogger */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 884C13CF05FF3074C180B457 /* Build configuration list for PBXNativeTarget "DriveLogger" */;
+			buildPhases = (
+				E05B817BCCAF147E37699EDA /* Sources */,
+				FEC85B134CF7228BAE9D664F /* Resources */,
+				AE37B53A6385967228C65E7B /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = DriveLogger;
+			packageProductDependencies = (
+				A3ADC0CF90EB1C47CE68194B /* DriveLoggerCore */,
+			);
+			productName = DriveLogger;
+			productReference = 404284ED2ADA7C27E439CC77 /* DriveLogger.app */;
+			productType = "com.apple.product-type.application";
+		};
+		400FC9EA21A9BC53670D340A /* DriveLoggerAppTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BC2BE93C1FD6C72329BBC35D /* Build configuration list for PBXNativeTarget "DriveLoggerAppTests" */;
+			buildPhases = (
+				220F2983D09DB101DF50B9AF /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				680BAE35B4DA44BA9834A81D /* PBXTargetDependency */,
+			);
+			name = DriveLoggerAppTests;
+			packageProductDependencies = (
+			);
+			productName = DriveLoggerAppTests;
+			productReference = 3B4CFB2197F8A96D56C50C74 /* DriveLoggerAppTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		510A19CC12064018E02C39AD /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 2700;
+				TargetAttributes = {
+					1BBEED779F3C38295EC09E18 = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+					400FC9EA21A9BC53670D340A = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 34B5471F9774FEED4D76258E /* Build configuration list for PBXProject "DriveLogger" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = A4B73C90161B22EF9DB1DEE7;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				1699950BF60B6E53258E29EA /* XCLocalSwiftPackageReference "Core" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 85D84EC6B19BB7C02B3F5F96 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				1BBEED779F3C38295EC09E18 /* DriveLogger */,
+				400FC9EA21A9BC53670D340A /* DriveLoggerAppTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		FEC85B134CF7228BAE9D664F /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				740AC40C242C54E79F09B42D /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		220F2983D09DB101DF50B9AF /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6A100EA473833AB5B83E6974 /* AppInfoTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E05B817BCCAF147E37699EDA /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4E301479F940B6C5F374BAC0 /* AppInfo.swift in Sources */,
+				9703F9AAE2A112783A148671 /* DriveLoggerApp.swift in Sources */,
+				9FA3198C111CA9BCE762F2B4 /* RootView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		680BAE35B4DA44BA9834A81D /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 1BBEED779F3C38295EC09E18 /* DriveLogger */;
+			targetProxy = 4DA35B5205F2AB058FD06313 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		0BEB79F347B4565495AAF73B /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = A258E57C132D921130E6EC80 /* Signing.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		3111012FB57BBC8AED5B5CB6 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = App/Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		72B6A1A54EAFB211E85B66E8 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(inherited).AppTests";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/DriveLogger.app/DriveLogger";
+			};
+			name = Release;
+		};
+		839A08B063F735B6F0D974F3 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = App/Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		D555CF1F9526FCA133EA1B77 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = A258E57C132D921130E6EC80 /* Signing.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		DF48093C2E3856CAF362E501 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(inherited).AppTests";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/DriveLogger.app/DriveLogger";
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		34B5471F9774FEED4D76258E /* Build configuration list for PBXProject "DriveLogger" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D555CF1F9526FCA133EA1B77 /* Debug */,
+				0BEB79F347B4565495AAF73B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		884C13CF05FF3074C180B457 /* Build configuration list for PBXNativeTarget "DriveLogger" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				3111012FB57BBC8AED5B5CB6 /* Debug */,
+				839A08B063F735B6F0D974F3 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		BC2BE93C1FD6C72329BBC35D /* Build configuration list for PBXNativeTarget "DriveLoggerAppTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DF48093C2E3856CAF362E501 /* Debug */,
+				72B6A1A54EAFB211E85B66E8 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		1699950BF60B6E53258E29EA /* XCLocalSwiftPackageReference "Core" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Core;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A3ADC0CF90EB1C47CE68194B /* DriveLoggerCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = DriveLoggerCore;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 510A19CC12064018E02C39AD /* Project object */;
+}

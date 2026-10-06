@@ -1,0 +1,16 @@
+// Copy to Config/Local.xcconfig (git-ignored) and fill in your own values.
+//
+//     cp Config/Local.xcconfig.example Config/Local.xcconfig
+//
+// Needed only to build and run on a physical iPhone. Simulator builds and
+// `swift test` work without this file — Config/Signing.xcconfig includes it
+// optionally, so its absence is not an error.
+
+// Your 10-character Apple Developer Team ID. Find it at
+// https://developer.apple.com/account under Membership details.
+DEVELOPMENT_TEAM = ABCDE12345
+
+// Must be unique across the App Store, so use a prefix you control. Changing it
+// makes iOS treat the app as a different install, which discards any recordings
+// already on the device.
+PRODUCT_BUNDLE_IDENTIFIER = com.yourname.drivelogger

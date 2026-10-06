@@ -1,0 +1,56 @@
+# ---------------------------------------------------------------------------
+# Recorded drives. Never commit these.
+#
+# A recording is large, uninteresting to diff, and a precise record of where
+# someone drove and when. Keep drives on the device or in whatever store the
+# research uses, not in git history where they cannot be removed.
+# ---------------------------------------------------------------------------
+*.jsonl
+*.jsonl.gz
+logs/
+
+# ---------------------------------------------------------------------------
+# Per-developer signing. Config/Signing.xcconfig is committed; this is not.
+# ---------------------------------------------------------------------------
+Config/Local.xcconfig
+
+# ---------------------------------------------------------------------------
+# Xcode
+# ---------------------------------------------------------------------------
+build/
+DerivedData/
+*.xcuserstate
+*.xcuserdatad/
+xcuserdata/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+*.xcarchive
+*.xccheckout
+*.xcscmblueprint
+*.perspectivev3
+!default.perspectivev3
+
+# DriveLogger.xcodeproj IS committed — it is generated from project.yml, but
+# checking it in means a fresh clone opens in Xcode without running XcodeGen
+# first. Its per-user state is not committed.
+DriveLogger.xcodeproj/xcuserdata/
+DriveLogger.xcodeproj/project.xcworkspace/xcuserdata/
+DriveLogger.xcodeproj/project.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
+DriveLogger.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/configuration/
+
+# ---------------------------------------------------------------------------
+# Swift Package Manager
+# ---------------------------------------------------------------------------
+.build/
+.swiftpm/
+Package.resolved
+*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+
+# ---------------------------------------------------------------------------
+# macOS
+# ---------------------------------------------------------------------------
+.DS_Store
+._*
