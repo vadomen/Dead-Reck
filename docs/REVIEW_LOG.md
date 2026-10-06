@@ -98,4 +98,39 @@ warn-then-stop low-disk policy".
 
 ### Round 3
 
-_Pending reviewer._ Range `80e0161..HEAD`.
+Range `80e0161..HEAD` (7acfa9a + c26f293 + 4ce952f). Reviewer: fresh
+`reviewer` agent. Result: **0 BLOCKER / 0 MAJOR / 5 MINOR** (+2 noted, not
+counted). R2-1 verified fixed (reviewer re-ran the test against the old
+provider body: fails; HEAD: passes 6/6, no temp leftovers). R2-2 verified
+fixed: one policy across code and docs, no leftover `minimumFreeBytes` /
+`LogWriteError.lowDiskSpace`, boundaries tested. Simulator build of the
+committed HEAD (from `git archive`, excluding Xcode's uncommitted rewrites)
+green; `swift test` 115/115; fixtures byte-identical at e712d29, 21547c7,
+80e0161 and HEAD.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R3-1 | MINOR | Floor row vs `stop` row ordering stated three incompatible ways ("immediately before", "immediately followed by", `.critical` while `stopping` writes its row). | DEFERRED | BACKLOG |
+| R3-2 | MINOR | End of `failures`/`diskSpaceNotices` streams and interleaving with stop paths unspecified (stale writer notices, `.critical` during calibration, rule 4 while stopping). | DEFERRED | BACKLOG |
+| R3-3 | MINOR | LOG_FORMAT "no `stop` row on a write failure" not guaranteed; rule 4 can't write an error row after `finish()`; PLAN says "rule-2 stop" vs "any stop". | DEFERRED | BACKLOG |
+| R3-4 | MINOR | `RecordingStopReason` raw values and `warning:`/`floor:` detail prefixes are on-disk strings pinned by no test. | DEFERRED | BACKLOG |
+| R3-5 | MINOR | `startBlocker` reads disk space synchronously on the main actor and isn't observable (Start may stay disabled after deletions). | DEFERRED | BACKLOG |
+| R3-6 | MINOR (noted) | PLAN.md §4.6: `LogStore` paragraph merged into list item 4. | DEFERRED | BACKLOG |
+| R3-7 | MINOR (noted) | Freshness test writes 512 MiB per `swift test`; fails unclearly below ~0.6 GB free. | DEFERRED | BACKLOG |
+
+**Loop stopped: no BLOCKER or MAJOR findings.**
+
+### Run 1 summary
+
+- Rounds run: 3.
+- Findings fixed: 4 (R1-1, R1-2, R2-1, R2-2), all MAJOR, all confirmed
+  before fixing. Rejected: 0. Deferred: 21 MINOR (R1-3…R1-10, R2-3…R2-8,
+  R3-1…R3-7) in `docs/BACKLOG.md`.
+- No finding came back after its fix. R2-1 was a new bug introduced by the
+  R1-1 fix; R2-2 was the unspecified consumer side of R1-1.
+- Commits: c26f293 (round 1), 4ce952f (round 2), plus this ledger update.
+- Final tests: `cd Core && swift test` 115 tests in 18 suites, all pass;
+  simulator build 0 errors / 0 warnings.
+- Outside the loop: `App/Resources/Info.plist`, `project.pbxproj` and the
+  shared scheme carry uncommitted rewrites by the open Xcode.app; left for
+  the user.
