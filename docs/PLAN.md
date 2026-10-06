@@ -11,7 +11,7 @@ Small deviations from the sketches below, made while writing the stubs:
 `StatsAccumulator.closeWindow(at:…)` (not `window(endingAt:…)`); the
 `needsReconnect` stream is folded into `ELMSessionEvent.needsReconnect`;
 `OBDLinkServicing` exposes a merged `adapter: AdapterRecord?` + `plan` instead
-of separate `adapterInfo`/`gatt`, and `sessionEvents()` instead of `events()`;
+of separate `adapterInfo`/`gatt`, and a single event stream (now `linkEvents()`);
 `RecordingSession` adds `handleMemoryWarning()`.
 
 **Review fixes (commit after "contracts").** The review found ten issues in the
@@ -250,8 +250,10 @@ Foundation, so:
 - `SensorSource` is `@MainActor`; framework callbacks are explicit `@Sendable`
   closures capturing only `clock` and `sink`. A non-Sendable closure in a
   main-actor method is inferred main-actor isolated and traps when CoreMotion
-  calls it off the main thread. Signatures below are what M0 commits as stubs; names may still be
-polished during review of this plan, not after.
+  calls it off the main thread.
+
+The signatures below summarise what is committed in code. Where they differ,
+the code wins.
 
 ### 4.1 ELM transport (Core, `ELM327/ELMTransport.swift`)
 
@@ -276,39 +278,38 @@ where `ELMRawReply { text: String; completedUptime: Double }` — accumulates un
 ### 4.2 ELM session (Core, `ELM327/ELMSession.swift`)
 
 ```swift
+public struct ValidatedELMCommand { public let wire: String; public var wireData: Data }  // internal init
+
 public enum ELMCommandPolicy {
-    /// The read-only guard: an allowlist of AT commands (ATZ, ATI, AT@1, ATE/L/S/H 0|1,
-    /// ATSP0, ATDP, ATDPN, ATRV, ATAT0-2, ATSThh) and mode 01 requests
-    /// (`01` + 1–6 PIDs + optional 1-digit count suffix) and nothing else.
-    public static func validate(_ wire: String) throws(ELMSessionError)
+    public enum Scope { case session, manual }
+    /// Allowlist. Printable ASCII only, checked before uppercasing.
+    /// .session: ATZ ATI AT@1 ATE0/1 ATL0/1 ATS0/1 ATH0/1 ATSP0 ATDP ATDPN ATRV
+    ///           ATAT0-2 ATSThh (hh 19…FF), plus mode 01.
+    /// .manual:  ATI AT@1 ATDP ATDPN ATRV, plus mode 01 (the debug console).
+    /// Mode 01: 01 + 1–6 PID bytes + optional count digit 1–9.
+    public static func validate(_ wire: String, scope: Scope = .session) throws(ELMSessionError) -> ValidatedELMCommand
 }
 
-public enum ELMState: String, Sendable {      // names are written into `link` rows
-    case idle, resetting, initialising, searching, probing, ready,
-         polling, retrying, reinitialising, failed
+public enum ELMState: String { idle, resetting, initialising, searching, probing, ready,
+                               polling, retrying, reinitialising, failed }   // written into `link` rows
+
+public struct ELMExchange {        // → `elm` row
+    seq, phase: ELMPhase, tx, requestUptime, rx: String?, completedUptime, outcome: ELMOutcome
 }
-
-public struct ELMExchange: Sendable {          // → `elm` row
-    public var seq: Int; public var phase: ELMPhase; public var tx: String
-    public var requestUptime: Double; public var rx: String?
-    public var completedUptime: Double; public var outcome: ELMOutcome
+public struct OBDReading {         // → `obd` row
+    seq, command, ecu: String?, measurement: OBDMeasurement, raw, requestUptime, replyUptime
 }
+public struct PollingPlan { pids, multiPID, responseCount: Int? /* 1–9 */, adaptiveTiming, rpmEvery, timeout }
+public struct ELMAdapterInfo { elmVersion, protocolNumber, voltage, supportedPIDs: String?, plan }
 
-public struct OBDReading: Sendable {           // → `obd` row
-    public var seq: Int; public var command: String; public var ecu: String?
-    public var measurement: OBDMeasurement; public var raw: String
-    public var requestUptime: Double; public var replyUptime: Double
-}
-
-public struct PollingPlan: Sendable, Hashable { command, pids, multiPID, responseCount, adaptiveTiming, rpmEvery, timeout }
-public struct ELMAdapterInfo: Sendable, Hashable { elmVersion, protocolNumber, voltage, supportedPIDs: String?, plan: PollingPlan }
-
-public enum ELMSessionEvent: Sendable {
-    case state(from: ELMState, to: ELMState, reason: String?)
+/// Every case carries the uptime at which it happened.
+public enum ELMSessionEvent {
+    case state(from: ELMState, to: ELMState, reason: String?, uptime: Double)
     case exchange(ELMExchange)
     case reading(OBDReading)
-    case adapter(ELMAdapterInfo)
-    case pollRate(hz: Double)
+    case adapter(ELMAdapterInfo, uptime: Double)
+    case pollRate(hz: Double, uptime: Double)      // display only
+    case needsReconnect(uptime: Double)            // always preceded by .state(to: .failed)
 }
 
 public actor ELMSession {
@@ -317,67 +318,78 @@ public actor ELMSession {
                 uptime: any UptimeSource = SystemUptimeSource(),     // stamps events
                 clock: any Clock<Duration> = ContinuousClock(),      // timeouts only, injectable
                 firstSeq: Int = 0)                                   // = previous session's nextSeq
-    /// Single consumer (AsyncStream). OBDLinkService fans it out.
-    public nonisolated var events: AsyncStream<ELMSessionEvent> { get }
+    public nonisolated let events: AsyncStream<ELMSessionEvent>     // single consumer
+    public private(set) var state: ELMState
+    public private(set) var nextSeq: Int
     /// ATZ → ATE0 → ATL0 → ATS0 → ATH1 → ATSP0 → 0100 (10 s) → ATDPN → ATRV,
     /// then probes multi-PID / count suffix / ATAT2 and picks the fastest that parses.
-    public func initialise() async throws -> ELMAdapterInfo
-    public func startPolling(_ plan: PollingPlan)
-    public func stopPolling()
-    /// Debug console. Guarded; queued between polls so only one command is ever in flight.
-    public func sendManual(_ command: String) async throws -> ELMExchange
-    /// Escalation after N re-init failures: caller should reconnect BLE.
-    public nonisolated var needsReconnect: AsyncStream<Void> { get }
+    public func initialise() async throws(ELMSessionError) -> ELMAdapterInfo
+    public func startPolling(_ plan: PollingPlan) throws(ELMSessionError)
+    public func stopPolling() async
+    /// Debug console, `scope: .manual`; queued between polls so only one command is in flight.
+    public func sendManual(_ command: String) async throws(ELMSessionError) -> ELMExchange
+    public func shutdown() async
 }
 ```
 
 Timestamps: the session records **uptimes** (from the transport for receive,
-from `send` for request). `RecordingSession` converts with
+from `send` for request, from its own `UptimeSource` for state changes,
+timeouts and rejections). `RecordingSession` converts with
 `clock.timestamp(uptimeSeconds:)`. That is the same base as `clock.now()` and
 lets the link run before a recording exists (pre-drive init).
 
-`MockELMAdapter: ELMTransport` (Core, library, not test-only so the simulator
-app can use it): script of `(match: String, reply: String, delay: Duration,
-fragmentSizes: [Int])`, plus canned Touareg scripts (headers on, two ECUs,
-multi-PID supported, `NO DATA` for 0x0F).
+`MockELMAdapter: ELMTransport` (Core actor, library, not test-only so the
+simulator app can use it): rules of `(command, reply?, delay, fragmentSizes)`,
+plus canned Touareg rules (headers on, two ECUs, multi-PID supported,
+`NO DATA` for 0x0F).
 
-Parser additions (`ELM327ResponseParser`): `replies(in raw:, headers: Bool) ->
-[ECUReply]` with `ECUReply { header: String?; bytes: [UInt8] }`;
-`OBDDecoder.decode(pids:payload:) -> [OBDMeasurement]` for multi-PID;
-`ELMTextReply` for `OK` / banner / `ATDPN` / `ATRV`. `ELM327Command` gains
-`.adaptiveTiming(Int)` and `.requestMany(pids:[OBDPID], responseCount: Int?)`;
-`handshake` becomes the spec sequence.
+Parser additions (`ELM327ResponseParser`): `replies(in:headers:) -> [ECUReply]`
+with `ECUReply { header: String?; bytes: [UInt8] }`;
+`OBDDecoder.decode(requested:bytes:) -> [OBDMeasurement]` for multi-PID;
+`textReply(to:raw:) -> ELMTextReply` for `OK` / banner / `ATDPN` / `ATRV`.
+`ELM327Command` gains `.adaptiveTiming(Int)`, `.supportedPIDs`,
+`.currentData(OBDPID)` and `.currentDataMany(_:responseCount:)`; `.raw` and
+`.request(mode:pid:)` are removed; `handshake` is the spec sequence.
 
 ### 4.3 Log writer / reader (Core, `Log/`)
 
 ```swift
-/// Nonisolated, non-blocking front door for 300+ events/s from sensor callbacks
+/// Non-blocking front door for 300+ events/s from sensor callbacks
 /// (AsyncStream continuation + NSLock-guarded counters, §4.0).
-/// Never blocks the caller; counts depth and drops (`stats`).
 public final class LogSink: Sendable {
     public func record(_ event: LogEvent)
     public var queueDepth: Int { get }
+    public var dropped: Int { get }
 }
 
 public actor LogFileWriter {
-    public init(url: URL, header: LogHeader, flushInterval: Duration = .seconds(2)) throws
-    public nonisolated var sink: LogSink { get }
-    public func flush() async throws                 // background, memory warning
-    public func finish() async throws -> LogFileSummary   // final flush + close
+    /// O_EXCL create (throws .fileExists), protection .completeUntilFirstUserAuthentication.
+    public init(url: URL, header: LogHeader, flushInterval: Duration = .seconds(2),
+                minimumFreeBytes: Int64 = 200_000_000) throws(LogWriteError)
+    public nonisolated let sink: LogSink
+    public nonisolated let failures: AsyncStream<LogWriteError>   // incl. .lowDiskSpace before ENOSPC
+    public func flush() async throws(LogWriteError)   // failed member truncated away, retried later
+    public func finish() async -> LogFileSummary      // always closes; reports unwrittenEvents + failure
     public var bytesWritten: Int { get }
-    public nonisolated var failures: AsyncStream<LogWriteError> { get }  // disk full etc. — never swallowed
 }
 
-public struct LogFileReader: Sequence {             // streaming, member by member
+public final class LogFileReader: Sequence {        // streaming, member by member
     public init(url: URL, recovery: LogRecovery = .skipMalformedLines) throws
-    public var header: LogHeader { get }
-    public var report: LogReadReport { get }        // truncatedTail, skipped line indices, members
+    public let header: LogHeader
+    public var report: LogReadReport { get }        // members, truncatedTail, skipped line indices
+}
+
+public enum LogFileName {
+    public static func make(for start: Date, timeZone: TimeZone, collisionIndex: Int = 1) -> String
 }
 ```
 
 One `LogCodec` lives inside `LogFileWriter` and one inside each reader (CLAUDE.md).
 Queue policy: unbounded, because dropping is data loss; depth is reported every
 10 s and a warning `lifecycle` row is written if it exceeds 2 s of data.
+On any write failure `RecordingSession` writes a `lifecycle` `error` row, calls
+`finish()` and enters `failed(reason:unwrittenEvents:)`, so the user sees it
+even if the row never reached the disk.
 
 ### 4.4 Sensor sources (protocol in Core `Recording/`, real ones in App)
 
@@ -387,7 +399,7 @@ public enum SensorAvailability: Sendable, Hashable { case available, unavailable
 @MainActor public protocol SensorSource: AnyObject {
     var name: String { get }
     var availability: SensorAvailability { get }
-    /// Starts delivering events stamped with `clock` into `sink`.
+    /// Starts delivering events stamped with `clock` into `sink`, off the main actor.
     func start(clock: SessionClock, sink: LogSink) throws
     func stop()
 }
@@ -401,35 +413,40 @@ best accuracy, `allowsBackgroundLocationUpdates`, no auto-pause, plus
 Core sample types and stamps with `clock.timestamp(uptimeSeconds: item.timestamp)`.
 
 `StatsAccumulator` (Core, struct): `mutating func observe(_ event: LogEvent)`,
-`mutating func window(endingAt: MonotonicTimestamp, queueDepthMax:, dropped:,
-bytesWritten:) -> StatsSample`. Pure, fully unit-tested.
+`mutating func closeWindow(at:queueDepthMax:dropped:bytesWritten:) -> StatsSample`.
+Pure, fully unit-tested.
 
-`EventMapping` (Core): `LogEvent(exchange:clock:)`, `LogEvent(reading:clock:)`,
-`LogEvent(adapter:)`, `LogEvent(state:clock:)` — the one place ELM runtime types
-become format types.
+`EventMapping` (Core): `LogEvent.rows(for: LinkEvent, adapter:clock:)` plus the
+per-row initialisers `LogEvent(exchange:clock:)`, `LogEvent(reading:clock:)`,
+`LogEvent(elmTransitionFrom:to:reason:uptime:clock:)`,
+`LogEvent(bleTransitionFrom:to:reason:uptime:clock:)` and
+`LogEvent(adapter:info:uptime:clock:)` — the one place link runtime types
+become format types. `LinkEvent` = `.ble(from:to:reason:uptime:)` |
+`.session(ELMSessionEvent)`.
 
 ### 4.5 OBDLink service (App, `Link/`)
 
 ```swift
 @MainActor protocol OBDLinkServicing: AnyObject, Observable {
-    var bluetooth: SensorAvailability { get }
-    var discovered: [DiscoveredAdapter] { get }       // name, identifier, RSSI
+    var state: OBDLinkState { get }                   // unavailable/idle/scanning/connecting/…/polling(protocol, voltage)
+    var discovered: [DiscoveredAdapter] { get }       // id, name, RSSI
     var rememberedAdapterID: UUID? { get }
-    var linkState: OBDLinkState { get }               // scanning/connecting/initialising/polling(protocol, voltage)/…
-    var adapterInfo: ELMAdapterInfo? { get }
-    var gatt: GATTSnapshot? { get }                   // for the header
+    var adapter: AdapterRecord? { get }               // BLE + ELM info merged, for the header
+    var plan: PollingPlan? { get }
     var pollHz: Double { get }
-    var console: [ConsoleLine] { get }                // ring buffer for the debug screen
+    var console: [ConsoleLine] { get }                // bounded, for the debug screen
     func startScan(); func stopScan()
-    func connect(_ id: UUID); func forget()
-    func sendManual(_ command: String) async throws   // guarded by ELMCommandPolicy
-    /// Session events for the recorder; one subscriber at a time.
+    func connect(to id: UUID); func disconnect(); func forget()
+    func sendManual(_ command: String) async throws(ELMSessionError) -> ELMExchange   // scope .manual
     func linkEvents() -> AsyncStream<LinkEvent>       // BLE transitions + ELM session events
 }
 ```
 
-`OBDLinkService` (CoreBluetooth, restore identifier, reconnect with backoff) and
-`SimulatedOBDLink` (wraps `MockELMAdapter`; chosen automatically on the simulator).
+`OBDLinkService` (CoreBluetooth, restore identifier, reconnect with backoff,
+each new `ELMSession` seeded with the previous `nextSeq`) and
+`SimulatedOBDLink` (wraps `MockELMAdapter`; chosen automatically on the
+simulator). Only `BLETransport.send` may call `writeValue`
+(`RepositoryInvariantTests`).
 
 ### 4.6 RecordingSession orchestrator (App, `Recording/`)
 
@@ -437,18 +454,22 @@ become format types.
 @MainActor @Observable final class RecordingSession {
     init(link: any OBDLinkServicing, sources: [any SensorSource], store: LogStore,
          uptime: any UptimeSource = SystemUptimeSource())
-    private(set) var state: RecordingState            // idle / calibrating / recording / stopping / failed(String)
-    private(set) var live: LiveStatus                 // obdSpeed, gpsSpeed, obdHz, motionHz, elapsed, fileBytes
-    func start(mount: String, vehicle: String, allowWithoutOBD: Bool) async throws
+    private(set) var state: RecordingState    // idle / calibrating / recording / stopping / failed(reason:unwrittenEvents:)
+    private(set) var live: LiveStatus         // obdSpeed, gpsSpeed, obdHz, motionHz, elapsed, fileBytes
+    var canStart: Bool { get }
+    /// Starts clock, file and sources, then runs calibration as the first phase.
+    func start(mount: String, vehicle: String, allowWithoutOBD: Bool,
+               calibration: Duration = .seconds(5)) async throws
     func mark(_ text: String)
     func stop() async
-    func handleScenePhase(_ phase: ScenePhase)        // background/foreground rows + flush
+    func handleScenePhase(_ phase: ScenePhase)   // background/foreground rows + flush
+    func handleMemoryWarning()                   // row + flush
 }
 ```
 
 Owns the single `SessionClock` per recording, the `LogFileWriter`, the stats
 timer, and the `isIdleTimerDisabled` toggle. `LogStore` lists, sizes and deletes
-files in `Documents/logs`.
+files in `Documents/logs`, and picks a file name that doesn't exist yet.
 
 ### 4.7 `inspect_log` (Core package, executable target)
 

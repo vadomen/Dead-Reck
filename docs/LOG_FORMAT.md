@@ -189,8 +189,8 @@ This is the complete raw traffic.
 |---|---|---|
 | `seq` | int | Increasing within the recording, including across adapter reconnects. |
 | `phase` | string | `init`, `probe`, `poll`, `manual`, `keepalive`. |
-| `tx` | string | Command as written, without CR. |
-| `requestT` | int, ns | Write issued. |
+| `tx` | string | Command as sent, without CR: printable ASCII, uppercased. For `rejected`, the input as typed. |
+| `requestT` | int, ns | Write issued. For `rejected` (never sent), the moment of rejection. |
 | `rx` | string | Reply, verbatim minus `>`. Absent on `timeout` and `rejected`. |
 | `outcome` | string | See below. |
 

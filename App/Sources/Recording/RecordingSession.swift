@@ -13,7 +13,10 @@ enum RecordingState: Hashable, Sendable {
     case calibrating
     case recording
     case stopping
-    case failed(reason: String)
+    /// Writing failed (disk full, I/O error) and the recording was stopped.
+    /// Shown to the user, because the failure row may not have reached the
+    /// file. `unwrittenEvents` comes from `LogFileSummary`.
+    case failed(reason: String, unwrittenEvents: Int)
 }
 
 /// Live numbers for the dashboard. Display only — never written to the log.

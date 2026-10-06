@@ -57,6 +57,10 @@ public enum ELM327Command: Hashable, Sendable {
     /// response-count suffix: `.currentDataMany([.vehicleSpeed, .engineSpeed],
     /// responseCount: 1)` → `010D0C1`. The suffix tells the adapter to stop
     /// after that many replies instead of waiting out its timeout.
+    ///
+    /// The suffix is a single digit, 1–9. `validated()` rejects anything else:
+    /// `responseCount: 10` would render `010D10`, which the adapter reads as a
+    /// request for PIDs 0x0D **and 0x10**, and the policy alone can't tell.
     case currentDataMany([OBDPID], responseCount: Int?)
 
     /// The command text, without the carriage-return terminator.
@@ -95,10 +99,19 @@ public enum ELM327Command: Hashable, Sendable {
         Data((wireFormat + "\r").utf8)
     }
 
-    /// Passes the command through `ELMCommandPolicy`. Can still throw, e.g. for
-    /// `.adaptiveTiming(7)` or a seven-PID `.currentDataMany`.
+    /// Passes the command through `ELMCommandPolicy` (session scope). Throws
+    /// for parameters the type can hold but the wire can't express, e.g.
+    /// `.adaptiveTiming(7)`, a seven-PID `.currentDataMany`, or a response
+    /// count outside 1–9.
     public func validated() throws(ELMSessionError) -> ValidatedELMCommand {
-        try ELMCommandPolicy.validate(wireFormat)
+        switch self {
+        case .currentDataMany(let pids, let responseCount?) where !(1...9).contains(responseCount):
+            throw .forbiddenCommand("currentDataMany(\(pids.count) PIDs, responseCount: \(responseCount))")
+        case .adaptiveTiming(let level) where !(0...2).contains(level):
+            throw .forbiddenCommand("adaptiveTiming(\(level))")
+        default:
+            return try ELMCommandPolicy.validate(wireFormat, scope: .session)
+        }
     }
 }
 

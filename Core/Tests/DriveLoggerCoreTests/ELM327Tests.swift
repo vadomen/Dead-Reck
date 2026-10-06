@@ -59,6 +59,24 @@ struct ELM327CommandTests {
         }
     }
 
+    // Regression: responseCount 10 rendered "010D10", which passed the policy
+    // as a request for PIDs 0x0D and 0x10.
+    @Test("A response count outside 1-9 is rejected, not rendered as another PID", arguments: [0, 10, 12, -1, 99])
+    func responseCountMustBeOneDigit(_ count: Int) {
+        #expect(throws: ELMSessionError.self) {
+            try ELM327Command.currentDataMany([.vehicleSpeed], responseCount: count).validated()
+        }
+        #expect(throws: ELMSessionError.self) {
+            try ELM327Command.currentDataMany([.vehicleSpeed, .engineSpeed], responseCount: count).validated()
+        }
+    }
+
+    @Test("Response counts 1-9 are accepted", arguments: 1...9)
+    func responseCountsOneToNine(_ count: Int) throws {
+        let validated = try ELM327Command.currentDataMany([.vehicleSpeed], responseCount: count).validated()
+        #expect(validated.wire == "010D\(count)")
+    }
+
     @Test("Out-of-range parameters are caught by the policy, not sent")
     func outOfRangeParametersRejected() {
         #expect(throws: ELMSessionError.self) { try ELM327Command.adaptiveTiming(3).validated() }

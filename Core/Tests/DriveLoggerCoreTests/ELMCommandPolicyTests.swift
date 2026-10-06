@@ -13,7 +13,7 @@ struct ELMCommandPolicyTests {
         "ATAT0", "ATAT1", "ATAT2", "ATST32", "ATSTFF",
         "0100", "010D", "010C", "010D0C", "010D1", "010D0C1", "0104",
         "01000102030405", "010D0C9",
-        "atz", "010d", "atst0a",
+        "atz", "010d", "atst3c", "ATST19",
     ])
     func allows(_ wire: String) throws {
         let validated = try ELMCommandPolicy.validate(wire)
@@ -65,5 +65,58 @@ struct ELMCommandPolicyTests {
     ])
     func rejectsMalformed(_ wire: String) {
         #expect(!ELMCommandPolicy.isAllowed(wire))
+    }
+
+    // Regression: Character.isHexDigit is true for fullwidth digits, and
+    // uppercased() maps ligatures and dotless i, so lookalikes used to pass
+    // and multibyte UTF-8 reached the adapter.
+    @Test("Non-ASCII lookalikes are rejected, not normalised", arguments: [
+        "01\u{FF10}\u{FF14}",        // fullwidth "04"
+        "\u{FF10}\u{FF11}0D",         // fullwidth "01"
+        "010\u{FF24}",               // fullwidth "D"
+        "ATST\u{FF13}\u{FF12}",       // fullwidth "32"
+        "01\u{0660}\u{0664}",         // Arabic-Indic "04"
+        "01\u{2070}\u{2074}",         // superscript "04"
+        "01\u{FB00}",                // "ﬀ" ligature, uppercases to "FF"
+        "at\u{0131}",                // dotless i, uppercases to "ATI"
+        "010D\u{00A0}",              // no-break space
+        "010D\u{200B}",              // zero-width space
+        "ATZ\u{0000}",
+    ])
+    func rejectsNonASCII(_ wire: String) {
+        #expect(!ELMCommandPolicy.isAllowed(wire))
+        #expect(!ELMCommandPolicy.isAllowed(wire, scope: .manual))
+    }
+
+    // Regression: ATST01 (4 ms) made every poll answer NO DATA, which by
+    // convention stops polling that PID for the rest of the drive.
+    @Test("ATST below about 100 ms is rejected", arguments: ["ATST00", "ATST01", "ATST0A", "ATST18"])
+    func rejectsTooShortATST(_ wire: String) {
+        #expect(!ELMCommandPolicy.isAllowed(wire))
+    }
+
+    // Regression: the console could change settings the session depends on.
+    @Test("The console may only query the adapter", arguments: [
+        "ATZ", "ATE0", "ATE1", "ATL0", "ATL1", "ATS0", "ATS1", "ATH0", "ATH1",
+        "ATSP0", "ATAT0", "ATAT1", "ATAT2", "ATST32", "ATSTFF",
+    ])
+    func manualScopeRejectsConfiguration(_ wire: String) {
+        #expect(ELMCommandPolicy.isAllowed(wire, scope: .session))
+        #expect(!ELMCommandPolicy.isAllowed(wire, scope: .manual))
+    }
+
+    @Test("The console may run read-only queries and mode 01", arguments: [
+        "ATI", "AT@1", "ATDP", "ATDPN", "ATRV", "atrv", "0100", "010D", "010D0C1",
+    ])
+    func manualScopeAllowsQueries(_ wire: String) throws {
+        let validated = try ELMCommandPolicy.validate(wire, scope: .manual)
+        #expect(validated.wire == wire.uppercased())
+    }
+
+    @Test("Every dangerous command is rejected from the console too", arguments: [
+        "ATCAF0", "ATSH7E0", "ATPPS", "ATMA", "ATBRD23", "ATD", "ATWS", "04", "2EF190",
+    ])
+    func manualScopeRejectsDangerous(_ wire: String) {
+        #expect(!ELMCommandPolicy.isAllowed(wire, scope: .manual))
     }
 }

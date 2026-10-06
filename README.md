@@ -76,6 +76,151 @@ Core logic tests run on the Mac:
 cd Core && swift test
 ```
 
+## Commands
+
+Run from the repository root unless the command starts with `cd Core`.
+
+### Toolchain
+
+| Command | What it does |
+|---|---|
+| `xcode-select -p` | Shows the active developer directory. It must be Xcode, not `/Library/Developer/CommandLineTools`, which can't build iOS targets or load the Swift Testing macros. |
+| `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer` | Makes Xcode the active developer directory, once per machine. |
+| `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer <command>` | Alternative to the above: uses Xcode for a single command without changing the system setting. |
+| `brew install xcodegen` | Installs XcodeGen, which generates the Xcode project from `project.yml`. |
+
+### Project setup
+
+| Command | What it does |
+|---|---|
+| `xcodegen generate` | Regenerates `DriveLogger.xcodeproj` from `project.yml`. Run it after adding, removing or renaming any app or test file, and commit the regenerated project with the change. Never edit the `.xcodeproj` by hand. |
+| `cp Config/Local.xcconfig.example Config/Local.xcconfig` | Creates your git-ignored signing config. Put your Team ID and bundle identifier there and nowhere else. Needed only for builds on a real device. |
+
+### Core package (fast, on the Mac, no simulator)
+
+| Command | What it does |
+|---|---|
+| `cd Core && swift test` | Builds and runs every Core unit test: ELM327 parsing, OBD decoding, the read-only command guard, the clock, and log format compatibility. Takes seconds. |
+| `cd Core && swift test --filter OBDDecoderTests` | Runs one test suite, matched by its type name. |
+| `cd Core && swift test --filter OBDDecoderTests/decodesEngineSpeed` | Runs one test, matched as `SuiteType/functionName`. `--filter` matches identifiers, not the display names in `@Test("…")`; a display name matches nothing and runs zero tests. |
+| `cd Core && swift build --build-tests` | Compiles Core and its tests without running them. |
+| `cd Core && swift run inspect_log <file.jsonl.gz> [--csv <dir>]` | Summarises a recording: header, events per kind, rates, gaps over 50 ms, OBD latency, adapter exchange outcomes, truncation. `--csv` writes one CSV per event kind. **Not implemented yet (milestone M1)**; it currently exits with an error. |
+| `grep -rhoE '^[[:space:]]*import[[:space:]]+[A-Za-z_]+' Core/Sources Core/Tests \| sort -u` | Lists every module Core imports. It must show only `Foundation`, `Testing` and `DriveLoggerCore`. No UIKit, SwiftUI, CoreBluetooth, CoreMotion or CoreLocation. |
+
+### iOS app
+
+| Command | What it does |
+|---|---|
+| `xcodebuild -project DriveLogger.xcodeproj -scheme DriveLogger -destination 'generic/platform=iOS Simulator' build` | Builds the app for the simulator. Unsigned, so it works without a signing identity. |
+| `xcodebuild -project DriveLogger.xcodeproj -scheme DriveLogger -destination 'generic/platform=iOS Simulator' build-for-testing` | Compiles the app and its test target without running the tests. |
+| `xcrun simctl list devices available \| grep iPhone` | Lists installed iPhone simulators with their UDIDs, which running the tests needs. |
+| `xcodebuild -project DriveLogger.xcodeproj -scheme DriveLogger -destination 'platform=iOS Simulator,id=<UDID>' test` | Runs the app tests on a specific simulator. Match by `id=`, not `name=`: name matching fails against some runtimes and xcodebuild then reports a confusing macOS destination error. |
+
+The simulator has no Bluetooth LE and no real motion sensors, so it only proves
+that the app builds and its logic works. Anything about the adapter, the
+sensors or background recording has to be checked on an iPhone in the car.
+
+### Reading a recording
+
+| Command | What it does |
+|---|---|
+| `gunzip -c Drive_<stamp>.jsonl.gz \| head -1 \| jq .` | Pretty-prints a recording's header. |
+| `gunzip -c Drive_<stamp>.jsonl.gz \| jq -c 'select(.kind=="obd")'` | Prints only the OBD rows. Swap in any kind: `motion`, `location`, `elm`, `stats`, … |
+
+Every field is described in [docs/LOG_FORMAT.md](docs/LOG_FORMAT.md).
+
+## ELM327 commands
+
+The app talks to the OBD adapter in plain-text ELM327 commands. `AT…`
+commands configure the adapter itself; hex commands such as `010D` are
+forwarded to the car. Every command, including the app's own init and polling
+and anything typed in the debug console, passes a **read-only guard**
+(`ELMCommandPolicy` in `Core/Sources/DriveLoggerCore/ELM327/`) before it can
+reach the adapter. The guard is an allowlist: anything not listed under
+"Allowed" is rejected and never leaves the phone.
+
+Commands are typed without spaces (`ATST32`, not `ATST 32`). Input must be
+plain ASCII: lookalike characters such as fullwidth digits are rejected, not
+converted. Lower case is fine (`atrv`); the upper-case form is what is sent.
+
+### Allowed
+
+The **Console** column says whether the command can be typed in the debug
+console. The console may only *query* the adapter. Commands that change its
+settings (echo, headers, spaces, timing, protocol, reset) are reserved for
+the app's own init, because the app depends on those settings to read replies
+and attribute them to the right ECU. A change it didn't make would silently
+corrupt every row after it.
+
+| Command | Console | What it does |
+|---|---|---|
+| `ATZ` | no | Full reset, like unplugging the adapter. Prints the version banner (e.g. `ELM327 v2.1`), which is recorded. First step of init. |
+| `ATI` | yes | Prints the adapter's version string without resetting. |
+| `AT@1` | yes | Prints the adapter's device description (manufacturer text). |
+| `ATE0` / `ATE1` | no | Command echo off / on. The app runs with echo off, so replies don't repeat the command. |
+| `ATL0` / `ATL1` | no | Linefeed after each carriage return off / on. |
+| `ATS0` / `ATS1` | no | Spaces between hex bytes in replies off / on. Off makes replies shorter, which matters over BLE. |
+| `ATH0` / `ATH1` | no | CAN headers in replies off / on. The app uses `ATH1`, so each reply shows which ECU sent it (`7E8` = engine). |
+| `ATSP0` | no | Protocol auto-detect: the adapter finds the car's OBD protocol itself. The adapter stores this choice in its memory as the default, which is harmless because "auto" is the factory setting. |
+| `ATDP` / `ATDPN` | yes | Describes the detected protocol, as text / as a number. `A6` means auto-detected protocol 6: CAN 11-bit, 500 kbaud. |
+| `ATRV` | yes | Reads the car's battery voltage at the OBD port. Recorded at init. Also a cheap check that the adapter is alive. |
+| `ATAT0` / `ATAT1` / `ATAT2` | no | Adaptive timing off / normal / aggressive: how long the adapter waits for slow ECU replies. `ATAT2` is often the biggest speed-up on cheap clones. Fall back to `ATAT1` if replies get cut off. |
+| `ATSThh` | no | Sets the adapter's reply timeout to `hh` × 4.096 ms, two hex digits from `19` to `FF` (≈100 ms to ≈1 s), e.g. `ATST32` ≈ 200 ms. Shorter values are rejected: they make every poll answer `NO DATA`, and the app stops polling a PID that answers `NO DATA`. |
+| `0100` | yes | Asks which PIDs 01–20 the car supports (a bitmask). After `ATSP0` it also forces the protocol search, so the first one can take several seconds. |
+| `01xx` | yes | Mode 01, "show current data", for one PID: `010D` = vehicle speed (km/h), `010C` = engine RPM. Read-only. |
+| `01xxyy…` | yes | Mode 01 for up to six PIDs in one request, e.g. `010D0C` = speed and RPM in one reply. Fewer round trips, so a higher sample rate. |
+| `01xx…n` | yes | Mode 01, one to six PIDs, with a response-count digit `n` from 1 to 9: the adapter stops after `n` replies instead of waiting out its timeout. `010D1` and `010D0C1` are the forms the app uses. Often the largest rate gain, but some clones don't support it. The count is a single digit: `010D10` would mean PIDs 0D **and 10**. |
+
+### Blocked: adapter commands
+
+These are ordinary ELM327 commands, but each can make an allowed request
+unsafe, change the adapter permanently, or break the app's one-command-at-a-time
+protocol. They're rejected everywhere, including the app's own init.
+
+| Command | What it does | Why it's blocked |
+|---|---|---|
+| `ATCAF0` / `ATCAF1` | CAN auto-formatting off / on. With formatting off, the adapter sends the hex you type as the raw CAN frame, without adding the length byte itself. | **Clears fault codes by accident.** After `ATCAF0`, the allowed-looking `0104` (engine load) goes out as the frame `01 04`. The car reads that as a one-byte request for **service 04: clear diagnostic trouble codes, freeze frames and readiness monitors**. `ATCAF1` is the default and `ATZ` restores it, so it's never needed either. |
+| `ATSHxxx` | Sets the CAN header, i.e. the address requests are sent to. Normally `7DF`, broadcast to emissions ECUs. | Retargets requests at any module in the car, e.g. `7E0` (engine directly) or body and chassis modules that don't speak OBD mode 01. Combined with raw formatting it removes the remaining protection. |
+| `ATCRAxxx` | Sets the CAN receive filter: which reply addresses the adapter shows. | Can hide the real ECU's replies, so the app records answers from the wrong module or nothing at all. |
+| `ATCEA` / `ATCEAhh` | CAN extended addressing: adds an address byte in front of the data. | Changes how every frame is built; only meaningful for specific manufacturer modules. |
+| `ATPPxxSVyy`, `ATPPxxON` / `OFF`, `ATPPS` | Programmable parameters: settings stored in the adapter's EEPROM. | **Permanent.** They survive power cycles and `ATZ`. One wrong value (e.g. the UART baud rate) can leave the adapter unable to talk to its own Bluetooth chip. |
+| `ATMA` | Monitor all: prints every frame on the CAN bus continuously. | Never returns the `>` prompt until interrupted, so the app's one-command-in-flight framing breaks, and it floods the BLE link. |
+| `ATMRhh` / `ATMThh` | Monitor only frames to / from one address. | Same problem as `ATMA`. |
+| `ATBRDhh` / `ATBRThh` | Try a new UART baud rate divisor / set the timeout for that try. | Changes the speed between the ELM chip and the Bluetooth module. On clones this can drop the link until the adapter is unplugged. |
+| `ATWS` | Warm start: a quick reset. | Silently undoes the init settings (headers, echo, spaces). The app resets only through `ATZ`, so the reset is recorded. |
+| `ATD` | Restores all settings to factory defaults. | Same: headers go back off mid-session, and ECU attribution is lost without any error. |
+| `ATLP` | Puts the adapter into low-power sleep. | The link goes dead until the adapter is woken up. |
+| `ATSPh` (h ≠ 0), `ATSPAh`, `ATTPh` | Set / try a specific OBD protocol, e.g. `ATSP6`. | `ATSPh` is saved as the adapter's default, so a forced protocol would persist into other cars and apps. Blocked for now: only `ATSP0` (auto) is allowed. If the bench test (M4) shows that forcing protocol 6 speeds up init, it can be added to the list. |
+| `ATSWhh` | Sets the interval of the wakeup (keep-alive) messages the adapter sends on the older ISO 9141 / ISO 14230 protocols; `ATSW00` stops them. They're on by default there and irrelevant on CAN. | Changes what the adapter transmits on its own. Not needed for this CAN car. |
+| `ATFCSH`, `ATFCSD`, `ATFCSM` | Flow control header / data / mode: the frames the adapter sends during multi-frame transfers. | Lets custom frames be put on the bus. |
+
+Malformed input is rejected rather than cleaned up: spaces, extra characters,
+embedded line breaks (`ATZ\r04`), invalid parameters like `ATAT3`, or an
+`ATST` without exactly two hex digits or below `ATST19`.
+
+### Blocked: diagnostic modes other than 01
+
+Only mode `01` (live data) is allowed. Everything else is rejected, including
+modes that only read, because the logger doesn't need them and a short list is
+easier to verify.
+
+| Mode | What it does |
+|---|---|
+| `02` | Freeze-frame data: sensor values captured when a fault was stored. Read-only. |
+| `03` | Read stored trouble codes. Read-only. |
+| `04` | **Clear trouble codes**, freeze frames and readiness monitors. Writes to the car. |
+| `07` | Read pending trouble codes. Read-only. |
+| `08` | Control an on-board system or run a test. Can actuate components. |
+| `09` | Vehicle information (VIN, calibration IDs). Read-only. |
+| `0A` | Read permanent trouble codes. Read-only. |
+| `10` | UDS diagnostic session control: switches an ECU into extended or programming sessions. |
+| `11` | UDS ECU reset: reboots a module, possibly while driving. |
+| `14` | UDS clear diagnostic information. |
+| `27` | UDS security access: unlocks protected functions. |
+| `2E` | UDS write data by identifier: changes ECU configuration (coding). |
+| `31` | UDS routine control: starts built-in routines (tests, adaptations, erase). |
+| `3B` | KWP2000 write data by local identifier. |
+
 ## Recording a drive
 
 > The recording UI is not implemented yet. This is the intended procedure.

@@ -67,6 +67,10 @@ public enum LogWriteError: Error, Hashable, Sendable {
     case couldNotCreate(path: String, description: String)
     case writeFailed(description: String)
     case diskFull
+    /// Free space fell below `minimumFreeBytes`. Reported *before* the disk
+    /// is full, so the recording can still be stopped cleanly with its final
+    /// rows written.
+    case lowDiskSpace(availableBytes: Int64)
     case encodingFailed(kind: String, description: String)
     case alreadyFinished
 }
@@ -74,15 +78,30 @@ public enum LogWriteError: Error, Hashable, Sendable {
 /// What a finished recording looks like on disk.
 public struct LogFileSummary: Hashable, Sendable {
     public var url: URL
+    /// Events written to complete members.
     public var eventCount: Int
     public var bytesWritten: Int
     public var members: Int
+    /// Events that were queued but never reached the file because writing
+    /// failed. Zero on a clean finish.
+    public var unwrittenEvents: Int
+    /// The failure that stopped writing, if any. The file is closed either way.
+    public var failure: LogWriteError?
 
-    public init(url: URL, eventCount: Int, bytesWritten: Int, members: Int) {
+    public init(
+        url: URL,
+        eventCount: Int,
+        bytesWritten: Int,
+        members: Int,
+        unwrittenEvents: Int = 0,
+        failure: LogWriteError? = nil
+    ) {
         self.url = url
         self.eventCount = eventCount
         self.bytesWritten = bytesWritten
         self.members = members
+        self.unwrittenEvents = unwrittenEvents
+        self.failure = failure
     }
 }
 
@@ -93,13 +112,27 @@ public struct LogFileSummary: Hashable, Sendable {
 /// `flushInterval`, on `flush()` and on `finish()`. A crash loses at most the
 /// unflushed buffer.
 ///
-/// On a write failure nothing is discarded. The member that failed is kept
-/// and retried on the next flush, the failure is reported once on `failures`
-/// (again only if it changes or clears), and events keep queuing.
-/// `RecordingSession` reacts to any failure by writing a `lifecycle` `error`
-/// row and stopping the recording with `finish()`, so the queue cannot grow
-/// until the system kills the app. Every member written before the failure
-/// stays readable.
+/// **File creation.** Exclusive (`open` with `O_CREAT | O_EXCL`, not
+/// `FileManager.createFile`, which overwrites), with data protection
+/// `.completeUntilFirstUserAuthentication`. Recording continues with the
+/// screen locked; `.complete` would make every write fail at screen lock and
+/// end the recording.
+///
+/// **Members stay whole.** Before writing a member the writer records the file
+/// offset. If the write fails partway (e.g. `ENOSPC` after some bytes), it
+/// truncates back to that offset before retrying on the next flush. A
+/// partial member is never left in the middle of the file, because readers
+/// slice members by their `FEXTRA` length and would treat everything after it
+/// as damaged.
+///
+/// **Failures.** Nothing queued is discarded while a retry can still succeed.
+/// Each distinct failure is reported once on `failures` (again only if it
+/// changes or clears). Free space is checked at creation and before every
+/// flush; below `minimumFreeBytes` the writer reports `.lowDiskSpace` while
+/// there is still room to finish cleanly. `RecordingSession` reacts to any
+/// failure by writing a `lifecycle` `error` row, calling `finish()`, and
+/// showing the failure in its own state, because the row may not reach a
+/// failing disk. Every member written before the failure stays readable.
 public actor LogFileWriter {
     /// Where producers enqueue events.
     public nonisolated let sink: LogSink
@@ -110,19 +143,29 @@ public actor LogFileWriter {
     /// Creates the file exclusively — throws `LogWriteError.fileExists` rather
     /// than truncate an existing recording — and writes the header as the
     /// first member.
-    public init(url: URL, header: LogHeader, flushInterval: Duration = .seconds(2)) throws(LogWriteError) {
+    ///
+    /// - Parameter minimumFreeBytes: free-space floor that triggers
+    ///   `.lowDiskSpace`. The default leaves several minutes of recording.
+    public init(
+        url: URL,
+        header: LogHeader,
+        flushInterval: Duration = .seconds(2),
+        minimumFreeBytes: Int64 = 200_000_000
+    ) throws(LogWriteError) {
         fatalError("M1: LogFileWriter.init")
     }
 
     /// Encodes and writes everything queued so far as one gzip member. Call on
-    /// entering background and on memory warnings.
-    public func flush() async throws {
+    /// entering background and on memory warnings. On failure the member is
+    /// truncated away and kept for the next attempt.
+    public func flush() async throws(LogWriteError) {
         fatalError("M1: LogFileWriter.flush")
     }
 
-    /// Final flush, close the file. Events recorded afterwards are dropped and
-    /// counted.
-    public func finish() async throws -> LogFileSummary {
+    /// Final flush attempt, then **always** closes the file, even after a
+    /// failure, and reports what didn't make it. Never throws. Events recorded
+    /// afterwards are dropped and counted in `LogSink.dropped`.
+    public func finish() async -> LogFileSummary {
         fatalError("M1: LogFileWriter.finish")
     }
 

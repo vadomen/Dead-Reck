@@ -152,6 +152,7 @@ public struct PollingPlan: Hashable, Sendable {
     public var pids: [OBDPID]
     public var multiPID: Bool
     /// Response-count suffix, e.g. `1` → `010D1`. Nil when unsupported.
+    /// Must be 1–9; anything else fails `ELM327Command.validated()`.
     public var responseCount: Int?
     /// `ATAT` level: 0, 1 or 2.
     public var adaptiveTiming: Int
@@ -347,9 +348,11 @@ public actor ELMSession {
         fatalError("M1: ELMSession.stopPolling")
     }
 
-    /// Debug console. Guarded by `ELMCommandPolicy`; while polling, queued
-    /// between polls so only one command is ever in flight. A rejected command
-    /// still produces an exchange with outcome `rejected`.
+    /// Debug console. Guarded by `ELMCommandPolicy` with `scope: .manual`:
+    /// read-only AT queries and mode 01 only, so a typed command can't change
+    /// the settings the session relies on. While polling, queued between polls
+    /// so only one command is ever in flight. A rejected command still
+    /// produces an exchange with outcome `rejected`.
     public func sendManual(_ command: String) async throws(ELMSessionError) -> ELMExchange {
         fatalError("M1: ELMSession.sendManual")
     }

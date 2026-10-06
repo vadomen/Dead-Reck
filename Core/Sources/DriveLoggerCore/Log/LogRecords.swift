@@ -178,9 +178,11 @@ public struct ELMTrafficSample: Hashable, Sendable, Codable {
     public var seq: Int
     /// `init`, `probe`, `poll`, `manual` or `keepalive`.
     public var phase: String
-    /// Command as written, without the carriage return.
+    /// Command as sent, without the carriage return: printable ASCII,
+    /// uppercased. For a `rejected` exchange, the input as typed.
     public var tx: String
-    /// When the write was issued.
+    /// When the write was issued; for `rejected` (never sent), the moment of
+    /// rejection.
     public var requestT: MonotonicTimestamp
     /// Reply as received, minus the `>` prompt. Absent on timeout or rejection.
     public var rx: String?

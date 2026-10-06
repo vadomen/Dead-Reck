@@ -61,10 +61,12 @@ Test Core on the Mac — no simulator, no signing, the fast inner loop:
 cd Core && swift test
 ```
 
-Run one Core test or suite by name:
+Run one Core test or suite. `--filter` matches `SuiteType/functionName`, not the
+`@Test("…")` display name (a display name runs zero tests, with only a
+"No matching test cases were run" warning):
 
 ```bash
-cd Core && swift test --filter "Engine speed uses quarter-RPM resolution"
+cd Core && swift test --filter OBDDecoderTests/decodesEngineSpeed
 cd Core && swift test --filter OBDDecoderTests
 ```
 
