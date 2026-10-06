@@ -22,10 +22,14 @@ Core/                        DriveLoggerCore — local SwiftPM package, pure log
     Time/                    MonotonicTimestamp, SessionClock, UptimeSource
     ELM327/                  Adapter commands, reply parsing, hex
     OBD/                     PID table and J1979 scaling
-    Log/                     Versioned JSONL format, codec, JSONValue
+    Log/                     Versioned JSONL format, codec, JSONValue, gzip file writer/reader
+    Recording/               SensorSource, stats, ELM→log event mapping, simulated sources
+  Sources/inspect_log/       Mac CLI that summarises a recording (`swift run inspect_log`)
   Tests/DriveLoggerCoreTests/
 App/                         iOS app target — owns every Apple framework
-  Sources/
+  Sources/Link/              CoreBluetooth transport, OBD link service (+ simulated)
+  Sources/Sensors/           CoreMotion and CoreLocation sources
+  Sources/Recording/         RecordingSession orchestrator, LogStore
   Resources/Info.plist       Hand-maintained; XcodeGen does not generate it
   Resources/Assets.xcassets
 AppTests/                    App unit tests (Swift Testing)

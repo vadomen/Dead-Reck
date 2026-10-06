@@ -3,10 +3,21 @@
 /// Raw values are part of the on-disk format: rename the case if you like, never
 /// the string.
 public enum LogEventKind: String, Hashable, Sendable, Codable, CaseIterable {
+    // v1
     case motion
     case location
     case obd
     case marker
+    // v2
+    case accelerometer = "accel"
+    case gyroscope = "gyro"
+    case magnetometer = "mag"
+    case barometer = "baro"
+    case elm
+    case adapter
+    case link
+    case lifecycle
+    case stats
 }
 
 /// One timestamped record in a recording.
@@ -30,6 +41,18 @@ public struct LogEvent: Hashable, Sendable, Codable {
         case obd(OBDSample)
         /// Operator-inserted marker, e.g. "entered tunnel", "GPS lost".
         case marker(String)
+        /// Raw accelerometer (gravity included), in g.
+        case accelerometer(Vector3)
+        /// Raw gyroscope (not bias-corrected), in rad/s.
+        case gyroscope(Vector3)
+        /// Raw uncalibrated magnetometer, in microtesla.
+        case magnetometer(Vector3)
+        case barometer(BarometerSample)
+        case elm(ELMTrafficSample)
+        case adapter(AdapterEventSample)
+        case link(LinkSample)
+        case lifecycle(LifecycleSample)
+        case stats(StatsSample)
 
         /// A record whose `kind` this build doesn't know, with its payload kept
         /// verbatim so a round-trip through an older reader doesn't destroy
@@ -42,6 +65,15 @@ public struct LogEvent: Hashable, Sendable, Codable {
             case .location: LogEventKind.location.rawValue
             case .obd: LogEventKind.obd.rawValue
             case .marker: LogEventKind.marker.rawValue
+            case .accelerometer: LogEventKind.accelerometer.rawValue
+            case .gyroscope: LogEventKind.gyroscope.rawValue
+            case .magnetometer: LogEventKind.magnetometer.rawValue
+            case .barometer: LogEventKind.barometer.rawValue
+            case .elm: LogEventKind.elm.rawValue
+            case .adapter: LogEventKind.adapter.rawValue
+            case .link: LogEventKind.link.rawValue
+            case .lifecycle: LogEventKind.lifecycle.rawValue
+            case .stats: LogEventKind.stats.rawValue
             case .unrecognized(let kind, _): kind
             }
         }
@@ -67,6 +99,24 @@ public struct LogEvent: Hashable, Sendable, Codable {
             payload = .obd(try container.decode(OBDSample.self, forKey: .data))
         case .marker:
             payload = .marker(try container.decode(String.self, forKey: .data))
+        case .accelerometer:
+            payload = .accelerometer(try container.decode(Vector3.self, forKey: .data))
+        case .gyroscope:
+            payload = .gyroscope(try container.decode(Vector3.self, forKey: .data))
+        case .magnetometer:
+            payload = .magnetometer(try container.decode(Vector3.self, forKey: .data))
+        case .barometer:
+            payload = .barometer(try container.decode(BarometerSample.self, forKey: .data))
+        case .elm:
+            payload = .elm(try container.decode(ELMTrafficSample.self, forKey: .data))
+        case .adapter:
+            payload = .adapter(try container.decode(AdapterEventSample.self, forKey: .data))
+        case .link:
+            payload = .link(try container.decode(LinkSample.self, forKey: .data))
+        case .lifecycle:
+            payload = .lifecycle(try container.decode(LifecycleSample.self, forKey: .data))
+        case .stats:
+            payload = .stats(try container.decode(StatsSample.self, forKey: .data))
         case nil:
             payload = .unrecognized(
                 kind: kind,
@@ -89,6 +139,20 @@ public struct LogEvent: Hashable, Sendable, Codable {
             try container.encode(sample, forKey: .data)
         case .marker(let text):
             try container.encode(text, forKey: .data)
+        case .accelerometer(let vector), .gyroscope(let vector), .magnetometer(let vector):
+            try container.encode(vector, forKey: .data)
+        case .barometer(let sample):
+            try container.encode(sample, forKey: .data)
+        case .elm(let sample):
+            try container.encode(sample, forKey: .data)
+        case .adapter(let sample):
+            try container.encode(sample, forKey: .data)
+        case .link(let sample):
+            try container.encode(sample, forKey: .data)
+        case .lifecycle(let sample):
+            try container.encode(sample, forKey: .data)
+        case .stats(let sample):
+            try container.encode(sample, forKey: .data)
         case .unrecognized(_, let data):
             try container.encodeIfPresent(data, forKey: .data)
         }

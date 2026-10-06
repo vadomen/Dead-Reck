@@ -13,10 +13,17 @@ let package = Package(
     ],
     products: [
         .library(name: "DriveLoggerCore", targets: ["DriveLoggerCore"]),
+        // Mac-only analysis tool: `swift run inspect_log <file>`.
+        .executable(name: "inspect_log", targets: ["inspect_log"]),
     ],
     targets: [
         .target(
             name: "DriveLoggerCore",
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
+        .executableTarget(
+            name: "inspect_log",
+            dependencies: ["DriveLoggerCore"],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .testTarget(

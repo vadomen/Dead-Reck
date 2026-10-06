@@ -56,3 +56,16 @@ public enum OBDDecoder {
         return try decode(pid: pid, payload: payload)
     }
 }
+
+extension OBDDecoder {
+    /// Decodes a multi-PID mode `01` answer such as `41 0D 3C 0C 1A F8`.
+    ///
+    /// `bytes` must include the leading `0x41`. Each PID echo is followed by
+    /// that PID's `payloadByteCount` bytes. Only the PIDs in `requested` are
+    /// accepted, in any order; an unknown or unrequested PID is an error,
+    /// because its length — and so everything after it — would be a guess.
+    public static func decode(requested: [OBDPID], bytes: [UInt8]) throws -> [OBDMeasurement] {
+        fatalError("M1: OBDDecoder.decode(requested:bytes:)")
+    }
+}
+

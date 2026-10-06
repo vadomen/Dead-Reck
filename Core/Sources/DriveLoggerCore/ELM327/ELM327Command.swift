@@ -35,8 +35,19 @@ public enum ELM327Command: Hashable, Sendable {
     /// cheap liveness probe between PID polls.
     case readVoltage
 
+    /// `ATAT0` / `ATAT1` / `ATAT2` — adaptive timing. 2 is the most aggressive
+    /// and often the biggest rate win on clones; fall back to 1 if replies
+    /// start getting cut off.
+    case adaptiveTiming(Int)
+
     /// A service/PID request, e.g. mode `0x01` PID `0x0C` for engine speed.
     case request(mode: UInt8, pid: UInt8)
+
+    /// A mode `01` request for up to six PIDs in one frame, optionally with the
+    /// response-count suffix: `.currentDataMany([.vehicleSpeed, .engineSpeed],
+    /// responseCount: 1)` → `010D0C1`. The suffix tells the adapter to stop
+    /// after that many replies instead of waiting out its timeout.
+    case currentDataMany([OBDPID], responseCount: Int?)
 
     /// Escape hatch for adapter-specific commands; sent verbatim.
     case raw(String)
@@ -60,8 +71,12 @@ public enum ELM327Command: Hashable, Sendable {
             "ATDPN"
         case .readVoltage:
             "ATRV"
+        case .adaptiveTiming(let level):
+            "ATAT\(level)"
         case .request(let mode, let pid):
             Hex.string(mode) + Hex.string(pid)
+        case .currentDataMany(let pids, let responseCount):
+            "01" + Hex.string(pids.map(\.rawValue)) + (responseCount.map(String.init) ?? "")
         case .raw(let text):
             text
         }

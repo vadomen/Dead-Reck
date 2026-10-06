@@ -7,10 +7,20 @@ import Foundation
 /// bumping `current`, and teaching `LogCodec` how to read the old one — never
 /// repurposing or removing an existing field.
 public enum LogFormatVersion: Int, Hashable, Sendable, Codable, CaseIterable, Comparable {
+    /// Header + `motion`, `location`, `obd`, `marker`. `obd.raw` is a
+    /// header-off reply.
     case v1 = 1
 
+    /// Adds adapter/polling/sensor sections to the header; request time,
+    /// command, ECU and sequence to `obd`; fix-time fields to `location`; and
+    /// the kinds `accel`, `gyro`, `mag`, `baro`, `elm`, `adapter`, `link`,
+    /// `lifecycle`, `stats`. `obd.raw` becomes the full verbatim reply with CAN
+    /// headers. Every addition is optional in the Swift types, so v1 files
+    /// decode into the same structs with those fields `nil`.
+    case v2 = 2
+
     /// The version new recordings are written in.
-    public static let current: LogFormatVersion = .v1
+    public static let current: LogFormatVersion = .v2
 
     public static func < (lhs: LogFormatVersion, rhs: LogFormatVersion) -> Bool {
         lhs.rawValue < rhs.rawValue
@@ -66,6 +76,22 @@ public struct LogHeader: Hashable, Sendable, Codable {
     /// Free-text note about the drive (route, mounting position, weather).
     public var notes: String?
 
+    // v2 additions, all optional.
+
+    /// Adapter at the time recording started. Absent when recording was
+    /// started without OBD. Later re-initialisations write `adapter` events.
+    public var adapter: AdapterRecord?
+    /// Polling combination at the time recording started.
+    public var polling: PollingRecord?
+    /// Requested sensor configuration.
+    public var sensors: SensorConfigRecord?
+    /// Mount note from the pre-drive checklist.
+    public var mount: String?
+    /// Vehicle note.
+    public var vehicle: String?
+    /// `TimeZone.identifier` at start. For display and file naming only.
+    public var timeZone: String?
+
     public init(
         formatVersion: LogFormatVersion = .current,
         sessionID: UUID,
@@ -73,7 +99,13 @@ public struct LogHeader: Hashable, Sendable, Codable {
         referenceUptimeSeconds: Double,
         app: AppIdentity,
         device: DeviceIdentity,
-        notes: String? = nil
+        notes: String? = nil,
+        adapter: AdapterRecord? = nil,
+        polling: PollingRecord? = nil,
+        sensors: SensorConfigRecord? = nil,
+        mount: String? = nil,
+        vehicle: String? = nil,
+        timeZone: String? = nil
     ) {
         self.formatVersion = formatVersion
         self.sessionID = sessionID
@@ -82,6 +114,12 @@ public struct LogHeader: Hashable, Sendable, Codable {
         self.app = app
         self.device = device
         self.notes = notes
+        self.adapter = adapter
+        self.polling = polling
+        self.sensors = sensors
+        self.mount = mount
+        self.vehicle = vehicle
+        self.timeZone = timeZone
     }
 
     /// Builds a header for a session about to start.
@@ -90,7 +128,13 @@ public struct LogHeader: Hashable, Sendable, Codable {
         clock: SessionClock,
         app: AppIdentity,
         device: DeviceIdentity,
-        notes: String? = nil
+        notes: String? = nil,
+        adapter: AdapterRecord? = nil,
+        polling: PollingRecord? = nil,
+        sensors: SensorConfigRecord? = nil,
+        mount: String? = nil,
+        vehicle: String? = nil,
+        timeZone: String? = nil
     ) {
         self.init(
             formatVersion: .current,
@@ -99,7 +143,13 @@ public struct LogHeader: Hashable, Sendable, Codable {
             referenceUptimeSeconds: clock.referenceUptimeSeconds,
             app: app,
             device: device,
-            notes: notes
+            notes: notes,
+            adapter: adapter,
+            polling: polling,
+            sensors: sensors,
+            mount: mount,
+            vehicle: vehicle,
+            timeZone: timeZone
         )
     }
 }

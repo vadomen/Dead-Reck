@@ -153,14 +153,14 @@ struct LogFormatCompatibilityTests {
         #expect(header.formatVersion == .current)
 
         let line = String(decoding: try codec.line(for: header), as: UTF8.self)
-        #expect(line.contains("\"formatVersion\":1"))
+        #expect(line.contains("\"formatVersion\":2"))
     }
 
     @Test("Every declared format version is readable")
     func allVersionsAreReadable() {
         // A version added to the enum without a reader is the failure mode this
         // invariant exists to prevent; keep a fixture per case above.
-        #expect(LogFormatVersion.allCases == [.v1])
+        #expect(LogFormatVersion.allCases == [.v1, .v2])
         #expect(LogFormatVersion.current == LogFormatVersion.allCases.max())
     }
 
@@ -170,7 +170,17 @@ struct LogFormatCompatibilityTests {
         #expect(LogEventKind.location.rawValue == "location")
         #expect(LogEventKind.obd.rawValue == "obd")
         #expect(LogEventKind.marker.rawValue == "marker")
-        #expect(LogEventKind.allCases.count == 4)
+        // Added in v2.
+        #expect(LogEventKind.accelerometer.rawValue == "accel")
+        #expect(LogEventKind.gyroscope.rawValue == "gyro")
+        #expect(LogEventKind.magnetometer.rawValue == "mag")
+        #expect(LogEventKind.barometer.rawValue == "baro")
+        #expect(LogEventKind.elm.rawValue == "elm")
+        #expect(LogEventKind.adapter.rawValue == "adapter")
+        #expect(LogEventKind.link.rawValue == "link")
+        #expect(LogEventKind.lifecycle.rawValue == "lifecycle")
+        #expect(LogEventKind.stats.rawValue == "stats")
+        #expect(LogEventKind.allCases.count == 13)
     }
 
     @Test("OBD PID and unit encodings are part of the format")
@@ -181,5 +191,174 @@ struct LogFormatCompatibilityTests {
         #expect(OBDUnit.revolutionsPerMinute.rawValue == "rpm")
         #expect(OBDUnit.degreesCelsius.rawValue == "degC")
         #expect(OBDUnit.percent.rawValue == "%")
+    }
+}
+
+
+/// Format v2 counterpart of the suite above. Same rule: the fixture is frozen at
+/// the "contracts" commit and must never be edited to fit a later change.
+@Suite("Log format compatibility v2")
+struct LogFormatCompatibilityV2Tests {
+    let codec = LogCodec()
+
+    /// Format v2, canonical spelling, one event of every v2 kind plus a
+    /// timed-out poll, a negative (pre-session) motion timestamp and a
+    /// multi-PID reply decoded into two `obd` rows. Raw string literal so the
+    /// JSON `\r` escapes in `rx`/`raw` stay escapes.
+    static let version2Recording = #"""
+        {"adapter":{"elmVersion":"ELM327 v2.1","gatt":{"maxWriteLength":20,"notify":"BEF8D6C9-9C21-4C9E-B632-BD58C1009F9F","service":"E7810A71-73AE-499D-8C15-FAA9AEF0C3F2","write":"BEF8D6C9-9C21-4C9E-B632-BD58C1009F9F","writeType":"withResponse"},"gattTable":[{"characteristics":[{"properties":["notify","write"],"uuid":"BEF8D6C9-9C21-4C9E-B632-BD58C1009F9F"}],"service":"E7810A71-73AE-499D-8C15-FAA9AEF0C3F2"}],"identifier":"6A1F3C2E-0B4D-4E5F-9A8B-7C6D5E4F3A2B","name":"IOS-Vlink","protocol":"A6","voltage":12.4},"app":{"build":"7","name":"DriveLogger","version":"0.2.0"},"device":{"model":"iPhone16,1","systemName":"iOS","systemVersion":"18.6"},"formatVersion":2,"mount":"windscreen, portrait","polling":{"adaptiveTiming":2,"command":"010D0C1","multiPID":true,"pids":[13,12],"responseCount":1,"rpmEvery":1,"timeoutMs":1000},"referenceUptimeSeconds":5000.25,"sensors":{"accelerometerHz":100,"altimeter":true,"deviceMotionHz":100,"gyroHz":100,"magnetometerHz":10,"referenceFrame":"xArbitraryZVertical"},"sessionID":"9B2C1A40-5E7D-4F3A-8C21-6D0E4B7A1F52","startedAt":"2026-05-28T20:26:40Z","timeZone":"Europe/Kyiv","vehicle":"VW Touareg 2025"}
+        {"data":{"event":"start"},"kind":"lifecycle","t":0}
+        {"data":{"attitude":{"w":0.995,"x":0.1,"y":0,"z":0},"gravity":{"x":0,"y":-0.98,"z":-0.2},"magneticAccuracy":2,"magneticField":{"x":20.5,"y":-3.25,"z":-41},"rotationRate":{"x":0.001,"y":0.002,"z":-0.003},"userAcceleration":{"x":0.01,"y":-0.02,"z":0.005}},"kind":"motion","t":-20000000}
+        {"data":{"x":0.012,"y":-0.981,"z":-0.195},"kind":"accel","t":5000000}
+        {"data":{"x":0.004,"y":-0.001,"z":0.0125},"kind":"gyro","t":6000000}
+        {"data":{"x":120.5,"y":-60.25,"z":-300},"kind":"mag","t":50000000}
+        {"data":{"pressureKPa":99.874,"relativeAltitude":0.5},"kind":"baro","t":80000000}
+        {"data":{"outcome":"ok","phase":"poll","requestT":95000000,"rx":"7E806410D320C1AF8\r\r","seq":41,"tx":"010D0C1"},"kind":"elm","t":120000000}
+        {"data":{"command":"010D0C1","ecu":"7E8","pid":13,"raw":"7E806410D320C1AF8\r\r","requestT":95000000,"seq":41,"unit":"km/h","value":50},"kind":"obd","t":120000000}
+        {"data":{"command":"010D0C1","ecu":"7E8","pid":12,"raw":"7E806410D320C1AF8\r\r","requestT":95000000,"seq":41,"unit":"rpm","value":1726},"kind":"obd","t":120000000}
+        {"data":{"outcome":"timeout","phase":"poll","requestT":150000000,"seq":42,"tx":"010D0C1"},"kind":"elm","t":1150000000}
+        {"data":{"from":"polling","layer":"elm","reason":"timeout","to":"retrying"},"kind":"link","t":1150000000}
+        {"data":{"accessory":false,"ageS":0.25,"altitude":179,"course":271.5,"courseAccuracy":8,"ellipsoidalAltitude":207.5,"fixTime":"2026-05-28T20:26:41.150Z","horizontalAccuracy":4.5,"latitude":50.4501,"longitude":30.5234,"receivedT":1650000000,"simulated":false,"speed":13.9,"speedAccuracy":0.5,"verticalAccuracy":3},"kind":"location","t":1400000000}
+        {"data":{"adapter":{"elmVersion":"ELM327 v2.1","identifier":"6A1F3C2E-0B4D-4E5F-9A8B-7C6D5E4F3A2B","name":"IOS-Vlink","protocol":"A6","voltage":12.3},"polling":{"adaptiveTiming":1,"command":"010D","multiPID":false,"pids":[13,12],"rpmEvery":5,"timeoutMs":1000}},"kind":"adapter","t":2000000000}
+        {"data":"tunnel","kind":"marker","t":3000000000}
+        {"data":{"bytesWritten":81920,"counts":{"accel":1000,"gyro":1000,"motion":1000,"obd":180},"dropped":0,"gaps":{"accel":0,"gyro":0,"motion":1},"maxGapMs":{"accel":10.5,"gyro":10.5,"motion":62},"motionHz":100,"obdHz":9,"queueDepthMax":34,"timeouts":1,"windowS":10},"kind":"stats","t":10000000000}
+        {"data":{"detail":"user","event":"stop"},"kind":"lifecycle","t":10500000000}
+        """#
+
+    var document: LogDocument {
+        get throws { try codec.document(from: Data(Self.version2Recording.utf8)) }
+    }
+
+    @Test("A v2 recording parses, header sections included")
+    func readsVersion2Header() throws {
+        let header = try document.header
+
+        #expect(header.formatVersion == .v2)
+        #expect(header.startedAt == Date(timeIntervalSince1970: 1_780_000_000))
+        #expect(header.referenceUptimeSeconds == 5_000.25)
+        #expect(header.adapter?.name == "IOS-Vlink")
+        #expect(header.adapter?.protocolNumber == "A6")
+        #expect(header.adapter?.elmVersion == "ELM327 v2.1")
+        #expect(header.adapter?.voltage == 12.4)
+        #expect(header.adapter?.gatt?.maxWriteLength == 20)
+        #expect(header.adapter?.gattTable?.first?.characteristics.first?.properties == ["notify", "write"])
+        #expect(header.polling?.command == "010D0C1")
+        #expect(header.polling?.pids == [13, 12])
+        #expect(header.polling?.responseCount == 1)
+        #expect(header.sensors?.referenceFrame == "xArbitraryZVertical")
+        #expect(header.mount == "windscreen, portrait")
+        #expect(header.vehicle == "VW Touareg 2025")
+        #expect(header.timeZone == "Europe/Kyiv")
+        #expect(header.notes == nil)
+    }
+
+    @Test("Every v2 event kind decodes to its own payload, none as unrecognized")
+    func readsEveryVersion2Kind() throws {
+        let events = try document.events
+        #expect(events.count == 16)
+
+        let kinds = Set(events.map(\.payload.kind))
+        #expect(kinds == Set(LogEventKind.allCases.map(\.rawValue)))
+        for event in events {
+            if case .unrecognized(let kind, _) = event.payload {
+                Issue.record("\(kind) decoded as unrecognized")
+            }
+        }
+    }
+
+    @Test("v2 OBD rows keep both timestamps, command, ECU and sequence")
+    func readsVersion2OBD() throws {
+        let events = try document.events
+        let readings = events.compactMap { event -> (MonotonicTimestamp, OBDSample)? in
+            guard case .obd(let sample) = event.payload else { return nil }
+            return (event.timestamp, sample)
+        }
+        #expect(readings.count == 2)
+
+        let (t, speed) = try #require(readings.first)
+        #expect(t.nanoseconds == 120_000_000)
+        #expect(speed.requestT?.nanoseconds == 95_000_000)
+        #expect(speed.pid == .vehicleSpeed)
+        #expect(speed.value == 50)
+        #expect(speed.command == "010D0C1")
+        #expect(speed.ecu == "7E8")
+        #expect(speed.seq == 41)
+        #expect(speed.raw == "7E806410D320C1AF8\r\r")
+        #expect(readings[1].1.pid == .engineSpeed)
+        #expect(readings[1].1.value == 1_726)
+
+        guard case .elm(let exchange) = events[6].payload else {
+            Issue.record("expected the elm exchange the readings came from")
+            return
+        }
+        #expect(exchange.seq == speed.seq)
+        #expect(exchange.rx == speed.raw)
+    }
+
+    @Test("A timed-out exchange has no reply and is followed by its transition")
+    func readsVersion2Timeout() throws {
+        let events = try document.events
+        guard case .elm(let exchange) = events[9].payload,
+              case .link(let link) = events[10].payload else {
+            Issue.record("expected elm timeout then link transition")
+            return
+        }
+        #expect(exchange.outcome == "timeout")
+        #expect(exchange.rx == nil)
+        #expect(link == LinkSample(layer: "elm", from: "polling", to: "retrying", reason: "timeout"))
+    }
+
+    @Test("v2 location keeps fix time on the session clock and its inputs")
+    func readsVersion2Location() throws {
+        let events = try document.events
+        guard case .location(let fix) = events[11].payload else {
+            Issue.record("expected a location payload")
+            return
+        }
+        // t = receivedT - ageS
+        #expect(events[11].timestamp.nanoseconds == 1_400_000_000)
+        #expect(fix.receivedT?.nanoseconds == 1_650_000_000)
+        #expect(fix.ageS == 0.25)
+        #expect(fix.fixTime == "2026-05-28T20:26:41.150Z")
+        #expect(fix.ellipsoidalAltitude == 207.5)
+        #expect(fix.simulated == false)
+        #expect(fix.accessory == false)
+    }
+
+    @Test("A pre-session motion timestamp stays negative")
+    func keepsNegativeOffsets() throws {
+        let events = try document.events
+        #expect(events[1].timestamp.nanoseconds == -20_000_000)
+        guard case .motion(let motion) = events[1].payload else {
+            Issue.record("expected a motion payload")
+            return
+        }
+        #expect(motion.magneticAccuracy == 2)
+    }
+
+    @Test("Rewriting a v2 recording reproduces it unchanged")
+    func rewritesVersion2Identically() throws {
+        let original = Data(Self.version2Recording.utf8)
+        let rewritten = try codec.encode(try document)
+        #expect(rewritten == original + Data("\n".utf8))
+    }
+
+    @Test("v2 vocabularies written by the app are stable on-disk strings")
+    func vocabulariesAreStable() {
+        #expect(LifecycleSample.Event.allCases.map(\.rawValue) == [
+            "start", "stop", "pause", "resume", "background", "foreground",
+            "calibrationStart", "calibrationEnd", "error", "memoryWarning",
+            "thermalState", "protectedDataUnavailable",
+        ])
+        #expect(ELMPhase.allCases.map(\.rawValue) == ["init", "probe", "poll", "manual", "keepalive"])
+        #expect(ELMOutcome.allCases.map(\.rawValue) == [
+            "ok", "noData", "timeout", "stopped", "notRecognised", "canError",
+            "busError", "busInitError", "bufferFull", "dataError",
+            "unableToConnect", "adapterError", "malformed", "rejected",
+        ])
+        #expect(ELMState.allCases.map(\.rawValue) == [
+            "idle", "resetting", "initialising", "searching", "probing", "ready",
+            "polling", "retrying", "reinitialising", "failed",
+        ])
     }
 }

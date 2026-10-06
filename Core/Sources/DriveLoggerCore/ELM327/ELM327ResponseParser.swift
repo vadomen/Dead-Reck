@@ -138,3 +138,50 @@ public enum ELM327ResponseParser {
         return Array(payload.prefix(declaredByteCount))
     }
 }
+
+/// One ECU's answer within a reply.
+public struct ECUReply: Hashable, Sendable {
+    /// CAN header, e.g. `7E8` (11-bit) or `18DAF110` (29-bit). Nil when the
+    /// adapter runs with headers off.
+    public var header: String?
+    /// Reassembled data bytes including the service/PID echo, with the CAN PCI
+    /// byte(s) removed.
+    public var bytes: [UInt8]
+
+    public init(header: String?, bytes: [UInt8]) {
+        self.header = header
+        self.bytes = bytes
+    }
+}
+
+/// A non-hex reply to an `AT` command, classified.
+public enum ELMTextReply: Hashable, Sendable {
+    case ok
+    /// `ATZ` / `ATI` banner, e.g. `ELM327 v2.1`.
+    case banner(String)
+    /// `ATDPN`, e.g. `A6`.
+    case protocolNumber(String)
+    /// `ATRV`, parsed volts.
+    case voltage(Double)
+    /// Anything else, verbatim.
+    case other(String)
+}
+
+extension ELM327ResponseParser {
+    /// Splits a reply into per-ECU answers.
+    ///
+    /// With `headers: true` (`ATH1`, the logger's mode) every line starts with
+    /// a CAN header and a PCI byte: `7E803410D3C`. With `headers: false` lines
+    /// are bare payload: `410D3C`. Multi-frame answers are reassembled per ECU.
+    /// Status lines (`NO DATA`, …) throw, as in `dataBytes(in:mode:pid:)`.
+    public static func replies(in raw: String, headers: Bool) throws -> [ECUReply] {
+        fatalError("M1: ELM327ResponseParser.replies")
+    }
+
+    /// Classifies the reply to an `AT` command. `command` is the wire text that
+    /// was sent, used to pick the interpretation (`ATRV` → voltage).
+    public static func textReply(to command: String, raw: String) throws -> ELMTextReply {
+        fatalError("M1: ELM327ResponseParser.textReply")
+    }
+}
+
