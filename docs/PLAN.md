@@ -5,8 +5,10 @@ contracts. M1 implemented all of Core behind them (merges fcae007, 1498d52):
 the ELM327 layer (framer, parser, multi-PID decoding, `MockELMAdapter`,
 `ELMSession` state machine) and the log layer (gzip member writer and reader,
 `LogSink`, `LogFileWriter`, stats, event mapping, simulated sources,
-`inspect_log`). What remains as stubs is App code, `fatalError("M2: …")`. All
-seven decisions in §5 were approved as written.
+`inspect_log`). The bench test (2026-10-07, see below and §6) confirmed the
+protocol and adapter; its findings are in the ELM layer (5644625, 2a7ac61).
+What remains as stubs is App code, `fatalError("M2: …")`: **next is M2**
+(`WORKFLOW.md`). All seven decisions in §5 were approved as written.
 
 **Decisions taken during M1 (by the user, after review):**
 - `NO DATA`: a PID that has answered OK in the session (poll or probe) is
@@ -17,12 +19,22 @@ seven decisions in §5 were approved as written.
   re-initialises at once. The earlier `ATRV` resync was removed after three
   review rounds showed a stale voltage reply could satisfy it.
 - `ATST` dropped from the allowlist (nothing sends it).
-- Bench test 2026-10-07 (`docs/BENCH_TEST_2026-10-07.md`): init ends with
-  `ATSH7E0`; the poll command is chosen at start-up in the order `010D0C1` →
-  `010D0C` → `010D1` → `010D`, with the `1` suffix only after `ATSH7E0`
-  answered `OK` (under functional addressing the suffix returned the
-  gearbox's reply). `ATSH` is allowlisted for `7DF` and `7E0`–`7E7` only, in
-  session scope. `polling.requestHeader` records the addressing.
+- Bench test 2026-10-07 (`docs/BENCH_TEST_2026-10-07.md`):
+  - **Physical addressing.** After `ATRV` the session sends `ATSH7E0` only
+    when `ATDPN` reports 11-bit ISO 15765-4 CAN (`6`, `A6`, `8`, `A8`) and the
+    `0100` reply had a `7E8` line. On other protocols a 3-digit `ATSH` isn't an
+    OBD request ID. Physical addressing engages only if `ATSH7E0` answers
+    `OK`; otherwise requests stay functional (`7DF`) and a note is recorded.
+  - **Poll command.** Chosen at start-up as the first of `010D0C1` →
+    `010D0C` → `010D1` → `010D` that returns the engine's (`7E8`) values.
+    The `1` suffix is used only after `ATSH7E0` answered `OK`: under
+    functional addressing the suffix returned the gearbox's reply.
+  - **Functional fallback.** If nothing parses at `7E0` (or only without
+    speed), the session sends `ATSH7DF` and selects again functionally
+    (`010D0C` → `010D`, no suffix). Every fallback plan is functional. The
+    gate is re-evaluated on every re-init.
+  - `ATSH` is allowlisted for `7DF` and `7E0`–`7E7` only, in session scope.
+    `polling.requestHeader` records the addressing.
 
 For M1 the code is authoritative over the §4 sketches below; the ELM and log
 behaviour is documented in the `ELMSession` / `LogFileWriter` doc comments and
@@ -113,10 +125,17 @@ Disjoint folders, so no merge conflicts:
 - Log: gzip member writer + CRC-32, `LogFileWriter`, `LogFileReader` (streaming, truncated tail), `LogSink`, `StatsAccumulator`, event mapping from ELM types to log types, simulated sources, `inspect_log`. Test-first.
 - Acceptance: both reviewed, CONFIRMED findings fixed, merged, `swift test` green on main.
 
-### M2 — App services, sequential
-1. elm-ble-engineer: `BLETransport` (CoreBluetooth, GATT auto-detect, write splitting, state restoration), `OBDLinkService` (scan / pick / remember / reconnect / console feed), `SimulatedOBDLink` (mock adapter, used on the simulator).
-2. sensors-logging-engineer: `MotionSource`, `RawIMUSource`, `AltimeterSource`, `LocationSource` (+ simulated twins), `LogStore` (Documents/logs), `RecordingSession` orchestrator, background lifecycle, 10 s stats.
-- Acceptance: simulator build + app tests green after each; reviewer on the M2 diff.
+### M2 — App services, sequential (in main)
+Two parts, one after the other. Full instructions in `WORKFLOW.md` M2.
+
+| Part | Agent | Owns (edits only here) |
+|---|---|---|
+| 1 | elm-ble-engineer | `App/Sources/Link/**`; `Core/…/ELM327/**`, `OBD/**` for M2 backlog items only; their tests; `project.yml` if a target setting is needed |
+| 2 | sensors-logging-engineer | `App/Sources/Sensors/**`, `App/Sources/Recording/**`; `App/Resources/Info.plist` if a purpose string or background mode is missing; `Core/…/{Log,Time,Recording}/**` for M2 backlog items only; their tests |
+
+1. `BLETransport` (CoreBluetooth, GATT auto-detect, write splitting, state restoration; adapter advertises as `IOS-Vlink`), `OBDLinkService` (scan / pick / remember / reconnect / console feed), `SimulatedOBDLink` (`MockELMAdapter` + `Rule.benchCar`, used on the simulator).
+2. `DeviceMotionSource`, `RawIMUSource`, `AltimeterSource`, `LocationSource` (+ simulated twins), `LogStore` (Documents/logs), `RecordingSession` orchestrator, background lifecycle, 10 s stats, disk-space policy.
+- Acceptance: green Core tests, simulator build and app tests after each part; `/review-loop` on each part's diff; a simulated end-to-end recording that `inspect_log` reads cleanly.
 
 ### M3 — UI (ios-ui-engineer, App UI only)
 Recording dashboard, pre-drive checklist + 5 s calibration, sessions list (share/delete with confirmation), ELM debug console with guarded manual field, simulator "unavailable" states, previews for every screen. Tag `logger-v1-rc1` after review.
@@ -619,8 +638,18 @@ check. Exit status 0 read, 1 unreadable, 2 usage.
 6. **`elm` rows for every exchange**, including successful polls (§3.4).
 7. **`inspect_log` lives in the Core package** (`Core/Sources/inspect_log`) rather than a separate `tools/` package, so it shares Core without a second `Package.swift`.
 
-## 6. Risks to check on hardware (M4), not claimable before
-- Whether the clone accepts `010D0C`, the `1` suffix and `ATAT2`; real poll Hz.
-- Whether `7E8` is the only responder for 0x0D on the Touareg.
-- Background survival over 5+ minutes locked with BLE + location.
-- Actual Vgate GATT layout and max write length.
+## 6. Hardware checks (M4/M5), not claimable before
+
+### Resolved by the bench test (2026-10-07, Car Scanner terminal, `docs/BENCH_TEST_2026-10-07.md`)
+- **Protocol:** `ATDPN` = `6`, ISO 15765-4 CAN 11-bit 500 kbaud. Expect `A6` after the app's own `ATSP0`.
+- **Adapter:** `ELM327 v2.3`; BLE name `IOS-Vlink`.
+- **Two ECUs answer functional requests:** `7E8` (engine) and `7E9` (gearbox, most likely). Handled by `ATSH7E0` (gated, see the status block) with the functional fallback, and speed is taken from `7E8`. Under functional addressing the `1` suffix returned `7E9`'s reply, so the suffix is used only with `ATSH7E0`.
+- **Multi-PID works:** `010D0C` / `010D0C1` → speed and RPM in one frame (663 rpm at idle).
+- **OBDonUDS (`22F40D`) not needed:** `NO DATA`, while mode 01 works.
+
+### Still open (M4 unless noted)
+- **Real poll Hz** of `010D0C1` after `ATSH7E0`, and which plan start-up selection picks with our own init (the bench used Car Scanner's init).
+- **`ATAT1` vs `ATAT2`:** which is faster and stable, and whether `ATAT2` cuts replies short.
+- **Background survival:** 5+ minutes locked with BLE + location (M4); ≥ 1 h locked on a drive (M5).
+- **GATT:** actual Vgate layout and max write length.
+- From the bench update, also to confirm with our app: `ATSH7E0` → `OK` after our handshake; only `7E8` replies under physical addressing while driving; how often write-offs and re-inits happen; `ATRV` under-reads (11.0 / 11.8 V).
