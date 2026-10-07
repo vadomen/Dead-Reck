@@ -265,6 +265,35 @@ struct VolumeDiskSpaceProviderTests {
         let bytes = try VolumeDiskSpaceProvider().availableBytes(for: missing)
         #expect(bytes > 0)
     }
+
+    /// R2-8: important-usage capacity counts purgeable space that iOS frees
+    /// asynchronously, so `ENOSPC` can arrive while it still reads far above
+    /// the floor. The reading is the smaller of the two.
+    @Test("The reading is the smaller of important-usage and plain capacity")
+    func usesTheSmallerReading() {
+        #expect(VolumeDiskSpaceProvider.reading(important: 32_000_000_000, plain: 150_000_000) == 150_000_000)
+        #expect(VolumeDiskSpaceProvider.reading(important: 100_000_000, plain: 900_000_000) == 100_000_000)
+        #expect(VolumeDiskSpaceProvider.reading(important: 5, plain: 5) == 5)
+    }
+
+    @Test("Either reading alone is used when the volume reports only one")
+    func usesWhicheverExists() {
+        #expect(VolumeDiskSpaceProvider.reading(important: 7, plain: nil) == 7)
+        #expect(VolumeDiskSpaceProvider.reading(important: nil, plain: 9) == 9)
+        #expect(VolumeDiskSpaceProvider.reading(important: nil, plain: nil) == nil)
+    }
+
+    @Test("The live reading never exceeds plain available capacity")
+    func liveReadingIsConservative() throws {
+        let directory = FileManager.default.temporaryDirectory
+        let reading = try VolumeDiskSpaceProvider().availableBytes(for: directory)
+        var url = URL(fileURLWithPath: directory.path)
+        url.removeAllCachedResourceValues()
+        if let plain = try url.resourceValues(forKeys: [.volumeAvailableCapacityKey]).volumeAvailableCapacity {
+            // Allow for other processes writing between the two queries.
+            #expect(reading <= Int64(plain) + 64 * 1024 * 1024)
+        }
+    }
 }
 
 /// Regression for R2-1. `LogFileWriter` keeps one recording `URL` for the
@@ -286,10 +315,29 @@ struct VolumeDiskSpaceProviderFreshnessTests {
         func read() throws -> Int64 { try provider.availableBytes(for: url) }
     }
 
-    static let bytesToWrite = 512 * 1024 * 1024
+    /// 64 MiB written, at least 32 MiB of drop required (R3-7: this was
+    /// 512 MiB on every `swift test`). The caching bug returns the identical
+    /// value — a drop of exactly 0 — so half the written size is a wide margin
+    /// either way. Checked at M1 to still fail against the old provider body
+    /// (reading through the caller's URL instance).
+    static let bytesToWrite = 64 * 1024 * 1024
+    static let requiredDrop = Int64(bytesToWrite / 2)
     static let chunkSize = 8 * 1024 * 1024
+    /// Below this the test is skipped rather than failing with a write error.
+    static let requiredFreeBytes: Int64 = 512 * 1024 * 1024
 
-    @Test("A second reading on the same URL instance reflects bytes written since the first")
+    static func hasRoom() -> Bool {
+        let free = try? VolumeDiskSpaceProvider().availableBytes(for: FileManager.default.temporaryDirectory)
+        return (free ?? 0) >= requiredFreeBytes
+    }
+
+    @Test(
+        "A second reading on the same URL instance reflects bytes written since the first",
+        .enabled(
+            if: VolumeDiskSpaceProviderFreshnessTests.hasRoom(),
+            "Skipped: needs at least 512 MiB free on the temporary volume to write 64 MiB safely"
+        )
+    )
     func secondReadingIsNotCached() async throws {
         let fileManager = FileManager.default
         let directory = fileManager.temporaryDirectory
@@ -320,7 +368,7 @@ struct VolumeDiskSpaceProviderFreshnessTests {
         let after = try await reader.read()
         let drop = before - after
         #expect(
-            drop >= Int64(Self.bytesToWrite / 2),
+            drop >= Self.requiredDrop,
             "free space before \(before), after \(after): dropped \(drop) bytes after writing \(Self.bytesToWrite)"
         )
     }
