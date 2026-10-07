@@ -104,7 +104,7 @@ Run from the repository root unless the command starts with `cd Core`.
 | `cd Core && swift test --filter OBDDecoderTests` | Runs one test suite, matched by its type name. |
 | `cd Core && swift test --filter OBDDecoderTests/decodesEngineSpeed` | Runs one test, matched as `SuiteType/functionName`. `--filter` matches identifiers, not the display names in `@Test("…")`; a display name matches nothing and runs zero tests. |
 | `cd Core && swift build --build-tests` | Compiles Core and its tests without running them. |
-| `cd Core && swift run inspect_log <file.jsonl.gz> [--csv <dir>]` | Summarises a recording: header, events per kind, rates, gaps over 50 ms, OBD latency, adapter exchange outcomes, truncation. `--csv` writes one CSV per event kind. **Not implemented yet (milestone M1)**; it currently exits with an error. |
+| `cd Core && swift run -c release inspect_log <file.jsonl.gz> [--csv <dir>] [--strict]` | Summarises a recording: header, events per kind, rates, gaps over 50 ms, OBD latency percentiles, adapter exchange outcomes, damage and truncation. `--csv` writes one CSV per event kind; `--strict` stops at the first damaged block or bad line. Exit status 0 = read (warnings printed), 1 = unreadable, 2 = usage. `-c release` is faster on long drives. |
 | `grep -rhoE '^[[:space:]]*import[[:space:]]+[A-Za-z_]+' Core/Sources Core/Tests \| sort -u` | Lists every module Core imports. It must show only `Foundation`, `Testing` and `DriveLoggerCore`. No UIKit, SwiftUI, CoreBluetooth, CoreMotion or CoreLocation. |
 
 ### iOS app
@@ -139,7 +139,7 @@ and anything typed in the debug console, passes a **read-only guard**
 reach the adapter. The guard is an allowlist: anything not listed under
 "Allowed" is rejected and never leaves the phone.
 
-Commands are typed without spaces (`ATST32`, not `ATST 32`). Input must be
+Commands are typed without spaces (`ATAT2`, not `ATAT 2`). Input must be
 plain ASCII: lookalike characters such as fullwidth digits are rejected, not
 converted. Lower case is fine (`atrv`); the upper-case form is what is sent.
 
@@ -165,7 +165,6 @@ corrupt every row after it.
 | `ATDP` / `ATDPN` | yes | Describes the detected protocol, as text / as a number. `A6` means auto-detected protocol 6: CAN 11-bit, 500 kbaud. |
 | `ATRV` | yes | Reads the car's battery voltage at the OBD port. Recorded at init. Also a cheap check that the adapter is alive. |
 | `ATAT0` / `ATAT1` / `ATAT2` | no | Adaptive timing off / normal / aggressive: how long the adapter waits for slow ECU replies. `ATAT2` is often the biggest speed-up on cheap clones. Fall back to `ATAT1` if replies get cut off. |
-| `ATSThh` | no | Sets the adapter's reply timeout to `hh` × 4.096 ms, two hex digits from `19` to `FF` (≈100 ms to ≈1 s), e.g. `ATST32` ≈ 200 ms. Shorter values are rejected: they make every poll answer `NO DATA`, and the app stops polling a PID that answers `NO DATA`. |
 | `0100` | yes | Asks which PIDs 01–20 the car supports (a bitmask). After `ATSP0` it also forces the protocol search, so the first one can take several seconds. |
 | `01xx` | yes | Mode 01, "show current data", for one PID: `010D` = vehicle speed (km/h), `010C` = engine RPM. Read-only. |
 | `01xxyy…` | yes | Mode 01 for up to six PIDs in one request, e.g. `010D0C` = speed and RPM in one reply. Fewer round trips, so a higher sample rate. |
@@ -191,12 +190,13 @@ protocol. They're rejected everywhere, including the app's own init.
 | `ATD` | Restores all settings to factory defaults. | Same: headers go back off mid-session, and ECU attribution is lost without any error. |
 | `ATLP` | Puts the adapter into low-power sleep. | The link goes dead until the adapter is woken up. |
 | `ATSPh` (h ≠ 0), `ATSPAh`, `ATTPh` | Set / try a specific OBD protocol, e.g. `ATSP6`. | `ATSPh` is saved as the adapter's default, so a forced protocol would persist into other cars and apps. Blocked for now: only `ATSP0` (auto) is allowed. If the bench test (M4) shows that forcing protocol 6 speeds up init, it can be added to the list. |
+| `ATSThh` | Sets the adapter's own reply timeout to `hh` × 4.096 ms. | Nothing in the app sends it (the session tunes speed with `ATAT`), and a too-short value turns every poll into `NO DATA`. May be reconsidered after the bench test (M4). |
 | `ATSWhh` | Sets the interval of the wakeup (keep-alive) messages the adapter sends on the older ISO 9141 / ISO 14230 protocols; `ATSW00` stops them. They're on by default there and irrelevant on CAN. | Changes what the adapter transmits on its own. Not needed for this CAN car. |
 | `ATFCSH`, `ATFCSD`, `ATFCSM` | Flow control header / data / mode: the frames the adapter sends during multi-frame transfers. | Lets custom frames be put on the bus. |
 
 Malformed input is rejected rather than cleaned up: spaces, extra characters,
-embedded line breaks (`ATZ\r04`), invalid parameters like `ATAT3`, or an
-`ATST` without exactly two hex digits or below `ATST19`.
+embedded line breaks (`ATZ\r04`), invalid parameters like `ATAT3`, or `ATST` in any form (not allowlisted; see
+the table above).
 
 ### Blocked: diagnostic modes other than 01
 

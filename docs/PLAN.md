@@ -1,10 +1,26 @@
 # DriveLogger v1 — implementation plan (M0)
 
-Status: **approved; M0 done** (commit "contracts"). The v2 format types and
-codec are implemented and covered by a frozen v2 fixture; every other API in §4
-exists as a compiling stub whose body is `fatalError("M1: …")` or
-`fatalError("M2: …")`, which marks the milestone that implements it. All seven
-decisions in §5 were approved as written.
+Status: **M0 and M1 done.** M0 (commit "contracts") fixed the format and the
+contracts. M1 implemented all of Core behind them (merges fcae007, 1498d52):
+the ELM327 layer (framer, parser, multi-PID decoding, `MockELMAdapter`,
+`ELMSession` state machine) and the log layer (gzip member writer and reader,
+`LogSink`, `LogFileWriter`, stats, event mapping, simulated sources,
+`inspect_log`). What remains as stubs is App code, `fatalError("M2: …")`. All
+seven decisions in §5 were approved as written.
+
+**Decisions taken during M1 (by the user, after review):**
+- `NO DATA`: a PID that has answered OK in the session (poll or probe) is
+  never dropped; its `NO DATA` is a failure (retry → re-init → reconnect). A
+  PID that never answered OK is dropped. Answered-OK beats the `0100` bitmask.
+- Write-off (a `>` missing for longer than timeout + grace): the link is
+  desynchronised and only `ATZ` may be sent; while polling the session
+  re-initialises at once. The earlier `ATRV` resync was removed after three
+  review rounds showed a stale voltage reply could satisfy it.
+- `ATST` dropped from the allowlist (nothing sends it).
+
+For M1 the code is authoritative over the §4 sketches below; the ELM and log
+behaviour is documented in the `ELMSession` / `LogFileWriter` doc comments and
+in `docs/LOG_FORMAT.md`.
 
 Small deviations from the sketches below, made while writing the stubs:
 `ELM327Command.currentDataMany(_:responseCount:)` (not `requestMany`);
@@ -284,10 +300,10 @@ public enum ELMCommandPolicy {
     public enum Scope { case session, manual }
     /// Allowlist. Printable ASCII only, checked before uppercasing.
     /// .session: ATZ ATI AT@1 ATE0/1 ATL0/1 ATS0/1 ATH0/1 ATSP0 ATDP ATDPN ATRV
-    ///           ATAT0-2 ATSThh (hh 19…FF), plus mode 01.
+    ///           ATAT0-2, plus mode 01. (ATST was dropped in M1.)
     /// .manual:  ATI AT@1 ATDP ATDPN ATRV, plus mode 01 (the debug console).
     /// Mode 01: 01 + 1–6 PID bytes + optional count digit 1–9.
-    public static func validate(_ wire: String, scope: Scope = .session) throws(ELMSessionError) -> ValidatedELMCommand
+    public static func validate(_ wire: String, scope: Scope) throws(ELMSessionError) -> ValidatedELMCommand  // scope required
 }
 
 public enum ELMState: String { idle, resetting, initialising, searching, probing, ready,
@@ -299,7 +315,9 @@ public struct ELMExchange {        // → `elm` row
 public struct OBDReading {         // → `obd` row
     seq, command, ecu: String?, measurement: OBDMeasurement, raw, requestUptime, replyUptime
 }
-public struct PollingPlan { pids, multiPID, responseCount: Int? /* 1–9 */, adaptiveTiming, rpmEvery, timeout }
+public struct PollingPlan { pids, multiPID, responseCount: Int? /* 1–9 */, adaptiveTiming, rpmEvery, timeout
+                            func validate() throws(ELMSessionError)        // 1–6 distinct PIDs, ranges
+                            var primaryCommand: ELM327Command }            // wireFormat = recorded polling.command
 public struct ELMAdapterInfo { elmVersion, protocolNumber, voltage, supportedPIDs: String?, plan }
 
 /// Every case carries the uptime at which it happened.
@@ -576,9 +594,12 @@ files in `Documents/logs`, and picks a file name that doesn't exist yet.
 
 ### 4.7 `inspect_log` (Core package, executable target)
 
-`swift run inspect_log <file> [--csv <dir>]` — header, events per kind, rates,
-gaps > 50 ms, OBD latency (`t − requestT`) percentiles, `elm` outcome counts,
-truncation report, CSV per kind. Foundation only, so it passes the import check.
+`swift run inspect_log <file> [--csv <dir>] [--strict]` — header, events per
+kind, rates, gaps > 50 ms, OBD latency (`t − requestT`) percentiles, `elm`
+outcome counts, damage/truncation report, CSV per kind. The analysis lives in
+Core (`RecordingAnalyzer`, `RecordingCSVExporter`) so `swift test` covers it;
+`main.swift` only parses arguments. Foundation only, so it passes the import
+check. Exit status 0 read, 1 unreadable, 2 usage.
 
 ---
 

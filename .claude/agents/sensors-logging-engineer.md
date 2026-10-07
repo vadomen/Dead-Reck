@@ -1,6 +1,6 @@
 ---
 name: sensors-logging-engineer
-description: Implements the recording pipeline - Core Motion, magnetometer, barometer, reference GPS, the shared monotonic clock, the versioned JSONL.gz log format, the buffered writer/reader, background execution, and the tools/inspect_log Mac CLI. Use for any task about sensors, timestamps, log schema, file writing, export or background survival.
+description: Implements the recording pipeline - Core Motion, magnetometer, barometer, reference GPS, the shared monotonic clock, the versioned JSONL.gz log format, the buffered writer/reader, background execution, and the inspect_log Mac CLI (Core/Sources/inspect_log). Use for any task about sensors, timestamps, log schema, file writing, export or background survival.
 tools: Read, Write, Edit, Glob, Grep, Bash
 model: opus
 effort: high

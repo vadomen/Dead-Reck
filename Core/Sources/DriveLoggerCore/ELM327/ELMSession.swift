@@ -1356,8 +1356,8 @@ public actor ELMSession {
         if await waitForOwedPrompts(grace) { return }
         guard !owedPrompts.isEmpty, !isShutdown, !transportClosed else { return }
         let lost = owedPrompts.map(\.tx).joined(separator: ", ")
-        // Their replies may still come: until an ATRV sync proves the
-        // stream aligned, nothing that arrives may resolve a command.
+        // Their replies may still come: until ATZ is answered with a banner,
+        // nothing that arrives may resolve a command.
         writtenOff += owedPrompts
         owedPrompts.removeAll()
         desynchronised = true

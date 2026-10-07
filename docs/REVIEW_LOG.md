@@ -134,3 +134,35 @@ green; `swift test` 115/115; fixtures byte-identical at e712d29, 21547c7,
 - Outside the loop: `App/Resources/Info.plist`, `project.pbxproj` and the
   shared scheme carry uncommitted rewrites by the open Xcode.app; left for
   the user.
+
+## M1 reviews (2026-10-07) — not a `/review-loop` run
+
+Per WORKFLOW M1: each branch reviewed by `reviewer`, CONFIRMED findings fixed
+by the owning agent with regression tests, then merged.
+
+**Log/recording branch** (`worktree-agent-a496ab3915a06dc51`). One review:
+0 BLOCKER / 0 MAJOR / 6 MINOR. Fixed before merge: duplicate failure reports
+after a partial success (2800040), damaged header member making the drive
+unreadable (8aecda4), two tests that didn't check their claim (e45316d).
+Deferred: M1-L1, M1-L2; LOG_FORMAT member layout applied at merge.
+
+**ELM327 branch** (`worktree-agent-a6745a3904557f4bf`). Four reviews.
+- Review 1 (cad8c53): 1 BLOCKER (late reply after a timeout taken as the
+  next command's answer, persistent off-by-one), 1 MAJOR (one NO DATA drops
+  speed for the drive), 10 MINOR. User decided the NO DATA rule (answered-OK
+  PIDs never dropped). Fixed in ce10d81 / 945ac22.
+- Review 2 (945ac22): 2 MAJOR — the same two findings on paths the fix
+  missed (probe NO DATA; prompt after a write-off). Fixed in 572bbb4 with an
+  ATRV resync.
+- Review 3 (572bbb4): 1 MAJOR — the write-off finding a third time (a stale
+  ATRV voltage satisfied the sync). Escalated to the user, who chose: any
+  write-off → ATZ re-init, no sync. Fixed in f68f9ff.
+- Review 4 (f68f9ff): 0 BLOCKER / 0 MAJOR / 6 MINOR, ready to merge. No reply
+  can be attributed to the wrong command. Deferred: M1-E4, M1-E5, M1-E6
+  (stale comment fixed at merge).
+
+**Merge** (fcae007, 1498d52, plus the integration commit): `stats.timeouts`
+counts only `timeout` rows without `rx` (late/unsolicited rows excluded);
+`PollingRecord.command` is `plan.primaryCommand.wireFormat` (empty plan →
+`""`); both pinned in `M1IntegrationTests`, the timeout test verified to fail
+without the fix.

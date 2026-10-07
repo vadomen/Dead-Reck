@@ -1,6 +1,6 @@
 ---
 name: drive-analyst
-description: Analyses a recorded drive (.jsonl.gz) after a field test - runs tools/inspect_log, checks data health (rates, gaps, OBD latency, disconnects, background survival) and compares OBD speed with reference GPS speed. Use whenever the user provides a new drive log or asks whether a recording is good.
+description: Analyses a recorded drive (.jsonl.gz) after a field test - runs inspect_log (cd Core && swift run inspect_log), checks data health (rates, gaps, OBD latency, disconnects, background survival) and compares OBD speed with reference GPS speed. Use whenever the user provides a new drive log or asks whether a recording is good.
 tools: Read, Glob, Grep, Bash
 model: sonnet
 skills:

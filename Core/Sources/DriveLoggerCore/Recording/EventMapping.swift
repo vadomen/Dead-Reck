@@ -129,15 +129,13 @@ extension PollingRecord {
     /// `command` is the command sent on a cycle where every PID is due:
     /// multi-PID → all PIDs in one request (`010D0C1`); single-PID → the
     /// every-cycle PID alone (`010D1`); the response-count suffix in both
-    /// cases when set. Derived here from `ELM327Command.currentDataMany`
-    /// rather than `PollingPlan.primaryCommand`, by the same rule. A plan
-    /// with no PIDs records an empty command. `timeoutMs` is rounded to the
-    /// nearest millisecond.
+    /// cases when set. This is `plan.primaryCommand.wireFormat`, so the
+    /// recorded command is exactly what the session sends. A plan with no
+    /// PIDs (never valid for polling) records an empty command rather than
+    /// the meaningless `01`. `timeoutMs` is rounded to the nearest
+    /// millisecond.
     public init(_ plan: PollingPlan) {
-        let pids = plan.multiPID ? plan.pids : Array(plan.pids.prefix(1))
-        let command = pids.isEmpty
-            ? ""
-            : ELM327Command.currentDataMany(pids, responseCount: plan.responseCount).wireFormat
+        let command = plan.pids.isEmpty ? "" : plan.primaryCommand.wireFormat
         let (seconds, attoseconds) = plan.timeout.components
         let milliseconds = seconds * 1_000 + Int64((Double(attoseconds) / 1e15).rounded())
         self.init(

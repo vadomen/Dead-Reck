@@ -33,7 +33,7 @@ Do not copy code from github.com/leea-software/gpsless (PolyForm Noncommercial l
 - Parse multi-line and multi-ECU answers (`7E8`, `7E9`, …); take speed from `7E8`, keep the rest. Support both header-on and header-off formats in the parser.
 - `NO DATA` for a PID means the vehicle does not implement it: record it and stop polling that PID (CLAUDE.md convention).
 - Keep the raw response alongside the parsed value, always.
-- Read-only: only `AT` commands and mode `01` PIDs may ever be sent. Enforce at the API boundary and test it. Never send modes 04, 08, 2E, 31, 3B or any coding/UDS request.
+- Read-only: only allowlisted `AT` commands and mode `01` PIDs may ever be sent (the allowlist is `ELMCommandPolicy`; see README "ELM327 commands"). Enforce at the API boundary and test it. Never send modes 04, 08, 2E, 31, 3B or any coding/UDS request.
 - Measure and record the achieved OBD rate (Hz).
 
 ## Sensors (App)
@@ -73,7 +73,7 @@ Recording must continue with the screen locked and the app in the background for
 
 - Recording screen: adapter status (scanning / connecting / initialising / polling + protocol + voltage); large live OBD speed and GPS speed side by side; OBD Hz, motion Hz, elapsed time, file size; large Start, Stop and Mark buttons (Mark writes a `marker` event, e.g. "tunnel", "traffic jam"). Screen stays awake while recording.
 - Before Start: checklist "phone in rigid mount, fixed orientation" and a 5-second keep-still calibration, recorded as an event.
-- Debug screen: raw ELM console (every TX/RX line) with a manual command field restricted to `AT` commands and mode `01` PIDs.
+- Debug screen: raw ELM console (every TX/RX line) with a manual command field restricted to the read-only queries `ATI`, `AT@1`, `ATDP`, `ATDPN`, `ATRV` and mode `01` PIDs (`ELMCommandPolicy` scope `.manual`; configuration commands are reserved for the session).
 - Sessions list: duration, size, date; export via the share sheet; delete with confirmation.
 - Simulator: clear "Bluetooth / motion unavailable" states, no crash.
 

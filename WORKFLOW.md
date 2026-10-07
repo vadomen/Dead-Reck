@@ -34,7 +34,7 @@ Wait for my approval. After approval, implement ONLY the contracts as compiling 
 ```text
 Run two subagents in parallel, each in its own git worktree (isolation: worktree), both on top of the "contracts" commit:
 1. elm-ble-engineer: implement the Core ELM327 layer behind the contracts - framing, parser (ATH0 and ATH1, fragments, statuses, multi-ECU, multi-PID), PID decoding, polling state machine with timeouts/retry/re-init, read-only command guard, and a MockELMAdapter that replays scripted responses with delays. Test-first.
-2. sensors-logging-engineer: implement the Core log layer - row encoding, gzip JSONL writer with periodic flush, tolerant reader (truncated tail), formatVersion handling with a v1 fixture, MonotonicClock conversions, and tools/inspect_log (header, counts, rates, gaps, OBD latency, CSV export per row type). Test-first.
+2. sensors-logging-engineer: implement the Core log layer - row encoding, gzip JSONL writer with periodic flush, tolerant reader (truncated tail), formatVersion handling with a v1 fixture, MonotonicClock conversions, and inspect_log in Core/Sources/inspect_log (header, counts, rates, gaps, OBD latency, CSV export per row type). Test-first.
 Both work only inside Core/ (ELM327/ + OBD/ vs Log/ + Time/ + tools); neither touches App/. When both finish, run the reviewer on each branch, fix CONFIRMED findings, merge both to main, run `cd Core && swift test`, commit.
 ```
 
@@ -49,7 +49,7 @@ Simulator build must pass after each. Then reviewer on the M2 diff; fix and comm
 ## M3 - UI
 
 ```text
-Use ios-ui-engineer to build: recording dashboard (big OBD and GPS speed, OBD Hz, motion Hz, elapsed, file size, Start/Stop/Mark), pre-drive checklist + 5 s still calibration, sessions list (share/delete), ELM debug console (manual AT / mode 01 only). Previews for every screen. Simulator build + app tests must pass. Reviewer, fix, commit, tag logger-v1-rc1.
+Use ios-ui-engineer to build: recording dashboard (big OBD and GPS speed, OBD Hz, motion Hz, elapsed, file size, Start/Stop/Mark), pre-drive checklist + 5 s still calibration, sessions list (share/delete), ELM debug console (manual commands limited to ATI, AT@1, ATDP, ATDPN, ATRV and mode 01 — `ELMCommandPolicy` `.manual`; it must handle `ELMSessionError.desynchronised` by offering a re-initialise). Previews for every screen. Simulator build + app tests must pass. Reviewer, fix, commit, tag logger-v1-rc1.
 ```
 
 ## M4 - Bench test in the parked car (you + main session)

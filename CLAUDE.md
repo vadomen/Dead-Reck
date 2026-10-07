@@ -70,6 +70,13 @@ cd Core && swift test --filter OBDDecoderTests/decodesEngineSpeed
 cd Core && swift test --filter OBDDecoderTests
 ```
 
+Summarise a recording (header, rates, gaps, OBD latency, damage; `--csv <dir>`
+exports one CSV per kind). Recordings live outside the repo — never commit one:
+
+```bash
+cd Core && swift run -c release inspect_log <file.jsonl.gz> [--csv <dir>] [--strict]
+```
+
 Build the app for the simulator:
 
 ```bash
@@ -224,7 +231,11 @@ multi-hundred-megabyte drive.
   pair. Keep one per reader or writer, inside whatever actor owns the file handle.
 - ELM327 adapter status strings (`NO DATA`, `UNABLE TO CONNECT`) are protocol,
   not transport noise. `NO DATA` is the normal answer for a PID a vehicle doesn't
-  implement; record it and stop polling that PID rather than retrying forever.
+  implement: record it, and stop polling that PID rather than retrying forever —
+  **but only if the PID has never answered successfully in this session**. A PID
+  that has answered OK is never dropped; its `NO DATA` is a transient failure
+  (retry → re-init → reconnect), so one CAN glitch can't lose vehicle speed for
+  the rest of a drive. See `ELMSession` and `docs/LOG_FORMAT.md`.
 - When splitting adapter text on line endings, split the **unicode scalar** view.
   Swift treats `\r\n` as a single `Character`, so a `Character`-level separator
   never matches it and lines come back with `\r\n` still attached.

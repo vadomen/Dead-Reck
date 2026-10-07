@@ -13,7 +13,10 @@
 ///   successful poll exchanges, however many `obd` rows (PIDs × ECUs) each
 ///   produced.
 /// - `motionHz`: `motion` rows per second.
-/// - `timeouts`: `elm` rows with outcome `timeout`, any phase.
+/// - `timeouts`: `elm` rows with outcome `timeout` and no `rx`, any phase —
+///   one per command that timed out. Late rows (a reply that arrived after
+///   its command timed out) and unsolicited rows also use outcome `timeout`
+///   but carry `rx`; counting them would count one timeout twice.
 /// - `gaps` / `maxGapMs`: for `motion`, `accel` and `gyro`, the intervals
 ///   between consecutive samples **in timestamp order**. The window's samples
 ///   are sorted together with the stream's latest sample from earlier
@@ -58,7 +61,7 @@ public struct StatsAccumulator: Sendable {
         case .motion, .accelerometer, .gyroscope:
             samples[kind, default: []].append(event.timestamp.nanoseconds)
         case .elm(let exchange):
-            if exchange.outcome == ELMOutcome.timeout.rawValue {
+            if exchange.outcome == ELMOutcome.timeout.rawValue, exchange.rx == nil {
                 timeouts += 1
             } else if exchange.outcome == ELMOutcome.ok.rawValue, exchange.phase == ELMPhase.poll.rawValue {
                 pollOK += 1
