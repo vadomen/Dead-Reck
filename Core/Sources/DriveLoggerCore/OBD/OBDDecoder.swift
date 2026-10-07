@@ -64,8 +64,37 @@ extension OBDDecoder {
     /// that PID's `payloadByteCount` bytes. Only the PIDs in `requested` are
     /// accepted, in any order; an unknown or unrequested PID is an error,
     /// because its length — and so everything after it — would be a guess.
+    ///
+    /// An ECU may answer only the subset it supports, so a missing PID is not
+    /// an error; results are in reply order. Once every requested PID has been
+    /// read, remaining bytes are padding and ignored. A repeated PID is an
+    /// error. `unexpectedPID.expected` is the first requested PID not yet seen.
     public static func decode(requested: [OBDPID], bytes: [UInt8]) throws -> [OBDMeasurement] {
-        fatalError("M1: OBDDecoder.decode(requested:bytes:)")
+        guard bytes.count >= 2 else {
+            throw ELM327Error.truncatedFrame(expected: 2, actual: bytes.count)
+        }
+        guard bytes[0] == 0x41 else {
+            throw ELM327Error.unexpectedMode(expected: 0x41, actual: bytes[0])
+        }
+
+        var measurements: [OBDMeasurement] = []
+        var seen: Set<OBDPID> = []
+        var index = 1
+        while index < bytes.count, seen.count < Set(requested).count {
+            let pidByte = bytes[index]
+            guard let pid = OBDPID(rawValue: pidByte), requested.contains(pid), !seen.contains(pid) else {
+                let expected = requested.first { !seen.contains($0) } ?? requested.first
+                throw ELM327Error.unexpectedPID(expected: expected?.rawValue ?? 0, actual: pidByte)
+            }
+            let payload = Array(bytes[(index + 1)...].prefix(pid.payloadByteCount))
+            guard payload.count == pid.payloadByteCount else {
+                throw ELM327Error.truncatedFrame(expected: pid.payloadByteCount, actual: payload.count)
+            }
+            measurements.append(try decode(pid: pid, payload: payload))
+            seen.insert(pid)
+            index += 1 + pid.payloadByteCount
+        }
+        return measurements
     }
 }
 

@@ -78,6 +78,17 @@ struct OBDDecoderTests {
         }
     }
 
+    @Test("Spec formulas: 0x0D is A km/h, 0x0C is (256A+B)/4 rpm")
+    func specFormulas() throws {
+        for a in [0, 1, 0x3C, 0xFF] {
+            #expect(try OBDDecoder.decode(pid: .vehicleSpeed, payload: [UInt8(a)]).value == Double(a))
+        }
+        for (a, b) in [(0, 0), (0x0B, 0xB8), (0x1A, 0xF8), (0xFF, 0xFF)] {
+            let expected = (256.0 * Double(a) + Double(b)) / 4.0
+            #expect(try OBDDecoder.decode(pid: .engineSpeed, payload: [UInt8(a), UInt8(b)]).value == expected)
+        }
+    }
+
     @Test("Every PID declares a payload length and a unit")
     func everyPIDIsDescribed() {
         // Catches a PID case added without a matching decode rule: the switch in
@@ -91,5 +102,97 @@ struct OBDDecoderTests {
                 #expect(measurement.unit == pid.unit)
             }
         }
+    }
+}
+
+@Suite("OBDDecoder multi-PID")
+struct OBDDecoderMultiPIDTests {
+    @Test("Speed and RPM in one answer: 41 0D 3C 0C 1A F8")
+    func speedAndRPM() throws {
+        let measurements = try OBDDecoder.decode(
+            requested: [.vehicleSpeed, .engineSpeed],
+            bytes: [0x41, 0x0D, 0x3C, 0x0C, 0x1A, 0xF8]
+        )
+        #expect(measurements == [
+            OBDMeasurement(pid: .vehicleSpeed, value: 60, unit: .kilometersPerHour),
+            OBDMeasurement(pid: .engineSpeed, value: 1_726, unit: .revolutionsPerMinute),
+        ])
+    }
+
+    @Test("PIDs may come back in any order; results follow the reply")
+    func anyOrder() throws {
+        let measurements = try OBDDecoder.decode(
+            requested: [.vehicleSpeed, .engineSpeed],
+            bytes: [0x41, 0x0C, 0x1A, 0xF8, 0x0D, 0x3C]
+        )
+        #expect(measurements.map(\.pid) == [.engineSpeed, .vehicleSpeed])
+        #expect(measurements.map(\.value) == [1_726, 60])
+    }
+
+    @Test("An ECU may answer only the PIDs it supports")
+    func subset() throws {
+        let measurements = try OBDDecoder.decode(requested: [.vehicleSpeed, .engineSpeed], bytes: [0x41, 0x0D, 0x3C])
+        #expect(measurements == [OBDMeasurement(pid: .vehicleSpeed, value: 60, unit: .kilometersPerHour)])
+    }
+
+    @Test("A single-PID answer decodes through the same path")
+    func single() throws {
+        #expect(try OBDDecoder.decode(requested: [.vehicleSpeed], bytes: [0x41, 0x0D, 0x00]).map(\.value) == [0])
+    }
+
+    @Test("Bytes after every requested PID are padding")
+    func trailingPadding() throws {
+        let measurements = try OBDDecoder.decode(requested: [.vehicleSpeed], bytes: [0x41, 0x0D, 0x3C, 0x00, 0x00])
+        #expect(measurements.count == 1)
+    }
+
+    @Test("An unrequested PID is rejected: its length would be a guess")
+    func unrequested() {
+        #expect(throws: ELM327Error.unexpectedPID(expected: 0x0C, actual: 0x11)) {
+            try OBDDecoder.decode(requested: [.vehicleSpeed, .engineSpeed], bytes: [0x41, 0x0D, 0x3C, 0x11, 0x80])
+        }
+    }
+
+    @Test("A PID unknown to the table is rejected")
+    func unknown() {
+        #expect(throws: ELM327Error.unexpectedPID(expected: 0x0D, actual: 0x42)) {
+            try OBDDecoder.decode(requested: [.vehicleSpeed], bytes: [0x41, 0x42, 0x30, 0xD4])
+        }
+    }
+
+    @Test("A repeated PID is rejected")
+    func repeated() {
+        #expect(throws: ELM327Error.unexpectedPID(expected: 0x0C, actual: 0x0D)) {
+            try OBDDecoder.decode(requested: [.vehicleSpeed, .engineSpeed], bytes: [0x41, 0x0D, 0x3C, 0x0D, 0x3C])
+        }
+    }
+
+    @Test("A PID cut short is truncated, not a low value")
+    func truncated() {
+        #expect(throws: ELM327Error.truncatedFrame(expected: 2, actual: 1)) {
+            try OBDDecoder.decode(requested: [.vehicleSpeed, .engineSpeed], bytes: [0x41, 0x0D, 0x3C, 0x0C, 0x1A])
+        }
+    }
+
+    @Test("A different service is rejected")
+    func wrongMode() {
+        #expect(throws: ELM327Error.unexpectedMode(expected: 0x41, actual: 0x7F)) {
+            try OBDDecoder.decode(requested: [.vehicleSpeed], bytes: [0x7F, 0x01, 0x12])
+        }
+    }
+
+    @Test("A reply with no PID at all is truncated")
+    func noPID() {
+        #expect(throws: ELM327Error.truncatedFrame(expected: 2, actual: 1)) {
+            try OBDDecoder.decode(requested: [.vehicleSpeed], bytes: [0x41])
+        }
+    }
+
+    @Test("Parser and decoder end to end on a header-on multi-PID reply")
+    func endToEnd() throws {
+        let replies = try ELM327ResponseParser.replies(in: "7E806410D3C0C1AF8\r\r", headers: true)
+        let measurements = try OBDDecoder.decode(requested: [.vehicleSpeed, .engineSpeed], bytes: replies[0].bytes)
+        #expect(replies[0].header == "7E8")
+        #expect(measurements.map(\.value) == [60, 1_726])
     }
 }
