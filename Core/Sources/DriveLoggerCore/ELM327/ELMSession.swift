@@ -69,18 +69,34 @@ import Foundation
 /// - Before sending anything while prompts are owed, the session waits up to
 ///   `latePromptGrace` for them. If they don't come they are written off: a
 ///   `.state` event with `from == to` and a reason starting `no prompt for`
-///   records it, partial text received so far becomes a late row, and the
-///   next command goes out. `ATZ` always starts from a clean framer and an
-///   empty FIFO.
+///   records it, and the link counts as **desynchronised**, because their
+///   replies may still arrive.
+/// - **Resync.** Before the next command (other than `ATZ`) goes out on a
+///   desynchronised link, the session sends `ATRV` and accepts only a
+///   voltage-shaped reply (e.g. `12.4V`; no data reply has that shape).
+///   Every reply before it is a late row for the written-off commands, in
+///   order, or unsolicited — it never resolves a command. The voltage reply
+///   is recorded as an ordinary `ATRV` exchange (phase of the command it
+///   precedes), and the link is trusted again. If the sync times out it gets
+///   its own grace for a late voltage. If none comes, a note (`from == to`,
+///   reason starting `no voltage reply to the ATRV sync`) records it.
+///   - While polling, the session then re-initialises via `ATZ` at once,
+///     through the normal re-init budget and backoff. A wedged adapter still
+///     ends in `failed` + `needsReconnect`.
+///   - A manual command or `initialise()` gets `.timeout(command: "ATRV")`.
+/// - `ATZ` always starts from a clean framer, an empty FIFO and a trusted
+///   link.
 /// - Output nobody asked for (buffered at connect, or anything while nothing
 ///   is owed or in flight) is recorded as a `timeout` exchange with `rx` and
 ///   an empty `tx`.
 /// - `ATZ` prefers a reply containing `ELM` as its banner, so a stale reply
 ///   can't pass for it. Other replies that arrive after `ATZ` was sent are
 ///   held. When an `ELM` reply comes they are recorded as unsolicited. If
-///   `resetTimeout` passes without one, the **last** held reply that isn't
-///   just status lines (`?`, `NO DATA`, …) becomes the banner (stamped when it
-///   arrived), the earlier ones are recorded as unsolicited, and a `.state`
+///   `resetTimeout` passes without one, the **last** held reply that looks
+///   like a banner — letters and digits, not all hex (a CAN frame, `A6`),
+///   not `OK`, not a voltage, no status lines — becomes the banner (stamped
+///   when it arrived), the earlier ones are recorded as unsolicited, and a
+///   `.state`
 ///   note (`from == to`) says `ATZ banner without 'ELM': <banner>`. Some
 ///   clones call themselves e.g. `OBDII v1.5`. Init fails at `ATZ` only if
 ///   nothing usable arrived.
@@ -142,8 +158,9 @@ public actor ELMSession {
         let token: UInt64
         let wire: String
         let phase: ELMPhase
-        /// `ATZ`: a reply containing `ELM` is preferred as its answer.
-        let requiresBanner: Bool
+        /// Which replies may resolve this command.
+        let acceptance: Acceptance
+        var requiresBanner: Bool { acceptance == .banner }
         /// `ATZ`: usable replies without `ELM`, held in arrival order until
         /// an `ELM` reply or the timeout decides.
         var bannerCandidates: [ELMRawReply] = []
@@ -152,6 +169,15 @@ public actor ELMSession {
         var resolution: Resolution?
         var continuation: CheckedContinuation<Resolution, Never>?
         var timeoutTask: Task<Void, Never>?
+    }
+
+    private enum Acceptance {
+        /// The first reply (the normal case).
+        case any
+        /// `ATZ`: prefer a reply containing `ELM`; see the type's doc.
+        case banner
+        /// The `ATRV` sync after a write-off: only a voltage-shaped reply.
+        case voltage
     }
 
     private enum Resolution: Sendable {
@@ -165,6 +191,9 @@ public actor ELMSession {
         var tx: String
         var phase: ELMPhase
         var requestUptime: Double
+        /// The in-flight token it was sent under, so a `requestUptime` learnt
+        /// after a timeout can be filled in.
+        var token: UInt64?
     }
 
     private var framer = ELMFramer()
@@ -179,6 +208,16 @@ public actor ELMSession {
     /// Commands that timed out and still owe a `>`, oldest first.
     private var owedPrompts: [SentCommand] = []
     private var owedWaiter: (token: UInt64, continuation: CheckedContinuation<Bool, Never>, timer: Task<Void, Never>)?
+    /// After a write-off, replies can't be trusted until a voltage-shaped
+    /// reply to the `ATRV` sync proves the stream is aligned again.
+    private var desynchronised = false
+    /// Written-off commands whose replies may still come; while
+    /// desynchronised, non-voltage replies are paid to them in order.
+    private var writtenOff: [SentCommand] = []
+    /// The sync `ATRV` after it timed out; a late voltage still resyncs.
+    private var syncOwed: SentCommand?
+    /// The plan last announced in an `.adapter` event.
+    private var announcedPlan: PollingPlan?
 
     // MARK: Adapter state
 
@@ -245,6 +284,9 @@ public actor ELMSession {
         self.plan = plan
         activePIDs = plan.pids
         multiPIDActive = plan.multiPID
+        // The log must say what is polled: announce a plan other than the
+        // one `initialise()` (or the last change) reported.
+        if currentPlan != announcedPlan { emitCurrentAdapterInfo() }
         stopRequested = false
         consecutiveFailures = 0
         reinitsWithoutSuccess = 0
@@ -336,6 +378,7 @@ public actor ELMSession {
             }
             let info = Self.adapterInfo(found, plan: plan)
             initialised = true
+            announcedPlan = plan
             continuation.yield(.adapter(info, uptime: uptime.uptimeSeconds))
             setState(.ready, reason: nil)
             return info
@@ -456,8 +499,10 @@ public actor ELMSession {
     /// PIDs, `latency(all)` for multi-PID. A combination counts only if every
     /// sample parses and the primary ECU (`7E8`) answered every PID. Ties keep
     /// the earlier, more conservative combination. A PID answering `NO DATA`
-    /// to the plain single request is left out. Leaves the adapter at the
-    /// chosen timing level.
+    /// to the plain single request is left out only under the NO DATA rule
+    /// (it has never answered OK in this session, earlier samples and earlier
+    /// `initialise()` calls included); otherwise that combination is just
+    /// invalid. Leaves the adapter at the chosen timing level.
     private func probe() async throws(ELMSessionError) -> PollingPlan {
         var supported = PollingPlan.baseline.pids
         let rpmEvery = PollingPlan.baseline.rpmEvery
@@ -471,9 +516,12 @@ public actor ELMSession {
                     switch try await measure(.currentDataMany([pid], responseCount: responseCount), pids: [pid]) {
                     case .valid(let latency):
                         latencies[pid] = latency
-                    case .noData where level == 1 && responseCount == nil:
+                    case .noData where level == 1 && responseCount == nil && isDroppableOnNoData(pid):
+                        // The one NO DATA rule: never answered OK → drop.
                         supported.removeAll { $0 == pid }
                     case .noData, .invalid:
+                        // A PID that has answered OK keeps its place; this
+                        // combination just doesn't count.
                         break
                     }
                 }
@@ -568,6 +616,8 @@ public actor ELMSession {
         case success
         case noData
         case failure(String)
+        /// The ATRV sync after a write-off got no voltage: re-init now.
+        case resyncFailed
         case ended
     }
 
@@ -594,6 +644,11 @@ public actor ELMSession {
                         break attempts
                     case .failure(let reason):
                         guard await escalate(after: reason) else { break cycles }
+                    case .resyncFailed:
+                        // Straight to re-init (ATZ: clean framer, empty FIFO,
+                        // banner rule), through the normal budget and backoff.
+                        consecutiveFailures = max(consecutiveFailures, configuration.failuresBeforeReinit - 1)
+                        guard await escalate(after: "ATRV sync failed after a written-off prompt") else { break cycles }
                     case .ended:
                         break cycles
                     }
@@ -694,6 +749,7 @@ public actor ELMSession {
     /// no PID is left (the `.state` change to `ready` says so).
     private func emitCurrentAdapterInfo() {
         guard let adapterFacts, let plan = currentPlan, !plan.pids.isEmpty else { return }
+        announcedPlan = plan
         continuation.yield(.adapter(Self.adapterInfo(adapterFacts, plan: plan), uptime: uptime.uptimeSeconds))
     }
 
@@ -710,6 +766,8 @@ public actor ELMSession {
         switch error {
         case .forbiddenCommand, .cancelled:
             return .ended
+        case .timeout:
+            return .resyncFailed
         case .transport where transportClosed || isShutdown:
             return .ended
         case .transport(let transportError):
@@ -857,9 +915,14 @@ public actor ELMSession {
         try checkOpen()
         if phase == .poll, stopRequested { throw .cancelled }
         let isReset = command.wire == ELM327Command.reset.wireFormat
-        if isReset { startFromCleanSlate() }
+        if isReset {
+            startFromCleanSlate()
+        } else if desynchronised {
+            try await resynchronise(phase: phase)
+            if phase == .poll, stopRequested { throw .cancelled }
+        }
         let (requestUptime, resolution) = try await transact(
-            command, phase: phase, timeout: timeout, requiresBanner: isReset
+            command, phase: phase, timeout: timeout, acceptance: isReset ? .banner : .any
         )
         switch resolution {
         case .reply(let reply):
@@ -882,8 +945,8 @@ public actor ELMSession {
                 completedUptime: firedUptime,
                 outcome: .timeout
             )
-            // The adapter still owes this command a prompt.
-            owedPrompts.append(SentCommand(tx: command.wire, phase: phase, requestUptime: requestUptime))
+            // `timeoutFired` already recorded that the adapter owes this
+            // command a prompt, in the same step that took it off the wire.
             return (exchange, nil)
         case .closed:
             throw .transport(.disconnected(nil))
@@ -896,7 +959,7 @@ public actor ELMSession {
         _ command: ValidatedELMCommand,
         phase: ELMPhase,
         timeout: Duration,
-        requiresBanner: Bool
+        acceptance: Acceptance
     ) async throws(ELMSessionError) -> (requestUptime: Double, resolution: Resolution) {
         try checkOpen()
         startReaderIfNeeded()
@@ -905,7 +968,7 @@ public actor ELMSession {
         // The deadline is fixed before the write, so a slow write counts
         // against the timeout too.
         let wait = clock.sleeper(untilAfter: timeout)
-        var flight = InFlight(token: token, wire: command.wire, phase: phase, requiresBanner: requiresBanner)
+        var flight = InFlight(token: token, wire: command.wire, phase: phase, acceptance: acceptance)
         flight.timeoutTask = Task { [weak self] in
             do {
                 try await wait()
@@ -925,8 +988,13 @@ public actor ELMSession {
             if transportClosed { throw .transport(.disconnected(nil)) }
             throw .transport(error as? ELMTransportError ?? .writeFailed(String(describing: error)))
         }
-        lastSent = SentCommand(tx: command.wire, phase: phase, requestUptime: requestUptime)
+        lastSent = SentCommand(tx: command.wire, phase: phase, requestUptime: requestUptime, token: token)
         if inFlight?.token == token { inFlight?.requestUptime = requestUptime }
+        // Timed out while the write was still going: fix up the owed entry.
+        if let index = owedPrompts.firstIndex(where: { $0.token == token }) {
+            owedPrompts[index].requestUptime = requestUptime
+        }
+        if syncOwed?.token == token { syncOwed?.requestUptime = requestUptime }
 
         // The reply (or the timeout) may already be in: a zero-latency
         // transport answers before `send` returns.
@@ -973,7 +1041,18 @@ public actor ELMSession {
             resolve(token, with: .reply(banner))
             return
         }
-        resolve(token, with: .timedOut(uptime: uptime.uptimeSeconds))
+        // Record the owed prompt in the same actor step that takes the
+        // command off the wire: no reply can be processed in between, so a
+        // reply landing together with the timeout is always paid as late,
+        // never mistaken for unsolicited output.
+        let now = uptime.uptimeSeconds
+        let owed = SentCommand(tx: flight.wire, phase: flight.phase, requestUptime: flight.requestUptime ?? now, token: token)
+        if flight.acceptance == .voltage {
+            syncOwed = owed
+        } else {
+            owedPrompts.append(owed)
+        }
+        resolve(token, with: .timedOut(uptime: now))
     }
 
     /// Records the held `ATZ` banner candidates as unsolicited, except the
@@ -989,11 +1068,37 @@ public actor ELMSession {
         return kept
     }
 
-    /// A reply that could be a banner: something besides the echo, and not
-    /// only status lines.
-    private static func isBannerCandidate(_ text: String, command: String) -> Bool {
+    /// A reply that could be a non-`ELM` banner. Its last line (after the
+    /// echo) must look like a banner: letters **and** digits, not all hex (a
+    /// CAN frame, `A6`, `6`), not `OK`, not a voltage; and no line may be a
+    /// status (`?`, `NO DATA`, …). Stale output therefore never qualifies.
+    static func isBannerCandidate(_ text: String, command: String) -> Bool {
         let lines = ELM327ResponseParser.lines(in: text).filter { $0.uppercased() != command.uppercased() }
-        return !lines.isEmpty && lines.allSatisfy { ELM327ResponseParser.error(for: $0) == nil }
+        guard let last = lines.last, lines.allSatisfy({ ELM327ResponseParser.error(for: $0) == nil }) else {
+            return false
+        }
+        let compact = String(last.filter { !$0.isWhitespace })
+        guard compact.contains(where: { $0.isASCII && $0.isLetter }),
+              compact.contains(where: { $0.isASCII && $0.isNumber }) else { return false }
+        if compact.allSatisfy({ $0.isASCII && $0.isHexDigit }) { return false }
+        if compact.uppercased() == "OK" { return false }
+        if isVoltageReply(last) { return false }
+        return true
+    }
+
+    /// The reply to `ATRV`: a number of volts (0–40), with a decimal point or
+    /// a `V` suffix, e.g. `12.4V`. No data reply has this shape: mode 01
+    /// replies always contain hex letters (`41 0D …`, a `7E8` header).
+    static func isVoltageReply(_ text: String) -> Bool {
+        let lines = ELM327ResponseParser.lines(in: text).filter { $0.uppercased() != "ATRV" }
+        guard let last = lines.last, lines.count == 1 else { return false }
+        var compact = String(last.filter { !$0.isWhitespace }).uppercased()
+        let hadSuffix = compact.hasSuffix("V")
+        if hadSuffix { compact.removeLast() }
+        guard hadSuffix || compact.contains("."),
+              compact.allSatisfy({ $0.isASCII && ($0.isNumber || $0 == ".") }),
+              let volts = Double(compact) else { return false }
+        return (0...40).contains(volts)
     }
 
     private func acquireSlot() async throws(ELMSessionError) {
@@ -1047,10 +1152,16 @@ public actor ELMSession {
         }
     }
 
-    /// Pays owed prompts first, then the command in flight; anything else is
-    /// unsolicited.
+    /// While desynchronised, only a voltage-shaped reply to the sync counts;
+    /// everything else is late (written-off commands, in order) or
+    /// unsolicited. Otherwise owed prompts are paid first, then the command
+    /// in flight; anything else is unsolicited.
     private func receive(_ chunk: ELMChunk) {
         for reply in framer.append(chunk) {
+            if desynchronised {
+                receiveWhileDesynchronised(reply)
+                continue
+            }
             if !owedPrompts.isEmpty {
                 let owed = owedPrompts.removeFirst()
                 recordLateReply(owed, text: reply.text, completedUptime: reply.completedUptime)
@@ -1071,6 +1182,81 @@ public actor ELMSession {
                 continue
             }
             recordUnsolicited(text: reply.text, completedUptime: reply.completedUptime)
+        }
+    }
+
+    private func receiveWhileDesynchronised(_ reply: ELMRawReply) {
+        if Self.isVoltageReply(reply.text) {
+            // The sync's own answer, in flight or late: the stream is aligned.
+            if let flight = inFlight, flight.resolution == nil, flight.acceptance == .voltage {
+                resynchronised()
+                resolve(flight.token, with: .reply(reply))
+                return
+            }
+            if let owed = syncOwed {
+                recordLateReply(owed, text: reply.text, completedUptime: reply.completedUptime)
+                resynchronised()
+                finishOwedWait(nil, drained: true)
+                return
+            }
+        }
+        if !writtenOff.isEmpty {
+            recordLateReply(writtenOff.removeFirst(), text: reply.text, completedUptime: reply.completedUptime)
+        } else {
+            recordUnsolicited(text: reply.text, completedUptime: reply.completedUptime)
+        }
+    }
+
+    private func resynchronised() {
+        desynchronised = false
+        writtenOff.removeAll()
+        syncOwed = nil
+    }
+
+    /// After a write-off: sends `ATRV` and accepts only a voltage-shaped
+    /// reply, recording everything before it as late or unsolicited. A
+    /// timed-out sync gets its own grace for a late voltage. If none comes,
+    /// the sync is written off too, noted, and `.timeout(command: "ATRV")` is
+    /// thrown: the poll loop re-initialises (via `ATZ`), counting it against
+    /// the re-init budget; other callers see the error.
+    private func resynchronise(phase: ELMPhase) async throws(ELMSessionError) {
+        let command: ValidatedELMCommand
+        do {
+            command = try ELM327Command.readVoltage.validated()
+        } catch {
+            emitRejection(phase: phase, tx: ELM327Command.readVoltage.wireFormat)
+            setState(.failed, reason: "ATRV sync rejected by the read-only guard: \(error)")
+            throw error
+        }
+        let timeout = configuration.commandTimeout
+        let (requestUptime, resolution) = try await transact(command, phase: phase, timeout: timeout, acceptance: .voltage)
+        switch resolution {
+        case .reply(let reply):
+            emitExchange(
+                phase: phase, tx: command.wire, requestUptime: requestUptime,
+                rx: reply.text, completedUptime: reply.completedUptime, outcome: .ok
+            )
+        case .timedOut(let firedUptime):
+            emitExchange(
+                phase: phase, tx: command.wire, requestUptime: requestUptime,
+                rx: nil, completedUptime: firedUptime, outcome: .timeout
+            )
+            let grace = configuration.effectiveLatePromptGrace
+            if desynchronised, syncOwed != nil {
+                _ = await waitForOwedPrompts(grace)
+            }
+            try checkOpen()
+            guard desynchronised else { return }
+            if let owed = syncOwed {
+                writtenOff.append(owed)
+                syncOwed = nil
+            }
+            noteState(reason: "no voltage reply to the ATRV sync within \(timeout) + \(grace); link not resynchronised")
+            throw .timeout(command: command.wire)
+        case .closed:
+            throw .transport(.disconnected(nil))
+        case .cancelled:
+            throw .cancelled
         }
     }
 
@@ -1141,7 +1327,7 @@ public actor ELMSession {
         framer.reset()
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let now = uptime.uptimeSeconds
-        if let owed = owedPrompts.first {
+        if let owed = owedPrompts.first ?? writtenOff.first {
             recordLateReply(owed, text: text, completedUptime: now)
         } else {
             recordUnsolicited(text: text, completedUptime: now)
@@ -1156,8 +1342,11 @@ public actor ELMSession {
         if await waitForOwedPrompts(grace) { return }
         guard !owedPrompts.isEmpty, !isShutdown, !transportClosed else { return }
         let lost = owedPrompts.map(\.tx).joined(separator: ", ")
-        recordPendingPartialReply()
+        // Their replies may still come: until an ATRV sync proves the
+        // stream aligned, nothing that arrives may resolve a command.
+        writtenOff += owedPrompts
         owedPrompts.removeAll()
+        desynchronised = true
         noteState(reason: "no prompt for \(lost) within \(grace) of its timeout; written off")
     }
 
@@ -1192,6 +1381,7 @@ public actor ELMSession {
     private func startFromCleanSlate() {
         recordPendingPartialReply()
         owedPrompts.removeAll()
+        resynchronised()
     }
 
     // MARK: Events

@@ -195,7 +195,7 @@ struct ELMSessionNoDataRuleTests {
         #expect(polls[2].outcome == .noData)
         #expect(polls[3].outcome == .ok)
         #expect(await harness.log.transitions.contains { $0.to == .retrying && $0.reason == "noData" })
-        #expect(await harness.log.adapterInfos.count == 1, "nothing was dropped")
+        #expect(await harness.log.adapterInfos.allSatisfy { $0.plan.pids.contains(.vehicleSpeed) }, "nothing was dropped")
     }
 
     @Test("A never-OK PID the 0100 bitmask calls unsupported is dropped on NO DATA")
@@ -253,8 +253,10 @@ struct ELMSessionReviewMinorTests {
         let harness = SessionHarness(rules: pacedRules())
         _ = try await harness.initialise()
         try await harness.session.startPolling(singlePlan([.vehicleSpeed, .intakeAirTemperature], rpmEvery: 1))
-        await harness.run { await $0.adapterInfos.count == 2 }
+        // Rows: initialise(), the plan announced at startPolling, the drop.
+        await harness.run { await $0.adapterInfos.count == 3 }
         try await harness.stopPolling()
+        #expect(await harness.log.adapterInfos[1].plan.pids == [.vehicleSpeed, .intakeAirTemperature])
         let latest = try #require(await harness.log.adapterInfos.last)
         #expect(latest.plan.pids == [.vehicleSpeed])
         #expect(latest.plan.multiPID == false)
@@ -275,10 +277,13 @@ struct ELMSessionReviewMinorTests {
         try await harness.session.startPolling(plan)
         await harness.run { await $0.readings.count >= 1 }
         try await harness.stopPolling()
+        // Rows: initialise(), the plan announced at startPolling, the
+        // fallback, the re-init.
         let infos = await harness.log.adapterInfos
-        #expect(infos.count >= 3)
-        #expect(infos[1].plan.multiPID == false)
-        #expect(infos[1].plan.pids == [.vehicleSpeed, .intakeAirTemperature])
+        #expect(infos.count >= 4)
+        #expect(infos[1].plan == plan)
+        #expect(infos[2].plan.multiPID == false)
+        #expect(infos[2].plan.pids == [.vehicleSpeed, .intakeAirTemperature])
         // After the re-init (3 timeouts on 010D) the row reports the singles plan.
         #expect(infos.last?.plan.multiPID == false)
     }

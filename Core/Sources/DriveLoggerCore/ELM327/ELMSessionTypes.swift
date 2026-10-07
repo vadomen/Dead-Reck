@@ -12,7 +12,11 @@ public enum ELMSessionError: Error, Hashable, Sendable {
     /// A `PollingPlan` field is out of range (`PollingPlan.validate()`);
     /// nothing was sent.
     case invalidPlan(String)
-    /// No `>` prompt within the command's timeout.
+    /// The link could not be resynchronised: after a written-off prompt, the
+    /// `ATRV` sync (`command`) got no voltage reply within its timeout and
+    /// grace. The poll loop handles it by re-initialising; a manual command
+    /// or `initialise()` caller sees it. An ordinary command timeout is not
+    /// an error: it is an exchange with outcome `timeout`.
     case timeout(command: String)
     /// An init step failed; `step` is the command that failed.
     case initFailed(step: String, reason: String)
@@ -81,6 +85,11 @@ public struct ELMExchange: Hashable, Sendable {
     /// Increasing across the whole recording, reconnects included: a new
     /// session continues from the previous one's `nextSeq` (see
     /// `ELMSession.init(firstSeq:)`).
+    ///
+    /// `seq` is **emission** order, not arrival order. Rows held while
+    /// waiting for the `ATZ` banner (non-`ELM` replies, written once the
+    /// banner is decided) may have an earlier `completedUptime` than rows
+    /// emitted before them. Sort by `completedUptime` for arrival order.
     public var seq: Int
     public var phase: ELMPhase
     /// Command as sent, without the carriage return: printable ASCII,

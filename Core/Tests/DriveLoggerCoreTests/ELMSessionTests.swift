@@ -412,9 +412,12 @@ struct ELMSessionPollingTests {
         try await harness.stopPolling()
 
         let sent = await harness.mock.sentCommands
-        #expect(Array(sent.prefix(22)) == handshakeWires + ["010D", "010D", "010D"] + handshakeWires + ["010D"])
+        // Each timed-out 010D is written off, so the retry is preceded by an
+        // ATRV sync; ATZ needs none (it starts from a clean slate).
+        #expect(Array(sent.prefix(24)) == handshakeWires + ["010D", "ATRV", "010D", "ATRV", "010D"] + handshakeWires + ["010D"])
         #expect(await harness.log.states.contains(.reinitialising))
-        #expect(await harness.log.adapterInfos.count == 2)
+        // initialise(), startPolling with a plan other than info.plan, re-init.
+        #expect(await harness.log.adapterInfos.count == 3)
         let reinitExchanges = await harness.log.exchanges.filter { $0.phase == .initialisation }
         #expect(reinitExchanges.count == 18)
         #expect(await harness.log.reconnectRequests == 0)
@@ -531,8 +534,8 @@ struct ELMSessionPollingTests {
         await harness.run { await $0.readings.count >= 1 }
         try await harness.stopPolling()
         let sent = Array(await harness.mock.sentCommands.dropFirst(9))
-        #expect(Array(sent.prefix(4)) == ["ATAT2", "010D", "010D", "010D"])
-        #expect(Array(sent.dropFirst(4).prefix(11)) == handshakeWires + ["ATAT2", "010D"])
+        #expect(Array(sent.prefix(6)) == ["ATAT2", "010D", "ATRV", "010D", "ATRV", "010D"])
+        #expect(Array(sent.dropFirst(6).prefix(11)) == handshakeWires + ["ATAT2", "010D"])
     }
 }
 
