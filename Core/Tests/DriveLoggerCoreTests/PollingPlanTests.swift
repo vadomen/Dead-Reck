@@ -89,6 +89,11 @@ struct PollingPlanTests {
 
     @Test("An empty plan's primaryCommand fails validation instead of trapping")
     func emptyPlan() {
-        #expect(throws: ELMSessionError.self) { try Self.plan(pids: []).primaryCommand.validated() }
+        let empty = Self.plan(pids: [])
+        #expect(empty.primaryCommand == .currentDataMany([], responseCount: nil))
+        #expect(empty.primaryCommand.wireFormat == "01")
+        #expect(throws: ELMSessionError.self) { try empty.primaryCommand.validated() }
+        #expect(throws: ELMSessionError.invalidPlan("0 PIDs; 1-6 allowed")) { try empty.validate() }
+        #expect(throws: ELMSessionError.self) { try Self.plan(pids: [], responseCount: 1).primaryCommand.validated() }
     }
 }

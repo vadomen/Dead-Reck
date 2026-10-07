@@ -151,8 +151,17 @@ func drive<T: Sendable>(
         return try await work()
     }
     let finished = await driveUntil(clock, step: step, limit: limit) { done.isSet }
-    if !finished { task.cancel() }
+    guard finished else {
+        // Don't await work that may ignore cancellation: fail, never hang.
+        task.cancel()
+        throw DriveTimeout(limit: limit)
+    }
     return try await task.value
+}
+
+struct DriveTimeout: Error, CustomStringConvertible {
+    var limit: Duration
+    var description: String { "work did not finish within \(limit) of virtual time" }
 }
 
 final class DoneFlag: Sendable {
