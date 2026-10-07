@@ -121,6 +121,21 @@ public actor MockELMAdapter: ELMTransport {
         return received
     }
 
+    /// Simulates output nobody asked for — what an adapter may still have
+    /// buffered at connect, or a reply to a command sent before this
+    /// session. Delivered immediately as one chunk, behind any pending reply.
+    public func emitUnsolicited(_ text: String) {
+        let fragments = [Data(text.utf8)]
+        guard let previous = lastDelivery else {
+            deliver(fragments)
+            return
+        }
+        lastDelivery = Task {
+            await previous.value
+            self.deliver(fragments)
+        }
+    }
+
     /// Simulates the adapter being unplugged: finishes `incoming`. Replies
     /// still pending are dropped and later sends throw `.notConnected`.
     public func disconnect() {
