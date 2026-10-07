@@ -294,6 +294,14 @@ public struct ELMSessionConfiguration: Hashable, Sendable {
     public var retryDelay: Duration
     /// Pause before re-init attempt `n` (1-based): `reinitBackoff × 2^(n−1)`.
     public var reinitBackoff: Duration
+    /// After a timeout, how long to wait for the late `>` before sending the
+    /// next command; nil = `commandTimeout`. See `ELMSession`.
+    public var latePromptGrace: Duration?
+
+    /// `latePromptGrace`, or `commandTimeout` if unset.
+    public var effectiveLatePromptGrace: Duration {
+        latePromptGrace ?? commandTimeout
+    }
 
     public init(
         commandTimeout: Duration = .seconds(1),
@@ -304,8 +312,10 @@ public struct ELMSessionConfiguration: Hashable, Sendable {
         probe: Bool = true,
         rateWindow: Duration = .seconds(10),
         retryDelay: Duration = .milliseconds(100),
-        reinitBackoff: Duration = .seconds(1)
+        reinitBackoff: Duration = .seconds(1),
+        latePromptGrace: Duration? = nil
     ) {
+        self.latePromptGrace = latePromptGrace
         self.commandTimeout = commandTimeout
         self.resetTimeout = resetTimeout
         self.searchTimeout = searchTimeout

@@ -29,27 +29,61 @@ import Foundation
 /// any ─transport closes→ failed;  any ─shutdown()→ idle
 /// ```
 ///
-/// - A poll **failure** is any outcome other than `ok` and `noData`
-///   (timeout, `?`, `CAN ERROR`, malformed, …) or a failed write. Failures
-///   are retried after `retryDelay`; the `failuresBeforeReinit`-th
-///   consecutive one re-runs the handshake (after `reinitBackoff × 2^(n−1)`
-///   for attempt `n`), then retries the command.
+/// - A poll **failure** is any outcome other than `ok` (and other than a
+///   droppable `NO DATA`, below): timeout, `?`, `CAN ERROR`, malformed, …,
+///   or a failed write. Failures are retried after `retryDelay`; the
+///   `failuresBeforeReinit`-th consecutive one re-runs the handshake (after
+///   `reinitBackoff × 2^(n−1)` for attempt `n`), then retries the command.
 /// - A re-init "fails" if a handshake step fails, or if polling fails
 ///   `failuresBeforeReinit` times again before any poll succeeds. After
 ///   `reinitsBeforeReconnect` of those the session goes to `failed`, emits
 ///   `needsReconnect` once and sends nothing more.
-/// - `NO DATA` is not a failure: the vehicle doesn't implement that PID. It
-///   is recorded and the PID is dropped from polling (a multi-PID request
-///   answering `NO DATA` falls back to single PIDs first). When no PID is
-///   left, polling ends in `ready`.
+///
+/// ## NO DATA
+///
+/// Every `NO DATA` is recorded as an `elm` row with outcome `noData`. What
+/// happens next depends on the PID's history in this session:
+/// - A PID that has **never** answered OK (poll or probe), or that the
+///   `0100` bitmask says is unsupported (when the bitmask covers it), is
+///   dropped: the vehicle doesn't implement it. When no PID is left, polling
+///   ends in `ready`.
+/// - A PID that **has** answered OK is never dropped. Its `NO DATA` is a
+///   failure like a timeout: retry → re-init → `failed` + `needsReconnect`,
+///   with the same backoff. One transient `NO DATA` must not cost the speed
+///   signal for the rest of the drive.
+/// - A multi-PID request answering `NO DATA` falls back to single PIDs, but
+///   only if that exact request has never answered OK; otherwise it is a
+///   failure too.
+/// Whenever the combination actually polled changes (a PID dropped, the
+/// multi-PID fallback, a re-init), `.adapter` is emitted again with the plan
+/// now in use, so the log always says what is being polled.
+///
+/// ## Replies, prompts and timeouts
+///
+/// - A command that times out still owes a `>`. Owed prompts are kept in a
+///   FIFO and paid first: the next reply belongs to the oldest owed command,
+///   not to whatever is in flight. It becomes an extra exchange with outcome
+///   `timeout` **and** `rx`, attributed to the owed command (its `tx`,
+///   `phase`, `requestUptime`), with its own `seq`, and produces no
+///   readings.
+/// - Before sending anything while prompts are owed, the session waits up to
+///   `latePromptGrace` for them. If they don't come they are written off: a
+///   `.state` event with `from == to` and a reason starting `no prompt for`
+///   records it, partial text received so far becomes a late row, and the
+///   next command goes out. `ATZ` always starts from a clean framer and an
+///   empty FIFO.
+/// - Output nobody asked for (buffered at connect, or anything while nothing
+///   is owed or in flight) is recorded as a `timeout` exchange with `rx` and
+///   an empty `tx`. While `ATZ` is in flight, replies that don't contain
+///   `ELM` are treated the same way, so a stale reply can't pass as the
+///   banner; the banner is still bounded by `resetTimeout`.
+/// - A command still in flight when the session shuts down or the link
+///   drops gets a final exchange: outcome `timeout`, no `rx`, completed at
+///   that moment.
 /// - A session-originated command that fails `validated()` (R1-8; cannot
 ///   happen with a validated plan, but defended anyway) becomes a `rejected`
 ///   exchange with `tx = wireFormat`, then `failed` with a reason. It is never
 ///   retried and does not request a reconnect.
-/// - A reply that completes when no command is waiting for it — it arrived
-///   after its command timed out — is recorded as an extra `timeout`
-///   exchange **with** `rx`, attributed to the most recently sent command,
-///   with its own `seq`. It never produces readings.
 public actor ELMSession {
     /// Single consumer. Finishes after `shutdown()` or when the transport's
     /// stream finishes.
@@ -81,6 +115,9 @@ public actor ELMSession {
         self.clock = clock
         self.nextSeq = firstSeq
         (events, continuation) = AsyncStream.makeStream(of: ELMSessionEvent.self)
+        // Listen from the start, so output buffered at connect is recorded as
+        // unsolicited instead of being read as the reply to the first command.
+        Task { await self.startReaderIfNeeded() }
     }
 
     public private(set) var state: ELMState = .idle
@@ -96,6 +133,12 @@ public actor ELMSession {
 
     private struct InFlight {
         let token: UInt64
+        let wire: String
+        let phase: ELMPhase
+        /// `ATZ`: only a reply containing `ELM` counts as its answer.
+        let requiresBanner: Bool
+        /// Set once `send` returns.
+        var requestUptime: Double?
         var resolution: Resolution?
         var continuation: CheckedContinuation<Resolution, Never>?
         var timeoutTask: Task<Void, Never>?
@@ -123,12 +166,24 @@ public actor ELMSession {
     private var lastSent: SentCommand?
     private var slotBusy = false
     private var slotWaiters: [CheckedContinuation<Void, Never>] = []
+    /// Commands that timed out and still owe a `>`, oldest first.
+    private var owedPrompts: [SentCommand] = []
+    private var owedWaiter: (token: UInt64, continuation: CheckedContinuation<Bool, Never>, timer: Task<Void, Never>)?
 
     // MARK: Adapter state
 
     private var headersOn = false
     private var adaptiveTimingLevel = 1
     private var initialised = false
+    /// What the last successful handshake found.
+    private var adapterFacts: HandshakeResult?
+    /// PIDs 0x01–0x20 any ECU flags as supported in the last `0100`; nil if
+    /// unknown.
+    private var bitmaskPIDs: Set<UInt8>?
+    /// PIDs that have answered OK (poll or probe) in this session.
+    private var okPIDs: Set<OBDPID> = []
+    /// Mode 01 commands (wire) that have answered OK in this session.
+    private var okCommands: Set<String> = []
     private var initTask: Task<Result<ELMAdapterInfo, ELMSessionError>, Never>?
 
     // MARK: Polling state
@@ -172,6 +227,13 @@ public actor ELMSession {
     public func startPolling(_ plan: PollingPlan) throws(ELMSessionError) {
         try checkOpen()
         try plan.validate()
+        try beginPolling(plan)
+    }
+
+    /// `startPolling` minus `validate()`. Internal so tests can push a plan
+    /// that slips past validation through the poll loop (R1-8 defence).
+    func beginPolling(_ plan: PollingPlan) throws(ELMSessionError) {
+        try checkOpen()
         guard state == .ready, initialised, pollTask == nil else { throw .notInitialised }
         self.plan = plan
         activePIDs = plan.pids
@@ -228,8 +290,9 @@ public actor ELMSession {
         initTask?.cancel()
         rateTask?.cancel()
         rateTask = nil
-        let abandoned = inFlight != nil ? lastSent?.tx : nil
-        if let flight = inFlight { resolve(flight.token, with: .cancelled) }
+        let abandoned = inFlight?.wire
+        abandonInFlight(with: .cancelled)
+        finishOwedWait(nil, drained: false)
         releaseAllWaiters()
         await pollTask?.value
         _ = await initTask?.value
@@ -264,13 +327,7 @@ public actor ELMSession {
             } else {
                 plan = fallbackPlan(pids: PollingPlan.baseline.pids)
             }
-            let info = ELMAdapterInfo(
-                elmVersion: found.banner,
-                protocolNumber: found.protocolNumber,
-                voltage: found.voltage,
-                supportedPIDs: found.supportedPIDs,
-                plan: plan
-            )
+            let info = Self.adapterInfo(found, plan: plan)
             initialised = true
             continuation.yield(.adapter(info, uptime: uptime.uptimeSeconds))
             setState(.ready, reason: nil)
@@ -321,7 +378,9 @@ public actor ELMSession {
             }
             switch value {
             case .banner(let banner): result.banner = banner
-            case .supported: result.supportedPIDs = exchange.rx
+            case .supported:
+                result.supportedPIDs = exchange.rx
+                bitmaskPIDs = exchange.rx.flatMap { Self.supportedPIDBitmask($0, headers: headers) }
             case .protocolNumber(let number): result.protocolNumber = number
             case .voltage(let volts): result.voltage = volts
             case .acknowledged: break
@@ -336,7 +395,33 @@ public actor ELMSession {
                 break
             }
         }
+        adapterFacts = result
         return result
+    }
+
+    /// PIDs 0x01–0x20 flagged by any ECU in a `0100` reply (`41 00 A B C D`,
+    /// bit 7 of A = PID 0x01). Nil if no reply carries a full bitmask.
+    static func supportedPIDBitmask(_ raw: String, headers: Bool) -> Set<UInt8>? {
+        guard let replies = try? ELM327ResponseParser.replies(in: raw, headers: headers) else { return nil }
+        var pids: Set<UInt8>?
+        for reply in replies where reply.bytes.count >= 6 && reply.bytes.starts(with: [0x41, 0x00]) {
+            var found = pids ?? []
+            for index in 0..<32 where reply.bytes[2 + index / 8] & (0x80 >> UInt8(index % 8)) != 0 {
+                found.insert(UInt8(index + 1))
+            }
+            pids = found
+        }
+        return pids
+    }
+
+    private static func adapterInfo(_ found: HandshakeResult, plan: PollingPlan) -> ELMAdapterInfo {
+        ELMAdapterInfo(
+            elmVersion: found.banner,
+            protocolNumber: found.protocolNumber,
+            voltage: found.voltage,
+            supportedPIDs: found.supportedPIDs,
+            plan: plan
+        )
     }
 
     private static func interpretInit(
@@ -459,6 +544,8 @@ public actor ELMSession {
             if exchange.outcome == .noData { return .noData }
             guard let decoded else { return .invalid }
             let fromPrimary = Set(decoded.filter { OBDReading.isPrimaryECU($0.ecu) }.map(\.measurement.pid))
+            okPIDs.formUnion(decoded.map(\.measurement.pid))
+            okCommands.insert(exchange.tx)
             guard fromPrimary.isSuperset(of: pids) else { return .invalid }
             latencies.append(exchange.completedUptime - exchange.requestUptime)
         }
@@ -564,26 +651,60 @@ public actor ELMSession {
                     replyUptime: exchange.completedUptime
                 )))
             }
+            okPIDs.formUnion((decoded ?? []).map(\.measurement.pid))
+            okCommands.insert(exchange.tx)
             successfulPollsInWindow += 1
             consecutiveFailures = 0
             reinitsWithoutSuccess = 0
             if state != .polling { setState(.polling, reason: "recovered") }
             return .success
         case .noData:
-            consecutiveFailures = 0
             let reason: String
             if multiPIDActive, pids.count > 1 {
+                // Once this request has worked, NO DATA is a fault, not a
+                // capability answer.
+                if okCommands.contains(exchange.tx) { return .failure(ELMOutcome.noData.rawValue) }
                 multiPIDActive = false
                 reason = "NO DATA for \(exchange.tx); polling PIDs singly"
             } else {
-                activePIDs.removeAll { pids.contains($0) }
+                let droppable = pids.filter(isDroppableOnNoData)
+                guard !droppable.isEmpty else { return .failure(ELMOutcome.noData.rawValue) }
+                activePIDs.removeAll { droppable.contains($0) }
                 reason = "NO DATA for \(exchange.tx); PID no longer polled"
             }
+            consecutiveFailures = 0
             if state != .polling { setState(.polling, reason: reason) }
+            emitCurrentAdapterInfo()
             return .noData
         default:
             return .failure(exchange.outcome.rawValue)
         }
+    }
+
+    /// The NO DATA rule (see the type's doc): drop a PID that never answered
+    /// OK, or that the `0100` bitmask (when it covers the PID) says is
+    /// unsupported.
+    private func isDroppableOnNoData(_ pid: OBDPID) -> Bool {
+        if !okPIDs.contains(pid) { return true }
+        if let bitmaskPIDs, (0x01...0x20).contains(pid.rawValue) {
+            return !bitmaskPIDs.contains(pid.rawValue)
+        }
+        return false
+    }
+
+    /// The plan as currently polled: active PIDs and multi-PID state.
+    private var currentPlan: PollingPlan? {
+        guard var plan else { return nil }
+        plan.pids = activePIDs
+        plan.multiPID = multiPIDActive
+        return plan
+    }
+
+    /// Re-announces the adapter with the combination now in use. Nothing if
+    /// no PID is left (the `.state` change to `ready` says so).
+    private func emitCurrentAdapterInfo() {
+        guard let adapterFacts, let plan = currentPlan, !plan.pids.isEmpty else { return }
+        continuation.yield(.adapter(Self.adapterInfo(adapterFacts, plan: plan), uptime: uptime.uptimeSeconds))
     }
 
     private func applyPlanTiming(_ level: Int) async -> PollStep {
@@ -633,19 +754,10 @@ public actor ELMSession {
             guard await pause(backoff) else { return false }
             initialised = false
             do {
-                let found = try await runHandshake(tracksStates: false)
+                _ = try await runHandshake(tracksStates: false)
                 initialised = true
                 consecutiveFailures = 0
-                if let plan {
-                    let info = ELMAdapterInfo(
-                        elmVersion: found.banner,
-                        protocolNumber: found.protocolNumber,
-                        voltage: found.voltage,
-                        supportedPIDs: found.supportedPIDs,
-                        plan: plan
-                    )
-                    continuation.yield(.adapter(info, uptime: uptime.uptimeSeconds))
-                }
+                emitCurrentAdapterInfo()
                 setState(.polling, reason: "re-initialised")
                 return true
             } catch {
@@ -748,7 +860,17 @@ public actor ELMSession {
     ) async throws(ELMSessionError) -> (exchange: ELMExchange, value: Value?) {
         try await acquireSlot()
         defer { releaseSlot() }
-        let (requestUptime, resolution) = try await transact(command, phase: phase, timeout: timeout)
+        // stopPolling() may have been called while this poll waited for the
+        // slot behind a manual command: don't let it out.
+        if phase == .poll, stopRequested { throw .cancelled }
+        await settleOwedPrompts()
+        try checkOpen()
+        if phase == .poll, stopRequested { throw .cancelled }
+        let isReset = command.wire == ELM327Command.reset.wireFormat
+        if isReset { startFromCleanSlate() }
+        let (requestUptime, resolution) = try await transact(
+            command, phase: phase, timeout: timeout, requiresBanner: isReset
+        )
         switch resolution {
         case .reply(let reply):
             let (outcome, value) = interpret(reply.text)
@@ -770,6 +892,8 @@ public actor ELMSession {
                 completedUptime: firedUptime,
                 outcome: .timeout
             )
+            // The adapter still owes this command a prompt.
+            owedPrompts.append(SentCommand(tx: command.wire, phase: phase, requestUptime: requestUptime))
             return (exchange, nil)
         case .closed:
             throw .transport(.disconnected(nil))
@@ -781,7 +905,8 @@ public actor ELMSession {
     private func transact(
         _ command: ValidatedELMCommand,
         phase: ELMPhase,
-        timeout: Duration
+        timeout: Duration,
+        requiresBanner: Bool
     ) async throws(ELMSessionError) -> (requestUptime: Double, resolution: Resolution) {
         try checkOpen()
         startReaderIfNeeded()
@@ -790,7 +915,7 @@ public actor ELMSession {
         // The deadline is fixed before the write, so a slow write counts
         // against the timeout too.
         let wait = clock.sleeper(untilAfter: timeout)
-        var flight = InFlight(token: token)
+        var flight = InFlight(token: token, wire: command.wire, phase: phase, requiresBanner: requiresBanner)
         flight.timeoutTask = Task { [weak self] in
             do {
                 try await wait()
@@ -811,6 +936,7 @@ public actor ELMSession {
             throw .transport(error as? ELMTransportError ?? .writeFailed(String(describing: error)))
         }
         lastSent = SentCommand(tx: command.wire, phase: phase, requestUptime: requestUptime)
+        if inFlight?.token == token { inFlight?.requestUptime = requestUptime }
 
         // The reply (or the timeout) may already be in: a zero-latency
         // transport answers before `send` returns.
@@ -905,10 +1031,25 @@ public actor ELMSession {
         }
     }
 
+    /// Pays owed prompts first, then the command in flight; anything else is
+    /// unsolicited.
     private func receive(_ chunk: ELMChunk) {
         for reply in framer.append(chunk) {
-            if let flight = inFlight, resolve(flight.token, with: .reply(reply)) { continue }
-            recordLateReply(text: reply.text, completedUptime: reply.completedUptime)
+            if !owedPrompts.isEmpty {
+                let owed = owedPrompts.removeFirst()
+                recordLateReply(owed, text: reply.text, completedUptime: reply.completedUptime)
+                if owedPrompts.isEmpty { finishOwedWait(nil, drained: true) }
+                continue
+            }
+            if let flight = inFlight, flight.resolution == nil {
+                if flight.requiresBanner, !reply.text.uppercased().contains("ELM") {
+                    recordUnsolicited(text: reply.text, completedUptime: reply.completedUptime)
+                    continue
+                }
+                resolve(flight.token, with: .reply(reply))
+                continue
+            }
+            recordUnsolicited(text: reply.text, completedUptime: reply.completedUptime)
         }
     }
 
@@ -919,32 +1060,116 @@ public actor ELMSession {
         pollTask?.cancel()
         rateTask?.cancel()
         rateTask = nil
-        if let flight = inFlight { resolve(flight.token, with: .closed) }
+        abandonInFlight(with: .closed)
+        finishOwedWait(nil, drained: false)
         recordPendingPartialReply()
         releaseAllWaiters()
         setState(.failed, reason: "transport closed")
         continuation.finish()
     }
 
-    /// A reply nobody is waiting for: its command already timed out. Kept as
-    /// a `timeout` exchange with `rx`, attributed to the last command sent.
-    private func recordLateReply(text: String, completedUptime: Double) {
+    /// Ends the command in flight without its reply (shutdown, link loss):
+    /// a final `timeout` exchange without `rx`, completed now, so every sent
+    /// command has a row. Partial text received for it follows as a late row.
+    private func abandonInFlight(with resolution: Resolution) {
+        guard let flight = inFlight, flight.resolution == nil else { return }
+        let now = uptime.uptimeSeconds
+        let requestUptime = flight.requestUptime ?? now
         emitExchange(
-            phase: lastSent?.phase ?? .initialisation,
-            tx: lastSent?.tx ?? "",
-            requestUptime: lastSent?.requestUptime ?? completedUptime,
+            phase: flight.phase,
+            tx: flight.wire,
+            requestUptime: requestUptime,
+            rx: nil,
+            completedUptime: now,
+            outcome: .timeout
+        )
+        owedPrompts.append(SentCommand(tx: flight.wire, phase: flight.phase, requestUptime: requestUptime))
+        resolve(flight.token, with: resolution)
+    }
+
+    /// The late `>` for a command that already timed out: a `timeout`
+    /// exchange with `rx`, attributed to that command.
+    private func recordLateReply(_ owed: SentCommand, text: String, completedUptime: Double) {
+        emitExchange(
+            phase: owed.phase,
+            tx: owed.tx,
+            requestUptime: owed.requestUptime,
             rx: text,
             completedUptime: completedUptime,
             outcome: .timeout
         )
     }
 
-    /// Bytes received without a prompt when the link ends are kept too.
+    /// Output no command is waiting for: `timeout` with `rx` and empty `tx`.
+    private func recordUnsolicited(text: String, completedUptime: Double) {
+        emitExchange(
+            phase: lastSent?.phase ?? .initialisation,
+            tx: "",
+            requestUptime: completedUptime,
+            rx: text,
+            completedUptime: completedUptime,
+            outcome: .timeout
+        )
+    }
+
+    /// Bytes received without a prompt are kept too: attributed to the
+    /// oldest owed command if any, else unsolicited.
     private func recordPendingPartialReply() {
         let text = framer.pendingText
         framer.reset()
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        recordLateReply(text: text, completedUptime: uptime.uptimeSeconds)
+        let now = uptime.uptimeSeconds
+        if let owed = owedPrompts.first {
+            recordLateReply(owed, text: text, completedUptime: now)
+        } else {
+            recordUnsolicited(text: text, completedUptime: now)
+        }
+    }
+
+    /// Waits up to the grace period for owed prompts; writes off the ones
+    /// that don't come, with a note, so the next command starts clean.
+    private func settleOwedPrompts() async {
+        guard !owedPrompts.isEmpty else { return }
+        let grace = configuration.effectiveLatePromptGrace
+        if await waitForOwedPrompts(grace) { return }
+        guard !owedPrompts.isEmpty, !isShutdown, !transportClosed else { return }
+        let lost = owedPrompts.map(\.tx).joined(separator: ", ")
+        recordPendingPartialReply()
+        owedPrompts.removeAll()
+        noteState(reason: "no prompt for \(lost) within \(grace) of its timeout; written off")
+    }
+
+    /// True when every owed prompt arrived within `grace`.
+    private func waitForOwedPrompts(_ grace: Duration) async -> Bool {
+        nextToken += 1
+        let token = nextToken
+        let wait = clock.sleeper(untilAfter: grace)
+        return await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            let timer = Task { [weak self] in
+                do {
+                    try await wait()
+                } catch {
+                    return
+                }
+                await self?.finishOwedWait(token, drained: false)
+            }
+            owedWaiter = (token, continuation, timer)
+        }
+    }
+
+    /// Resumes the owed-prompt wait; `token` nil matches any wait.
+    private func finishOwedWait(_ token: UInt64?, drained: Bool) {
+        guard let waiter = owedWaiter, token == nil || waiter.token == token else { return }
+        owedWaiter = nil
+        waiter.timer.cancel()
+        waiter.continuation.resume(returning: drained)
+    }
+
+    /// Before `ATZ`: whatever is half-received or still owed belongs to the
+    /// adapter's previous life. Keep the text, then start clean.
+    private func startFromCleanSlate() {
+        recordPendingPartialReply()
+        owedPrompts.removeAll()
     }
 
     // MARK: Events
@@ -954,6 +1179,12 @@ public actor ELMSession {
         let old = state
         state = new
         continuation.yield(.state(from: old, to: new, reason: reason, uptime: uptime.uptimeSeconds))
+    }
+
+    /// Records something about the link without a state change: a `.state`
+    /// event with `from == to`.
+    private func noteState(reason: String) {
+        continuation.yield(.state(from: state, to: state, reason: reason, uptime: uptime.uptimeSeconds))
     }
 
     private func failIfOpen(reason: String) {
