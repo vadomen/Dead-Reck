@@ -29,14 +29,14 @@ Things still marked (verify) haven't been checked on the device yet; clones diff
 - One command in flight. Default timeout 1.0 s (first `0100` after `ATSP0` can take several seconds while searching - allow ~10 s).
 
 ## Init sequence
-`ATZ` (reset, wait for banner; capture version string) -> `ATE0` (echo off) -> `ATL0` (linefeeds off) -> `ATS0` (spaces off) -> `ATH1` (headers ON: needed to tell ECUs apart) -> `ATSP0` (auto protocol) -> `0100` (forces search) -> `ATDPN` (log detected protocol; `6` on the test car, `A6` when auto-detected) -> `ATRV` (battery voltage) -> **`ATSH7E0`** (physical addressing to the engine ECU), only if `ATDPN` is `6`/`A6`/`8`/`A8` and `0100` had a `7E8` line. A 3-digit `ATSH` means header `00 0x yz`, which isn't an OBD ID on 29-bit CAN or K-line/J1850. If it doesn't answer `OK`, stay functional (see recipe step 4). If nothing parses at 7E0, send `ATSH7DF` and select again functionally.
+`ATZ` (reset, wait for banner; capture version string) -> `ATE0` (echo off) -> `ATL0` (linefeeds off) -> `ATS0` (spaces off) -> `ATH1` (headers ON: needed to tell ECUs apart) -> `ATSP0` (auto protocol) -> `0100` (forces search) -> `ATDPN` (log detected protocol; `6` on the test car, `A6` when auto-detected) -> `ATRV` (battery voltage) -> **`ATSH7E0`** (physical addressing to the engine ECU), only if `ATDPN` is `6`/`A6`/`8`/`A8` and `0100` had a `7E8` line. A 3-digit `ATSH` means header `00 0x yz`, which isn't an OBD ID on 29-bit CAN or K-line/J1850. Physical addressing engages only if it answers `OK`. If it doesn't, stay functional, record a note and carry on (see recipe step 4). If nothing parses at 7E0, send `ATSH7DF` and select again functionally.
 Optional speed tuning, try and measure: `ATAT2` (aggressive adaptive timing). If anything misbehaves, fall back to `ATAT1`.
 
 ## Recipe for the test car (bench-verified)
 1. Finish init with `ATSH7E0` → `OK`. From now on requests go to the engine ECU only; `7E9` stays silent.
 2. Poll speed + RPM with one request: `010D0C1` → `7E806410D000C0A5C` (one line from `7E8`: speed `00` = 0 km/h, RPM `0A5C`/4 = 663).
 3. Start-up fallbacks, in order, if a step's reply doesn't parse (no `7E8` value for every requested PID): `010D0C1` → `010D0C` → `010D1` → `010D`.
-4. If `ATSH7E0` did not answer `OK`, stay on functional addressing (`7DF`) and **never** use the `1` suffix: the order becomes `010D0C` → `010D`.
+4. If `ATSH7E0` did not answer `OK` (or was skipped), stay on functional addressing (`7DF`), record a note, and carry on: it is not an init failure and recording continues. **Never** use the `1` suffix then: the order becomes `010D0C` → `010D`.
 5. Record which combination is in use (the `adapter` row's `polling` section).
 
 `ATSH` is allowlisted only for the OBD request headers `7DF` and `7E0`–`7E7` (session scope; the debug console can't send it). Response headers (`7E8`…), other modules (`6F1`, `7xx`) and 29-bit headers stay blocked.

@@ -147,7 +147,7 @@ converted. Lower case is fine (`atrv`); the upper-case form is what is sent.
 
 The **Console** column says whether the command can be typed in the debug
 console. The console may only *query* the adapter. Commands that change its
-settings (echo, headers, spaces, timing, protocol, reset) are reserved for
+settings (echo, headers, spaces, timing, protocol, addressing, reset) are reserved for
 the app's own init, because the app depends on those settings to read replies
 and attribute them to the right ECU. A change it didn't make would silently
 corrupt every row after it.
@@ -200,8 +200,10 @@ protocol. They're rejected everywhere, including the app's own init.
 `0100`. The poll command is then the first of `010D0C1` → `010D0C` → `010D1`
 → `010D` that returns the engine's (`7E8`) values. The `1` suffix is used only
 if `ATSH7E0` was answered `OK`; otherwise the order is `010D0C` → `010D`, and a
-note is recorded. If `7E0` answers nothing, the app switches back with
-`ATSH7DF` and selects again functionally. Under functional
+note is recorded. A refused or skipped `ATSH7E0` is not an error:
+initialisation and recording carry on with functional addressing. If `7E0`
+answers nothing, the app switches back with `ATSH7DF` and selects again
+functionally. Under functional
 addressing the suffix stops at the first reply, whichever ECU sends it, which
 on the test car was the gearbox. The console can still type `010D1`, but
 console replies never become readings. Bench transcripts:

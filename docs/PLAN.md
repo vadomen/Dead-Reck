@@ -24,7 +24,9 @@ What remains as stubs is App code, `fatalError("M2: …")`: **next is M2**
     when `ATDPN` reports 11-bit ISO 15765-4 CAN (`6`, `A6`, `8`, `A8`) and the
     `0100` reply had a `7E8` line. On other protocols a 3-digit `ATSH` isn't an
     OBD request ID. Physical addressing engages only if `ATSH7E0` answers
-    `OK`; otherwise requests stay functional (`7DF`) and a note is recorded.
+    `OK`. If it doesn't — or it was skipped — requests stay functional
+    (`7DF`), a note is recorded, and initialisation and recording carry on:
+    this is not an error.
   - **Poll command.** Chosen at start-up as the first of `010D0C1` →
     `010D0C` → `010D1` → `010D` that returns the engine's (`7E8`) values.
     The `1` suffix is used only after `ATSH7E0` answered `OK`: under

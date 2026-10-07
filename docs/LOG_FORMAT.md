@@ -286,8 +286,10 @@ is a failure too.
 
 After `ATRV`, `ATSH7E0` (physical addressing to the engine ECU) is sent only
 when `ATDPN` reported 11-bit ISO 15765-4 CAN (`6`, `A6`, `8`, `A8`) and `0100`
-was answered from `7E8`; otherwise it is skipped and requests stay functional
-(`7DF`). The poll command is then chosen at start-up: the first of `010D0C1` →
+was answered from `7E8`; otherwise it is skipped. Physical addressing engages
+only if `ATSH7E0` answers `OK`. If it doesn't — or it was skipped — requests
+stay functional (`7DF`), a `link` note records why, and initialisation and
+recording carry on: this is not an error. The poll command is then chosen at start-up: the first of `010D0C1` →
 `010D0C` → `010D1` → `010D` whose reply carries the engine's value for every
 requested PID; single-PID steps also send `010C1` / `010C`. The suffix steps
 (`…1`) are tried only if `ATSH7E0` was answered `OK`. If nothing parses with
