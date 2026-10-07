@@ -131,13 +131,12 @@ extension ELM327Command {
     /// Echo, linefeeds and spaces off keep replies compact; headers **on** so
     /// replies from different ECUs (`7E8`, `7E9`, …) can be told apart;
     /// `ATSP0` leaves protocol detection to the adapter and `0100` forces the
-    /// search; `ATDPN` and `ATRV` record what was found. `ATSH7E0` last:
-    /// physical addressing to the engine ECU, so the response-count suffix
-    /// returns the engine's reply (bench test 2026-10-07). It runs after
-    /// `0100`, which stays functional so the log records every ECU's
-    /// supported PIDs. `ELMSession` runs this with per-step timeouts (long
-    /// for `ATZ` and `0100`) and records every exchange; a refused `ATSH7E0`
-    /// is not an init failure.
+    /// search; `ATDPN` and `ATRV` record what was found. `ELMSession` runs
+    /// this with per-step timeouts (long for `ATZ` and `0100`) and records
+    /// every exchange.
+    ///
+    /// These are the unconditional steps. `physicalAddressing` (`ATSH7E0`)
+    /// follows `ATRV` only when its condition holds; see there.
     public static let handshake: [ELM327Command] = [
         .reset,
         .echo(false),
@@ -148,8 +147,19 @@ extension ELM327Command {
         .supportedPIDs,
         .describeProtocolNumber,
         .readVoltage,
-        .setHeader(.engine),
     ]
+
+    /// `ATSH7E0`: physical addressing to the engine ECU, so the
+    /// response-count suffix returns the engine's reply (bench test
+    /// 2026-10-07). `ELMSession` sends it right after `handshake`, and only
+    /// when `ATDPN` reported 11-bit ISO 15765-4 CAN (`6`, `A6`, `8`, `A8`)
+    /// and the `0100` reply contained a positive `7E8` line. A 3-digit
+    /// `ATSH xyz` sets the header to `00 0x yz`; only on 11-bit CAN is that
+    /// the OBD request ID `7E0` (on 29-bit CAN it would be `180007E0`, on
+    /// ISO 9141/KWP/J1850 the header bytes `00 07 E0`). `0100` itself stays
+    /// functional, so the log records every ECU's supported PIDs. A skipped
+    /// or refused `ATSH7E0` is not an init failure.
+    public static let physicalAddressing: ELM327Command = .setHeader(.engine)
 }
 
 /// An 11-bit CAN header for OBD requests (ISO 15765-4): `7DF` functional,

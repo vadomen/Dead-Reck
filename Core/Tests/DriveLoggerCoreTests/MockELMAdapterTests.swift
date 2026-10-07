@@ -249,7 +249,7 @@ struct MockELMAdapterBenchCarTests {
         let asker = MockAsker(rules: MockELMAdapter.Rule.benchCarInstant)
         #expect(try await asker.ask("ATI") == T.ati)
         #expect(try await asker.ask("ATRV") == T.atrvEngineOff)
-        #expect(try await asker.ask("ATDPN") == T.atdpn)
+        #expect(try await asker.ask("ATDPN") == "A6\r\r", "deliberately A6, not the transcribed 6: see benchCar")
         #expect(try await asker.ask("ATH1") == T.ath1)
         #expect(try await asker.ask("0100") == T.supportedPIDs0100)
         #expect(try await asker.ask("010D") == T.speed010D)
@@ -294,7 +294,7 @@ struct MockELMAdapterBenchCarTests {
     @Test("Every transcribed reply is in the script, for the right header")
     func coversTranscript() {
         let rules = MockELMAdapter.Rule.benchCar
-        for (command, reply) in BenchTranscript.all {
+        for (command, reply) in BenchTranscript.all where command != "ATDPN" {
             #expect(rules.contains { $0.command == command && $0.reply == reply + ">" }, "\(command) → \(reply.debugDescription)")
         }
     }

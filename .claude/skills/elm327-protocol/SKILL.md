@@ -29,7 +29,7 @@ Things still marked (verify) haven't been checked on the device yet; clones diff
 - One command in flight. Default timeout 1.0 s (first `0100` after `ATSP0` can take several seconds while searching - allow ~10 s).
 
 ## Init sequence
-`ATZ` (reset, wait for banner; capture version string) -> `ATE0` (echo off) -> `ATL0` (linefeeds off) -> `ATS0` (spaces off) -> `ATH1` (headers ON: needed to tell ECUs apart) -> `ATSP0` (auto protocol) -> `0100` (forces search) -> `ATDPN` (log detected protocol; `6` on the test car, `A6` when auto-detected) -> `ATRV` (battery voltage) -> **`ATSH7E0`** (physical addressing to the engine ECU; must answer `OK`).
+`ATZ` (reset, wait for banner; capture version string) -> `ATE0` (echo off) -> `ATL0` (linefeeds off) -> `ATS0` (spaces off) -> `ATH1` (headers ON: needed to tell ECUs apart) -> `ATSP0` (auto protocol) -> `0100` (forces search) -> `ATDPN` (log detected protocol; `6` on the test car, `A6` when auto-detected) -> `ATRV` (battery voltage) -> **`ATSH7E0`** (physical addressing to the engine ECU), only if `ATDPN` is `6`/`A6`/`8`/`A8` and `0100` had a `7E8` line. A 3-digit `ATSH` means header `00 0x yz`, which isn't an OBD ID on 29-bit CAN or K-line/J1850. If it doesn't answer `OK`, stay functional (see recipe step 4). If nothing parses at 7E0, send `ATSH7DF` and select again functionally.
 Optional speed tuning, try and measure: `ATAT2` (aggressive adaptive timing). If anything misbehaves, fall back to `ATAT1`.
 
 ## Recipe for the test car (bench-verified)
@@ -72,3 +72,4 @@ Cheap clones: 3-10 Hz for one PID; with `ATAT2` + response-count suffix sometime
 3. Measure the poll rate (Hz) of `010D0C1` after `ATSH7E0`, and `ATAT1` vs `ATAT2`. Keep the fastest stable combo. *Not yet measured.*
 4. Lock the screen for 5 minutes while polling: rows must continue (check `stats`).
 5. Unplug/replug the adapter while recording: app must reconnect and re-init on its own and log both events.
+6. `ATDPN` after the app's own `ATSP0` (expect `A6`); `ATSH7E0` → `OK`; with 7E0, replies only from `7E8`. On a non-11-bit car, `ATSH7E0` must not appear in the `elm` rows.

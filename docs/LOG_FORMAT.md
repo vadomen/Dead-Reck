@@ -284,17 +284,23 @@ is a failure too.
 
 ### `adapter`
 
-The polling combination is chosen at start-up, after the handshake ends with
-`ATSH7E0`. The first of `010D0C1` → `010D0C` → `010D1` → `010D` whose reply
-carries the engine's (`7E8`) value for every requested PID is used;
-single-PID steps also send `010C1` / `010C`. The suffix steps (`…1`) are tried
-only if `ATSH7E0` was answered `OK`; with functional addressing the order is
-`010D0C` → `010D`. `ATAT2` replaces `ATAT1` only if it measured faster. If
-nothing parses, `010D` / `010C` every 5th cycle at `ATAT1`. `polling` records
-the combination, including `requestHeader`. `ATSH7E0` appears in `elm` rows
-with phase `init` (the last handshake step), and `ATSH7E0` / `ATSH7DF` with
-phase `poll` when polling restores the plan's addressing, e.g. after a
-re-init.
+After `ATRV`, `ATSH7E0` (physical addressing to the engine ECU) is sent only
+when `ATDPN` reported 11-bit ISO 15765-4 CAN (`6`, `A6`, `8`, `A8`) and `0100`
+was answered from `7E8`; otherwise it is skipped and requests stay functional
+(`7DF`). The poll command is then chosen at start-up: the first of `010D0C1` →
+`010D0C` → `010D1` → `010D` whose reply carries the engine's value for every
+requested PID; single-PID steps also send `010C1` / `010C`. The suffix steps
+(`…1`) are tried only if `ATSH7E0` was answered `OK`. If nothing parses with
+physical addressing (or only without vehicle speed), `ATSH7DF` is sent and the
+selection runs again functionally, `010D0C` → `010D`. `ATAT2` replaces `ATAT1`
+only if it measured faster. If nothing parses: `010D`, with `010C` every 5th
+cycle, at `ATAT1`, functional. `polling` records the combination, including
+`requestHeader`.
+
+`ATSH7E0` appears in `elm` rows with phase `init` (the conditional last
+handshake step); `ATSH7DF` with phase `probe` (physical selection found
+nothing) or `poll`; `ATSH7E0` with phase `poll` (restoring a physical plan's
+addressing, e.g. after a re-init).
 
 `{adapter, polling}`, same shapes as the header sections. Written after every
 successful initialisation, including re-inits and reconnects mid-drive, when
@@ -309,7 +315,7 @@ polled.
 |---|---|
 | `layer` | `ble` or `elm`. |
 | `from`, `to` | State names. `elm` states: `idle`, `resetting`, `initialising`, `searching`, `probing`, `ready`, `polling`, `retrying`, `reinitialising`, `failed`. `ble` states: `unavailable`, `idle`, `scanning`, `connecting`, `discovering`, `connected`, `disconnected`, `reconnecting`, `restoring`. |
-| `reason` | Optional free text, e.g. `timeout`. `elm` `failed` reasons include `transport closed`, a re-init limit message, or a read-only-guard rejection of a session command (followed by no reconnect request). Rows with `from == to` are notes (write-offs, init restarts, non-`ELM` banners, addressing), not transitions. Addressing notes: `ATSH7E0 not accepted (<outcome>); requests stay functional (7DF), no response-count suffix` and `late OK for ATSH7E0; requests go to 7E0`. While polling, a refused `ATSH<header>` is a failure with reason `ATSH<header>: <outcome>`; a suffixed poll under functional addressing is refused (an `elm` `rejected` row, then `failed`). |
+| `reason` | Optional free text, e.g. `timeout`. `elm` `failed` reasons include `transport closed`, a re-init limit message, or a read-only-guard rejection of a session command (followed by no reconnect request). Rows with `from == to` are notes (write-offs, init restarts, non-`ELM` banners, addressing), not transitions. Addressing notes: `ATSH7E0 skipped: protocol <n> is not 11-bit ISO 15765-4 CAN (6, A6, 8, A8); requests stay functional (7DF), no response-count suffix`, `ATSH7E0 skipped: no 7E8 reply to 0100; …`, `ATSH7E0 not accepted (<outcome>); requests stay functional (7DF), no response-count suffix`, `late OK for ATSH7E0; requests go to 7E0`, `no poll command parsed with physical addressing (7E0); selecting again with functional addressing (7DF), no response-count suffix` (or `…; ATSH7DF not accepted (<outcome>); using the baseline plan`), and `physical addressing unavailable: <cause>; polling with functional addressing (7DF), no response-count suffix` (followed by an `adapter` row with the functional plan). While polling, a refused `ATSH<header>` is a failure with reason `ATSH<header>: <outcome>`; a suffixed poll under functional addressing is refused (an `elm` `rejected` row, then `failed`). |
 
 ### `lifecycle`
 

@@ -162,7 +162,7 @@ corrupt every row after it.
 | `ATS0` / `ATS1` | no | Spaces between hex bytes in replies off / on. Off makes replies shorter, which matters over BLE. |
 | `ATH0` / `ATH1` | no | CAN headers in replies off / on. The app uses `ATH1`, so each reply shows which ECU sent it (`7E8` = engine). |
 | `ATSP0` | no | Protocol auto-detect: the adapter finds the car's OBD protocol itself. The adapter stores this choice in its memory as the default, which is harmless because "auto" is the factory setting. |
-| `ATSH7DF`, `ATSH7E0` … `ATSH7E7` | no | Sets the CAN header requests go to: `7DF` = every emissions ECU (the default after `ATZ`), `7E0` … `7E7` = one ECU (`7E0` = engine, which answers on `7E8`). Init ends with `ATSH7E0`: on the test car the response-count suffix otherwise returned the gearbox's (`7E9`) reply. Only these OBD request IDs are accepted, and requests stay mode 01. Not in the console: it changes addressing the app relies on. |
+| `ATSH7DF`, `ATSH7E0` … `ATSH7E7` | no | Sets the CAN header requests go to: `7DF` = every emissions ECU (the default after `ATZ`), `7E0` … `7E7` = one ECU (`7E0` = engine, which answers on `7E8`). The app sends `ATSH7E0` only on 11-bit CAN (`ATDPN` `6`/`A6`/`8`/`A8`) when the engine answered `0100`, so the response-count suffix gets the engine's reply; if the engine then answers nothing it switches back with `ATSH7DF`. Only these OBD request IDs are accepted, and requests stay mode 01. Not in the console: it changes addressing the app relies on. |
 | `ATDP` / `ATDPN` | yes | Describes the detected protocol, as text / as a number. `A6` means auto-detected protocol 6: CAN 11-bit, 500 kbaud. |
 | `ATRV` | yes | Reads the car's battery voltage at the OBD port. Recorded at init. Also a cheap check that the adapter is alive. |
 | `ATAT0` / `ATAT1` / `ATAT2` | no | Adaptive timing off / normal / aggressive: how long the adapter waits for slow ECU replies. `ATAT2` is often the biggest speed-up on cheap clones. Fall back to `ATAT1` if replies get cut off. |
@@ -180,7 +180,7 @@ protocol. They're rejected everywhere, including the app's own init.
 | Command | What it does | Why it's blocked |
 |---|---|---|
 | `ATCAF0` / `ATCAF1` | CAN auto-formatting off / on. With formatting off, the adapter sends the hex you type as the raw CAN frame, without adding the length byte itself. | **Clears fault codes by accident.** After `ATCAF0`, the allowed-looking `0104` (engine load) goes out as the frame `01 04`. The car reads that as a one-byte request for **service 04: clear diagnostic trouble codes, freeze frames and readiness monitors**. `ATCAF1` is the default and `ATZ` restores it, so it's never needed either. |
-| `ATSH` with any other header (`7E8`, `6F1`, `7DE`, 29-bit `18DB33F1`, …) | Sets the CAN header, i.e. the address requests are sent to. | Retargets requests at a reply address or at modules that don't speak OBD mode 01. Only the OBD request IDs `7DF` and `7E0`–`7E7` are allowed (see above), and `ATCAF0` / `ATCRA` / `ATCEA` stay blocked, so a physically addressed `0104` is still a mode 01 request. |
+| `ATSH` with any other header (`7E8`, `6F1`, `7DE`, 29-bit `18DB33F1`, …) | Sets the CAN header, i.e. the address requests are sent to. | Retargets requests at a reply address or at modules that don't speak OBD mode 01. Only the OBD request IDs `7DF` and `7E0`–`7E7` are allowed (see above), and `ATCAF0` / `ATCRA` / `ATCEA` stay blocked, so a physically addressed `0104` is still a mode 01 request. A 3-digit `ATSH xyz` means header `00 0x yz`; only on 11-bit CAN is `7E0` an OBD request ID (on 29-bit CAN it would be `180007E0`), which is why the app checks the protocol first. |
 | `ATCRAxxx` | Sets the CAN receive filter: which reply addresses the adapter shows. | Can hide the real ECU's replies, so the app records answers from the wrong module or nothing at all. |
 | `ATCEA` / `ATCEAhh` | CAN extended addressing: adds an address byte in front of the data. | Changes how every frame is built; only meaningful for specific manufacturer modules. |
 | `ATPPxxSVyy`, `ATPPxxON` / `OFF`, `ATPPS` | Programmable parameters: settings stored in the adapter's EEPROM. | **Permanent.** They survive power cycles and `ATZ`. One wrong value (e.g. the UART baud rate) can leave the adapter unable to talk to its own Bluetooth chip. |
@@ -196,10 +196,12 @@ protocol. They're rejected everywhere, including the app's own init.
 | `ATFCSH`, `ATFCSD`, `ATFCSM` | Flow control header / data / mode: the frames the adapter sends during multi-frame transfers. | Lets custom frames be put on the bus. |
 
 **Init and polling.** Init is `ATZ → ATE0 → ATL0 → ATS0 → ATH1 → ATSP0 →
-0100 → ATDPN → ATRV → ATSH7E0`. The poll command is then the first of
-`010D0C1` → `010D0C` → `010D1` → `010D` that returns the engine's (`7E8`)
-values. The `1` suffix is used only if `ATSH7E0` was answered `OK`; otherwise
-the order is `010D0C` → `010D`, and a note is recorded. Under functional
+0100 → ATDPN → ATRV`, then `ATSH7E0` on 11-bit CAN when the engine answered
+`0100`. The poll command is then the first of `010D0C1` → `010D0C` → `010D1`
+→ `010D` that returns the engine's (`7E8`) values. The `1` suffix is used only
+if `ATSH7E0` was answered `OK`; otherwise the order is `010D0C` → `010D`, and a
+note is recorded. If `7E0` answers nothing, the app switches back with
+`ATSH7DF` and selects again functionally. Under functional
 addressing the suffix stops at the first reply, whichever ECU sends it, which
 on the test car was the gearbox. The console can still type `010D1`, but
 console replies never become readings. Bench transcripts:

@@ -278,8 +278,8 @@ extension MockELMAdapter.Rule {
     /// (`ELM327 v2.3`) on the test car, headers on, spaces off.
     ///
     /// Transcribed verbatim, keyed by addressing:
-    /// - functional (`7DF`, after `ATZ`): `ATI`, `ATRV` 11.0 V, `ATDPN` `6`,
-    ///   `ATH1`, `0100` and `010D` and `010D0C` answered by `7E9` then `7E8`,
+    /// - functional (`7DF`, after `ATZ`): `ATI`, `ATRV` 11.0 V, `ATH1`,
+    ///   `0100` and `010D` and `010D0C` answered by `7E9` then `7E8`,
     ///   `010D1` answered by `7E9` only, `22F40D` `NO DATA`;
     /// - `ATSH7E0` → `OK`; then `010D1` and `010D0C1` answered by `7E8` only
     ///   (speed 0, 663 rpm) and `ATRV` 11.8 V.
@@ -287,6 +287,11 @@ extension MockELMAdapter.Rule {
     /// Not transcribed, assumed so the session's handshake and selection
     /// can run: `ATZ` (banner with echo, as after a power-up reset),
     /// `ATE0`, `ATL0`, `ATS0`, `ATSP0`, `ATAT1`, `ATAT2`, `ATSH7DF` → `OK`.
+    ///
+    /// One deliberate deviation: `ATDPN` answers `A6`, not the transcribed
+    /// `6`. The bench adapter had been set up by Car Scanner; after the
+    /// session's own `ATSP0` an ELM327 reports the auto-detected protocol
+    /// with the `A` prefix. The verbatim `6` is a parser fixture.
     /// Anything else (e.g. `010D` after `ATSH7E0`, `010D0C1` under
     /// functional addressing) gets `?`, so tests add what they need.
     ///
@@ -318,7 +323,7 @@ extension MockELMAdapter.Rule {
             // Block 1, functional addressing, engine off.
             rule("ATI", "ELM327 v2.3\r\r>"),
             rule("ATRV", "11.0V\r\r>", header: functional),
-            rule("ATDPN", "6\r\r>"),
+            rule("ATDPN", "A6\r\r>"),
             rule("ATH1", "OK\r\r>"),
             rule("0100", "7E906410098180001\r7E8064100BE1CA813\r\r>", ms: 1_500, header: functional),
             rule("010D", "7E903410D00\r7E803410D00\r\r>", ms: 95, header: functional),

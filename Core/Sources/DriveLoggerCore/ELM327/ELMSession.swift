@@ -20,7 +20,7 @@ import Foundation
 ///
 /// ```
 /// idle ─initialise()→ resetting (ATZ) → initialising (ATE0…ATSP0)
-///      → searching (0100) → initialising (ATDPN, ATRV, ATSH7E0) → probing → ready
+///      → searching (0100) → initialising (ATDPN, ATRV[, ATSH7E0]) → probing → ready
 /// ready ─startPolling()→ polling
 /// polling ─failure→ retrying ─failure × failuresBeforeReinit→ reinitialising
 /// retrying/reinitialising ─success→ polling
@@ -45,21 +45,34 @@ import Foundation
 /// (`7DF`) are answered by the engine (`7E8`) and the gearbox (`7E9`), and
 /// with the response-count suffix the adapter keeps the first reply, which
 /// was the gearbox's.
-/// - The handshake ends with `ATSH7E0`. `OK` → requests go to the engine
-///   alone (physical addressing). Anything else → requests stay functional,
-///   a `.state` note with `from == to` and reason `ATSH7E0 not accepted
-///   (<outcome>); requests stay functional (7DF), no response-count suffix`
-///   records it, and init carries on. A late `OK` (paid within the grace
-///   period on a trusted link) counts, with a note `late OK for ATSH7E0;
-///   requests go to 7E0`. `ATZ` returns the adapter to functional.
+/// - After `ATRV` the handshake sends `ATSH7E0`, **only** if `ATDPN`
+///   reported 11-bit ISO 15765-4 CAN (`6`, `A6`, `8`, `A8`) and the `0100`
+///   reply had a positive `7E8` line (`ELM327Command.physicalAddressing`
+///   explains why: elsewhere `ATSH7E0` is not the engine's request ID).
+///   Otherwise it is skipped, with a `.state` note (`from == to`)
+///   `ATSH7E0 skipped: protocol <n> is not 11-bit ISO 15765-4 CAN (6, A6,
+///   8, A8); …` or `ATSH7E0 skipped: no 7E8 reply to 0100; …`, both ending
+///   `requests stay functional (7DF), no response-count suffix`. The gate
+///   is re-evaluated on every handshake, re-inits included.
+/// - `ATSH7E0` answered `OK` → requests go to the engine alone (physical
+///   addressing). Anything else → requests stay functional, with a note
+///   `ATSH7E0 not accepted (<outcome>); requests stay functional (7DF), no
+///   response-count suffix`, and init carries on. A late `OK` (paid within
+///   the grace period on a trusted link) counts, with a note `late OK for
+///   ATSH7E0; requests go to 7E0`. `ATZ` returns the adapter to functional.
 /// - Start-up selection (`probing`) tries, in order, `010D0C1` → `010D0C`
 ///   → `010D1` → `010D` (single-PID steps also send `010C1` / `010C`) and
-///   takes the first whose every sample carries `7E8`'s value for every
-///   requested PID. Under functional addressing the suffix steps are
+///   takes the first whose every sample carries the primary ECU's value for
+///   every requested PID. Under functional addressing the suffix steps are
 ///   skipped: `010D0C` → `010D`. Then `ATAT2` is measured against `ATAT1`
-///   with the chosen command and kept only if faster. Nothing parses →
-///   `PollingPlan.baseline`. The plan records the addressing
-///   (`requestHeader`).
+///   with the chosen command and kept only if faster.
+/// - Physical addressing is abandoned if it reaches nothing: when no step
+///   parses under `7E0` (or the only one that does has lost vehicle speed
+///   to the NO DATA rule), the session notes `no poll command parsed with
+///   physical addressing (7E0); …`, sends `ATSH7DF` (phase `probe`) and
+///   runs selection again functionally, starting from the full PID list.
+/// - Nothing parses → `PollingPlan.baseline`: functional, no suffix. The
+///   plan records the addressing (`requestHeader`).
 /// - The response-count suffix is never sent unless `ATSH7E0` was answered
 ///   `OK`: `PollingPlan.validate()` requires a `requestHeader` for it, the
 ///   poll loop sends `ATSH<header>` (phase `poll`) whenever the adapter's
@@ -67,10 +80,15 @@ import Foundation
 ///   `ATZ` resets it — and polls only once that is answered `OK`, and a
 ///   suffixed poll with the adapter functional is refused like a rejected
 ///   session command (`rejected` exchange, `failed`).
-/// - A re-init re-runs the whole handshake, `ATSH7E0` included, then
-///   restores the plan's addressing: a physical plan whose `ATSH7E0` is
-///   now refused fails like any poll (retry → re-init → `failed` +
-///   `needsReconnect`); a functional plan gets `ATSH7DF`.
+/// - A re-init re-runs the whole handshake, the `ATSH7E0` gate included,
+///   then restores the plan's addressing: a functional plan gets `ATSH7DF`;
+///   a physical plan whose `ATSH7E0` is now refused fails like any poll
+///   (retry → re-init → `failed` + `needsReconnect`).
+/// - The poll loop never sends a physical header while the gate is closed
+///   (after a re-init that closed it, or a physical plan passed to
+///   `startPolling` on such a car). The plan then becomes functional
+///   without the suffix, with a note `physical addressing unavailable: …`
+///   and a new `.adapter` event.
 ///
 /// ## NO DATA
 ///
@@ -269,6 +287,9 @@ public actor ELMSession {
     /// from the moment `ATZ` is sent, physical once an `ATSH` is answered
     /// `OK`. Never physical without that `OK`.
     private var requestHeader = CANRequestHeader.functional
+    /// Why a physical header may not be sent now; nil once the last
+    /// handshake's gate passed. Closed from the moment `ATZ` is sent.
+    private var physicalAddressingBlocked: String? = "no handshake yet"
     private var initialised = false
     /// What the last successful handshake found.
     private var adapterFacts: HandshakeResult?
@@ -293,17 +314,19 @@ public actor ELMSession {
     // MARK: Public API
 
     /// `ATZ` → `ATE0` → `ATL0` → `ATS0` → `ATH1` → `ATSP0` → `0100` → `ATDPN`
-    /// → `ATRV` → `ATSH7E0`, then (if configured) start-up selection: the
-    /// first of `010D0C1` → `010D0C` → `010D1` → `010D` that parses (suffix
-    /// steps only if `ATSH7E0` was answered `OK`), at the faster of `ATAT1`
-    /// and `ATAT2`. See "Addressing and start-up selection".
+    /// → `ATRV` → `ATSH7E0` (only on 11-bit ISO 15765-4 CAN with a `7E8`
+    /// reply to `0100`), then (if configured) start-up selection: the first
+    /// of `010D0C1` → `010D0C` → `010D1` → `010D` that parses (suffix steps
+    /// only if `ATSH7E0` was answered `OK`; functionally again if nothing
+    /// parses physically), at the faster of `ATAT1` and `ATAT2`. See
+    /// "Addressing and start-up selection".
     ///
     /// `ATZ` waits up to `resetTimeout`, the `0100` search `searchTimeout`,
     /// everything else `commandTimeout`. A failed step throws
     /// `.initFailed(step:reason:)` (reason = the exchange outcome) and leaves
     /// the session `failed`; a missing `ATRV` voltage and a refused `ATSH7E0`
-    /// are not failures. Stops polling first if it was running. Concurrent
-    /// calls share one run.
+    /// (or one skipped by the gate) are not failures. Stops polling first if
+    /// it was running. Concurrent calls share one run.
     public func initialise() async throws(ELMSessionError) -> ELMAdapterInfo {
         if let initTask {
             return try await initTask.value.get()
@@ -488,13 +511,6 @@ public actor ELMSession {
             }
             guard let value else {
                 if command == .readVoltage { continue }
-                if case .setHeader = command {
-                    noteState(
-                        reason: "\(command.wireFormat) not accepted (\(exchange.outcome.rawValue)); requests stay "
-                            + "functional (\(CANRequestHeader.functional)), no response-count suffix"
-                    )
-                    continue
-                }
                 throw .initFailed(step: command.wireFormat, reason: exchange.outcome.rawValue)
             }
             switch value {
@@ -514,14 +530,65 @@ public actor ELMSession {
                 adaptiveTimingLevel = 1
             case .headers(let on):
                 headersOn = on
-            case .setHeader(let header):
-                requestHeader = header
             default:
                 break
             }
         }
+        try await applyPhysicalAddressingIfAllowed(result)
         adapterFacts = result
         return result
+    }
+
+    /// The handshake's last, conditional step: `ATSH7E0` if the gate passes
+    /// (`physicalAddressingSkipReason`), else a note. Neither a skip nor a
+    /// refusal fails init.
+    private func applyPhysicalAddressingIfAllowed(_ found: HandshakeResult) async throws(ELMSessionError) {
+        let command = ELM327Command.physicalAddressing
+        guard case .setHeader(let header) = command else { return }
+        if let cause = Self.physicalAddressingCause(protocolNumber: found.protocolNumber, supportedPIDs: found.supportedPIDs) {
+            physicalAddressingBlocked = cause
+            noteState(reason: "\(command.wireFormat) skipped: \(cause); " + Self.staysFunctional)
+            return
+        }
+        physicalAddressingBlocked = nil
+        let headers = headersOn
+        let (exchange, value) = try await perform(command, phase: .initialisation, timeout: configuration.commandTimeout) { raw in
+            Self.interpretInit(command, raw: raw, headers: headers)
+        }
+        if value != nil {
+            requestHeader = header
+        } else {
+            noteState(reason: "\(command.wireFormat) not accepted (\(exchange.outcome.rawValue)); " + Self.staysFunctional)
+        }
+    }
+
+    static let staysFunctional = "requests stay functional (\(CANRequestHeader.functional)), no response-count suffix"
+
+    /// Protocols on which `ATSH7E0` is the 11-bit OBD request ID `7E0`:
+    /// ISO 15765-4 CAN 11-bit at 500 or 250 kbaud, auto-detected or not.
+    static let elevenBitCANProtocols: Set<String> = ["6", "A6", "8", "A8"]
+
+    /// Why `ATSH7E0` must not be sent, or nil if it may: `protocolNumber`
+    /// (`ATDPN`) must be 11-bit ISO 15765-4 and `supportedPIDs` (the raw
+    /// `0100` reply, headers on) must contain a positive `41 00` line from
+    /// `7E8`.
+    static func physicalAddressingCause(protocolNumber: String, supportedPIDs: String?) -> String? {
+        let number = String(protocolNumber.filter { !$0.isWhitespace }).uppercased()
+        guard elevenBitCANProtocols.contains(number) else {
+            return "protocol \(protocolNumber) is not 11-bit ISO 15765-4 CAN (6, A6, 8, A8)"
+        }
+        let replies = supportedPIDs.flatMap { try? ELM327ResponseParser.replies(in: $0, headers: true) } ?? []
+        guard replies.contains(where: { $0.header == "7E8" && $0.bytes.starts(with: [0x41, 0x00]) }) else {
+            return "no 7E8 reply to 0100"
+        }
+        return nil
+    }
+
+    /// The note recorded when the gate skips `ATSH7E0`, or nil if it passes.
+    static func physicalAddressingSkipReason(protocolNumber: String, supportedPIDs: String?) -> String? {
+        physicalAddressingCause(protocolNumber: protocolNumber, supportedPIDs: supportedPIDs).map {
+            "\(ELM327Command.physicalAddressing.wireFormat) skipped: \($0); " + staysFunctional
+        }
     }
 
     private static func adapterInfo(_ found: HandshakeResult, plan: PollingPlan) -> ELMAdapterInfo {
@@ -598,31 +665,67 @@ public actor ELMSession {
         }
     }
 
-    /// Start-up selection (see the type's doc). Takes the first candidate
-    /// in `candidates` order that parses at `ATAT1`; then measures it at
-    /// `ATAT2` and keeps level 2 only if strictly faster (ties keep the
-    /// more conservative `ATAT1`). Cost per speed sample:
+    /// Start-up selection (see the type's doc).
+    ///
+    /// A pass (`select`) takes the first candidate in `candidates` order
+    /// that parses at `ATAT1`. With physical addressing the first pass runs
+    /// under `7E0`; if it finds nothing, or only a plan without vehicle
+    /// speed, `ATSH7DF` is sent and a second pass runs functionally. Each
+    /// pass starts from the full PID list, so a PID dropped under `7E0` gets
+    /// a fresh chance. The NO DATA rule is unchanged and session-wide: a PID
+    /// that answered OK under either addressing (or in an earlier
+    /// `initialise()`) is in `okPIDs` and never dropped; one that has only
+    /// ever answered NO DATA is dropped by the functional pass only if it
+    /// answers NO DATA there too.
+    ///
+    /// The chosen candidate is then measured at `ATAT2`, kept only if
+    /// strictly faster (ties keep `ATAT1`). Cost per speed sample:
     /// `latency(all)` for multi-PID, `latency(speed) + latency(others) /
-    /// rpmEvery` for single PIDs. A PID answering `NO DATA` to its plain
-    /// single request is dropped only under the NO DATA rule (never
-    /// answered OK in this session, earlier samples and earlier
-    /// `initialise()` calls included), and selection restarts without it;
-    /// otherwise the step is just invalid. Nothing parses → the baseline
-    /// plan. Leaves the adapter at the chosen timing level. The addressing
-    /// is read after `ATAT1`, which settles a late `ATSH7E0` reply.
+    /// rpmEvery` for single PIDs. Nothing parses → the functional baseline.
+    /// Leaves the adapter at the chosen timing level. The addressing is
+    /// read after `ATAT1`, which settles a late `ATSH7E0` reply.
     private func probe() async throws(ELMSessionError) -> PollingPlan {
+        _ = try await setAdaptiveTiming(1, phase: .probe)
+        if let header = planHeader {
+            let physical = try await select(physical: true)
+            if let chosen = physical.chosen, physical.pids.first == PollingPlan.baseline.pids.first {
+                return try await finishSelection(chosen, pids: physical.pids, header: header)
+            }
+            let outcome = try await setRequestHeader(.functional, phase: .probe)
+            guard outcome == .ok else {
+                noteState(
+                    reason: "no poll command parsed with physical addressing (\(header)); ATSH7DF not accepted "
+                        + "(\(outcome.rawValue)); using the baseline plan"
+                )
+                return fallbackPlan(pids: PollingPlan.baseline.pids)
+            }
+            noteState(
+                reason: "no poll command parsed with physical addressing (\(header)); "
+                    + "selecting again with functional addressing (7DF), no response-count suffix"
+            )
+        }
+        let functional = try await select(physical: false)
+        guard let chosen = functional.chosen else {
+            return fallbackPlan(pids: functional.pids.isEmpty ? PollingPlan.baseline.pids : functional.pids)
+        }
+        return try await finishSelection(chosen, pids: functional.pids, header: nil)
+    }
+
+    private struct Selection {
+        /// The PIDs left after NO DATA drops.
+        var pids: [OBDPID]
+        var chosen: (candidate: Candidate, cost: Double)?
+    }
+
+    /// One selection pass from the full PID list.
+    private func select(physical: Bool) async throws(ELMSessionError) -> Selection {
         let rpmEvery = PollingPlan.baseline.rpmEvery
         var pids = PollingPlan.baseline.pids
-        _ = try await setAdaptiveTiming(1, phase: .probe)
-        let header = planHeader
-
-        var chosen: (candidate: Candidate, cost: Double)?
-        selection: while chosen == nil, !pids.isEmpty {
-            for candidate in Self.candidates(pidCount: pids.count, physical: header != nil) {
+        selection: while !pids.isEmpty {
+            for candidate in Self.candidates(pidCount: pids.count, physical: physical) {
                 switch try await measure(candidate, pids: pids, rpmEvery: rpmEvery, mayDrop: true) {
                 case .valid(let cost):
-                    chosen = (candidate, cost)
-                    break selection
+                    return Selection(pids: pids, chosen: (candidate, cost))
                 case .drop(let pid):
                     pids.removeAll { $0 == pid }
                     continue selection
@@ -632,10 +735,16 @@ public actor ELMSession {
             }
             break
         }
+        return Selection(pids: pids, chosen: nil)
+    }
 
-        guard let chosen else {
-            return fallbackPlan(pids: pids.isEmpty ? PollingPlan.baseline.pids : pids)
-        }
+    /// `ATAT2` against `ATAT1` for the chosen candidate, then the plan.
+    private func finishSelection(
+        _ chosen: (candidate: Candidate, cost: Double),
+        pids: [OBDPID],
+        header: CANRequestHeader?
+    ) async throws(ELMSessionError) -> PollingPlan {
+        let rpmEvery = PollingPlan.baseline.rpmEvery
         var level = 1
         if try await setAdaptiveTiming(2, phase: .probe) == .ok,
            case .valid(let cost) = try await measure(chosen.candidate, pids: pids, rpmEvery: rpmEvery, mayDrop: false),
@@ -692,13 +801,13 @@ public actor ELMSession {
         requestHeader.isPhysical ? requestHeader : nil
     }
 
-    /// `PollingPlan.baseline` with `pids`, the configured command timeout and
-    /// the adapter's addressing.
+    /// `PollingPlan.baseline` with `pids` and the configured command timeout:
+    /// functional, no suffix, whatever the adapter's addressing (the poll
+    /// loop sends `ATSH7DF` if it is physical).
     private func fallbackPlan(pids: [OBDPID]) -> PollingPlan {
         var plan = PollingPlan.baseline
         plan.pids = pids
         plan.timeout = configuration.commandTimeout
-        plan.requestHeader = planHeader
         return plan
     }
 
@@ -769,6 +878,13 @@ public actor ELMSession {
             for (command, pids) in commands {
                 attempts: while true {
                     if stopRequested || Task.isCancelled { break cycles }
+                    // Never a physical header while the gate is closed: the
+                    // plan becomes functional, and the cycle is rebuilt
+                    // without the suffix.
+                    if plan.requestHeader != nil, let cause = physicalAddressingBlocked {
+                        abandonPhysicalAddressing(because: cause)
+                        continue cycles
+                    }
                     let step: PollStep
                     let header = plan.requestHeader ?? .functional
                     if requestHeader != header {
@@ -906,6 +1022,18 @@ public actor ELMSession {
         guard let adapterFacts, let plan = currentPlan, !plan.pids.isEmpty else { return }
         announcedPlan = plan
         continuation.yield(.adapter(Self.adapterInfo(adapterFacts, plan: plan), uptime: uptime.uptimeSeconds))
+    }
+
+    /// The plan in use becomes functional without the suffix; noted and
+    /// re-announced.
+    private func abandonPhysicalAddressing(because cause: String) {
+        plan?.requestHeader = nil
+        plan?.responseCount = nil
+        noteState(
+            reason: "physical addressing unavailable: \(cause); polling with functional addressing "
+                + "(\(CANRequestHeader.functional)), no response-count suffix"
+        )
+        emitCurrentAdapterInfo()
     }
 
     private func applyPlanHeader(_ header: CANRequestHeader) async -> PollStep {
@@ -1549,8 +1677,10 @@ public actor ELMSession {
     private func prepareForReset() {
         recordPendingPartialReply()
         // The adapter resets on receipt; until an ATSH is answered OK again,
-        // requests are functional.
+        // requests are functional, and until the handshake's gate passes
+        // again no physical header may be sent.
         requestHeader = .functional
+        physicalAddressingBlocked = "adapter reset; handshake not finished"
     }
 
     // MARK: Events

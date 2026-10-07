@@ -47,7 +47,7 @@ struct ELMSessionBenchInitTests {
         let info = try await harness.initialise()
 
         #expect(info.elmVersion == "ELM327 v2.3")
-        #expect(info.protocolNumber == "6")
+        #expect(info.protocolNumber == "A6", "the script answers A6, as after our own ATSP0")
         #expect(info.voltage == 11.0, "ATRV is read before ATSH7E0, under functional addressing")
         #expect(info.supportedPIDs == BenchTranscript.supportedPIDs0100)
         #expect(info.plan == PollingPlan(
@@ -174,12 +174,13 @@ struct ELMSessionBenchInitTests {
         #expect(!(await harness.mock.sentCommands.contains(where: hasResponseCountSuffix)))
     }
 
-    @Test("Without probing the plan still carries the addressing the handshake established", arguments: [true, false])
+    @Test("Without probing the plan is the functional baseline, whatever ATSH7E0 answered", arguments: [true, false])
     func noProbe(accepted: Bool) async throws {
         let rules = (accepted ? [] : [refuseATSH7E0]) + MockELMAdapter.Rule.benchCarInstant
         let harness = SessionHarness(rules: rules)
         let info = try await harness.initialise()
-        #expect(info.plan.requestHeader == (accepted ? .engine : nil))
+        #expect(await harness.mock.requestHeader == (accepted ? "7E0" : "7DF"))
+        #expect(info.plan.requestHeader == nil)
         #expect(info.plan.responseCount == nil)
         #expect(info.plan.primaryCommand.wireFormat == "010D")
     }

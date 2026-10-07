@@ -34,7 +34,8 @@ struct ELM327CommandTests {
     @Test("Handshake follows the spec sequence with headers on")
     func handshakeFollowsSpec() {
         let spellings = ELM327Command.handshake.map(\.wireFormat)
-        #expect(spellings == ["ATZ", "ATE0", "ATL0", "ATS0", "ATH1", "ATSP0", "0100", "ATDPN", "ATRV", "ATSH7E0"])
+        #expect(spellings == ["ATZ", "ATE0", "ATL0", "ATS0", "ATH1", "ATSP0", "0100", "ATDPN", "ATRV"])
+        #expect(ELM327Command.physicalAddressing.wireFormat == "ATSH7E0")
     }
 
     @Test("New commands render to their documented spellings")

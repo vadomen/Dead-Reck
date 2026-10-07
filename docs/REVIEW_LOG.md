@@ -166,3 +166,48 @@ counts only `timeout` rows without `rx` (late/unsolicited rows excluded);
 `PollingRecord.command` is `plan.primaryCommand.wireFormat` (empty plan →
 `""`); both pinned in `M1IntegrationTests`, the timeout test verified to fail
 without the fix.
+
+## Run 2 — range `HEAD~1..HEAD` (189387e..5644625), started 2026-10-07
+
+Commit under review: 5644625 "Bench test: ATSH7E0 physical addressing,
+ordered poll selection, fixtures".
+
+### Round 1
+
+Reviewer: fresh `reviewer` agent. Result: 0 BLOCKER / 1 MAJOR / 5 MINOR.
+Tests at review time: 441/441 ×3, simulator build-for-testing green,
+fixtures byte-identical, five mutations of the new rules all caught. The
+`polling.requestHeader` no-bump rationale was assessed as sound.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R2.1-1 | MAJOR | `ATSH7E0` is sent whatever protocol was detected and never abandoned: if no candidate parses physically, PIDs are dropped (never answered OK) and `fallbackPlan` keeps `requestHeader = 7E0`, so the drive records no OBD data; before this commit the same car polled functionally. Also, on non-11-bit-CAN protocols a 3-digit `ATSH` is not an OBD request ID, so the policy's "no non-OBD module" claim holds only on 11-bit CAN. | CONFIRMED | Verified: `ELM327Command.handshake` ends with `.setHeader(.engine)` unconditionally; `fallbackPlan` (`ELMSession.swift:697-702`) sets `requestHeader = planHeader`. |
+| R2.1-2 | MINOR | Suffix guard checked before late prompts settle; a late `ATSH7DF` OK can let one `010D0C1` go out functionally (readings tagged 7E9, no misattribution). | DEFERRED | BACKLOG |
+| R2.1-3 | MINOR | Docs disagree on the nothing-parses fallback's addressing. | DEFERRED | Resolved by the R2.1-1 fix if it makes the fallback functional; else BACKLOG. |
+| R2.1-4 | MINOR | CSV export drops `requestHeader`. | DEFERRED | BACKLOG |
+| R2.1-5 | MINOR | Skill says ATSH7E0 "must answer OK" (it's only a note); README's reserved-settings list omits addressing. | DEFERRED | BACKLOG |
+| R2.1-6 | MINOR | `benchCar` mock answers `ATDPN` `6` after the app's own `ATSP0`; a real ELM reports `A6`. | DEFERRED | Needed by the R2.1-1 test (protocol gate must accept `A6`); handled there. |
+
+Fix: R2.1-1 by `elm-ble-engineer`.
+
+- R2.1-1 → `ATSH7E0` moved out of the unconditional handshake
+  (`ELM327Command.physicalAddressing`) and sent only when `ATDPN` is
+  6/A6/8/A8 and `0100` had a 7E8 line, otherwise skipped with a note. If
+  nothing parses at 7E0 (or only without speed), `ATSH7DF` and a functional
+  re-selection (`010D0C` → `010D`, no suffix). The nothing-parses and
+  `probe: false` fallbacks are functional. The poll loop never sends a
+  physical header while the gate is closed. `benchCar` answers `ATDPN` `A6`
+  (R2.1-6). Regression tests: `ELMSessionAddressingGateTests`, 7 of 8 failed
+  on 5644625 (the 8th asserts the bench outcome is unchanged); 3 of 4
+  mutations caught (the 4th, gate left open across ATZ, is unobservable).
+- Docs aligned: LOG_FORMAT, README, skill (incl. the "must answer OK"
+  wording, part of R2.1-5); R2.1-3 resolved by the functional fallback.
+
+Verification: `swift test` 453/453 (67 suites) ×2; simulator build 0
+errors/warnings; compat tests untouched; Core imports Foundation only.
+Committed as "review round 1: gate ATSH7E0 on 11-bit CAN, functional
+fallback".
+
+### Round 2
+
+_Pending reviewer._ Range `189387e..HEAD`.

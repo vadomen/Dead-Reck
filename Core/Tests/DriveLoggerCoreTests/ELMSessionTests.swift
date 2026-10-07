@@ -87,7 +87,7 @@ struct ELMSessionInitTests {
         #expect(info.protocolNumber == "A6")
         #expect(info.voltage == 12.4)
         #expect(info.supportedPIDs == "SEARCHING...\r7E8064100BE3FA813\r7E906410098180001\r\r")
-        #expect(info.plan == singlePlan())
+        #expect(info.plan == singlePlan(requestHeader: nil), "without probing: the functional baseline")
         #expect(await harness.mock.sentCommands == handshakeWires)
         #expect(await harness.session.state == .ready)
 
@@ -257,10 +257,12 @@ struct ELMSessionProbeTests {
         }
         let harness = SessionHarness(rules: broken + MockELMAdapter.Rule.touareg, configuration: Self.probing)
         let info = try await harness.initialise()
+        // Physical addressing reached nothing: back to 7DF, and the
+        // baseline is functional (review R2.1-1).
         var expected = PollingPlan.baseline
         expected.timeout = .milliseconds(200)
-        expected.requestHeader = .engine
         #expect(info.plan == expected)
+        #expect(await harness.mock.sentCommands.contains("ATSH7DF"))
     }
 
     @Test("A PID that answers NO DATA while probing is left out of the plan")

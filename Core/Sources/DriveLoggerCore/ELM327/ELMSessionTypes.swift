@@ -290,11 +290,13 @@ public struct ELMAdapterInfo: Hashable, Sendable {
     public var voltage: Double?
     /// Raw `0100` reply (supported-PID bitmask), recorded as-is.
     public var supportedPIDs: String?
-    /// The combination start-up selection chose (first command in
-    /// `010D0C1` → `010D0C` → `010D1` → `010D` whose reply carries `7E8`'s
-    /// value for every requested PID, at the faster of `ATAT1`/`ATAT2`), or
-    /// the baseline if none did; with the addressing the handshake
-    /// established.
+    /// The combination start-up selection chose: the first command in
+    /// `010D0C1` → `010D0C` → `010D1` → `010D` whose reply carries the
+    /// primary ECU's value for every requested PID, at the faster of
+    /// `ATAT1`/`ATAT2` — with physical addressing if `ATSH7E0` was sent and
+    /// answered `OK` and something parsed that way, else functionally
+    /// (suffix steps skipped). If nothing parsed, or without probing, the
+    /// baseline: functional, no suffix.
     public var plan: PollingPlan
 
     public init(
@@ -325,7 +327,7 @@ public struct ELMSessionConfiguration: Hashable, Sendable {
     /// Consecutive failed re-inits before asking for a BLE reconnect.
     public var reinitsBeforeReconnect: Int
     /// Whether `initialise()` runs start-up selection or uses `.baseline`
-    /// (with the addressing the handshake established).
+    /// (functional, whatever the handshake established).
     public var probe: Bool
     /// How often `pollRate` events are emitted.
     public var rateWindow: Duration

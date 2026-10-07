@@ -52,7 +52,14 @@ public struct ValidatedELMCommand: Hashable, Sendable {
 /// engine alone. It is still read-only:
 /// - only `7DF` and `7E0`–`7E7` are accepted, the ISO 15765-4 OBD request
 ///   IDs; response IDs (`7E8`), other 11-bit IDs (`6F1`, `7DE`), 29-bit and
-///   any other length are rejected, so no non-OBD module can be addressed;
+///   any other length are rejected;
+/// - those are OBD request IDs **only on 11-bit CAN**. A 3-digit `ATSH xyz`
+///   sets the header to `00 0x yz`: on 29-bit CAN (protocols 7, 9) `ATSH7E0`
+///   means `180007E0`, not a diagnostic ID, and on ISO 9141/KWP/J1850 the
+///   header bytes `00 07 E0`. The policy can't see the protocol, so
+///   `ELMSession` sends a physical header only when `ATDPN` reported 11-bit
+///   ISO 15765-4 (`6`, `A6`, `8`, `A8`) and `0100` was answered from `7E8`
+///   (see `ELM327Command.physicalAddressing`);
 /// - the payload is still mode `01` only;
 /// - `ATCAF0`, `ATCRA` and `ATCEA` stay blocked, so the adapter still adds the
 ///   ISO-TP length byte itself and a physically addressed `0104` is a mode
