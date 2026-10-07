@@ -560,7 +560,9 @@ struct LogFileWriterDiskSpaceTests {
         #expect(summary.eventCount == 1)
     }
 
-    @Test("The timer checks free space too")
+    // The `for await` below waits for a notice; a regression must fail the
+    // test, not hang the run.
+    @Test("The timer checks free space too", .timeLimit(.minutes(1)))
     func timerChecks() async throws {
         let scratch = try ScratchDirectory()
         defer { scratch.remove() }

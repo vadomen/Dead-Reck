@@ -104,16 +104,48 @@ struct SimulatedMotionSourceTests {
 
     @Test("Starting again restarts cleanly from the new clock")
     func restart() async throws {
+        // Same live uptime, reference instants 1000 s apart: samples from the
+        // first clock sit near t = 0, samples from the second near t = 1000 s.
+        let uptime = SystemUptimeSource()
+        let now = uptime.uptimeSeconds
+        let first = SessionClock(referenceUptimeSeconds: now, wallClockStart: Date(timeIntervalSince1970: 0), source: uptime)
+        let second = SessionClock(referenceUptimeSeconds: now - 1_000, wallClockStart: Date(timeIntervalSince1970: 0), source: uptime)
+        let boundary: Int64 = 500_000_000_000
+
         let sink = LogSink()
         let source = SimulatedMotionSource(rateHz: 100)
-        try source.start(clock: SessionClock(), sink: sink)
-        try await Task.sleep(for: .milliseconds(30))
-        try source.start(clock: SessionClock(), sink: sink)
-        try await Task.sleep(for: .milliseconds(30))
+        try source.start(clock: first, sink: sink)
+        try await Task.sleep(for: .milliseconds(40))
+        let secondNowAtRestart = second.now()
+        try source.start(clock: second, sink: sink)
+        try await Task.sleep(for: .milliseconds(60))
         source.stop()
         let count = sink.totalEnqueued
         try await Task.sleep(for: .milliseconds(60))
         #expect(sink.totalEnqueued == count)
+
+        let events = await drain(sink)
+        let motion = events.filter { $0.payload.kind == "motion" }.map(\.timestamp.nanoseconds)
+        guard let firstAfter = motion.firstIndex(where: { $0 >= boundary }) else {
+            Issue.record("no samples from the second clock: \(motion)")
+            return
+        }
+        let before = motion[..<firstAfter]
+        let after = motion[firstAfter...]
+        // Nothing from the old clock after the restart, nothing interleaved.
+        #expect(before.allSatisfy { $0 < boundary })
+        #expect(after.allSatisfy { $0 >= boundary })
+        #expect(!before.isEmpty)
+        // The new run starts at the second clock's now() at restart …
+        let start = after.first!
+        #expect(start >= secondNowAtRestart.nanoseconds)
+        #expect(start - secondNowAtRestart.nanoseconds < 50_000_000)
+        // … from sample 0 (same values as a fresh start), with exact spacing.
+        let firstAfterEvent = events.first { $0.payload.kind == "motion" && $0.timestamp.nanoseconds == start }
+        #expect(firstAfterEvent?.payload == SimulatedMotionModel.payloads(index: 0, rateHz: 100)[0])
+        for (earlier, later) in zip(after, after.dropFirst()) {
+            #expect(later - earlier == 10_000_000)
+        }
     }
 
     @Test("Name and availability")
