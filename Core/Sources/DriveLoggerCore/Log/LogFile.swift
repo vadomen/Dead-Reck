@@ -291,7 +291,8 @@ public struct LogFileSummary: Hashable, Sendable {
 /// **Streams end at `finish()` (R3-2).** Both `failures` and
 /// `diskSpaceNotices` are finished before `finish()` returns; a consumer's
 /// `for await` loop then ends. `finish()` is idempotent: every call, including
-/// concurrent ones, returns the same summary.
+/// concurrent ones, returns the same summary. Always call it: until then the
+/// writer's drain task keeps the writer, and its file descriptor, alive.
 ///
 /// **Tests M1 adds** (`LogFileWriterTests.swift`, through the internal
 /// `LogFileHandle` seam, with a fault-injecting handle wrapping
@@ -867,6 +868,8 @@ final class POSIXLogFileHandle: LogFileHandle {
                 description: LogFileHandleError(operation: .open, errno: error).description
             )
         }
+        // Exactly 0644 whatever the process umask, as documented.
+        _ = fchmod(fd, 0o644)
         do {
             try FileManager.default.setAttributes(
                 [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],

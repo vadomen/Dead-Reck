@@ -290,8 +290,11 @@ struct VolumeDiskSpaceProviderTests {
         var url = URL(fileURLWithPath: directory.path)
         url.removeAllCachedResourceValues()
         if let plain = try url.resourceValues(forKeys: [.volumeAvailableCapacityKey]).volumeAvailableCapacity {
-            // Allow for other processes writing between the two queries.
-            #expect(reading <= Int64(plain) + 64 * 1024 * 1024)
+            // Generous slack for other writers between the two queries — the
+            // freshness test writes and deletes 64 MiB in parallel — while
+            // still far below the purgeable surplus important-usage capacity
+            // reported on the development Mac (~32 GB).
+            #expect(reading <= Int64(plain) + 1024 * 1024 * 1024)
         }
     }
 }

@@ -51,6 +51,11 @@ final class SimulatedTicker: Sendable {
         self.queue = DispatchQueue(label: "DriveLogger.\(label)", qos: .userInitiated)
     }
 
+    deinit {
+        // A resumed dispatch source outlives its owner until cancelled.
+        timer?.cancel()
+    }
+
     /// Starts ticking every `tick` (at most every 20 ms, at least once per
     /// sample period).
     func begin() {
