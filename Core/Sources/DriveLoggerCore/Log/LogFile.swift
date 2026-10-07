@@ -75,6 +75,9 @@ public final class LogSink: Sendable {
     private nonisolated(unsafe) var droppedCount = 0
     /// Guarded by `lock`. Set once by `finish()`.
     private nonisolated(unsafe) var isFinished = false
+    /// Guarded by `lock`. Highest `enqueued - consumed` since the last
+    /// `takePeakQueueDepth()`.
+    private nonisolated(unsafe) var peakDepth = 0
 
     init() {
         (events, continuation) = AsyncStream.makeStream(of: LogEvent.self, bufferingPolicy: .unbounded)
@@ -93,6 +96,7 @@ public final class LogSink: Sendable {
         switch continuation.yield(event) {
         case .enqueued:
             enqueued += 1
+            peakDepth = max(peakDepth, enqueued - consumed)
         case .dropped, .terminated:
             droppedCount += 1
         @unknown default:
@@ -115,6 +119,18 @@ public final class LogSink: Sendable {
     /// it was called.
     var totalEnqueued: Int {
         lock.withLock { enqueued }
+    }
+
+    /// The highest queue depth since the previous call (or since the sink
+    /// was created), measured at every `record`, so a burst that the writer
+    /// drained between two samples is still seen. Resets the peak to the
+    /// current depth. Used by `LogFileWriter.closeStatsWindow(at:)`.
+    func takePeakQueueDepth() -> Int {
+        lock.withLock {
+            let peak = peakDepth
+            peakDepth = enqueued - consumed
+            return peak
+        }
     }
 
     /// Called by the writer after encoding each event it took.
@@ -364,6 +380,10 @@ public actor LogFileWriter {
     private var timerTask: Task<Void, Never>?
     /// The sink's stream has ended and every event in it was taken.
     private var drained = false
+    /// Every event taken for writing, in write order, for `stats` rows.
+    private var stats = StatsAccumulator()
+    /// `sink.dropped` at the previous `closeStatsWindow`.
+    private var droppedAtLastClose = 0
     private var waiters: [(target: Int, continuation: CheckedContinuation<Void, Never>)] = []
 
     /// Creates the file exclusively — throws `LogWriteError.fileExists` rather
@@ -495,6 +515,37 @@ public actor LogFileWriter {
         Int(fileEnd)
     }
 
+    /// Closes the current `stats` window at `end` and returns the row for it
+    /// (`StatsAccumulator`'s definitions). The recorder writes the row into
+    /// `sink` itself, every 10 s and once more just before `finish()`.
+    ///
+    /// The writer is the one place every event passes, in write order, so it
+    /// owns the accumulator: everything recorded into `sink` before this call
+    /// is taken first (as `flush()` does), then counted in this window.
+    /// What only the writer knows is filled in here:
+    /// - `queueDepthMax`: the sink's peak queue depth since the previous
+    ///   close, measured at every `record` (not sampled), so the backlog that
+    ///   builds while a member is compressed and written is seen;
+    /// - `dropped`: events the sink refused since the previous close (only
+    ///   possible after `finish()`, so 0 in every row of a healthy file);
+    /// - `bytesWritten`: compressed bytes in complete members, as
+    ///   `bytesWritten`.
+    ///
+    /// An event that could not be encoded is counted as the `lifecycle` row
+    /// that replaced it; events discarded after writing stopped for good are
+    /// not counted. Safe after `finish()` (the counts are then final).
+    public func closeStatsWindow(at end: MonotonicTimestamp) async -> StatsSample {
+        await catchUp(to: sink.totalEnqueued)
+        let dropped = sink.dropped
+        defer { droppedAtLastClose = dropped }
+        return stats.closeWindow(
+            at: end,
+            queueDepthMax: sink.takePeakQueueDepth(),
+            dropped: dropped - droppedAtLastClose,
+            bytesWritten: Int(fileEnd)
+        )
+    }
+
     // MARK: - Internals
 
     /// Drains the sink for the writer's lifetime and runs the flush timer.
@@ -525,6 +576,7 @@ public actor LogFileWriter {
         }
         do {
             pending.append(try codec.line(for: event))
+            stats.observe(event)
         } catch {
             let replacement = LogEvent(
                 timestamp: event.timestamp,
@@ -535,6 +587,7 @@ public actor LogFileWriter {
             )
             if let line = try? codec.line(for: replacement) {
                 pending.append(line)
+                stats.observe(replacement)
             } else {
                 // Unreachable in practice: the replacement holds only strings
                 // and an integer. Keep the count honest anyway.

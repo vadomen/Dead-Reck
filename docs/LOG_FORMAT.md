@@ -47,6 +47,11 @@ Current version: **2** (`LogFormatVersion.current`). Readable: **1, 2**.
   - Under `LogRecovery.skipMalformedLines` undecodable lines are skipped;
     skipped-line indices count non-empty lines across the whole file, header
     = 0.
+  - An I/O error while reading (e.g. `EIO` from failing media) ends reading
+    under either recovery mode and is reported as a read error
+    (`LogReadReport.readError`, an `inspect_log` warning), not as a damaged
+    member or a truncated tail: the bytes after it were never seen. Before
+    the header is complete it makes the reader throw.
 - Line 1 is the header. Every later line is an event.
 - Recordings are never committed to git (see CLAUDE.md).
 
@@ -77,8 +82,8 @@ Current version: **2** (`LogFormatVersion.current`). Readable: **1, 2**.
 | `startedAt` | ISO 8601 string | 1 | Wall clock at start, whole seconds, UTC. The only wall-clock anchor. |
 | `referenceUptimeSeconds` | double, s | 1 | Seconds since boot at start; `t = 0` here. |
 | `app` | `{name, version, build}` | 1 | Producing build. |
-| `device` | `{model, systemName, systemVersion}` | 1 | e.g. `iPhone16,1`, `iOS`, `18.6`. |
-| `notes` | string | 1 | Free text. |
+| `device` | `{model, systemName, systemVersion}` | 1 | e.g. `iPhone16,1`, `iOS`, `18.6`. Simulator builds write `Simulator (<model>)`. |
+| `notes` | string | 1 | Free text. Simulator builds say what is simulated: `Simulated sensors (simulator build): …` and `Simulated OBD adapter (…)`. |
 | `adapter` | object, see below | 2 | Adapter as of start. Absent if started without OBD. |
 | `polling` | object, see below | 2 | Polling combination as of start. |
 | `sensors` | object, see below | 2 | Requested sensor configuration. |
@@ -184,8 +189,16 @@ CoreLocation's "negative means invalid" convention is kept as-is.
 | `accessory` | bool | 2 | `CLLocationSourceInformation.isProducedByAccessory`. |
 
 In v2, `t = receivedT − ageS` (the fix time on the session clock). `fixTime`
-lets that be recomputed offline. GNSS is reference only: ground truth for
-evaluation, never an input.
+lets that be recomputed offline (it has millisecond resolution; `ageS` carries
+the full precision). `receivedT` and the wall-clock reading behind `ageS` are
+taken together once per CoreLocation callback, so a late delivery changes
+`receivedT` and `ageS`, not `t`. `ageS` is never clamped: a fix stamped
+slightly after the reading has a negative age. GNSS is reference only: ground
+truth for evaluation, never an input — the app's source is called
+`ReferenceLocationSource` for that reason. It asks CoreLocation for
+`kCLLocationAccuracyBest` (not `…BestForNavigation`, which mixes in other
+sensors), activity type `otherNavigation` (no reason to snap to roads), no
+distance filter and no automatic pausing.
 
 ### `obd`
 
@@ -332,10 +345,44 @@ polled.
 | `event` | `start`, `stop`, `pause`, `resume`, `background`, `foreground`, `calibrationStart`, `calibrationEnd`, `error`, `memoryWarning`, `thermalState`, `protectedDataUnavailable`, `lowDiskSpace`. Calibration is the first phase of a recording: the samples between `calibrationStart` and `calibrationEnd` were taken with the car and phone still. |
 | `detail` | Optional free text (error description, thermal state name, stop reason). An event that couldn't be encoded (e.g. a NaN or infinite value) is replaced by an `error` row at the same `t` with detail `encodingFailed <kind>: <description>`. |
 
+What the app writes (all at `clock.now()` when written):
+
+| `event` | `detail` | When |
+|---|---|---|
+| `start` | absent, or `without OBD: link <state>` | First row. The second form when the user chose to record without a polling adapter (the header then has no `adapter`/`polling`). |
+| `calibrationStart` | `keep still for <s> s` | Right after `start`: the keep-still phase begins. |
+| `calibrationEnd` | absent; `cut short after <s> s`; `interrupted by stop` | End of the keep-still phase. Back to back with `calibrationStart` when calibration was skipped. `interrupted by stop` when the recording was stopped during calibration (it is then followed by `stop`). |
+| `background` / `foreground` | absent | The app entered the background / left it. Each `background` is followed by a flush. |
+| `memoryWarning` | absent | The system sent a memory warning; a flush follows. |
+| `thermalState` | `nominal`, `fair`, `serious`, `critical` | At start when not `nominal`, then on every change. |
+| `protectedDataUnavailable` | free text | The device was locked with a passcode. Recording continues: files are `completeUntilFirstUserAuthentication`. |
+| `error` | `<source> unavailable: <reason>` | A sensor source could not run at start (e.g. no permission, no barometer). The rest of the recording goes on. |
+| `error` | `<source> failed to start: <error>` | A sensor source threw when started. |
+| `error` | `<source>: <error>` | A sensor reported an error while running; once per distinct error per source. Also `rawIMU: magnetometer unavailable; recording accel and gyro only`. |
+| `error` | `writer queue peaked at <n> events, more than 2 s of data (<m>)` | The writer fell behind in that `stats` window (written after the `stats` row). |
+| `error` | `write failed: <description>` | A write failure (below). |
+| `lowDiskSpace` | see below | Free space crossed a threshold. |
+| `stop` | `user` or `lowDiskSpace` | The normal stop path, followed by the final `stats` row and nothing else. |
+
+Source names in `error` details: `deviceMotion`, `rawIMU`, `altimeter`,
+`referenceLocation` on a phone; `simulatedMotion`, `simulatedMagBaro`,
+`simulatedLocation` in simulator builds.
+
 Stop reasons (`detail` of `stop`): `user` (the user stopped the recording) or
-`lowDiskSpace` (free space fell below the stop floor). A recording that ends
-on a write failure has an `error` row instead — if that row reached the disk
-at all — and no `stop` row.
+`lowDiskSpace` (free space fell below the stop floor). The strings are pinned
+in Core (`LifecycleSample.StopReason`). Every sensor source is stopped before
+the `stop` row is written, so no sensor or link row follows it; the final
+`stats` row is the last line of a cleanly stopped file.
+
+A **write failure** (`ENOSPC`, an I/O error, a failed `fsync`) ends the
+recording: an `error` row with detail `write failed: <description>` is
+written — it may not reach the disk — and the file is closed, with no `stop`
+row and no final `stats` row. If the failure happens while a normal stop is
+already under way, the `stop` row may be present, and the `error` row may sit
+just before it or be missing; a failure in the very last write of a stop
+leaves the `stop` row but no further row. **The app's state (failed, with the
+count of unwritten events) is authoritative, not the file.** A truncated tail
+or a missing final `stats` row is the file-side sign.
 
 Low disk space ("warn, then stop at a floor"; thresholds default to 200 MB and
 50 MB free):
@@ -343,18 +390,31 @@ Low disk space ("warn, then stop at a floor"; thresholds default to 200 MB and
 | Row | `detail` | Meaning |
 |---|---|---|
 | `lowDiskSpace` | `warning: <bytes> free` | Free space fell below the warning threshold. Recording continued. Written again only if space recovered well above the threshold and fell again. |
-| `lowDiskSpace` | `floor: <bytes> free` | Free space fell below the stop floor. Immediately followed by the final rows of a normal stop. |
+| `lowDiskSpace` | `floor: <bytes> free` | Free space fell below the stop floor. Precedes the `stop` row in write order (rows of other kinds may sit between them); the recording then stops through the normal path. |
 | `stop` | `lowDiskSpace` | The clean stop caused by the floor. The final `stats` row is still written. |
 
 `<bytes>` is the free-space reading, in bytes, that crossed the threshold. A
 reading that drops below both thresholds at once produces both `lowDiskSpace`
-rows, `warning` first. Like all `detail` text this is for humans and
-`inspect_log`; a reader should not depend on more than the prefix.
+rows, `warning` first. No `lowDiskSpace` row follows the `stop` row. The
+prefixes `warning: ` and `floor: ` are pinned in Core
+(`LifecycleSample.lowDiskSpaceWarningPrefix` / `…FloorPrefix`). Like all
+`detail` text this is for humans and `inspect_log`; a reader should not depend
+on more than the prefix.
+
+Free space is the smaller of the volume's "important usage" and plain
+available capacity (purgeable space is not counted). A recording is not
+started below the warning threshold.
 
 ### `stats`
 
 Recorder health over the preceding window. Computed live because queue depth
-and drops can't be reconstructed afterwards.
+and drops can't be reconstructed afterwards. Written every 10 s while
+recording (calibration included), and once more right after the `stop` row,
+closing the last, shorter window. The counts come from the writer itself —
+the one place every row passes, in write order — so every row of the file
+(this kind included: a `stats` row is counted in the next window) is counted
+in exactly one `stats` row of a cleanly stopped recording. `t` is the end of
+the window.
 
 | Field | Type, unit | Meaning |
 |---|---|---|
@@ -365,8 +425,8 @@ and drops can't be reconstructed afterwards.
 | `gaps` | {kind: int} | Intervals > 50 ms in `motion`, `accel`, `gyro`, in timestamp order, including the stream's last sample from the previous window. Always has all three keys. |
 | `maxGapMs` | {kind: double}, ms | Longest interval per kind; only kinds with at least one interval. |
 | `timeouts` | int | `elm` rows with outcome `timeout` and no `rx` — one per command that timed out (late and unsolicited rows excluded). |
-| `queueDepthMax` | int, events | Peak writer queue depth. |
-| `dropped` | int | Events dropped. Should always be 0. |
+| `queueDepthMax` | int, events | Peak writer queue depth in the window: events handed to the writer and not yet encoded, measured at every hand-over (not sampled), starting from the depth carried over from the previous window. A peak above 2 s of data is also written as a `lifecycle` `error` row. |
+| `dropped` | int | Events refused in the window. Only possible after the file was closed; always 0 in a healthy file. |
 | `bytesWritten` | int, bytes | Compressed file size so far. |
 
 ### `marker`

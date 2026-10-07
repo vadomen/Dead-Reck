@@ -298,9 +298,44 @@ public struct LifecycleSample: Hashable, Sendable, Codable {
         case protectedDataUnavailable
         /// Free space crossed a `DiskSpacePolicy` threshold. `detail` is
         /// `"warning: <bytes> free"` (recording continues) or
-        /// `"floor: <bytes> free"` (written immediately before the `stop` row
-        /// whose detail is `"lowDiskSpace"`).
+        /// `"floor: <bytes> free"`, which precedes the `stop` row whose
+        /// detail is `"lowDiskSpace"` in write order (rows of other kinds may
+        /// sit between them). Built by `lowDiskSpaceWarning(availableBytes:)`
+        /// and `lowDiskSpaceFloor(availableBytes:)`.
         case lowDiskSpace
+    }
+
+    /// Why a recording ended through the normal stop path: the `detail` of
+    /// its `stop` row. Raw values are on-disk strings: never rename them.
+    public enum StopReason: String, Hashable, Sendable, CaseIterable {
+        /// The user stopped the recording.
+        case user
+        /// Free space fell below the stop floor.
+        case lowDiskSpace
+    }
+
+    /// Prefix of a `lowDiskSpace` row's `detail` for the warning threshold.
+    /// On-disk string.
+    public static let lowDiskSpaceWarningPrefix = "warning: "
+    /// Prefix of a `lowDiskSpace` row's `detail` for the stop floor.
+    /// On-disk string.
+    public static let lowDiskSpaceFloorPrefix = "floor: "
+
+    /// `stop` row with `reason` as its detail.
+    public static func stop(_ reason: StopReason) -> LifecycleSample {
+        LifecycleSample(.stop, detail: reason.rawValue)
+    }
+
+    /// `lowDiskSpace` row for a `DiskSpaceNotice.low`: detail
+    /// `"warning: <bytes> free"`.
+    public static func lowDiskSpaceWarning(availableBytes: Int64) -> LifecycleSample {
+        LifecycleSample(.lowDiskSpace, detail: "\(lowDiskSpaceWarningPrefix)\(availableBytes) free")
+    }
+
+    /// `lowDiskSpace` row for a `DiskSpaceNotice.critical`: detail
+    /// `"floor: <bytes> free"`.
+    public static func lowDiskSpaceFloor(availableBytes: Int64) -> LifecycleSample {
+        LifecycleSample(.lowDiskSpace, detail: "\(lowDiskSpaceFloorPrefix)\(availableBytes) free")
     }
 }
 

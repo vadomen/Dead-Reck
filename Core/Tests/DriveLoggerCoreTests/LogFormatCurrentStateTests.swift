@@ -40,6 +40,9 @@ struct LogFormatCurrentStateTests {
         // the version that introduces them.
         #expect(LogEventKind.allCases.count == 13)
         #expect(LifecycleSample.Event.allCases.count == 13)
+        // `stop` details; pinned with the low-disk prefixes in
+        // `LifecycleDetailTests` (R3-4).
+        #expect(LifecycleSample.StopReason.allCases.count == 2)
         #expect(ELMPhase.allCases.count == 5)
         #expect(ELMOutcome.allCases.count == 14)
         #expect(ELMState.allCases.count == 10)

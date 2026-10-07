@@ -37,7 +37,8 @@ public enum RecordingCSV {
         case .adapter:
             ["t", "name", "identifier", "elmVersion", "protocol", "voltage",
              "gattService", "gattNotify", "gattWrite", "gattWriteType", "gattMaxWriteLength",
-             "command", "pids", "multiPID", "responseCount", "adaptiveTiming", "rpmEvery", "timeoutMs"]
+             "command", "pids", "multiPID", "responseCount", "adaptiveTiming", "rpmEvery", "timeoutMs",
+             "requestHeader"]
         case .link:
             ["t", "layer", "from", "to", "reason"]
         case .lifecycle:
@@ -80,7 +81,8 @@ public enum RecordingCSV {
                     a.gatt?.service ?? "", a.gatt?.notify ?? "", a.gatt?.write ?? "", a.gatt?.writeType ?? "",
                     i(a.gatt?.maxWriteLength),
                     p?.command ?? "", p.map { $0.pids.map(String.init).joined(separator: ";") } ?? "",
-                    b(p?.multiPID), i(p?.responseCount), i(p?.adaptiveTiming), i(p?.rpmEvery), i(p?.timeoutMs)]
+                    b(p?.multiPID), i(p?.responseCount), i(p?.adaptiveTiming), i(p?.rpmEvery), i(p?.timeoutMs),
+                    p?.requestHeader ?? ""]
         case .link(let l):
             return [t, l.layer, l.from, l.to, l.reason ?? ""]
         case .lifecycle(let l):

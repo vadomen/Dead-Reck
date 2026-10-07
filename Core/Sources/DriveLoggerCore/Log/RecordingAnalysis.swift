@@ -285,6 +285,9 @@ public struct RecordingSummary: Hashable, Sendable {
         if let failure = report.failure {
             warnings.append("reading stopped early: \(failure)")
         }
+        if let readError = report.readError {
+            warnings.append("reading stopped at a read error; the rest of the file was not read: \(readError)")
+        }
         if let stats {
             if stats.totalDropped > 0 {
                 warnings.append("\(stats.totalDropped) event(s) dropped by the recorder")
@@ -389,7 +392,7 @@ public struct RecordingSummary: Hashable, Sendable {
 
         out.append("")
         let members = report.members == 0 ? "plain .jsonl" : "\(report.members) gzip members"
-        out.append("Integrity     \(members); truncated tail: \(report.truncatedTail ? "yes" : "no"); damaged members: \(report.damagedMemberIndices.isEmpty ? "none" : "\(report.damagedMemberIndices)"); skipped lines: \(report.skippedLineIndices.isEmpty ? "none" : "\(report.skippedLineIndices.count)")")
+        out.append("Integrity     \(members); truncated tail: \(report.truncatedTail ? "yes" : "no"); damaged members: \(report.damagedMemberIndices.isEmpty ? "none" : "\(report.damagedMemberIndices)"); skipped lines: \(report.skippedLineIndices.isEmpty ? "none" : "\(report.skippedLineIndices.count)")" + (report.readError == nil ? "" : "; read error: yes"))
         let warnings = healthWarnings
         out.append("Health        " + (warnings.isEmpty ? "OK" : "\(warnings.count) warning(s)"))
         for warning in warnings {

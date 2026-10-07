@@ -1,8 +1,10 @@
 /// Builds the `stats` row written every 10 s.
 ///
-/// Pure value type, fed every event the recorder writes, in write order. The
-/// recorder supplies what only it knows — queue depth, drops, bytes on disk —
-/// when closing a window.
+/// Pure value type, fed every event the recorder writes, in write order. In
+/// the app it lives inside `LogFileWriter`, the one place every event passes
+/// (`LogFileWriter.closeStatsWindow(at:)`), which supplies what only the
+/// writer knows — peak queue depth, drops, bytes on disk — when closing a
+/// window.
 ///
 /// Definitions (the `stats` row's fields):
 /// - `counts`: events observed since the last close, by `kind` string

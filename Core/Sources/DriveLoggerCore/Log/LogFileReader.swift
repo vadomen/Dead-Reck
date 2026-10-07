@@ -28,19 +28,28 @@ public struct LogReadReport: Hashable, Sendable {
     /// Under `LogRecovery.strict`: the problem that ended iteration early
     /// (`.malformedLine` or `.damagedMember`). nil otherwise.
     public var failure: LogDecodingError?
+    /// Reading stopped because the file itself could not be read — an I/O
+    /// error such as `EIO` from failing media — under either recovery mode.
+    /// Everything before that point was returned; nothing after it was
+    /// looked at, so whether the rest is intact is unknown. Not a damaged
+    /// member, not a truncated tail and not `failure`: the bytes were never
+    /// seen (M1-L1). The description names the error.
+    public var readError: String?
 
     public init(
         members: Int,
         truncatedTail: Bool,
         skippedLineIndices: [Int],
         damagedMemberIndices: [Int] = [],
-        failure: LogDecodingError? = nil
+        failure: LogDecodingError? = nil,
+        readError: String? = nil
     ) {
         self.members = members
         self.truncatedTail = truncatedTail
         self.skippedLineIndices = skippedLineIndices
         self.damagedMemberIndices = damagedMemberIndices
         self.failure = failure
+        self.readError = readError
     }
 }
 
@@ -50,6 +59,10 @@ public enum LogFileReadError: Error, Hashable, Sendable {
     /// e.g. a recording that was decompressed and recompressed with `gzip`.
     /// Decompress it (`gunzip`) and read the plain `.jsonl`.
     case foreignGzip(path: String)
+    /// The file could not be read before its header was complete (an I/O
+    /// error). A read error after the header ends iteration instead and is
+    /// reported in `LogReadReport.readError`.
+    case readFailed(path: String, description: String)
 }
 
 /// Streams a recording member by member without loading it whole.
@@ -72,6 +85,10 @@ public enum LogFileReadError: Error, Hashable, Sendable {
 ///   checksum is salvaged under `.skipMalformedLines` (listed in
 ///   `damagedMemberIndices`) and refused under `.strict`; one that cannot be
 ///   inflated is refused with `.damagedMember(index: 0, …)`.
+/// - An I/O error while reading ends iteration under either recovery mode
+///   and is reported as `report.readError` — never as a damaged member or a
+///   truncated tail, because the bytes were never seen. Before the header is
+///   complete it makes `init` throw `LogFileReadError.readFailed`.
 ///
 /// Single pass: the reader is its own cursor, so a second iterator continues
 /// where the first stopped. Not `Sendable`: owns a `LogCodec`.
@@ -79,11 +96,21 @@ public final class LogFileReader: Sequence {
     public let header: LogHeader
     private let cursor: Cursor
 
-    public init(url: URL, recovery: LogRecovery = .skipMalformedLines) throws {
-        let cursor = try Cursor(url: url, recovery: recovery)
+    public convenience init(url: URL, recovery: LogRecovery = .skipMalformedLines) throws {
+        try self.init(url: url, recovery: recovery, readFault: nil)
+    }
+
+    /// Test seam (M1-L1): `readFault` is called before every read from the
+    /// file with the offset the read starts at; throwing from it stands in
+    /// for an I/O error at that point.
+    init(url: URL, recovery: LogRecovery, readFault: ChunkedFile.ReadFault?) throws {
+        let cursor = try Cursor(url: url, recovery: recovery, readFault: readFault)
         let line = try cursor.nextLine()
         if let failure = cursor.headerMemberFailure {
             throw failure
+        }
+        if line == nil, let readError = cursor.report.readError {
+            throw LogFileReadError.readFailed(path: url.path, description: readError)
         }
         // In a gzip file the header is the first line of member 0. An event
         // line from a later member is never taken for it.
@@ -143,10 +170,10 @@ private final class Cursor {
     private var plainRemainder = Data()
     private var exhausted = false
 
-    init(url: URL, recovery: LogRecovery) throws {
+    init(url: URL, recovery: LogRecovery, readFault: ChunkedFile.ReadFault?) throws {
         self.recovery = recovery
         self.path = url.path
-        file = try ChunkedFile(url: url)
+        file = try ChunkedFile(url: url, readFault: readFault)
         let magic = try file.peek(2)
         format = magic == Data([0x1F, 0x8B]) ? .gzip : .plain
         if format == .gzip, case .foreign = GzipMember.parseHeader(try file.peek(65_600)) {
@@ -266,9 +293,14 @@ private final class Cursor {
             lineSourceMember = memberIndex
             appendLines(payload)
         } catch {
-            damaged(memberIndex, "read error: \(error)")
-            exhausted = true
+            readFailed(error)
         }
+    }
+
+    /// An I/O error: stop here, whatever the recovery mode (M1-L1).
+    private func readFailed(_ error: any Error) {
+        report.readError = String(describing: error)
+        exhausted = true
     }
 
     private func truncatedTail() {
@@ -304,7 +336,7 @@ private final class Cursor {
                 plainRemainder = data
             }
         } catch {
-            stop(.damagedMember(index: 0, description: "read error: \(error)"))
+            readFailed(error)
         }
     }
 
@@ -324,16 +356,24 @@ private final class Cursor {
 }
 
 /// Buffered sequential reads from a file.
-private final class ChunkedFile {
+final class ChunkedFile {
+    /// Called with the file offset before every read; throwing simulates an
+    /// I/O error there. Test seam only.
+    typealias ReadFault = (_ offset: Int) throws -> Void
+
     static let chunkSize = 1 << 20
 
     private let handle: FileHandle
+    private let readFault: ReadFault?
     private var buffer = Data()
     private var position = 0
     private var atEnd = false
+    /// Bytes read from the file so far.
+    private var fileOffset = 0
 
-    init(url: URL) throws {
+    init(url: URL, readFault: ReadFault? = nil) throws {
         handle = try FileHandle(forReadingFrom: url)
+        self.readFault = readFault
     }
 
     deinit {
@@ -351,7 +391,9 @@ private final class ChunkedFile {
                 position = 0
             }
             let want = max(Self.chunkSize, count - available)
+            try readFault?(fileOffset)
             if let more = try handle.read(upToCount: want), !more.isEmpty {
+                fileOffset += more.count
                 buffer.append(more)
             } else {
                 atEnd = true
