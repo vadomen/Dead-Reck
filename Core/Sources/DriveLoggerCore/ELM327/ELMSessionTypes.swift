@@ -12,12 +12,14 @@ public enum ELMSessionError: Error, Hashable, Sendable {
     /// A `PollingPlan` field is out of range (`PollingPlan.validate()`);
     /// nothing was sent.
     case invalidPlan(String)
-    /// The link could not be resynchronised: after a written-off prompt, the
-    /// `ATRV` sync (`command`) got no voltage reply within its timeout and
-    /// grace. The poll loop handles it by re-initialising; a manual command
-    /// or `initialise()` caller sees it. An ordinary command timeout is not
-    /// an error: it is an exchange with outcome `timeout`.
+    /// No `>` prompt within the command's timeout. Not thrown by
+    /// `ELMSession` today: a timeout is an exchange with outcome `timeout`.
     case timeout(command: String)
+    /// The link is desynchronised: a timed-out command's prompt never came
+    /// (it was written off), so replies can't be matched to commands until
+    /// `ATZ` resets the adapter. Nothing was sent. Call `initialise()` (or
+    /// start polling, which re-initialises by itself) and retry.
+    case desynchronised
     /// An init step failed; `step` is the command that failed.
     case initFailed(step: String, reason: String)
     case transport(ELMTransportError)

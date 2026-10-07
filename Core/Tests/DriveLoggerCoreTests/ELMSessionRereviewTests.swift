@@ -51,127 +51,16 @@ struct ELMSessionProbeNoDataTests {
     }
 }
 
-@Suite("ELMSession resync after a write-off (re-review #2)", .timeLimit(.minutes(1)))
-struct ELMSessionResyncTests {
-    // Reviewer's writeOffThenLatePrompt: X's reply comes after timeout + grace
-    // (250 ms > 100 + 100). It used to resolve the next command.
-    @Test("Single PID: a prompt arriving after the write-off never becomes data")
-    func writeOffThenLatePromptSingle() async throws {
-        let harness = SessionHarness(rules: pacedRules([
-            .init(command: "010D", reply: "7E803410D01\r\r>", delay: .milliseconds(250), times: 1),
-        ]))
-        _ = try await harness.initialise()
-        try await harness.session.startPolling(singlePlan([.vehicleSpeed]))
-        await harness.run { await $0.readings.count >= 5 }
-        try await harness.stopPolling()
-
-        let readings = await harness.log.readings
-        #expect(readings.allSatisfy { $0.measurement.value == 60 }, "values: \(readings.map(\.measurement.value))")
-        let exchanges = await harness.log.exchanges
-        let late = try #require(exchanges.first { $0.rx == "7E803410D01\r\r" })
-        #expect(late.tx == "010D")
-        #expect(late.outcome == .timeout)
-        let sync = try #require(exchanges.first { $0.tx == "ATRV" && $0.phase == .poll })
-        #expect(sync.outcome == .ok)
-        #expect(sync.rx == "12.4V\r\r")
-        #expect(late.completedUptime <= sync.completedUptime)
-        // The only command sent while X's reply was still pending is the sync.
-        #expect(await harness.mock.overlappingCommands == ["ATRV"])
-        for ok in exchanges where ok.tx == "010D" && ok.outcome == .ok {
-            #expect(ok.completedUptime - ok.requestUptime >= 0.01 - 1e-9)
-        }
-    }
-
-    @Test("Multi-PID: identical polls can't hide an offset either")
-    func writeOffThenLatePromptMulti() async throws {
-        let harness = SessionHarness(rules: pacedRules([
-            .init(command: "010D0C", reply: "7E806410D010C0004\r\r>", delay: .milliseconds(250), times: 1),
-        ]))
-        _ = try await harness.initialise()
-        let plan = PollingPlan(
-            pids: [.vehicleSpeed, .engineSpeed], multiPID: true, responseCount: nil,
-            adaptiveTiming: 1, rpmEvery: 5, timeout: .milliseconds(100)
-        )
-        try await harness.session.startPolling(plan)
-        await harness.run { await $0.readings.count >= 8 }
-        try await harness.stopPolling()
-
-        let readings = await harness.log.readings
-        #expect(readings.filter { $0.measurement.pid == .vehicleSpeed }.allSatisfy { $0.measurement.value == 60 })
-        #expect(readings.filter { $0.measurement.pid == .engineSpeed }.allSatisfy { $0.measurement.value == 750 })
-        #expect(await harness.log.exchanges.contains { $0.tx == "010D0C" && $0.rx == "7E806410D010C0004\r\r" && $0.outcome == .timeout })
-        #expect(await harness.mock.overlappingCommands == ["ATRV"])
-    }
-
-    @Test("A prompt arriving during the sync is recorded as late, not as the sync's answer or data")
-    func promptDuringSync() async throws {
-        let harness = SessionHarness(rules: [
-            .init(command: "ATRV", reply: "12.4V\r\r>", delay: .milliseconds(10), times: 1),   // handshake
-            .init(command: "ATRV", reply: "12.5V\r\r>", delay: .milliseconds(80), times: 1),   // sync, within its 100 ms timeout
-        ] + pacedRules([
-            .init(command: "010D", reply: "7E803410D01\r\r>", delay: .milliseconds(250), times: 1),
-        ]))
-        _ = try await harness.initialise()
-        try await harness.session.startPolling(singlePlan([.vehicleSpeed]))
-        await harness.run { await $0.readings.count >= 2 }
-        try await harness.stopPolling()
-
-        let exchanges = await harness.log.exchanges
-        let sync = try #require(exchanges.first { $0.tx == "ATRV" && $0.phase == .poll })
-        let late = try #require(exchanges.first { $0.rx == "7E803410D01\r\r" })
-        #expect(late.tx == "010D")
-        #expect(late.completedUptime > sync.requestUptime, "arrived while the sync was in flight")
-        #expect(late.completedUptime < sync.completedUptime)
-        #expect(sync.rx == "12.5V\r\r")
-        #expect(await harness.log.readings.allSatisfy { $0.measurement.value == 60 })
-    }
-
-    @Test("A sync that gets no voltage re-initialises via ATZ and counts toward the budget")
-    func syncTimeoutReinitialises() async throws {
-        let harness = SessionHarness(rules: [
-            .init(command: "ATRV", reply: "12.4V\r\r>", delay: .milliseconds(10), times: 1),   // handshake
-            .init(command: "ATRV", reply: nil, times: 1),                                      // sync: silent
-        ] + pacedRules([.init(command: "010D", reply: nil, times: 1)]))
-        _ = try await harness.initialise()
-        try await harness.session.startPolling(singlePlan([.vehicleSpeed]))
-        await harness.run { await $0.readings.count >= 1 }
-        try await harness.stopPolling()
-
-        let sent = await harness.mock.sentCommands
-        #expect(Array(sent.dropFirst(9).prefix(3)) == ["010D", "ATRV", "ATZ"])
-        let reinit = try #require(await harness.log.transitions.first { $0.to == .reinitialising })
-        #expect(reinit.reason?.contains("sync") == true)
-        // initialise(), the plan announced at startPolling, the re-init.
-        #expect(await harness.log.adapterInfos.count == 3)
-        #expect(await harness.log.transitions.contains { $0.reason?.hasPrefix("no voltage reply to the ATRV sync") == true })
-        #expect(await harness.log.readings.first?.measurement.value == 60)
-    }
-
-    @Test("A wedged adapter that never resyncs still reaches needsReconnect with backoff")
-    func wedgedReachesReconnect() async throws {
-        let harness = SessionHarness(rules: [
-            .init(command: "ATRV", reply: "12.4V\r\r>", delay: .zero, times: 1),
-            .init(command: "010D", reply: nil),
-            .init(command: "ATRV", reply: nil),
-            .init(command: "ATZ", reply: "ATZ\r\r\rELM327 v2.1\r\r>", delay: .zero, times: 1),
-            .init(command: "ATZ", reply: nil),
-        ] + MockELMAdapter.Rule.touaregInstant)
-        _ = try await harness.initialise()
-        try await harness.session.startPolling(singlePlan([.vehicleSpeed]))
-        await harness.run { await $0.reconnectRequests == 1 }
-        #expect(await harness.session.state == .failed)
-        let sent = await harness.mock.sentCommands.count
-        await harness.clock.advance(by: .seconds(5))
-        #expect(await harness.mock.sentCommands.count == sent)
-    }
-}
-
 @Suite("ELMSession re-review minors", .timeLimit(.minutes(1)))
 struct ELMSessionRereviewMinorTests {
     // #3
     @Test(
         "Stale output never becomes the ATZ banner",
-        arguments: ["7E803410D3C", "OK", "12.4V", "A6", "6", "410D3C", "7E8 03 41 0D 3C"]
+        arguments: [
+            "7E803410D3C", "OK", "12.4V", "A6", "6", "410D3C", "7E8 03 41 0D 3C",
+            // ATDP and AT@1 replies: letters and digits, but no version token.
+            "AUTO, ISO 15765-4 (CAN 11/500)", "ISO 15765-4 (CAN 11/500)", "OBDII to RS232 Interpreter",
+        ]
     )
     func staleNeverBanner(text: String) async throws {
         let harness = SessionHarness(rules: [.init(command: "ATZ", reply: "\(text)\r\r>", delay: .zero)])

@@ -386,18 +386,23 @@ struct ELMSessionPollingTests {
 
     @Test("A timeout is recorded with the session's stamp, retried, and polling recovers")
     func timeoutRetry() async throws {
-        let harness = SessionHarness(rules: pacedRules([.init(command: "010D", reply: nil, times: 1)]))
+        // 150 ms: past the 100 ms timeout, within the 100 ms grace, so the
+        // late prompt is paid and the retry needs no re-init.
+        let harness = SessionHarness(rules: pacedRules([
+            .init(command: "010D", reply: "7E803410D3C\r\r>", delay: .milliseconds(150), times: 1),
+        ]))
         _ = try await harness.initialise()
         try await harness.session.startPolling(singlePlan([.vehicleSpeed]))
         await harness.run { await $0.readings.count >= 2 }
         try await harness.stopPolling()
 
-        let polls = await harness.log.exchanges.filter { $0.phase == .poll }
+        let polls = await harness.log.exchanges.filter { $0.phase == .poll && !($0.outcome == .timeout && $0.rx != nil) }
         #expect(polls[0].outcome == .timeout)
         #expect(polls[0].rx == nil)
         #expect(abs(polls[0].completedUptime - polls[0].requestUptime - 0.1) < 1e-9)
         #expect(polls[1].outcome == .ok)
         #expect(polls[1].requestUptime - polls[0].completedUptime >= 0.01 - 1e-9, "retry waits retryDelay")
+        #expect(!(await harness.log.states.contains(.reinitialising)))
         let transitions = await harness.log.transitions
         #expect(transitions.contains { $0.from == .polling && $0.to == .retrying && $0.reason == "timeout" })
         #expect(transitions.contains { $0.from == .retrying && $0.to == .polling })
@@ -405,16 +410,18 @@ struct ELMSessionPollingTests {
 
     @Test("failuresBeforeReinit consecutive failures re-run the handshake, then polling resumes")
     func reinit() async throws {
-        let harness = SessionHarness(rules: pacedRules([.init(command: "010D", reply: nil, times: 3)]))
+        // Errors that come with a prompt (a silent command is a write-off,
+        // which re-initialises at once; see ELMSessionWriteOffTests).
+        let harness = SessionHarness(rules: pacedRules([
+            .init(command: "010D", reply: "CAN ERROR\r\r>", delay: .milliseconds(10), times: 3),
+        ]))
         _ = try await harness.initialise()
         try await harness.session.startPolling(singlePlan([.vehicleSpeed]))
         await harness.run { await $0.readings.count >= 1 }
         try await harness.stopPolling()
 
         let sent = await harness.mock.sentCommands
-        // Each timed-out 010D is written off, so the retry is preceded by an
-        // ATRV sync; ATZ needs none (it starts from a clean slate).
-        #expect(Array(sent.prefix(24)) == handshakeWires + ["010D", "ATRV", "010D", "ATRV", "010D"] + handshakeWires + ["010D"])
+        #expect(Array(sent.prefix(22)) == handshakeWires + ["010D", "010D", "010D"] + handshakeWires + ["010D"])
         #expect(await harness.log.states.contains(.reinitialising))
         // initialise(), startPolling with a plan other than info.plan, re-init.
         #expect(await harness.log.adapterInfos.count == 3)
@@ -434,9 +441,10 @@ struct ELMSessionPollingTests {
         await harness.clock.advance(by: .seconds(5))
         #expect(await harness.mock.sentCommands.count == sentAtFailure, "no tight loop after failing")
 
-        // 1 init + 2 re-inits, 3 polls before each escalation.
+        // 1 init + 2 re-inits. A silent poll is written off after its grace
+        // and goes straight to re-init, so one poll per attempt.
         #expect(await harness.mock.sentCommands.filter { $0 == "ATZ" }.count == 3)
-        #expect(await harness.pollCommands.count == 9)
+        #expect(await harness.pollCommands.count == 3)
         let events = await harness.log.events
         let failedIndex = try #require(events.firstIndex {
             if case .state(_, .failed, _, _) = $0 { true } else { false }
@@ -526,7 +534,9 @@ struct ELMSessionPollingTests {
 
     @Test("A plan with ATAT2 applies it before polling and again after a re-init")
     func appliesAdaptiveTiming() async throws {
-        let harness = SessionHarness(rules: pacedRules([.init(command: "010D", reply: nil, times: 3)]))
+        let harness = SessionHarness(rules: pacedRules([
+            .init(command: "010D", reply: "CAN ERROR\r\r>", delay: .milliseconds(10), times: 3),
+        ]))
         _ = try await harness.initialise()
         var plan = singlePlan([.vehicleSpeed])
         plan.adaptiveTiming = 2
@@ -534,8 +544,8 @@ struct ELMSessionPollingTests {
         await harness.run { await $0.readings.count >= 1 }
         try await harness.stopPolling()
         let sent = Array(await harness.mock.sentCommands.dropFirst(9))
-        #expect(Array(sent.prefix(6)) == ["ATAT2", "010D", "ATRV", "010D", "ATRV", "010D"])
-        #expect(Array(sent.dropFirst(6).prefix(11)) == handshakeWires + ["ATAT2", "010D"])
+        #expect(Array(sent.prefix(4)) == ["ATAT2", "010D", "010D", "010D"])
+        #expect(Array(sent.dropFirst(4).prefix(11)) == handshakeWires + ["ATAT2", "010D"])
     }
 }
 

@@ -195,7 +195,7 @@ struct ELMSessionNoDataRuleTests {
         #expect(polls[2].outcome == .noData)
         #expect(polls[3].outcome == .ok)
         #expect(await harness.log.transitions.contains { $0.to == .retrying && $0.reason == "noData" })
-        #expect(await harness.log.adapterInfos.allSatisfy { $0.plan.pids.contains(.vehicleSpeed) }, "nothing was dropped")
+        #expect(await harness.log.adapterInfos.count == 2, "initialise() and the startPolling plan; nothing dropped")
     }
 
     @Test("A never-OK PID the 0100 bitmask calls unsupported is dropped on NO DATA")
@@ -267,7 +267,7 @@ struct ELMSessionReviewMinorTests {
     func adapterAfterFallbackAndReinit() async throws {
         let harness = SessionHarness(rules: pacedRules([
             .init(command: "010D0F", reply: "NO DATA\r\r>", delay: .milliseconds(10)),
-            .init(command: "010D", reply: nil, times: 3),
+            .init(command: "010D", reply: "CAN ERROR\r\r>", delay: .milliseconds(10), times: 3),
         ]))
         _ = try await harness.initialise()
         let plan = PollingPlan(
@@ -284,7 +284,7 @@ struct ELMSessionReviewMinorTests {
         #expect(infos[1].plan == plan)
         #expect(infos[2].plan.multiPID == false)
         #expect(infos[2].plan.pids == [.vehicleSpeed, .intakeAirTemperature])
-        // After the re-init (3 timeouts on 010D) the row reports the singles plan.
+        // After the re-init (3 CAN ERRORs on 010D) the row reports the singles plan.
         #expect(infos.last?.plan.multiPID == false)
     }
 
