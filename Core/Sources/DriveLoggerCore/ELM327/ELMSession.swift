@@ -43,14 +43,14 @@ import Foundation
 ///
 /// Every `NO DATA` is recorded as an `elm` row with outcome `noData`. What
 /// happens next depends on the PID's history in this session:
-/// - A PID that has **never** answered OK (poll or probe), or that the
-///   `0100` bitmask says is unsupported (when the bitmask covers it), is
-///   dropped: the vehicle doesn't implement it. When no PID is left, polling
-///   ends in `ready`.
-/// - A PID that **has** answered OK is never dropped. Its `NO DATA` is a
-///   failure like a timeout: retry → re-init → `failed` + `needsReconnect`,
-///   with the same backoff. One transient `NO DATA` must not cost the speed
-///   signal for the rest of the drive.
+/// - A PID that has **never** answered OK in this session (poll or probe)
+///   is dropped: the vehicle doesn't implement it. When no PID is left,
+///   polling ends in `ready`.
+/// - A PID that **has** answered OK is never dropped — whatever the `0100`
+///   bitmask says; a PID that has answered is evidently supported. Its
+///   `NO DATA` is a failure like a timeout: retry → re-init → `failed` +
+///   `needsReconnect`, with the same backoff. One transient `NO DATA` must
+///   not cost the speed signal for the rest of the drive.
 /// - A multi-PID request answering `NO DATA` falls back to single PIDs, but
 ///   only if that exact request has never answered OK; otherwise it is a
 ///   failure too.
@@ -74,9 +74,16 @@ import Foundation
 ///   empty FIFO.
 /// - Output nobody asked for (buffered at connect, or anything while nothing
 ///   is owed or in flight) is recorded as a `timeout` exchange with `rx` and
-///   an empty `tx`. While `ATZ` is in flight, replies that don't contain
-///   `ELM` are treated the same way, so a stale reply can't pass as the
-///   banner; the banner is still bounded by `resetTimeout`.
+///   an empty `tx`.
+/// - `ATZ` prefers a reply containing `ELM` as its banner, so a stale reply
+///   can't pass for it. Other replies that arrive after `ATZ` was sent are
+///   held. When an `ELM` reply comes they are recorded as unsolicited. If
+///   `resetTimeout` passes without one, the **last** held reply that isn't
+///   just status lines (`?`, `NO DATA`, …) becomes the banner (stamped when it
+///   arrived), the earlier ones are recorded as unsolicited, and a `.state`
+///   note (`from == to`) says `ATZ banner without 'ELM': <banner>`. Some
+///   clones call themselves e.g. `OBDII v1.5`. Init fails at `ATZ` only if
+///   nothing usable arrived.
 /// - A command still in flight when the session shuts down or the link
 ///   drops gets a final exchange: outcome `timeout`, no `rx`, completed at
 ///   that moment.
@@ -135,8 +142,11 @@ public actor ELMSession {
         let token: UInt64
         let wire: String
         let phase: ELMPhase
-        /// `ATZ`: only a reply containing `ELM` counts as its answer.
+        /// `ATZ`: a reply containing `ELM` is preferred as its answer.
         let requiresBanner: Bool
+        /// `ATZ`: usable replies without `ELM`, held in arrival order until
+        /// an `ELM` reply or the timeout decides.
+        var bannerCandidates: [ELMRawReply] = []
         /// Set once `send` returns.
         var requestUptime: Double?
         var resolution: Resolution?
@@ -177,9 +187,6 @@ public actor ELMSession {
     private var initialised = false
     /// What the last successful handshake found.
     private var adapterFacts: HandshakeResult?
-    /// PIDs 0x01–0x20 any ECU flags as supported in the last `0100`; nil if
-    /// unknown.
-    private var bitmaskPIDs: Set<UInt8>?
     /// PIDs that have answered OK (poll or probe) in this session.
     private var okPIDs: Set<OBDPID> = []
     /// Mode 01 commands (wire) that have answered OK in this session.
@@ -377,10 +384,12 @@ public actor ELMSession {
                 throw .initFailed(step: command.wireFormat, reason: exchange.outcome.rawValue)
             }
             switch value {
-            case .banner(let banner): result.banner = banner
-            case .supported:
-                result.supportedPIDs = exchange.rx
-                bitmaskPIDs = exchange.rx.flatMap { Self.supportedPIDBitmask($0, headers: headers) }
+            case .banner(let banner):
+                result.banner = banner
+                if !banner.uppercased().contains("ELM") {
+                    noteState(reason: "ATZ banner without 'ELM': \(banner)")
+                }
+            case .supported: result.supportedPIDs = exchange.rx
             case .protocolNumber(let number): result.protocolNumber = number
             case .voltage(let volts): result.voltage = volts
             case .acknowledged: break
@@ -397,21 +406,6 @@ public actor ELMSession {
         }
         adapterFacts = result
         return result
-    }
-
-    /// PIDs 0x01–0x20 flagged by any ECU in a `0100` reply (`41 00 A B C D`,
-    /// bit 7 of A = PID 0x01). Nil if no reply carries a full bitmask.
-    static func supportedPIDBitmask(_ raw: String, headers: Bool) -> Set<UInt8>? {
-        guard let replies = try? ELM327ResponseParser.replies(in: raw, headers: headers) else { return nil }
-        var pids: Set<UInt8>?
-        for reply in replies where reply.bytes.count >= 6 && reply.bytes.starts(with: [0x41, 0x00]) {
-            var found = pids ?? []
-            for index in 0..<32 where reply.bytes[2 + index / 8] & (0x80 >> UInt8(index % 8)) != 0 {
-                found.insert(UInt8(index + 1))
-            }
-            pids = found
-        }
-        return pids
     }
 
     private static func adapterInfo(_ found: HandshakeResult, plan: PollingPlan) -> ELMAdapterInfo {
@@ -681,15 +675,11 @@ public actor ELMSession {
         }
     }
 
-    /// The NO DATA rule (see the type's doc): drop a PID that never answered
-    /// OK, or that the `0100` bitmask (when it covers the PID) says is
-    /// unsupported.
+    /// The NO DATA rule (see the type's doc): only a PID that has never
+    /// answered OK in this session may be dropped. Having answered OK wins
+    /// over everything else, the `0100` bitmask included.
     private func isDroppableOnNoData(_ pid: OBDPID) -> Bool {
-        if !okPIDs.contains(pid) { return true }
-        if let bitmaskPIDs, (0x01...0x20).contains(pid.rawValue) {
-            return !bitmaskPIDs.contains(pid.rawValue)
-        }
-        return false
+        !okPIDs.contains(pid)
     }
 
     /// The plan as currently polled: active PIDs and multi-PID state.
@@ -977,7 +967,33 @@ public actor ELMSession {
     }
 
     private func timeoutFired(_ token: UInt64) {
+        guard let flight = inFlight, flight.token == token, flight.resolution == nil else { return }
+        // ATZ without an `ELM` banner: settle for the last usable reply.
+        if flight.requiresBanner, let banner = releaseBannerCandidates(keepingLast: true) {
+            resolve(token, with: .reply(banner))
+            return
+        }
         resolve(token, with: .timedOut(uptime: uptime.uptimeSeconds))
+    }
+
+    /// Records the held `ATZ` banner candidates as unsolicited, except the
+    /// last one if `keepingLast`, which is returned.
+    @discardableResult
+    private func releaseBannerCandidates(keepingLast: Bool) -> ELMRawReply? {
+        guard let candidates = inFlight?.bannerCandidates, !candidates.isEmpty else { return nil }
+        inFlight?.bannerCandidates = []
+        let kept = keepingLast ? candidates.last : nil
+        for held in keepingLast ? Array(candidates.dropLast()) : candidates {
+            recordUnsolicited(text: held.text, completedUptime: held.completedUptime)
+        }
+        return kept
+    }
+
+    /// A reply that could be a banner: something besides the echo, and not
+    /// only status lines.
+    private static func isBannerCandidate(_ text: String, command: String) -> Bool {
+        let lines = ELM327ResponseParser.lines(in: text).filter { $0.uppercased() != command.uppercased() }
+        return !lines.isEmpty && lines.allSatisfy { ELM327ResponseParser.error(for: $0) == nil }
     }
 
     private func acquireSlot() async throws(ELMSessionError) {
@@ -1043,9 +1059,14 @@ public actor ELMSession {
             }
             if let flight = inFlight, flight.resolution == nil {
                 if flight.requiresBanner, !reply.text.uppercased().contains("ELM") {
-                    recordUnsolicited(text: reply.text, completedUptime: reply.completedUptime)
+                    if Self.isBannerCandidate(reply.text, command: flight.wire) {
+                        inFlight?.bannerCandidates.append(reply)
+                    } else {
+                        recordUnsolicited(text: reply.text, completedUptime: reply.completedUptime)
+                    }
                     continue
                 }
+                releaseBannerCandidates(keepingLast: false)
                 resolve(flight.token, with: .reply(reply))
                 continue
             }
@@ -1073,6 +1094,7 @@ public actor ELMSession {
     /// command has a row. Partial text received for it follows as a late row.
     private func abandonInFlight(with resolution: Resolution) {
         guard let flight = inFlight, flight.resolution == nil else { return }
+        releaseBannerCandidates(keepingLast: false)
         let now = uptime.uptimeSeconds
         let requestUptime = flight.requestUptime ?? now
         emitExchange(

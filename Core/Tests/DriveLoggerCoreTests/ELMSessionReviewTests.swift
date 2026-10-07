@@ -80,6 +80,45 @@ struct ELMSessionLatePromptTests {
         #expect(await harness.log.exchanges.allSatisfy { $0.tx == "" || $0.outcome == .ok })
     }
 
+    @Test("A clone whose banner lacks ELM still initialises, with that banner and a note")
+    func nonELMBanner() async throws {
+        let harness = SessionHarness(rules: [
+            .init(command: "ATZ", reply: "ATZ\r\r\rOBDII v1.5\r\r>", delay: .milliseconds(20)),
+        ] + MockELMAdapter.Rule.touaregInstant)
+        let info = try await harness.initialise()
+        #expect(info.elmVersion == "OBDII v1.5")
+        let atz = try #require(await harness.log.exchanges.first { $0.tx == "ATZ" })
+        #expect(atz.outcome == .ok)
+        #expect(atz.rx == "ATZ\r\r\rOBDII v1.5\r\r")
+        #expect(abs(atz.completedUptime - atz.requestUptime - 0.02) < 1e-9, "stamped when the banner arrived")
+        let note = try #require(await harness.log.transitions.first { $0.reason?.hasPrefix("ATZ banner without 'ELM'") == true })
+        #expect(note.from == note.to)
+        #expect(note.reason == "ATZ banner without 'ELM': OBDII v1.5")
+        // The ELM banner was waited for until resetTimeout (300 ms).
+        let ate0 = try #require(await harness.log.exchanges.first { $0.tx == "ATE0" })
+        #expect(ate0.requestUptime - atz.requestUptime >= 0.3 - 1e-9)
+        #expect(!(await harness.log.exchanges.contains { $0.tx == "" }), "the banner isn't also an unsolicited row")
+    }
+
+    @Test("Several non-ELM replies after ATZ: the last is the banner, the others are kept as unsolicited")
+    func lastNonELMReplyWins() async throws {
+        let harness = SessionHarness(rules: [
+            .init(command: "ATZ", reply: "7E803410D3C\r\r>\r\rOBDII v1.5\r\r>", delay: .zero),
+        ] + MockELMAdapter.Rule.touaregInstant)
+        let info = try await harness.initialise()
+        #expect(info.elmVersion == "OBDII v1.5")
+        #expect(await harness.log.exchanges.contains { $0.tx == "" && $0.rx == "7E803410D3C\r\r" })
+    }
+
+    @Test("Only status lines after ATZ is not a banner: init fails")
+    func statusOnlyAfterATZ() async throws {
+        let harness = SessionHarness(rules: [.init(command: "ATZ", reply: "?\r\r>", delay: .zero)])
+        await #expect(throws: ELMSessionError.initFailed(step: "ATZ", reason: "timeout")) {
+            _ = try await harness.initialise()
+        }
+        #expect(await harness.log.exchanges.contains { $0.tx == "" && $0.rx == "?\r\r" })
+    }
+
     @Test("Probing with a slow, then late, reply never measures an instant answer")
     func probingNotFooledByLateReply() async throws {
         let harness = SessionHarness(
@@ -134,18 +173,41 @@ struct ELMSessionNoDataRuleTests {
         #expect(!(await harness.log.states.contains(.retrying)))
     }
 
-    @Test("A once-OK PID absent from the 0100 bitmask is dropped on NO DATA")
-    func absentFromBitmaskDropped() async throws {
-        // 0x37 in byte B: 0x0D's bit is clear (0x0B, 0x0C, 0x0E-0x10 set).
+    /// 0x37 in byte B: 0x0D's bit is clear (0x0B, 0x0C, 0x0E–0x10 set).
+    static let bitmaskWithoutSpeed = MockELMAdapter.Rule(
+        command: "0100", reply: "7E8064100BE37A813\r\r>", delay: .milliseconds(10)
+    )
+
+    // User's decision: having answered OK wins over the bitmask.
+    @Test("A once-OK PID the 0100 bitmask calls unsupported is still polled; its NO DATA is a failure")
+    func onceOKBeatsBitmask() async throws {
         let harness = SessionHarness(rules: pacedRules([
-            .init(command: "0100", reply: "7E8064100BE37A813\r\r>", delay: .milliseconds(10)),
+            Self.bitmaskWithoutSpeed,
             .init(command: "010D", reply: "7E803410D3C\r\r>", delay: .milliseconds(10), times: 2),
+            .init(command: "010D", reply: "NO DATA\r\r>", delay: .milliseconds(10), times: 1),
+        ]))
+        _ = try await harness.initialise()
+        try await harness.session.startPolling(singlePlan([.vehicleSpeed]))
+        await harness.run { await $0.readings.count >= 4 }
+        try await harness.stopPolling()
+
+        let polls = await harness.log.exchanges.filter { $0.tx == "010D" }
+        #expect(polls[2].outcome == .noData)
+        #expect(polls[3].outcome == .ok)
+        #expect(await harness.log.transitions.contains { $0.to == .retrying && $0.reason == "noData" })
+        #expect(await harness.log.adapterInfos.count == 1, "nothing was dropped")
+    }
+
+    @Test("A never-OK PID the 0100 bitmask calls unsupported is dropped on NO DATA")
+    func neverOKUnsupportedDropped() async throws {
+        let harness = SessionHarness(rules: pacedRules([
+            Self.bitmaskWithoutSpeed,
             .init(command: "010D", reply: "NO DATA\r\r>", delay: .milliseconds(10)),
         ]))
         _ = try await harness.initialise()
         try await harness.session.startPolling(singlePlan([.vehicleSpeed]))
         await harness.run { await $0.transitions.last?.to == .ready }
-        #expect(await harness.pollCommands.count == 3)
+        #expect(await harness.pollCommands == ["010D"])
         #expect(await harness.log.reconnectRequests == 0)
     }
 
