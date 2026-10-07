@@ -273,6 +273,11 @@ public struct ELMSessionConfiguration: Hashable, Sendable {
     public var probe: Bool
     /// How often `pollRate` events are emitted.
     public var rateWindow: Duration
+    /// Pause before retrying a failed poll, so an adapter that answers every
+    /// command instantly with an error isn't hammered in a tight loop.
+    public var retryDelay: Duration
+    /// Pause before re-init attempt `n` (1-based): `reinitBackoff × 2^(n−1)`.
+    public var reinitBackoff: Duration
 
     public init(
         commandTimeout: Duration = .seconds(1),
@@ -281,7 +286,9 @@ public struct ELMSessionConfiguration: Hashable, Sendable {
         failuresBeforeReinit: Int = 3,
         reinitsBeforeReconnect: Int = 2,
         probe: Bool = true,
-        rateWindow: Duration = .seconds(10)
+        rateWindow: Duration = .seconds(10),
+        retryDelay: Duration = .milliseconds(100),
+        reinitBackoff: Duration = .seconds(1)
     ) {
         self.commandTimeout = commandTimeout
         self.resetTimeout = resetTimeout
@@ -290,6 +297,8 @@ public struct ELMSessionConfiguration: Hashable, Sendable {
         self.reinitsBeforeReconnect = reinitsBeforeReconnect
         self.probe = probe
         self.rateWindow = rateWindow
+        self.retryDelay = retryDelay
+        self.reinitBackoff = reinitBackoff
     }
 
     public static let `default` = ELMSessionConfiguration()
