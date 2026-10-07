@@ -30,8 +30,7 @@ public struct ValidatedELMCommand: Hashable, Sendable {
 /// `.session` — the app's own init, probing and polling (`ELMSession`):
 /// - AT commands: `ATZ`, `ATI`, `AT@1`, `ATE0`/`ATE1`, `ATL0`/`ATL1`,
 ///   `ATS0`/`ATS1`, `ATH0`/`ATH1`, `ATSP0`, `ATDP`, `ATDPN`, `ATRV`,
-///   `ATAT0`–`ATAT2`, and `ATSThh` with `hh` from `19` to `FF` (≈100 ms to
-///   1 s; shorter makes every poll answer `NO DATA`, which stops polling).
+///   `ATAT0`–`ATAT2`.
 /// - Mode `01`.
 ///
 /// `.manual` — the debug console, typed by a person mid-session:
@@ -41,8 +40,16 @@ public struct ValidatedELMCommand: Hashable, Sendable {
 /// The console can't change echo, headers, spaces, timing or protocol, or
 /// reset the adapter. The session depends on those settings to frame and
 /// attribute replies; a change it didn't make would silently corrupt the rows
-/// that follow (e.g. `ATH0` drops ECU attribution, `ATST01` makes every poll
-/// time out and polling stop).
+/// that follow (e.g. `ATH0` drops ECU attribution).
+///
+/// `ATSThh` (the adapter's own reply timeout) is deliberately **not** listed,
+/// in either scope. No code path needs it: adaptive timing (`ATAT`) is the
+/// knob the session probes. A value too short for this car's slowest
+/// responder lets the adapter give up before a supported PID answers (J1979
+/// gives a CAN ECU up to 50 ms, and clones and multi-ECU replies add their
+/// own latency); the reply is then `NO DATA`, and by the `NO DATA` convention
+/// that PID stops being polled for the rest of the drive. Adding it back is a
+/// reviewed change, best made with bench data (M4).
 ///
 /// Mode `01` means `01` followed by 1–6 PID bytes and an optional single
 /// response-count digit `1`–`9` (`010D`, `010D0C`, `010D1`, `010D0C1`).
@@ -66,9 +73,12 @@ public enum ELMCommandPolicy {
         case manual
     }
 
+    /// Checks `wire` against the allowlist for `scope`. There is deliberately
+    /// no default scope: the caller has to say whether this is the session's
+    /// own command (`.session`) or something a person typed (`.manual`).
     public static func validate(
         _ wire: String,
-        scope: Scope = .session
+        scope: Scope
     ) throws(ELMSessionError) -> ValidatedELMCommand {
         guard !wire.isEmpty, wire.utf8.allSatisfy({ (0x21...0x7E).contains($0) }) else {
             throw .forbiddenCommand(wire)
@@ -77,7 +87,7 @@ public enum ELMCommandPolicy {
         // another that would pass.
         let upper = wire.uppercased()
         let allowedAT = switch scope {
-        case .session: isAllowedSessionAT(upper)
+        case .session: sessionATCommands.contains(upper)
         case .manual: manualATCommands.contains(upper)
         }
         guard allowedAT || isAllowedMode01(upper) else {
@@ -86,7 +96,7 @@ public enum ELMCommandPolicy {
         return ValidatedELMCommand(checkedWire: upper)
     }
 
-    public static func isAllowed(_ wire: String, scope: Scope = .session) -> Bool {
+    public static func isAllowed(_ wire: String, scope: Scope) -> Bool {
         (try? validate(wire, scope: scope)) != nil
     }
 
@@ -99,18 +109,12 @@ public enum ELMCommandPolicy {
 
     static let manualATCommands: Set<String> = ["ATI", "AT@1", "ATDP", "ATDPN", "ATRV"]
 
-    /// Lowest `ATST` value: 0x19 × 4.096 ms ≈ 102 ms.
-    static let minimumATST: UInt8 = 0x19
-
-    private static func isAllowedSessionAT(_ upper: String) -> Bool {
-        if sessionATCommands.contains(upper) { return true }
-        // ATSThh — adapter's own response timeout, in 4.096 ms units.
-        if upper.hasPrefix("ATST"), upper.utf8.count == 6,
-           upper.utf8.dropFirst(4).allSatisfy(isASCIIHexDigit),
-           let value = UInt8(upper.dropFirst(4), radix: 16) {
-            return value >= minimumATST
-        }
-        return false
+    /// True if `line` is a command this policy would let the session send.
+    /// The reply parser uses it to recognise echo lines: no adapter reply
+    /// line has that shape (replies start with `41`, `7F`, a CAN header or a
+    /// 3-digit ISO-TP byte count, never `AT` or a mode `01` request).
+    static func looksLikeSessionCommand(_ line: String) -> Bool {
+        isAllowed(line, scope: .session)
     }
 
     private static func isAllowedMode01(_ upper: String) -> Bool {

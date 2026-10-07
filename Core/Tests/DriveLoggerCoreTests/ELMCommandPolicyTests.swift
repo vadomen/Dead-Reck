@@ -10,13 +10,13 @@ struct ELMCommandPolicyTests {
     @Test("Allowlisted commands pass", arguments: [
         "ATZ", "ATI", "AT@1", "ATE0", "ATE1", "ATL0", "ATL1", "ATS0", "ATS1",
         "ATH0", "ATH1", "ATSP0", "ATDP", "ATDPN", "ATRV",
-        "ATAT0", "ATAT1", "ATAT2", "ATST32", "ATSTFF",
+        "ATAT0", "ATAT1", "ATAT2",
         "0100", "010D", "010C", "010D0C", "010D1", "010D0C1", "0104",
         "01000102030405", "010D0C9",
-        "atz", "010d", "atst3c", "ATST19",
+        "atz", "010d",
     ])
     func allows(_ wire: String) throws {
-        let validated = try ELMCommandPolicy.validate(wire)
+        let validated = try ELMCommandPolicy.validate(wire, scope: .session)
         #expect(validated.wire == wire.uppercased())
         #expect(validated.wireData == Data((wire.uppercased() + "\r").utf8))
     }
@@ -36,7 +36,10 @@ struct ELMCommandPolicyTests {
     ])
     func rejectsOtherModes(_ wire: String) {
         #expect(throws: ELMSessionError.forbiddenCommand(wire)) {
-            try ELMCommandPolicy.validate(wire)
+            try ELMCommandPolicy.validate(wire, scope: .session)
+        }
+        #expect(throws: ELMSessionError.forbiddenCommand(wire)) {
+            try ELMCommandPolicy.validate(wire, scope: .manual)
         }
     }
 
@@ -55,7 +58,7 @@ struct ELMCommandPolicyTests {
         "AT", "ATE2", "ATH",
     ])
     func rejectsDangerousAT(_ wire: String) {
-        #expect(!ELMCommandPolicy.isAllowed(wire))
+        #expect(!ELMCommandPolicy.isAllowed(wire, scope: .session))
     }
 
     @Test("Malformed or padded input is rejected, not cleaned up", arguments: [
@@ -64,7 +67,7 @@ struct ELMCommandPolicyTests {
         "010D\r04", "ATZ\r04", "ATZ;04", "ATZ 04",
     ])
     func rejectsMalformed(_ wire: String) {
-        #expect(!ELMCommandPolicy.isAllowed(wire))
+        #expect(!ELMCommandPolicy.isAllowed(wire, scope: .session))
     }
 
     // Regression: Character.isHexDigit is true for fullwidth digits, and
@@ -84,21 +87,26 @@ struct ELMCommandPolicyTests {
         "ATZ\u{0000}",
     ])
     func rejectsNonASCII(_ wire: String) {
-        #expect(!ELMCommandPolicy.isAllowed(wire))
+        #expect(!ELMCommandPolicy.isAllowed(wire, scope: .session))
         #expect(!ELMCommandPolicy.isAllowed(wire, scope: .manual))
     }
 
-    // Regression: ATST01 (4 ms) made every poll answer NO DATA, which by
-    // convention stops polling that PID for the rest of the drive.
-    @Test("ATST below about 100 ms is rejected", arguments: ["ATST00", "ATST01", "ATST0A", "ATST18"])
-    func rejectsTooShortATST(_ wire: String) {
-        #expect(!ELMCommandPolicy.isAllowed(wire))
+    // R1-6: ATST was allowlisted but no code path could send it. It is no
+    // longer allowed at any value: a too-short adapter timeout cuts off slow
+    // ECUs, a supported PID then answers NO DATA, and by convention that PID
+    // stops being polled for the rest of the drive. ATAT is the tuning knob.
+    @Test("ATST is not allowlisted at any value", arguments: [
+        "ATST00", "ATST01", "ATST0A", "ATST18", "ATST19", "ATST32", "ATSTFF", "atst3c",
+    ])
+    func rejectsATST(_ wire: String) {
+        #expect(!ELMCommandPolicy.isAllowed(wire, scope: .session))
+        #expect(!ELMCommandPolicy.isAllowed(wire, scope: .manual))
     }
 
     // Regression: the console could change settings the session depends on.
     @Test("The console may only query the adapter", arguments: [
         "ATZ", "ATE0", "ATE1", "ATL0", "ATL1", "ATS0", "ATS1", "ATH0", "ATH1",
-        "ATSP0", "ATAT0", "ATAT1", "ATAT2", "ATST32", "ATSTFF",
+        "ATSP0", "ATAT0", "ATAT1", "ATAT2",
     ])
     func manualScopeRejectsConfiguration(_ wire: String) {
         #expect(ELMCommandPolicy.isAllowed(wire, scope: .session))

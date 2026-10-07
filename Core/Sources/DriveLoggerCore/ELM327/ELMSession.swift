@@ -80,7 +80,10 @@ public struct ELMExchange: Hashable, Sendable {
     /// `ELMSession.init(firstSeq:)`).
     public var seq: Int
     public var phase: ELMPhase
-    /// Command as written, without the carriage return.
+    /// Command as sent, without the carriage return: printable ASCII,
+    /// uppercased (`ValidatedELMCommand.wire`). For a `rejected` exchange,
+    /// which never left the phone: the input as typed (manual), or the
+    /// command's `wireFormat` (session-originated).
     public var tx: String
     /// Uptime when the write was issued (`ELMTransport.send`). For a
     /// `rejected` exchange, which is never sent, the session's uptime at the
