@@ -61,6 +61,9 @@ public actor MockELMAdapter: ELMTransport {
     /// this unless a reply outlives its timeout.
     public private(set) var overlappingSends = 0
 
+    /// The commands counted by `overlappingSends`, in order.
+    public private(set) var overlappingCommands: [String] = []
+
     /// - Parameters:
     ///   - rules: first match wins; unmatched commands get `?\r\r>`.
     ///   - uptime: stamps sends and chunks, like the real transport.
@@ -80,7 +83,10 @@ public actor MockELMAdapter: ELMTransport {
         Self.assertAllowed(command.wire)
         guard connected else { throw ELMTransportError.notConnected }
         received.append(command.wire)
-        if !deliveries.isEmpty { overlappingSends += 1 }
+        if !deliveries.isEmpty {
+            overlappingSends += 1
+            overlappingCommands.append(command.wire)
+        }
         let requestUptime = uptime.uptimeSeconds
 
         let rule = takeRule(for: command.wire)
