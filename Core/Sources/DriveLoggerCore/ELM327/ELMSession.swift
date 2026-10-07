@@ -9,6 +9,9 @@ public enum ELMSessionError: Error, Hashable, Sendable {
     case forbiddenCommand(String)
     /// The operation needs a completed `initialise()`.
     case notInitialised
+    /// A `PollingPlan` field is out of range (`PollingPlan.validate()`);
+    /// nothing was sent.
+    case invalidPlan(String)
     /// No `>` prompt within the command's timeout.
     case timeout(command: String)
     /// An init step failed; `step` is the command that failed.
@@ -189,9 +192,40 @@ public struct PollingPlan: Hashable, Sendable {
         timeout: .seconds(1)
     )
 
-    /// The command sent on a cycle where every PID is due, e.g. `010D0C1`.
-    public var primaryCommand: String {
-        fatalError("M1: PollingPlan.primaryCommand")
+    /// The command sent every cycle, and the one recorded as
+    /// `PollingRecord.command`:
+    /// - `multiPID` → `.currentDataMany(pids, responseCount: responseCount)`,
+    ///   e.g. `010D0C1`;
+    /// - otherwise → `.currentDataMany([pids[0]], responseCount: responseCount)`,
+    ///   e.g. `010D1` or `010D`.
+    ///
+    /// An `ELM327Command`, not a string, so it can only reach the adapter
+    /// through `validated()`, which range-checks the response count (a
+    /// string `010D10` would pass the policy as PIDs 0x0D and 0x10). The
+    /// recorded string is its `wireFormat`. An empty plan yields a command
+    /// that fails validation rather than trapping.
+    public var primaryCommand: ELM327Command {
+        .currentDataMany(multiPID ? pids : Array(pids.prefix(1)), responseCount: responseCount)
+    }
+
+    /// Throws `.invalidPlan` unless every field is in range: 1–6 distinct
+    /// PIDs, `responseCount` nil or 1–9, `adaptiveTiming` 0–2, `rpmEvery` ≥ 1,
+    /// `timeout` > 0, and `primaryCommand` passes `validated()`.
+    /// `ELMSession.startPolling` calls it before anything is sent.
+    public func validate() throws(ELMSessionError) {
+        guard (1...6).contains(pids.count) else { throw .invalidPlan("\(pids.count) PIDs; 1-6 allowed") }
+        guard Set(pids).count == pids.count else { throw .invalidPlan("repeated PID") }
+        if let responseCount, !(1...9).contains(responseCount) {
+            throw .invalidPlan("responseCount \(responseCount); 1-9 allowed")
+        }
+        guard (0...2).contains(adaptiveTiming) else { throw .invalidPlan("adaptiveTiming \(adaptiveTiming); 0-2 allowed") }
+        guard rpmEvery >= 1 else { throw .invalidPlan("rpmEvery \(rpmEvery); must be at least 1") }
+        guard timeout > .zero else { throw .invalidPlan("timeout must be positive") }
+        do {
+            _ = try primaryCommand.validated()
+        } catch {
+            throw .invalidPlan("primary command rejected: \(error)")
+        }
     }
 }
 
