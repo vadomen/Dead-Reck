@@ -8,27 +8,30 @@ import Testing
 
 @Suite("ELMSession write-off → ATZ", .timeLimit(.minutes(1)))
 struct ELMSessionWriteOffTests {
-    // Reviewer's scenario: the handshake ATRV answers late (250 ms against a
-    // 100 ms timeout plus 100 ms grace). Its late voltage used to satisfy
-    // the ATRV sync and bring back the off-by-one.
-    @Test("Handshake ATRV late, then polling: re-init via ATZ, no shifted reply")
-    func handshakeATRVLateThenPolling() async throws {
+    // Reviewer's scenario: the last handshake step answers late (250 ms
+    // against a 100 ms timeout plus 100 ms grace). It was ATRV, whose late
+    // voltage used to satisfy the ATRV sync and bring back the off-by-one;
+    // since the bench test the last step is ATSH7E0.
+    @Test("Last handshake step (ATSH7E0) late, then polling: re-init via ATZ, no shifted reply")
+    func handshakeLastStepLateThenPolling() async throws {
         let harness = SessionHarness(rules: pacedRules([
-            .init(command: "ATRV", reply: "12.5V\r\r>", delay: .milliseconds(250), times: 1),
+            .init(command: "ATSH7E0", reply: "OK\r\r>", delay: .milliseconds(250), times: 1),
         ]))
         let info = try await harness.initialise()
-        #expect(info.voltage == nil)
+        #expect(info.plan.requestHeader == nil, "no OK seen yet")
         try await harness.session.startPolling(singlePlan([.vehicleSpeed]))
         await harness.run { await $0.readings.count >= 4 }
         try await harness.stopPolling()
 
         let sent = await harness.mock.sentCommands
-        #expect(sent.dropFirst(9).first == "ATZ", "nothing but ATZ after the write-off: \(Array(sent.dropFirst(9).prefix(3)))")
+        #expect(sent.dropFirst(10).first == "ATZ", "nothing but ATZ after the write-off: \(Array(sent.dropFirst(10).prefix(3)))")
         let reinit = try #require(await harness.log.transitions.first { $0.to == .reinitialising })
         #expect(reinit.reason?.contains("desynchronised") == true)
         let exchanges = await harness.log.exchanges
-        let late = try #require(exchanges.first { $0.rx == "12.5V\r\r" })
-        #expect(late.tx == "ATRV")
+        let late = try #require(exchanges.first { $0.tx == "ATSH7E0" && $0.rx != nil })
+        #expect(late.rx == "OK\r\r")
+        #expect(!(await harness.log.transitions.contains { $0.reason?.hasPrefix("late OK") == true }),
+                "a late reply paid while desynchronised is not believed")
         #expect(late.outcome == .timeout)
         #expect(await harness.log.readings.allSatisfy { $0.measurement.value == 60 })
         for ok in exchanges where ok.tx == "010D" && ok.outcome == .ok {

@@ -248,6 +248,17 @@ extension MockELMAdapter.Rule {
     }
 }
 
+extension MockELMAdapter.Rule {
+    /// The bench-car script with every delay removed.
+    static var benchCarInstant: [MockELMAdapter.Rule] {
+        benchCar.map { rule in
+            var rule = rule
+            rule.delay = .zero
+            return rule
+        }
+    }
+}
+
 /// Short timeouts so state-machine tests need little virtual time.
 extension ELMSessionConfiguration {
     static let fastTest = ELMSessionConfiguration(

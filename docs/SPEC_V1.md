@@ -27,11 +27,13 @@ Do not copy code from github.com/leea-software/gpsless (PolyForm Noncommercial l
 ## ELM327 protocol (Core, pure Swift, fully unit-tested)
 
 - Build on the existing `ELM327Command`, `ELM327ResponseParser`, `OBDPID`, `OBDDecoder`.
-- Init sequence: `ATZ` (wait for the banner, capture the version string) → `ATE0` → `ATL0` → `ATS0` → `ATH1` (headers on, to tell ECUs apart) → `ATSP0` → `0100` (forces protocol search; allow ~10 s) → `ATDPN` → `ATRV`. Record every command and raw response.
+- Init sequence: `ATZ` (wait for the banner, capture the version string) → `ATE0` → `ATL0` → `ATS0` → `ATH1` (headers on, to tell ECUs apart) → `ATSP0` → `0100` (forces protocol search; allow ~10 s) → `ATDPN` → `ATRV` → `ATSH7E0` (physical addressing to the engine ECU, see below). Record every command and raw response.
 - Polling: exactly one command in flight; per-command timeout (1 s default); retry, then re-init after N consecutive failures, then BLE reconnect. Model it as a state machine with named states; record every transition.
-- PIDs: `010D` (vehicle speed) every cycle; `010C` (RPM) every 5th cycle. Try the multi-PID request `010D0C` once and use it if the answer parses correctly. Try the response-count suffix (`010D1`) and `ATAT2`; keep whatever gives the highest stable rate and record which combination is in use.
-- Parse multi-line and multi-ECU answers (`7E8`, `7E9`, …); take speed from `7E8`, keep the rest. Support both header-on and header-off formats in the parser.
-- `NO DATA` for a PID means the vehicle does not implement it: record it and stop polling that PID (CLAUDE.md convention).
+- PIDs: speed (`0D`) every cycle, RPM (`0C`) with it. Default poll command on the test car is `010D0C1` after `ATSH7E0` — one request, one reply from `7E8`, both values (verified on the bench, see `docs/BENCH_TEST_2026-10-07.md`). Fallbacks, in order, if a step fails at start-up: `010D0C` without the suffix → `010D1` → `010D`. Also try `ATAT2` vs `ATAT1` and keep the higher stable rate. Record which combination is in use.
+- Never use the response-count suffix without `ATSH7E0`: with functional addressing (`7DF`) the first reply wins, and on the test car that was the gearbox (`7E9`), not the engine.
+- Parse multi-line and multi-ECU answers (`7E8`, `7E9`, …); take speed from `7E8`, keep the rest. Support both header-on and header-off formats in the parser. On the test car both `7E8` and `7E9` answer functional requests and both support `0C`/`0D`.
+- OBDonUDS (`22F4xx`) is not needed on the test car (`22F40D` → `NO DATA`, mode `01` works); keep it out of v1.
+- `NO DATA` for a PID means the vehicle does not implement it: record it and stop polling that PID — but only if the PID has never answered successfully in this session. A PID that has answered OK is never dropped; its `NO DATA` is a transient failure (retry → re-init → reconnect). See the CLAUDE.md convention.
 - Keep the raw response alongside the parsed value, always.
 - Read-only: only allowlisted `AT` commands and mode `01` PIDs may ever be sent (the allowlist is `ELMCommandPolicy`; see README "ELM327 commands"). Enforce at the API boundary and test it. Never send modes 04, 08, 2E, 31, 3B or any coding/UDS request.
 - Measure and record the achieved OBD rate (Hz).

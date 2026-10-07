@@ -17,6 +17,12 @@ seven decisions in §5 were approved as written.
   re-initialises at once. The earlier `ATRV` resync was removed after three
   review rounds showed a stale voltage reply could satisfy it.
 - `ATST` dropped from the allowlist (nothing sends it).
+- Bench test 2026-10-07 (`docs/BENCH_TEST_2026-10-07.md`): init ends with
+  `ATSH7E0`; the poll command is chosen at start-up in the order `010D0C1` →
+  `010D0C` → `010D1` → `010D`, with the `1` suffix only after `ATSH7E0`
+  answered `OK` (under functional addressing the suffix returned the
+  gearbox's reply). `ATSH` is allowlisted for `7DF` and `7E0`–`7E7` only, in
+  session scope. `polling.requestHeader` records the addressing.
 
 For M1 the code is authoritative over the §4 sketches below; the ELM and log
 behaviour is documented in the `ELMSession` / `LogFileWriter` doc comments and

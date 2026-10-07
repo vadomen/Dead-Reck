@@ -34,7 +34,7 @@ struct ELM327CommandTests {
     @Test("Handshake follows the spec sequence with headers on")
     func handshakeFollowsSpec() {
         let spellings = ELM327Command.handshake.map(\.wireFormat)
-        #expect(spellings == ["ATZ", "ATE0", "ATL0", "ATS0", "ATH1", "ATSP0", "0100", "ATDPN", "ATRV"])
+        #expect(spellings == ["ATZ", "ATE0", "ATL0", "ATS0", "ATH1", "ATSP0", "0100", "ATDPN", "ATRV", "ATSH7E0"])
     }
 
     @Test("New commands render to their documented spellings")
@@ -53,6 +53,7 @@ struct ELM327CommandTests {
         commands += (0...2).map(ELM327Command.adaptiveTiming)
         commands += OBDPID.allCases.map(ELM327Command.currentData)
         commands.append(.currentDataMany([.vehicleSpeed, .engineSpeed], responseCount: 1))
+        commands += CANRequestHeader.all.map(ELM327Command.setHeader)
         for command in commands {
             let validated = try command.validated()
             #expect(validated.wireData == command.wireData)

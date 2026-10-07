@@ -39,7 +39,9 @@ public enum ELMState: String, Hashable, Sendable, CaseIterable {
     case initialising
     /// `0100` sent after `ATSP0`; the adapter is searching for a protocol.
     case searching
-    /// Trying multi-PID, the response-count suffix and adaptive timing.
+    /// Selecting the poll command (`010D0C1` → `010D0C` → `010D1` → `010D`,
+    /// suffix steps only with physical addressing) and comparing `ATAT1`
+    /// with `ATAT2`.
     case probing
     /// Initialised, not polling.
     case ready
@@ -185,12 +187,21 @@ public struct PollingPlan: Hashable, Sendable {
     public var pids: [OBDPID]
     public var multiPID: Bool
     /// Response-count suffix, e.g. `1` → `010D1`. Nil when unsupported.
-    /// Must be 1–9; anything else fails `ELM327Command.validated()`.
+    /// Must be 1–9; anything else fails `ELM327Command.validated()`. Requires
+    /// a physical `requestHeader`: with functional addressing the adapter
+    /// stops after the first ECU's reply, which need not be the engine's.
     public var responseCount: Int?
     /// `ATAT` level: 0, 1 or 2.
     public var adaptiveTiming: Int
     public var rpmEvery: Int
     public var timeout: Duration
+    /// The CAN header polls go out with: a physical header (`.engine`,
+    /// `7E0`), or nil for functional addressing (`7DF`, the adapter's
+    /// default). Never `.functional` itself (`validate()` rejects it), so
+    /// functional addressing has one spelling. `ELMSession` sends
+    /// `ATSH<header>` before polling whenever the adapter's addressing
+    /// differs, as it does for `adaptiveTiming`.
+    public var requestHeader: CANRequestHeader?
 
     public init(
         pids: [OBDPID],
@@ -198,7 +209,8 @@ public struct PollingPlan: Hashable, Sendable {
         responseCount: Int?,
         adaptiveTiming: Int,
         rpmEvery: Int,
-        timeout: Duration
+        timeout: Duration,
+        requestHeader: CANRequestHeader? = nil
     ) {
         self.pids = pids
         self.multiPID = multiPID
@@ -206,10 +218,12 @@ public struct PollingPlan: Hashable, Sendable {
         self.adaptiveTiming = adaptiveTiming
         self.rpmEvery = rpmEvery
         self.timeout = timeout
+        self.requestHeader = requestHeader
     }
 
     /// Conservative fallback that every ELM327 clone accepts: `010D` every
-    /// cycle, `010C` every 5th, adaptive timing 1, no suffix.
+    /// cycle, `010C` every 5th, adaptive timing 1, no suffix, functional
+    /// addressing.
     public static let baseline = PollingPlan(
         pids: [.vehicleSpeed, .engineSpeed],
         multiPID: false,
@@ -236,14 +250,24 @@ public struct PollingPlan: Hashable, Sendable {
     }
 
     /// Throws `.invalidPlan` unless every field is in range: 1–6 distinct
-    /// PIDs, `responseCount` nil or 1–9, `adaptiveTiming` 0–2, `rpmEvery` ≥ 1,
-    /// `timeout` > 0, and `primaryCommand` passes `validated()`.
-    /// `ELMSession.startPolling` calls it before anything is sent.
+    /// PIDs, `responseCount` nil or 1–9 and only with a physical
+    /// `requestHeader`, `requestHeader` nil or physical, `adaptiveTiming`
+    /// 0–2, `rpmEvery` ≥ 1, `timeout` > 0, and `primaryCommand` passes
+    /// `validated()`. `ELMSession.startPolling` calls it before anything is
+    /// sent.
     public func validate() throws(ELMSessionError) {
         guard (1...6).contains(pids.count) else { throw .invalidPlan("\(pids.count) PIDs; 1-6 allowed") }
         guard Set(pids).count == pids.count else { throw .invalidPlan("repeated PID") }
         if let responseCount, !(1...9).contains(responseCount) {
             throw .invalidPlan("responseCount \(responseCount); 1-9 allowed")
+        }
+        if requestHeader == .functional {
+            throw .invalidPlan("requestHeader 7DF: functional addressing is nil")
+        }
+        if responseCount != nil, requestHeader == nil {
+            throw .invalidPlan(
+                "responseCount needs physical addressing (requestHeader); with functional 7DF the first ECU to answer wins"
+            )
         }
         guard (0...2).contains(adaptiveTiming) else { throw .invalidPlan("adaptiveTiming \(adaptiveTiming); 0-2 allowed") }
         guard rpmEvery >= 1 else { throw .invalidPlan("rpmEvery \(rpmEvery); must be at least 1") }
@@ -266,7 +290,11 @@ public struct ELMAdapterInfo: Hashable, Sendable {
     public var voltage: Double?
     /// Raw `0100` reply (supported-PID bitmask), recorded as-is.
     public var supportedPIDs: String?
-    /// The fastest combination that parsed correctly during probing.
+    /// The combination start-up selection chose (first command in
+    /// `010D0C1` → `010D0C` → `010D1` → `010D` whose reply carries `7E8`'s
+    /// value for every requested PID, at the faster of `ATAT1`/`ATAT2`), or
+    /// the baseline if none did; with the addressing the handshake
+    /// established.
     public var plan: PollingPlan
 
     public init(
@@ -296,7 +324,8 @@ public struct ELMSessionConfiguration: Hashable, Sendable {
     public var failuresBeforeReinit: Int
     /// Consecutive failed re-inits before asking for a BLE reconnect.
     public var reinitsBeforeReconnect: Int
-    /// Whether `initialise()` probes faster combinations or uses `.baseline`.
+    /// Whether `initialise()` runs start-up selection or uses `.baseline`
+    /// (with the addressing the handshake established).
     public var probe: Bool
     /// How often `pollRate` events are emitted.
     public var rateWindow: Duration

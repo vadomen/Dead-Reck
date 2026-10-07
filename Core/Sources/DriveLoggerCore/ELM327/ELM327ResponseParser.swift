@@ -152,6 +152,12 @@ public struct ECUReply: Hashable, Sendable {
         self.header = header
         self.bytes = bytes
     }
+
+    /// `OBDReading.isPrimaryECU(header)`: the engine ECU's answer (`7E8`),
+    /// the one speed is taken from when several ECUs answer.
+    public var isFromPrimaryECU: Bool {
+        OBDReading.isPrimaryECU(header)
+    }
 }
 
 /// A non-hex reply to an `AT` command, classified.

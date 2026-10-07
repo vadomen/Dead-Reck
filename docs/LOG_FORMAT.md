@@ -109,6 +109,7 @@ Current version: **2** (`LogFormatVersion.current`). Readable: **1, 2**.
 | `adaptiveTiming` | int | `ATAT` level, 0–2. |
 | `rpmEvery` | int | When not combined, RPM is polled every Nth cycle. |
 | `timeoutMs` | int, ms | Per-command timeout. |
+| `requestHeader` | string | CAN request header set with `ATSH`, e.g. `7E0` (physical addressing to the engine ECU, which answers on `7E8`). Absent for functional addressing (`7DF`, the adapter's default) and in every recording made before this field existed. Added to v2 before the app wrote any v2 recording, so no version bump (same precedent as the `lowDiskSpace` lifecycle value). |
 
 `sensors`: `deviceMotionHz`, `accelerometerHz`, `gyroHz`, `magnetometerHz`
 (double, Hz, requested), `referenceFrame` (string, e.g. `xArbitraryZVertical`),
@@ -283,6 +284,18 @@ is a failure too.
 
 ### `adapter`
 
+The polling combination is chosen at start-up, after the handshake ends with
+`ATSH7E0`. The first of `010D0C1` → `010D0C` → `010D1` → `010D` whose reply
+carries the engine's (`7E8`) value for every requested PID is used;
+single-PID steps also send `010C1` / `010C`. The suffix steps (`…1`) are tried
+only if `ATSH7E0` was answered `OK`; with functional addressing the order is
+`010D0C` → `010D`. `ATAT2` replaces `ATAT1` only if it measured faster. If
+nothing parses, `010D` / `010C` every 5th cycle at `ATAT1`. `polling` records
+the combination, including `requestHeader`. `ATSH7E0` appears in `elm` rows
+with phase `init` (the last handshake step), and `ATSH7E0` / `ATSH7DF` with
+phase `poll` when polling restores the plan's addressing, e.g. after a
+re-init.
+
 `{adapter, polling}`, same shapes as the header sections. Written after every
 successful initialisation, including re-inits and reconnects mid-drive, when
 polling starts with a combination other than the last one written, and
@@ -296,7 +309,7 @@ polled.
 |---|---|
 | `layer` | `ble` or `elm`. |
 | `from`, `to` | State names. `elm` states: `idle`, `resetting`, `initialising`, `searching`, `probing`, `ready`, `polling`, `retrying`, `reinitialising`, `failed`. `ble` states: `unavailable`, `idle`, `scanning`, `connecting`, `discovering`, `connected`, `disconnected`, `reconnecting`, `restoring`. |
-| `reason` | Optional free text, e.g. `timeout`. `elm` `failed` reasons include `transport closed`, a re-init limit message, or a read-only-guard rejection of a session command (followed by no reconnect request). Rows with `from == to` are notes (write-offs, init restarts, non-`ELM` banners), not transitions. |
+| `reason` | Optional free text, e.g. `timeout`. `elm` `failed` reasons include `transport closed`, a re-init limit message, or a read-only-guard rejection of a session command (followed by no reconnect request). Rows with `from == to` are notes (write-offs, init restarts, non-`ELM` banners, addressing), not transitions. Addressing notes: `ATSH7E0 not accepted (<outcome>); requests stay functional (7DF), no response-count suffix` and `late OK for ATSH7E0; requests go to 7E0`. While polling, a refused `ATSH<header>` is a failure with reason `ATSH<header>: <outcome>`; a suffixed poll under functional addressing is refused (an `elm` `rejected` row, then `failed`). |
 
 ### `lifecycle`
 

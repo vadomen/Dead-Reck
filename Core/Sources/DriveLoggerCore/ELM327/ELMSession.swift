@@ -20,7 +20,7 @@ import Foundation
 ///
 /// ```
 /// idle ─initialise()→ resetting (ATZ) → initialising (ATE0…ATSP0)
-///      → searching (0100) → initialising (ATDPN, ATRV) → probing → ready
+///      → searching (0100) → initialising (ATDPN, ATRV, ATSH7E0) → probing → ready
 /// ready ─startPolling()→ polling
 /// polling ─failure→ retrying ─failure × failuresBeforeReinit→ reinitialising
 /// retrying/reinitialising ─success→ polling
@@ -38,6 +38,39 @@ import Foundation
 ///   `failuresBeforeReinit` times again before any poll succeeds. After
 ///   `reinitsBeforeReconnect` of those the session goes to `failed`, emits
 ///   `needsReconnect` once and sends nothing more.
+///
+/// ## Addressing and start-up selection
+///
+/// From the bench test (docs/BENCH_TEST_2026-10-07.md): functional requests
+/// (`7DF`) are answered by the engine (`7E8`) and the gearbox (`7E9`), and
+/// with the response-count suffix the adapter keeps the first reply, which
+/// was the gearbox's.
+/// - The handshake ends with `ATSH7E0`. `OK` → requests go to the engine
+///   alone (physical addressing). Anything else → requests stay functional,
+///   a `.state` note with `from == to` and reason `ATSH7E0 not accepted
+///   (<outcome>); requests stay functional (7DF), no response-count suffix`
+///   records it, and init carries on. A late `OK` (paid within the grace
+///   period on a trusted link) counts, with a note `late OK for ATSH7E0;
+///   requests go to 7E0`. `ATZ` returns the adapter to functional.
+/// - Start-up selection (`probing`) tries, in order, `010D0C1` → `010D0C`
+///   → `010D1` → `010D` (single-PID steps also send `010C1` / `010C`) and
+///   takes the first whose every sample carries `7E8`'s value for every
+///   requested PID. Under functional addressing the suffix steps are
+///   skipped: `010D0C` → `010D`. Then `ATAT2` is measured against `ATAT1`
+///   with the chosen command and kept only if faster. Nothing parses →
+///   `PollingPlan.baseline`. The plan records the addressing
+///   (`requestHeader`).
+/// - The response-count suffix is never sent unless `ATSH7E0` was answered
+///   `OK`: `PollingPlan.validate()` requires a `requestHeader` for it, the
+///   poll loop sends `ATSH<header>` (phase `poll`) whenever the adapter's
+///   addressing differs from the plan's — after every re-init too, since
+///   `ATZ` resets it — and polls only once that is answered `OK`, and a
+///   suffixed poll with the adapter functional is refused like a rejected
+///   session command (`rejected` exchange, `failed`).
+/// - A re-init re-runs the whole handshake, `ATSH7E0` included, then
+///   restores the plan's addressing: a physical plan whose `ATSH7E0` is
+///   now refused fails like any poll (retry → re-init → `failed` +
+///   `needsReconnect`); a functional plan gets `ATSH7DF`.
 ///
 /// ## NO DATA
 ///
@@ -232,6 +265,10 @@ public actor ELMSession {
 
     private var headersOn = false
     private var adaptiveTimingLevel = 1
+    /// What requests go out with, as far as the session knows: functional
+    /// from the moment `ATZ` is sent, physical once an `ATSH` is answered
+    /// `OK`. Never physical without that `OK`.
+    private var requestHeader = CANRequestHeader.functional
     private var initialised = false
     /// What the last successful handshake found.
     private var adapterFacts: HandshakeResult?
@@ -256,14 +293,17 @@ public actor ELMSession {
     // MARK: Public API
 
     /// `ATZ` → `ATE0` → `ATL0` → `ATS0` → `ATH1` → `ATSP0` → `0100` → `ATDPN`
-    /// → `ATRV`, then (if configured) probes multi-PID, the response-count
-    /// suffix and `ATAT2`, keeping the fastest combination that parses.
+    /// → `ATRV` → `ATSH7E0`, then (if configured) start-up selection: the
+    /// first of `010D0C1` → `010D0C` → `010D1` → `010D` that parses (suffix
+    /// steps only if `ATSH7E0` was answered `OK`), at the faster of `ATAT1`
+    /// and `ATAT2`. See "Addressing and start-up selection".
     ///
     /// `ATZ` waits up to `resetTimeout`, the `0100` search `searchTimeout`,
     /// everything else `commandTimeout`. A failed step throws
     /// `.initFailed(step:reason:)` (reason = the exchange outcome) and leaves
-    /// the session `failed`; a missing `ATRV` voltage is not a failure. Stops
-    /// polling first if it was running. Concurrent calls share one run.
+    /// the session `failed`; a missing `ATRV` voltage and a refused `ATSH7E0`
+    /// are not failures. Stops polling first if it was running. Concurrent
+    /// calls share one run.
     public func initialise() async throws(ELMSessionError) -> ELMAdapterInfo {
         if let initTask {
             return try await initTask.value.get()
@@ -277,8 +317,10 @@ public actor ELMSession {
 
     /// Starts the poll loop. Requires `ready`; the plan must pass
     /// `PollingPlan.validate()` (else `.invalidPlan`, nothing sent). If the
-    /// plan's `adaptiveTiming` differs from the adapter's, `ATATn` is sent
-    /// first (phase `poll`), and again after every re-init.
+    /// plan's `requestHeader` (nil = `7DF`) differs from the adapter's,
+    /// `ATSH<header>` is sent first, then `ATATn` if the plan's
+    /// `adaptiveTiming` differs (both phase `poll`), and again after every
+    /// re-init. A poll goes out only once both are answered `OK`.
     public func startPolling(_ plan: PollingPlan) throws(ELMSessionError) {
         try checkOpen()
         try plan.validate()
@@ -446,6 +488,13 @@ public actor ELMSession {
             }
             guard let value else {
                 if command == .readVoltage { continue }
+                if case .setHeader = command {
+                    noteState(
+                        reason: "\(command.wireFormat) not accepted (\(exchange.outcome.rawValue)); requests stay "
+                            + "functional (\(CANRequestHeader.functional)), no response-count suffix"
+                    )
+                    continue
+                }
                 throw .initFailed(step: command.wireFormat, reason: exchange.outcome.rawValue)
             }
             switch value {
@@ -465,6 +514,8 @@ public actor ELMSession {
                 adaptiveTimingLevel = 1
             case .headers(let on):
                 headersOn = on
+            case .setHeader(let header):
+                requestHeader = header
             default:
                 break
             }
@@ -498,7 +549,8 @@ public actor ELMSession {
             case (.reset, .banner(let banner)): return (.ok, .banner(banner))
             case (.describeProtocolNumber, .protocolNumber(let number)): return (.ok, .protocolNumber(number))
             case (.readVoltage, .voltage(let volts)): return (.ok, .voltage(volts))
-            case (.echo, .ok), (.lineFeeds, .ok), (.spaces, .ok), (.headers, .ok), (.autoProtocol, .ok):
+            case (.echo, .ok), (.lineFeeds, .ok), (.spaces, .ok), (.headers, .ok), (.autoProtocol, .ok),
+                 (.setHeader, .ok):
                 return (.ok, .acknowledged)
             default: return (.malformed, nil)
             }
@@ -515,86 +567,138 @@ public actor ELMSession {
         case invalid
     }
 
-    /// Measures every combination of adaptive timing (1, 2), response-count
-    /// suffix (none, 1) and single vs multi-PID, and returns the cheapest per
-    /// speed sample: `latency(speed) + latency(others) / rpmEvery` for single
-    /// PIDs, `latency(all)` for multi-PID. A combination counts only if every
-    /// sample parses and the primary ECU (`7E8`) answered every PID. Ties keep
-    /// the earlier, more conservative combination. A PID answering `NO DATA`
-    /// to the plain single request is left out only under the NO DATA rule
-    /// (it has never answered OK in this session, earlier samples and earlier
-    /// `initialise()` calls included); otherwise that combination is just
-    /// invalid. Leaves the adapter at the chosen timing level.
-    private func probe() async throws(ELMSessionError) -> PollingPlan {
-        var supported = PollingPlan.baseline.pids
-        let rpmEvery = PollingPlan.baseline.rpmEvery
-        var best: (plan: PollingPlan, cost: Double)?
-
-        for level in 1...2 {
-            guard try await setAdaptiveTiming(level, phase: .probe) == .ok else { continue }
-            for responseCount in [nil, 1] as [Int?] {
-                var latencies: [OBDPID: Double] = [:]
-                for pid in supported {
-                    switch try await measure(.currentDataMany([pid], responseCount: responseCount), pids: [pid]) {
-                    case .valid(let latency):
-                        latencies[pid] = latency
-                    case .noData where level == 1 && responseCount == nil && isDroppableOnNoData(pid):
-                        // The one NO DATA rule: never answered OK → drop.
-                        supported.removeAll { $0 == pid }
-                    case .noData, .invalid:
-                        // A PID that has answered OK keeps its place; this
-                        // combination just doesn't count.
-                        break
-                    }
-                }
-                if let first = supported.first, let firstLatency = latencies[first],
-                   supported.allSatisfy({ latencies[$0] != nil }) {
-                    let others = supported.dropFirst().compactMap { latencies[$0] }.reduce(0, +)
-                    let cost = firstLatency + others / Double(rpmEvery)
-                    if best.map({ cost < $0.cost }) ?? true {
-                        best = (probePlan(supported, multiPID: false, responseCount, level, rpmEvery), cost)
-                    }
-                }
-                if supported.count > 1,
-                   case .valid(let latency) = try await measure(
-                       .currentDataMany(supported, responseCount: responseCount),
-                       pids: supported
-                   ),
-                   best.map({ latency < $0.cost }) ?? true {
-                    best = (probePlan(supported, multiPID: true, responseCount, level, rpmEvery), latency)
-                }
-            }
-        }
-
-        let plan = best?.plan ?? fallbackPlan(pids: supported.isEmpty ? PollingPlan.baseline.pids : supported)
-        if adaptiveTimingLevel != plan.adaptiveTiming {
-            _ = try await setAdaptiveTiming(plan.adaptiveTiming, phase: .probe)
-        }
-        return plan
+    /// One start-up selection step: PIDs in one request or singly, with or
+    /// without the response-count suffix.
+    private struct Candidate: Equatable {
+        var multiPID: Bool
+        var responseCount: Int?
     }
 
-    private func probePlan(
-        _ pids: [OBDPID],
-        multiPID: Bool,
-        _ responseCount: Int?,
-        _ level: Int,
-        _ rpmEvery: Int
-    ) -> PollingPlan {
-        PollingPlan(
+    private enum CandidateResult {
+        /// Every sample of every command parsed with `7E8`'s values.
+        /// `cost` is the latency per speed sample.
+        case valid(cost: Double)
+        case invalid
+        /// The plain single request for this PID answered `NO DATA` and the
+        /// PID has never answered OK: the NO DATA rule drops it.
+        case drop(OBDPID)
+    }
+
+    /// Selection order: `010D0C1` → `010D0C` → `010D1` → `010D`. Multi-PID
+    /// steps need two PIDs; suffix steps need physical addressing.
+    private static func candidates(pidCount: Int, physical: Bool) -> [Candidate] {
+        let order: [Candidate] = [
+            Candidate(multiPID: true, responseCount: 1),
+            Candidate(multiPID: true, responseCount: nil),
+            Candidate(multiPID: false, responseCount: 1),
+            Candidate(multiPID: false, responseCount: nil),
+        ]
+        return order.filter { candidate in
+            (!candidate.multiPID || pidCount > 1) && (candidate.responseCount == nil || physical)
+        }
+    }
+
+    /// Start-up selection (see the type's doc). Takes the first candidate
+    /// in `candidates` order that parses at `ATAT1`; then measures it at
+    /// `ATAT2` and keeps level 2 only if strictly faster (ties keep the
+    /// more conservative `ATAT1`). Cost per speed sample:
+    /// `latency(all)` for multi-PID, `latency(speed) + latency(others) /
+    /// rpmEvery` for single PIDs. A PID answering `NO DATA` to its plain
+    /// single request is dropped only under the NO DATA rule (never
+    /// answered OK in this session, earlier samples and earlier
+    /// `initialise()` calls included), and selection restarts without it;
+    /// otherwise the step is just invalid. Nothing parses → the baseline
+    /// plan. Leaves the adapter at the chosen timing level. The addressing
+    /// is read after `ATAT1`, which settles a late `ATSH7E0` reply.
+    private func probe() async throws(ELMSessionError) -> PollingPlan {
+        let rpmEvery = PollingPlan.baseline.rpmEvery
+        var pids = PollingPlan.baseline.pids
+        _ = try await setAdaptiveTiming(1, phase: .probe)
+        let header = planHeader
+
+        var chosen: (candidate: Candidate, cost: Double)?
+        selection: while chosen == nil, !pids.isEmpty {
+            for candidate in Self.candidates(pidCount: pids.count, physical: header != nil) {
+                switch try await measure(candidate, pids: pids, rpmEvery: rpmEvery, mayDrop: true) {
+                case .valid(let cost):
+                    chosen = (candidate, cost)
+                    break selection
+                case .drop(let pid):
+                    pids.removeAll { $0 == pid }
+                    continue selection
+                case .invalid:
+                    continue
+                }
+            }
+            break
+        }
+
+        guard let chosen else {
+            return fallbackPlan(pids: pids.isEmpty ? PollingPlan.baseline.pids : pids)
+        }
+        var level = 1
+        if try await setAdaptiveTiming(2, phase: .probe) == .ok,
+           case .valid(let cost) = try await measure(chosen.candidate, pids: pids, rpmEvery: rpmEvery, mayDrop: false),
+           cost < chosen.cost {
+            level = 2
+        }
+        if adaptiveTimingLevel != level {
+            _ = try await setAdaptiveTiming(level, phase: .probe)
+        }
+        return PollingPlan(
             pids: pids,
-            multiPID: multiPID,
-            responseCount: responseCount,
+            multiPID: chosen.candidate.multiPID,
+            responseCount: chosen.candidate.responseCount,
             adaptiveTiming: level,
             rpmEvery: rpmEvery,
-            timeout: configuration.commandTimeout
+            timeout: configuration.commandTimeout,
+            requestHeader: header
         )
     }
 
-    /// `PollingPlan.baseline` with `pids` and the configured command timeout.
+    /// Sends a candidate's commands, `probeSamples` times each, stopping at
+    /// the first that doesn't parse.
+    private func measure(
+        _ candidate: Candidate,
+        pids: [OBDPID],
+        rpmEvery: Int,
+        mayDrop: Bool
+    ) async throws(ELMSessionError) -> CandidateResult {
+        if candidate.multiPID {
+            let command = ELM327Command.currentDataMany(pids, responseCount: candidate.responseCount)
+            guard case .valid(let latency) = try await measure(command, pids: pids) else { return .invalid }
+            return .valid(cost: latency)
+        }
+        var latencies: [Double] = []
+        for pid in pids {
+            switch try await measure(.currentDataMany([pid], responseCount: candidate.responseCount), pids: [pid]) {
+            case .valid(let latency):
+                latencies.append(latency)
+            case .noData where mayDrop && candidate.responseCount == nil && isDroppableOnNoData(pid):
+                // The one NO DATA rule: never answered OK → drop.
+                return .drop(pid)
+            case .noData, .invalid:
+                // A PID that has answered OK keeps its place; this step
+                // just doesn't count.
+                return .invalid
+            }
+        }
+        return .valid(cost: latencies[0] + latencies.dropFirst().reduce(0, +) / Double(rpmEvery))
+    }
+
+    /// The adapter's addressing as a plan field: the physical header, or
+    /// nil for functional.
+    private var planHeader: CANRequestHeader? {
+        requestHeader.isPhysical ? requestHeader : nil
+    }
+
+    /// `PollingPlan.baseline` with `pids`, the configured command timeout and
+    /// the adapter's addressing.
     private func fallbackPlan(pids: [OBDPID]) -> PollingPlan {
         var plan = PollingPlan.baseline
         plan.pids = pids
         plan.timeout = configuration.commandTimeout
+        plan.requestHeader = planHeader
         return plan
     }
 
@@ -627,6 +731,17 @@ public actor ELMSession {
         return exchange.outcome
     }
 
+    /// Sends `ATSH<header>`; on `OK` records the adapter's new addressing.
+    private func setRequestHeader(_ header: CANRequestHeader, phase: ELMPhase) async throws(ELMSessionError) -> ELMOutcome {
+        let command = ELM327Command.setHeader(header)
+        let wire = command.wireFormat
+        let (exchange, _) = try await perform(command, phase: phase, timeout: configuration.commandTimeout) { raw in
+            Self.interpretAcknowledgement(raw, wire: wire)
+        }
+        if exchange.outcome == .ok { requestHeader = header }
+        return exchange.outcome
+    }
+
     // MARK: Polling
 
     private struct DecodedValue {
@@ -655,7 +770,11 @@ public actor ELMSession {
                 attempts: while true {
                     if stopRequested || Task.isCancelled { break cycles }
                     let step: PollStep
-                    if adaptiveTimingLevel != plan.adaptiveTiming {
+                    let header = plan.requestHeader ?? .functional
+                    if requestHeader != header {
+                        step = await applyPlanHeader(header)
+                        if case .success = step { continue attempts }
+                    } else if adaptiveTimingLevel != plan.adaptiveTiming {
                         step = await applyPlanTiming(plan.adaptiveTiming)
                         if case .success = step { continue attempts }
                     } else {
@@ -699,6 +818,19 @@ public actor ELMSession {
     }
 
     private func pollOnce(_ command: ELM327Command, pids: [OBDPID], plan: PollingPlan) async -> PollStep {
+        // The suffix with functional addressing keeps whichever ECU answers
+        // first. validate() and the loop's ATSH step make this unreachable;
+        // a plan pushed past validate() still never gets it onto the wire.
+        if case .currentDataMany(_, .some) = command, !requestHeader.isPhysical {
+            emitRejection(phase: .poll, tx: command.wireFormat)
+            stopRequested = true
+            setState(
+                .failed,
+                reason: "\(command.wireFormat) refused: the response-count suffix needs physical addressing "
+                    + "(ATSH7E0 answered OK); requests are functional"
+            )
+            return .ended
+        }
         let headers = headersOn
         let exchange: ELMExchange
         let decoded: [DecodedValue]?
@@ -774,6 +906,15 @@ public actor ELMSession {
         guard let adapterFacts, let plan = currentPlan, !plan.pids.isEmpty else { return }
         announcedPlan = plan
         continuation.yield(.adapter(Self.adapterInfo(adapterFacts, plan: plan), uptime: uptime.uptimeSeconds))
+    }
+
+    private func applyPlanHeader(_ header: CANRequestHeader) async -> PollStep {
+        do {
+            let outcome = try await setRequestHeader(header, phase: .poll)
+            return outcome == .ok ? .success : .failure("ATSH\(header): \(outcome.rawValue)")
+        } catch {
+            return step(for: error)
+        }
     }
 
     private func applyPlanTiming(_ level: Int) async -> PollStep {
@@ -1310,6 +1451,11 @@ public actor ELMSession {
 
     /// The late `>` for a command that already timed out: a `timeout`
     /// exchange with `rx`, attributed to that command.
+    ///
+    /// A late `OK` for an `ATSH` on a trusted link means the adapter did
+    /// switch headers: believe it, with a note, so the plan's recorded
+    /// addressing stays true. While desynchronised nothing is believed; the
+    /// coming `ATZ` resets the addressing anyway.
     private func recordLateReply(_ owed: SentCommand, text: String, completedUptime: Double) {
         emitExchange(
             phase: owed.phase,
@@ -1319,6 +1465,12 @@ public actor ELMSession {
             completedUptime: completedUptime,
             outcome: .timeout
         )
+        if !desynchronised, owed.tx.hasPrefix("ATSH"),
+           let header = CANRequestHeader(rawValue: String(owed.tx.dropFirst(4))),
+           (try? ELM327ResponseParser.textReply(to: owed.tx, raw: text)) == .ok {
+            requestHeader = header
+            noteState(reason: "late OK for \(owed.tx); requests go to \(header)")
+        }
     }
 
     /// Output no command is waiting for: `timeout` with `rx` and empty `tx`.
@@ -1396,6 +1548,9 @@ public actor ELMSession {
     /// reset are still attributed to them.
     private func prepareForReset() {
         recordPendingPartialReply()
+        // The adapter resets on receipt; until an ATSH is answered OK again,
+        // requests are functional.
+        requestHeader = .functional
     }
 
     // MARK: Events

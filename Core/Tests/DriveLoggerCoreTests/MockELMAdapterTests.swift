@@ -173,3 +173,129 @@ struct MockELMAdapterTests {
         #expect(delays["0100"]! > delays["010D"]!)
     }
 }
+
+/// Asks the mock one command at a time and returns each framed reply.
+private struct MockAsker {
+    let mock: MockELMAdapter
+    let clock: TestClock
+    let log: ChunkLog
+
+    init(rules: [MockELMAdapter.Rule]) {
+        clock = TestClock()
+        mock = MockELMAdapter(rules: rules, uptime: clock, clock: clock)
+        log = ChunkLog.start(mock.incoming)
+    }
+
+    /// The reply text without the prompt.
+    func ask(_ wire: String) async throws -> String {
+        let before = await log.text.count
+        _ = try await mock.send(ELMCommandPolicy.validate(wire, scope: .session))
+        let log = log
+        let done = await driveUntil(clock) { await log.text.dropFirst(before).contains(">") }
+        try #require(done, "no prompt for \(wire)")
+        return String(await log.text.dropFirst(before).dropLast())
+    }
+}
+
+@Suite("MockELMAdapter addressing", .timeLimit(.minutes(1)))
+struct MockELMAdapterAddressingTests {
+    static let rules: [MockELMAdapter.Rule] = [
+        .init(command: "ATZ", reply: "ELM327 v2.3\r\r>", delay: .zero),
+        .init(command: "ATSH7E0", reply: "OK\r\r>", delay: .zero),
+        .init(command: "ATSH7DF", reply: "OK\r\r>", delay: .zero),
+        .init(command: "010D1", reply: "7E903410D00\r\r>", delay: .zero, requestHeader: "7DF"),
+        .init(command: "010D1", reply: "7E803410D00\r\r>", delay: .zero, requestHeader: "7E0"),
+    ]
+
+    @Test("Starts functional; ATSH answered OK switches the header; ATZ resets it")
+    func headerState() async throws {
+        let asker = MockAsker(rules: Self.rules)
+        #expect(await asker.mock.requestHeader == "7DF")
+        #expect(try await asker.ask("010D1") == "7E903410D00\r\r")
+        #expect(try await asker.ask("ATSH7E0") == "OK\r\r")
+        #expect(await asker.mock.requestHeader == "7E0")
+        #expect(try await asker.ask("010D1") == "7E803410D00\r\r")
+        #expect(try await asker.ask("ATSH7DF") == "OK\r\r")
+        #expect(await asker.mock.requestHeader == "7DF")
+        #expect(try await asker.ask("ATSH7E0") == "OK\r\r")
+        #expect(try await asker.ask("ATZ") == "ELM327 v2.3\r\r")
+        #expect(await asker.mock.requestHeader == "7DF")
+        #expect(try await asker.ask("010D1") == "7E903410D00\r\r")
+    }
+
+    @Test("ATSH answered with anything but OK leaves the header alone")
+    func refusedHeader() async throws {
+        let asker = MockAsker(rules: [.init(command: "ATSH7E0", reply: "?\r\r>", delay: .zero)] + Self.rules)
+        #expect(try await asker.ask("ATSH7E0") == "?\r\r")
+        #expect(await asker.mock.requestHeader == "7DF")
+        #expect(try await asker.ask("010D1") == "7E903410D00\r\r")
+    }
+
+    @Test("A rule scoped to another header doesn't match: the command gets ?")
+    func scopedRuleDoesNotMatch() async throws {
+        let asker = MockAsker(rules: [
+            .init(command: "010D0C1", reply: "7E806410D000C0A5C\r\r>", delay: .zero, requestHeader: "7E0"),
+        ])
+        #expect(try await asker.ask("010D0C1") == "?\r\r")
+    }
+}
+
+@Suite("MockELMAdapter bench-car script", .timeLimit(.minutes(1)))
+struct MockELMAdapterBenchCarTests {
+    typealias T = BenchTranscript
+
+    @Test("Block 1, functional: every reply exactly as transcribed")
+    func functionalBlock() async throws {
+        let asker = MockAsker(rules: MockELMAdapter.Rule.benchCarInstant)
+        #expect(try await asker.ask("ATI") == T.ati)
+        #expect(try await asker.ask("ATRV") == T.atrvEngineOff)
+        #expect(try await asker.ask("ATDPN") == T.atdpn)
+        #expect(try await asker.ask("ATH1") == T.ath1)
+        #expect(try await asker.ask("0100") == T.supportedPIDs0100)
+        #expect(try await asker.ask("010D") == T.speed010D)
+        #expect(try await asker.ask("010D1") == T.speedFunctionalSuffix010D1)
+        #expect(try await asker.ask("010D0C") == T.speedRPM010D0C)
+    }
+
+    @Test("Block 2, after ATSH7E0: every reply exactly as transcribed")
+    func physicalBlock() async throws {
+        let asker = MockAsker(rules: MockELMAdapter.Rule.benchCarInstant)
+        #expect(try await asker.ask("ATSH7E0") == T.atsh7E0)
+        #expect(await asker.mock.requestHeader == "7E0")
+        #expect(try await asker.ask("010D1") == T.speedPhysicalSuffix010D1)
+        #expect(try await asker.ask("010D0C1") == T.speedRPMPhysicalSuffix010D0C1)
+        #expect(try await asker.ask("ATRV") == T.atrvIdling)
+    }
+
+    @Test("ATZ answers the v2.3 banner and returns to functional addressing")
+    func resetBanner() async throws {
+        let asker = MockAsker(rules: MockELMAdapter.Rule.benchCarInstant)
+        _ = try await asker.ask("ATSH7E0")
+        #expect(try ELM327ResponseParser.textReply(to: "ATZ", raw: await asker.ask("ATZ")) == .banner("ELM327 v2.3"))
+        #expect(await asker.mock.requestHeader == "7DF")
+        #expect(try await asker.ask("010D1") == T.speedFunctionalSuffix010D1)
+    }
+
+    @Test("The suffix with a functional header is not scripted beyond the transcript: 010D0C1 gets ?")
+    func untranscribed() async throws {
+        let asker = MockAsker(rules: MockELMAdapter.Rule.benchCarInstant)
+        #expect(try await asker.ask("010D0C1") == "?\r\r")
+    }
+
+    // The script carries the 22F40D transcript for completeness, but the
+    // read-only guard means it can never be asked.
+    @Test("22F40D is scripted as NO DATA but can't be sent: the policy rejects mode 22")
+    func modeTwentyTwoUnreachable() throws {
+        let rule = try #require(MockELMAdapter.Rule.benchCar.first { $0.command == "22F40D" })
+        #expect(rule.reply == T.udsSpeed22F40D + ">")
+        #expect(throws: ELMSessionError.forbiddenCommand("22F40D")) { try ELMCommandPolicy.validate("22F40D", scope: .session) }
+    }
+
+    @Test("Every transcribed reply is in the script, for the right header")
+    func coversTranscript() {
+        let rules = MockELMAdapter.Rule.benchCar
+        for (command, reply) in BenchTranscript.all {
+            #expect(rules.contains { $0.command == command && $0.reply == reply + ">" }, "\(command) → \(reply.debugDescription)")
+        }
+    }
+}

@@ -108,6 +108,11 @@ public struct PollingRecord: Hashable, Sendable, Codable {
     public var rpmEvery: Int
     /// Per-command timeout, in milliseconds.
     public var timeoutMs: Int
+    /// CAN request header set with `ATSH`, e.g. `7E0` (physical addressing
+    /// to the engine ECU). Absent for functional addressing (`7DF`, the
+    /// adapter's default) — including every recording made before this
+    /// field existed, when no `ATSH` was ever sent.
+    public var requestHeader: String?
 
     public init(
         command: String,
@@ -116,7 +121,8 @@ public struct PollingRecord: Hashable, Sendable, Codable {
         responseCount: Int? = nil,
         adaptiveTiming: Int,
         rpmEvery: Int,
-        timeoutMs: Int
+        timeoutMs: Int,
+        requestHeader: String? = nil
     ) {
         self.command = command
         self.pids = pids
@@ -125,6 +131,7 @@ public struct PollingRecord: Hashable, Sendable, Codable {
         self.adaptiveTiming = adaptiveTiming
         self.rpmEvery = rpmEvery
         self.timeoutMs = timeoutMs
+        self.requestHeader = requestHeader
     }
 }
 

@@ -8,12 +8,18 @@ import Testing
 
 @Suite("ELMSession probe keeps answered PIDs (re-review #1)", .timeLimit(.minutes(1)))
 struct ELMSessionProbeNoDataTests {
+    /// Refuses the multi-PID and suffix selection steps, so start-up
+    /// selection reaches the plain single-PID requests.
+    static let singlesOnly: [MockELMAdapter.Rule] = ["010D0C1", "010D0C", "010D1", "010C1"].map {
+        .init(command: $0, reply: "?\r\r>", delay: .milliseconds(5))
+    }
+
     // Reviewer's probe: 010D answers OK on sample 1, NO DATA on sample 2;
     // the plan used to come out as [engineSpeed].
     @Test("A PID that answered OK during probing is not dropped by a later NO DATA")
     func probeKeepsAnsweredPID() async throws {
         let harness = SessionHarness(
-            rules: [
+            rules: Self.singlesOnly + [
                 .init(command: "010D", reply: "7E803410D3C\r\r>", delay: .milliseconds(95), times: 1),
                 .init(command: "010D", reply: "NO DATA\r\r>", delay: .milliseconds(95), times: 1),
             ] + MockELMAdapter.Rule.touareg,
@@ -28,7 +34,7 @@ struct ELMSessionProbeNoDataTests {
     func repeatedInitialiseKeepsAnsweredPID() async throws {
         // First init sends 010D six times (3 samples x 2 timing levels), all OK.
         let harness = SessionHarness(
-            rules: [
+            rules: Self.singlesOnly + [
                 .init(command: "010D", reply: "7E803410D3C\r\r>", delay: .milliseconds(95), times: 6),
                 .init(command: "010D", reply: "NO DATA\r\r>", delay: .milliseconds(95), times: 1),
             ] + MockELMAdapter.Rule.touareg,
@@ -43,8 +49,11 @@ struct ELMSessionProbeNoDataTests {
 
     @Test("A PID that never answered OK is still left out by probing")
     func probeDropsNeverAnswered() async throws {
+        // No RPM from this ECU: multi-PID requests return speed only.
         let rules: [MockELMAdapter.Rule] = ["010C", "010C1"].map {
             .init(command: $0, reply: "NO DATA\r\r>", delay: .milliseconds(5))
+        } + ["010D0C1", "010D0C"].map {
+            .init(command: $0, reply: "7E803410D3C\r\r>", delay: .milliseconds(5))
         }
         let harness = SessionHarness(rules: rules + MockELMAdapter.Rule.touareg, configuration: ELMSessionProbeTests.probing)
         #expect(try await harness.initialise().plan.pids == [.vehicleSpeed])

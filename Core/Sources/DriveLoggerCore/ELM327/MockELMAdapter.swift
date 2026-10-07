@@ -12,6 +12,11 @@ import Foundation
 /// test clock drives it deterministically. A rule with zero delay answers
 /// before `send` returns.
 ///
+/// Like a real adapter it has addressing state: `requestHeader` is `7DF`
+/// (functional) after `ATZ`, and changes when an `ATSHxxx` is answered `OK`.
+/// A rule can be limited to one header, so the same command can answer
+/// differently before and after `ATSH7E0`, as on the bench car.
+///
 /// An actor, so its mutable script state needs no locks.
 public actor MockELMAdapter: ELMTransport {
     /// One scripted behaviour: when a command matching `command` arrives, reply
@@ -28,19 +33,25 @@ public actor MockELMAdapter: ELMTransport {
         /// rules get their turn. Nil = unlimited. Lets a test script "time out
         /// twice, then answer".
         public var times: Int?
+        /// The rule only matches while the adapter's request header is this
+        /// (`7DF` = functional, the state after `ATZ`; `7E0` after `ATSH7E0`
+        /// was answered `OK`). Nil = any.
+        public var requestHeader: String?
 
         public init(
             command: String,
             reply: String?,
             delay: Duration = .milliseconds(30),
             fragmentSizes: [Int] = [],
-            times: Int? = nil
+            times: Int? = nil,
+            requestHeader: String? = nil
         ) {
             self.command = command
             self.reply = reply
             self.delay = delay
             self.fragmentSizes = fragmentSizes
             self.times = times
+            self.requestHeader = requestHeader
         }
     }
 
@@ -63,6 +74,10 @@ public actor MockELMAdapter: ELMTransport {
 
     /// The commands counted by `overlappingSends`, in order.
     public private(set) var overlappingCommands: [String] = []
+
+    /// CAN header requests currently go out with: `7DF` after `ATZ` (and
+    /// initially), else the header of the last `ATSH` answered `OK`.
+    public private(set) var requestHeader = CANRequestHeader.functional.rawValue
 
     /// - Parameters:
     ///   - rules: first match wins; unmatched commands get `?\r\r>`.
@@ -90,6 +105,7 @@ public actor MockELMAdapter: ELMTransport {
         let requestUptime = uptime.uptimeSeconds
 
         let rule = takeRule(for: command.wire)
+        updateAddressing(command.wire, reply: rule.reply)
         guard let reply = rule.reply else { return requestUptime }
         let fragments = Self.fragments(of: Data(reply.utf8), sizes: rule.fragmentSizes)
 
@@ -152,9 +168,23 @@ public actor MockELMAdapter: ELMTransport {
         continuation.finish()
     }
 
+    /// `ATZ` resets to functional (on receipt, like a real reset); `ATSHxxx`
+    /// takes effect when its scripted reply is `OK`.
+    private func updateAddressing(_ wire: String, reply: String?) {
+        if wire == ELM327Command.reset.wireFormat {
+            requestHeader = CANRequestHeader.functional.rawValue
+        } else if wire.hasPrefix("ATSH"), let reply,
+                  (try? ELM327ResponseParser.textReply(to: wire, raw: reply)) == .ok {
+            requestHeader = String(wire.dropFirst(4))
+        }
+    }
+
     private func takeRule(for wire: String) -> Rule {
         let upper = wire.uppercased()
-        guard let index = rules.firstIndex(where: { $0.command.uppercased() == upper && ($0.times ?? 1) > 0 }) else {
+        guard let index = rules.firstIndex(where: {
+            $0.command.uppercased() == upper && ($0.times ?? 1) > 0
+                && ($0.requestHeader.map { $0.uppercased() == requestHeader } ?? true)
+        }) else {
             return Rule(command: wire, reply: "?\r\r>", delay: .zero)
         }
         let rule = rules[index]
@@ -198,8 +228,10 @@ public actor MockELMAdapter: ELMTransport {
 extension MockELMAdapter.Rule {
     /// A VW Touareg 2025 behind an ELM327 v2.1 clone, headers on, spaces off:
     /// protocol 6, two ECUs answering `0100`, multi-PID and the `1` suffix
-    /// supported, `NO DATA` for intake air temperature. Speed and RPM replies
-    /// come from `7E8` (60 km/h, 750 rpm), the battery reads 12.4 V.
+    /// supported, `ATSH7E0`/`ATSH7DF` accepted, `NO DATA` for intake air
+    /// temperature. Speed and RPM replies come from `7E8` (60 km/h, 750 rpm)
+    /// whatever the addressing, the battery reads 12.4 V. Invented before
+    /// the bench test; `benchCar` is the transcribed one.
     ///
     /// Delays imitate a cheap clone over BLE: without the suffix the adapter
     /// waits out its own timeout for more ECUs (~95 ms), with it the reply
@@ -223,6 +255,8 @@ extension MockELMAdapter.Rule {
             rule("ATAT0", "OK\r\r>"),
             rule("ATAT1", "OK\r\r>"),
             rule("ATAT2", "OK\r\r>"),
+            rule("ATSH7E0", "OK\r\r>"),
+            rule("ATSH7DF", "OK\r\r>"),
             rule("ATI", "ELM327 v2.1\r\r>"),
             rule("AT@1", "OBDII to RS232 Interpreter\r\r>"),
             rule("ATDP", "AUTO, ISO 15765-4 (CAN 11/500)\r\r>"),
@@ -237,6 +271,65 @@ extension MockELMAdapter.Rule {
             rule("010D0C1", "7E806410D3C0C0BB8\r\r>", ms: 45),
             rule("010F", "NO DATA\r\r>", ms: 95),
             rule("010F1", "NO DATA\r\r>", ms: 95),
+        ]
+    }
+
+    /// The bench car (docs/BENCH_TEST_2026-10-07.md): Vgate iCar Pro BLE 4.0
+    /// (`ELM327 v2.3`) on the test car, headers on, spaces off.
+    ///
+    /// Transcribed verbatim, keyed by addressing:
+    /// - functional (`7DF`, after `ATZ`): `ATI`, `ATRV` 11.0 V, `ATDPN` `6`,
+    ///   `ATH1`, `0100` and `010D` and `010D0C` answered by `7E9` then `7E8`,
+    ///   `010D1` answered by `7E9` only, `22F40D` `NO DATA`;
+    /// - `ATSH7E0` → `OK`; then `010D1` and `010D0C1` answered by `7E8` only
+    ///   (speed 0, 663 rpm) and `ATRV` 11.8 V.
+    ///
+    /// Not transcribed, assumed so the session's handshake and selection
+    /// can run: `ATZ` (banner with echo, as after a power-up reset),
+    /// `ATE0`, `ATL0`, `ATS0`, `ATSP0`, `ATAT1`, `ATAT2`, `ATSH7DF` → `OK`.
+    /// Anything else (e.g. `010D` after `ATSH7E0`, `010D0C1` under
+    /// functional addressing) gets `?`, so tests add what they need.
+    ///
+    /// `22F40D` is mode 22: `ELMCommandPolicy` rejects it, so the session can
+    /// never send it and this rule never fires. It's here so the script holds
+    /// the whole transcript.
+    ///
+    /// Delays are invented, as in `touareg` (the bench didn't measure them):
+    /// without the suffix the adapter waits out its own timeout for more
+    /// ECUs. Replies arrive in 20-byte notifications.
+    public static var benchCar: [MockELMAdapter.Rule] {
+        func rule(_ command: String, _ reply: String, ms: Int = 30, header: String? = nil) -> MockELMAdapter.Rule {
+            MockELMAdapter.Rule(
+                command: command, reply: reply, delay: .milliseconds(ms), fragmentSizes: [20], requestHeader: header
+            )
+        }
+        let functional = CANRequestHeader.functional.rawValue
+        let engine = CANRequestHeader.engine.rawValue
+        return [
+            // Assumed.
+            rule("ATZ", "ATZ\r\r\rELM327 v2.3\r\r>", ms: 600),
+            rule("ATE0", "ATE0\rOK\r\r>"),
+            rule("ATL0", "OK\r\r>"),
+            rule("ATS0", "OK\r\r>"),
+            rule("ATSP0", "OK\r\r>"),
+            rule("ATAT1", "OK\r\r>"),
+            rule("ATAT2", "OK\r\r>"),
+            rule("ATSH7DF", "OK\r\r>"),
+            // Block 1, functional addressing, engine off.
+            rule("ATI", "ELM327 v2.3\r\r>"),
+            rule("ATRV", "11.0V\r\r>", header: functional),
+            rule("ATDPN", "6\r\r>"),
+            rule("ATH1", "OK\r\r>"),
+            rule("0100", "7E906410098180001\r7E8064100BE1CA813\r\r>", ms: 1_500, header: functional),
+            rule("010D", "7E903410D00\r7E803410D00\r\r>", ms: 95, header: functional),
+            rule("010D1", "7E903410D00\r\r>", ms: 40, header: functional),
+            rule("010D0C", "7E906410D000C0000\r7E806410D000C0000\r\r>", ms: 100, header: functional),
+            rule("22F40D", "NO DATA\r\r>", ms: 95),
+            // Block 2, physical addressing to the engine ECU, engine idling.
+            rule("ATSH7E0", "OK\r\r>"),
+            rule("010D1", "7E803410D00\r\r>", ms: 40, header: engine),
+            rule("010D0C1", "7E806410D000C0A5C\r\r>", ms: 45, header: engine),
+            rule("ATRV", "11.8V\r\r>", header: engine),
         ]
     }
 }

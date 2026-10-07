@@ -11,7 +11,8 @@ struct PollingPlanTests {
         responseCount: Int? = nil,
         adaptiveTiming: Int = 1,
         rpmEvery: Int = 5,
-        timeout: Duration = .seconds(1)
+        timeout: Duration = .seconds(1),
+        requestHeader: CANRequestHeader? = nil
     ) -> PollingPlan {
         PollingPlan(
             pids: pids,
@@ -19,7 +20,8 @@ struct PollingPlanTests {
             responseCount: responseCount,
             adaptiveTiming: adaptiveTiming,
             rpmEvery: rpmEvery,
-            timeout: timeout
+            timeout: timeout,
+            requestHeader: requestHeader
         )
     }
 
@@ -59,8 +61,8 @@ struct PollingPlanTests {
 
     @Test("Range edges are accepted")
     func edges() throws {
-        try Self.plan(responseCount: 1).validate()
-        try Self.plan(responseCount: 9).validate()
+        try Self.plan(responseCount: 1, requestHeader: .engine).validate()
+        try Self.plan(responseCount: 9, requestHeader: .engine).validate()
         try Self.plan(adaptiveTiming: 0).validate()
         try Self.plan(adaptiveTiming: 2).validate()
         try Self.plan(rpmEvery: 1).validate()
@@ -73,6 +75,8 @@ struct PollingPlanTests {
         arguments: [
             plan(responseCount: 0),
             plan(responseCount: 10),
+            plan(responseCount: 0, requestHeader: .engine),
+            plan(responseCount: 10, requestHeader: .engine),
             plan(adaptiveTiming: -1),
             plan(adaptiveTiming: 3),
             plan(pids: []),
@@ -95,5 +99,45 @@ struct PollingPlanTests {
         #expect(throws: ELMSessionError.self) { try empty.primaryCommand.validated() }
         #expect(throws: ELMSessionError.invalidPlan("0 PIDs; 1-6 allowed")) { try empty.validate() }
         #expect(throws: ELMSessionError.self) { try Self.plan(pids: [], responseCount: 1).primaryCommand.validated() }
+    }
+
+    // Bench test 2026-10-07: under functional addressing (7DF) the suffix
+    // returned the gearbox's (7E9) reply, not the engine's.
+    @Test("The response-count suffix requires physical addressing", arguments: [1, 9])
+    func suffixNeedsPhysicalAddressing(count: Int) throws {
+        for multiPID in [false, true] {
+            #expect(throws: ELMSessionError.invalidPlan(
+                "responseCount needs physical addressing (requestHeader); with functional 7DF the first ECU to answer wins"
+            )) {
+                try Self.plan(multiPID: multiPID, responseCount: count).validate()
+            }
+            try Self.plan(multiPID: multiPID, responseCount: count, requestHeader: .engine).validate()
+        }
+    }
+
+    @Test("Functional addressing is nil, never an explicit 7DF")
+    func functionalIsNil() throws {
+        try Self.plan().validate()
+        #expect(Self.plan().requestHeader == nil)
+        #expect(throws: ELMSessionError.invalidPlan("requestHeader 7DF: functional addressing is nil")) {
+            try Self.plan(requestHeader: .functional).validate()
+        }
+    }
+
+    @Test("Any physical request header is accepted", arguments: CANRequestHeader.all.filter(\.isPhysical))
+    func physicalHeaders(header: CANRequestHeader) throws {
+        try Self.plan(multiPID: true, responseCount: 1, requestHeader: header).validate()
+    }
+
+    @Test("The baseline plan is functional and has no suffix")
+    func baselineIsFunctional() {
+        #expect(PollingPlan.baseline.requestHeader == nil)
+        #expect(PollingPlan.baseline.responseCount == nil)
+    }
+
+    @Test("requestHeader doesn't change the poll command")
+    func headerDoesNotChangeCommand() {
+        #expect(Self.plan(multiPID: true, responseCount: 1, requestHeader: .engine).primaryCommand.wireFormat == "010D0C1")
+        #expect(Self.plan(multiPID: true).primaryCommand.wireFormat == "010D0C")
     }
 }

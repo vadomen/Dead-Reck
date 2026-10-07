@@ -133,7 +133,8 @@ extension PollingRecord {
     /// recorded command is exactly what the session sends. A plan with no
     /// PIDs (never valid for polling) records an empty command rather than
     /// the meaningless `01`. `timeoutMs` is rounded to the nearest
-    /// millisecond.
+    /// millisecond. `requestHeader` is the plan's physical header (`7E0`),
+    /// absent for functional addressing.
     public init(_ plan: PollingPlan) {
         let command = plan.pids.isEmpty ? "" : plan.primaryCommand.wireFormat
         let (seconds, attoseconds) = plan.timeout.components
@@ -145,7 +146,8 @@ extension PollingRecord {
             responseCount: plan.responseCount,
             adaptiveTiming: plan.adaptiveTiming,
             rpmEvery: plan.rpmEvery,
-            timeoutMs: Int(milliseconds)
+            timeoutMs: Int(milliseconds),
+            requestHeader: plan.requestHeader?.rawValue
         )
     }
 }

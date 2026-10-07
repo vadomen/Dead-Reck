@@ -65,12 +65,16 @@ func singlePlan(
     _ pids: [OBDPID] = [.vehicleSpeed, .engineSpeed],
     responseCount: Int? = nil,
     rpmEvery: Int = 5,
-    timeout: Duration = .milliseconds(100)
+    timeout: Duration = .milliseconds(100),
+    requestHeader: CANRequestHeader? = .engine
 ) -> PollingPlan {
-    PollingPlan(pids: pids, multiPID: false, responseCount: responseCount, adaptiveTiming: 1, rpmEvery: rpmEvery, timeout: timeout)
+    PollingPlan(
+        pids: pids, multiPID: false, responseCount: responseCount, adaptiveTiming: 1, rpmEvery: rpmEvery,
+        timeout: timeout, requestHeader: requestHeader
+    )
 }
 
-let handshakeWires = ["ATZ", "ATE0", "ATL0", "ATS0", "ATH1", "ATSP0", "0100", "ATDPN", "ATRV"]
+let handshakeWires = ["ATZ", "ATE0", "ATL0", "ATS0", "ATH1", "ATSP0", "0100", "ATDPN", "ATRV", "ATSH7E0"]
 
 @Suite("ELMSession initialisation", .timeLimit(.minutes(1)))
 struct ELMSessionInitTests {
@@ -90,12 +94,12 @@ struct ELMSessionInitTests {
         await harness.run { await $0.adapterInfos.count == 1 }
         let exchanges = await harness.log.exchanges
         #expect(exchanges.map(\.tx) == handshakeWires)
-        #expect(exchanges.map(\.seq) == Array(0..<9))
+        #expect(exchanges.map(\.seq) == Array(0..<10))
         #expect(exchanges.allSatisfy { $0.phase == .initialisation && $0.outcome == .ok && $0.rx != nil })
         #expect(exchanges[0].rx == "ATZ\r\r\rELM327 v2.1\r\r")
         #expect(await harness.log.states == [.resetting, .initialising, .searching, .initialising, .ready])
         #expect(await harness.log.adapterInfos == [info])
-        #expect(await harness.session.nextSeq == 9)
+        #expect(await harness.session.nextSeq == 10)
     }
 
     @Test("Byte-by-byte notifications and echoes don't disturb the handshake")
@@ -155,7 +159,7 @@ struct ELMSessionInitTests {
         let harness = SessionHarness(rules: [.init(command: "ATRV", reply: "?\r\r>", delay: .zero)] + MockELMAdapter.Rule.touaregInstant)
         let info = try await harness.initialise()
         #expect(info.voltage == nil)
-        #expect(await harness.log.exchanges.last?.outcome == .notRecognised)
+        #expect(await harness.log.exchanges.first { $0.tx == "ATRV" }?.outcome == .notRecognised)
     }
 
     @Test("Concurrent initialise() calls share one handshake")
@@ -194,10 +198,11 @@ struct ELMSessionProbeTests {
             responseCount: 1,
             adaptiveTiming: 1,
             rpmEvery: 5,
-            timeout: .milliseconds(200)
+            timeout: .milliseconds(200),
+            requestHeader: .engine
         ))
         let sent = await harness.mock.sentCommands
-        #expect(Array(sent.prefix(9)) == handshakeWires)
+        #expect(Array(sent.prefix(10)) == handshakeWires)
         #expect(sent.contains("ATAT2"))
         #expect(sent.last == "ATAT1", "adapter must be left at the chosen timing level")
         let probes = await harness.log.exchanges.filter { $0.phase == .probe }
@@ -254,13 +259,17 @@ struct ELMSessionProbeTests {
         let info = try await harness.initialise()
         var expected = PollingPlan.baseline
         expected.timeout = .milliseconds(200)
+        expected.requestHeader = .engine
         #expect(info.plan == expected)
     }
 
     @Test("A PID that answers NO DATA while probing is left out of the plan")
     func noDataPIDExcluded() async throws {
+        // The ECU doesn't implement RPM: multi-PID requests return speed only.
         let rules: [MockELMAdapter.Rule] = ["010C", "010C1"].map {
             .init(command: $0, reply: "NO DATA\r\r>", delay: .milliseconds(5))
+        } + ["010D0C1", "010D0C"].map {
+            .init(command: $0, reply: "7E803410D3C\r\r>", delay: .milliseconds(5))
         }
         let harness = SessionHarness(rules: rules + MockELMAdapter.Rule.touareg, configuration: Self.probing)
         let info = try await harness.initialise()
@@ -305,7 +314,7 @@ struct ELMSessionPollingTests {
         _ = try await harness.initialise()
         let plan = PollingPlan(
             pids: [.vehicleSpeed, .engineSpeed], multiPID: true, responseCount: 1,
-            adaptiveTiming: 1, rpmEvery: 5, timeout: .milliseconds(100)
+            adaptiveTiming: 1, rpmEvery: 5, timeout: .milliseconds(100), requestHeader: .engine
         )
         try await harness.session.startPolling(plan)
         await harness.run { await $0.readings.count >= 6 }
@@ -421,12 +430,12 @@ struct ELMSessionPollingTests {
         try await harness.stopPolling()
 
         let sent = await harness.mock.sentCommands
-        #expect(Array(sent.prefix(22)) == handshakeWires + ["010D", "010D", "010D"] + handshakeWires + ["010D"])
+        #expect(Array(sent.prefix(24)) == handshakeWires + ["010D", "010D", "010D"] + handshakeWires + ["010D"])
         #expect(await harness.log.states.contains(.reinitialising))
         // initialise(), startPolling with a plan other than info.plan, re-init.
         #expect(await harness.log.adapterInfos.count == 3)
         let reinitExchanges = await harness.log.exchanges.filter { $0.phase == .initialisation }
-        #expect(reinitExchanges.count == 18)
+        #expect(reinitExchanges.count == 20)
         #expect(await harness.log.reconnectRequests == 0)
     }
 
@@ -529,7 +538,7 @@ struct ELMSessionPollingTests {
         bad.responseCount = 10
         await #expect(throws: ELMSessionError.self) { try await harness.session.startPolling(bad) }
         #expect(await harness.mock.sentCommands == handshakeWires)
-        #expect(await harness.log.exchanges.count == 9)
+        #expect(await harness.log.exchanges.count == 10)
     }
 
     @Test("A plan with ATAT2 applies it before polling and again after a re-init")
@@ -543,9 +552,9 @@ struct ELMSessionPollingTests {
         try await harness.session.startPolling(plan)
         await harness.run { await $0.readings.count >= 1 }
         try await harness.stopPolling()
-        let sent = Array(await harness.mock.sentCommands.dropFirst(9))
+        let sent = Array(await harness.mock.sentCommands.dropFirst(10))
         #expect(Array(sent.prefix(4)) == ["ATAT2", "010D", "010D", "010D"])
-        #expect(Array(sent.dropFirst(4).prefix(11)) == handshakeWires + ["ATAT2", "010D"])
+        #expect(Array(sent.dropFirst(4).prefix(12)) == handshakeWires + ["ATAT2", "010D"])
     }
 }
 
@@ -562,7 +571,7 @@ struct ELMSessionBoundaryTests {
         await #expect(throws: ELMSessionError.forbiddenCommand(command)) {
             _ = try await harness.session.sendManual(command)
         }
-        await harness.run { await $0.exchanges.count == 10 }
+        await harness.run { await $0.exchanges.count == 11 }
         let rejected = try #require(await harness.log.exchanges.last)
         #expect(rejected.outcome == .rejected)
         #expect(rejected.tx == command)
@@ -644,7 +653,7 @@ struct ELMSessionBoundaryTests {
         #expect(exchange.outcome == .timeout)
         #expect(exchange.rx == nil)
 
-        await harness.run { await $0.exchanges.count == 11 }
+        await harness.run { await $0.exchanges.count == 12 }
         let late = try #require(await harness.log.exchanges.last)
         #expect(late.outcome == .timeout)
         #expect(late.rx == "AUTO, ISO 15765-4 (CAN 11/500)\r\r")
@@ -677,7 +686,7 @@ struct ELMSessionBoundaryTests {
         _ = try await harness.initialise()
         try await harness.session.startPolling(singlePlan([.vehicleSpeed], timeout: .seconds(10)))
         let mock = harness.mock
-        await harness.run { _ in await mock.sentCommands.count == 10 }
+        await harness.run { _ in await mock.sentCommands.count == 11 }
         await harness.session.shutdown()
         await harness.run { await $0.finished }
         #expect(await harness.session.state == .idle)

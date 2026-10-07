@@ -45,7 +45,7 @@ struct ELMCommandPolicyTests {
 
     @Test("AT commands that can make a mode 01 request unsafe are rejected", arguments: [
         "ATCAF0", "ATCAF1",  // raw CAN formatting: "0104" would go out as service 04
-        "ATSH7E0", "ATSH7DF", "ATSH18DB33F1",  // set header / retarget
+        "ATSH18DB33F1", "ATSH7E8", "ATSH6F1",  // set header: only 7DF/7E0-7E7, see ELMCommandPolicyHeaderTests
         "ATCRA7E8", "ATCRA",  // receive address filter
         "ATCEA", "ATCEA01",  // CAN extended address
         "ATPP0CSV01", "ATPP0CON", "ATPPS",  // programmable parameters (EEPROM)
@@ -126,5 +126,99 @@ struct ELMCommandPolicyTests {
     ])
     func manualScopeRejectsDangerous(_ wire: String) {
         #expect(!ELMCommandPolicy.isAllowed(wire, scope: .manual))
+    }
+}
+
+/// `ATSH` with an OBD request header: session scope only (bench test
+/// 2026-10-07, physical addressing to the engine ECU).
+@Suite("ELMCommandPolicy ATSH")
+struct ELMCommandPolicyHeaderTests {
+    static let requestHeaders = ["7DF", "7E0", "7E1", "7E2", "7E3", "7E4", "7E5", "7E6", "7E7"]
+
+    @Test("ATSH with a CAN request header (7DF, 7E0-7E7) is allowed in session scope", arguments: requestHeaders)
+    func allowsRequestHeaders(_ header: String) throws {
+        let validated = try ELMCommandPolicy.validate("ATSH" + header, scope: .session)
+        #expect(validated.wire == "ATSH" + header)
+        #expect(validated.wireData == Data("ATSH\(header)\r".utf8))
+    }
+
+    @Test("Lower case is accepted and sent upper case", arguments: ["atsh7e0", "AtSh7dF", "atsh7E7"])
+    func lowercase(_ wire: String) throws {
+        #expect(try ELMCommandPolicy.validate(wire, scope: .session).wire == wire.uppercased())
+    }
+
+    @Test("Every other ATSH form is rejected in both scopes", arguments: [
+        // Response headers and other 11-bit addresses.
+        "ATSH7E8", "ATSH7E9", "ATSH7EF", "ATSH6F1", "ATSH7DE", "ATSH7E", "ATSH7F0", "ATSH700", "ATSH000", "ATSH7D0",
+        // 29-bit, 2-, 4- and 6-digit headers.
+        "ATSH18DB33F1", "ATSH18DAF110", "ATSHE0", "ATSH07E0", "ATSH7E00", "ATSH0007E0", "ATSH18DAF1",
+        // Spaces, trailing junk, a smuggled second command.
+        "ATSH 7E0", "ATSH7E0 ", " ATSH7E0", "ATSH 7 E 0", "ATSH7E0X", "ATSH7E01", "ATSH7DF0", "ATSH7E0\r04",
+        "ATSH7E0\r", "ATSH7E0;04", "ATSH",
+        // Fullwidth and other lookalike digits.
+        "ATSH7E\u{FF10}", "ATSH\u{FF17}E0", "ATSH7\u{FF25}0", "ATSH7E\u{0660}",
+    ])
+    func rejectsOtherHeaders(_ wire: String) {
+        #expect(throws: ELMSessionError.forbiddenCommand(wire)) { try ELMCommandPolicy.validate(wire, scope: .session) }
+        #expect(!ELMCommandPolicy.isAllowed(wire, scope: .manual))
+    }
+
+    // ATSH changes addressing state the session relies on, like ATH0.
+    @Test("ATSH stays out of the console", arguments: requestHeaders)
+    func consoleCannotSetHeader(_ header: String) {
+        #expect(ELMCommandPolicy.isAllowed("ATSH" + header, scope: .session))
+        #expect(throws: ELMSessionError.forbiddenCommand("ATSH" + header)) {
+            try ELMCommandPolicy.validate("ATSH" + header, scope: .manual)
+        }
+    }
+
+    // A physically addressed mode 01 request is still read-only only while
+    // CAN formatting and addressing stay at their defaults.
+    @Test("The commands that would make a physical request unsafe stay blocked", arguments: [
+        "ATCAF0", "ATCAF1", "ATCRA7E8", "ATCRA", "ATCEA", "ATCEA01", "ATFCSH7E0", "ATFCSD300000", "ATFCSM1",
+    ])
+    func companionsStillBlocked(_ wire: String) {
+        #expect(!ELMCommandPolicy.isAllowed(wire, scope: .session))
+        #expect(!ELMCommandPolicy.isAllowed(wire, scope: .manual))
+    }
+
+    @Test("Mode 22 from the bench transcript (22F40D) is rejected in both scopes")
+    func rejectsBenchMode22() {
+        #expect(throws: ELMSessionError.forbiddenCommand("22F40D")) { try ELMCommandPolicy.validate("22F40D", scope: .session) }
+        #expect(throws: ELMSessionError.forbiddenCommand("22F40D")) { try ELMCommandPolicy.validate("22F40D", scope: .manual) }
+    }
+}
+
+@Suite("CANRequestHeader and ELM327Command.setHeader")
+struct CANRequestHeaderTests {
+    @Test("Only 7DF and 7E0-7E7 construct", arguments: ELMCommandPolicyHeaderTests.requestHeaders)
+    func constructs(_ text: String) throws {
+        let header = try #require(CANRequestHeader(rawValue: text))
+        #expect(header.rawValue == text)
+        #expect(header.isPhysical == (text != "7DF"))
+        #expect(ELM327Command.setHeader(header).wireFormat == "ATSH" + text)
+        #expect(try ELM327Command.setHeader(header).validated().wire == "ATSH" + text)
+    }
+
+    @Test("Lower case constructs the upper-case header")
+    func lowercase() {
+        #expect(CANRequestHeader(rawValue: "7e0") == .engine)
+        #expect(CANRequestHeader(rawValue: "7df") == .functional)
+    }
+
+    @Test("Anything else doesn't construct", arguments: [
+        "", "7E8", "7EF", "6F1", "7DE", "7E", "7E00", "07E0", "18DB33F1", " 7E0", "7E0 ", "7\u{FF25}0", "7E\u{FF10}",
+    ])
+    func rejects(_ text: String) {
+        #expect(CANRequestHeader(rawValue: text) == nil)
+    }
+
+    @Test("Named headers and the full list")
+    func named() {
+        #expect(CANRequestHeader.functional.rawValue == "7DF")
+        #expect(CANRequestHeader.engine.rawValue == "7E0")
+        #expect(CANRequestHeader.all.map(\.rawValue) == ELMCommandPolicyHeaderTests.requestHeaders)
+        #expect(CANRequestHeader.engine.isPhysical)
+        #expect(!CANRequestHeader.functional.isPhysical)
     }
 }

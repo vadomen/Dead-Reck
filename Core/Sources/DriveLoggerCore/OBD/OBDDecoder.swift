@@ -98,3 +98,32 @@ extension OBDDecoder {
     }
 }
 
+extension OBDDecoder {
+    /// The PIDs a "supported PIDs" reply (`41 00`, `41 20`, … with four
+    /// bitmask bytes A–D) marks as supported, ascending. Bit 7 of A is PID
+    /// base + 1, bit 0 of D is base + 32 (which, when set, means the next
+    /// range is worth asking for). `bytes` must include the leading `0x41`
+    /// and the PID; bytes after D are padding and ignored.
+    ///
+    /// The logger records `0100` raw and polls regardless of the bitmask
+    /// (the NO DATA rule decides); this is for reading a recording.
+    public static func supportedPIDs(bytes: [UInt8]) throws -> [UInt8] {
+        guard bytes.count >= 2 + 4 else {
+            throw ELM327Error.truncatedFrame(expected: 6, actual: bytes.count)
+        }
+        guard bytes[0] == 0x41 else {
+            throw ELM327Error.unexpectedMode(expected: 0x41, actual: bytes[0])
+        }
+        let base = bytes[1]
+        guard base.isMultiple(of: 0x20), base <= 0xE0 else {
+            throw ELM327Error.unexpectedPID(expected: 0x00, actual: base)
+        }
+        var pids: [UInt8] = []
+        for (byteIndex, mask) in bytes[2..<6].enumerated() {
+            for bit in 0..<8 where mask & (0x80 >> bit) != 0 {
+                pids.append(base + UInt8(byteIndex * 8 + bit + 1))
+            }
+        }
+        return pids
+    }
+}

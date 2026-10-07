@@ -121,19 +121,25 @@ struct ELMSessionLatePromptTests {
 
     @Test("Probing with a slow, then late, reply never measures an instant answer")
     func probingNotFooledByLateReply() async throws {
+        // The first selection step answers after its timeout (within the
+        // grace): that step doesn't count, and the next one is measured from
+        // its own send.
         let harness = SessionHarness(
-            rules: [.init(command: "010D", reply: "7E803410D3C\r\r>", delay: .milliseconds(250), times: 1)]
+            rules: [.init(command: "010D0C1", reply: "7E806410D3C0C0BB8\r\r>", delay: .milliseconds(250), times: 1)]
                 + MockELMAdapter.Rule.touareg,
             configuration: ELMSessionProbeTests.probing
         )
         let info = try await harness.initialise()
         let probes = await harness.log.exchanges.filter { $0.phase == .probe && $0.tx.hasPrefix("01") && $0.outcome == .ok }
+        #expect(!probes.isEmpty)
         // The fastest scripted PID reply takes 40 ms.
         for probe in probes {
             #expect(probe.completedUptime - probe.requestUptime >= 0.04 - 1e-9, "\(probe.tx) looked instant")
         }
+        let late = try #require(await harness.log.exchanges.first { $0.tx == "010D0C1" && $0.rx != nil })
+        #expect(late.outcome == .timeout)
         #expect(info.plan.multiPID == true)
-        #expect(info.plan.responseCount == 1)
+        #expect(info.plan.responseCount == nil)
         #expect(await harness.mock.overlappingSends == 0)
         let atat = await harness.log.exchanges.filter { $0.tx.hasPrefix("ATAT") }
         #expect(atat.allSatisfy { $0.outcome == .ok })
@@ -295,7 +301,7 @@ struct ELMSessionReviewMinorTests {
         _ = try await harness.initialise()
         try await harness.session.startPolling(singlePlan([.vehicleSpeed], timeout: .seconds(10)))
         let mock = harness.mock
-        await harness.run { _ in await mock.sentCommands.count == 10 }
+        await harness.run { _ in await mock.sentCommands.count == 11 }
         await harness.clock.advance(by: .milliseconds(30))
         await harness.session.shutdown()
         await harness.run { await $0.finished }
@@ -313,7 +319,7 @@ struct ELMSessionReviewMinorTests {
         _ = try await harness.initialise()
         try await harness.session.startPolling(singlePlan([.vehicleSpeed], timeout: .seconds(10)))
         let mock = harness.mock
-        await harness.run { _ in await mock.sentCommands.count == 10 }
+        await harness.run { _ in await mock.sentCommands.count == 11 }
         await harness.mock.disconnect()
         await harness.run { await $0.finished }
         let last = try #require(await harness.log.exchanges.last)

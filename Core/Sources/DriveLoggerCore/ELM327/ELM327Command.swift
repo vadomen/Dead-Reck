@@ -40,6 +40,14 @@ public enum ELM327Command: Hashable, Sendable {
     /// cheap liveness probe between PID polls.
     case readVoltage
 
+    /// `ATSH7E0` etc. — the CAN header requests go out with. `.functional`
+    /// (`7DF`, the default after `ATZ`) asks every emissions ECU; a physical
+    /// header (`7E0`–`7E7`) asks one. On the test car functional requests
+    /// are answered by the engine (`7E8`) and the gearbox (`7E9`), and with
+    /// the response-count suffix the first reply wins — which was the
+    /// gearbox's. `ATSH7E0` makes the engine the only responder.
+    case setHeader(CANRequestHeader)
+
     /// `ATAT0` / `ATAT1` / `ATAT2` — adaptive timing. 2 is the most aggressive
     /// and often the biggest rate win on clones; fall back to 1 if replies
     /// start getting cut off.
@@ -82,6 +90,8 @@ public enum ELM327Command: Hashable, Sendable {
             "ATDPN"
         case .readVoltage:
             "ATRV"
+        case .setHeader(let header):
+            "ATSH" + header.rawValue
         case .adaptiveTiming(let level):
             "ATAT\(level)"
         case .supportedPIDs:
@@ -121,9 +131,13 @@ extension ELM327Command {
     /// Echo, linefeeds and spaces off keep replies compact; headers **on** so
     /// replies from different ECUs (`7E8`, `7E9`, …) can be told apart;
     /// `ATSP0` leaves protocol detection to the adapter and `0100` forces the
-    /// search; `ATDPN` and `ATRV` record what was found. `ELMSession` runs this
-    /// with per-step timeouts (long for `ATZ` and `0100`) and records every
-    /// exchange.
+    /// search; `ATDPN` and `ATRV` record what was found. `ATSH7E0` last:
+    /// physical addressing to the engine ECU, so the response-count suffix
+    /// returns the engine's reply (bench test 2026-10-07). It runs after
+    /// `0100`, which stays functional so the log records every ECU's
+    /// supported PIDs. `ELMSession` runs this with per-step timeouts (long
+    /// for `ATZ` and `0100`) and records every exchange; a refused `ATSH7E0`
+    /// is not an init failure.
     public static let handshake: [ELM327Command] = [
         .reset,
         .echo(false),
@@ -134,5 +148,42 @@ extension ELM327Command {
         .supportedPIDs,
         .describeProtocolNumber,
         .readVoltage,
+        .setHeader(.engine),
     ]
+}
+
+/// An 11-bit CAN header for OBD requests (ISO 15765-4): `7DF` functional,
+/// or `7E0`–`7E7` physical, one ECU each (that ECU answers on header + 8,
+/// e.g. `7E0` → `7E8`). Nothing else can be built, so `.setHeader` can't
+/// address a response ID (`7E8`), a 29-bit header or a manufacturer module.
+public struct CANRequestHeader: RawRepresentable, Hashable, Sendable, CustomStringConvertible {
+    /// Three upper-case hex digits.
+    public let rawValue: String
+
+    /// Accepts `7DF` and `7E0`–`7E7`, in either case; nil for anything else,
+    /// including non-ASCII lookalikes.
+    public init?(rawValue: String) {
+        guard rawValue.utf8.allSatisfy({ (0x21...0x7E).contains($0) }) else { return nil }
+        let upper = rawValue.uppercased()
+        guard Self.all.contains(where: { $0.rawValue == upper }) else { return nil }
+        self.rawValue = upper
+    }
+
+    private init(checked rawValue: String) {
+        self.rawValue = rawValue
+    }
+
+    /// `7DF`: every emissions ECU answers. The adapter's default after `ATZ`.
+    public static let functional = CANRequestHeader(checked: "7DF")
+    /// `7E0`: ECU #1, the engine, which answers on `7E8`.
+    public static let engine = CANRequestHeader(checked: "7E0")
+
+    /// `7DF`, then `7E0`…`7E7`.
+    public static let all: [CANRequestHeader] = [functional]
+        + (0...7).map { CANRequestHeader(checked: "7E\($0)") }
+
+    /// True for `7E0`–`7E7`.
+    public var isPhysical: Bool { self != .functional }
+
+    public var description: String { rawValue }
 }

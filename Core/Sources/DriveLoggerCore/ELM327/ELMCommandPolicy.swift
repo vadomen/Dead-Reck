@@ -30,17 +30,33 @@ public struct ValidatedELMCommand: Hashable, Sendable {
 /// `.session` — the app's own init, probing and polling (`ELMSession`):
 /// - AT commands: `ATZ`, `ATI`, `AT@1`, `ATE0`/`ATE1`, `ATL0`/`ATL1`,
 ///   `ATS0`/`ATS1`, `ATH0`/`ATH1`, `ATSP0`, `ATDP`, `ATDPN`, `ATRV`,
-///   `ATAT0`–`ATAT2`.
+///   `ATAT0`–`ATAT2`, and `ATSH` with an OBD request header: `ATSH7DF`,
+///   `ATSH7E0`–`ATSH7E7` (`CANRequestHeader`).
 /// - Mode `01`.
 ///
 /// `.manual` — the debug console, typed by a person mid-session:
 /// - Query-only AT commands: `ATI`, `AT@1`, `ATDP`, `ATDPN`, `ATRV`.
 /// - Mode `01`.
 ///
-/// The console can't change echo, headers, spaces, timing or protocol, or
-/// reset the adapter. The session depends on those settings to frame and
-/// attribute replies; a change it didn't make would silently corrupt the rows
-/// that follow (e.g. `ATH0` drops ECU attribution).
+/// The console can't change echo, headers, spaces, timing, protocol or
+/// addressing, or reset the adapter. The session depends on those settings to
+/// frame and attribute replies; a change it didn't make would silently
+/// corrupt the rows that follow (e.g. `ATH0` drops ECU attribution, and an
+/// `ATSH` the session didn't send would make the plan's recorded addressing
+/// wrong and could put the response-count suffix on functional requests).
+///
+/// `ATSH` is allowed for **request** headers only, because the bench test
+/// (2026-10-07) showed that with functional addressing (`7DF`) the
+/// response-count suffix returns whichever ECU answers first, which on the
+/// test car was the gearbox (`7E9`), not the engine. `ATSH7E0` addresses the
+/// engine alone. It is still read-only:
+/// - only `7DF` and `7E0`–`7E7` are accepted, the ISO 15765-4 OBD request
+///   IDs; response IDs (`7E8`), other 11-bit IDs (`6F1`, `7DE`), 29-bit and
+///   any other length are rejected, so no non-OBD module can be addressed;
+/// - the payload is still mode `01` only;
+/// - `ATCAF0`, `ATCRA` and `ATCEA` stay blocked, so the adapter still adds the
+///   ISO-TP length byte itself and a physically addressed `0104` is a mode
+///   01 request for PID 04 to the engine, never service 04.
 ///
 /// `ATSThh` (the adapter's own reply timeout) is deliberately **not** listed,
 /// in either scope. No code path needs it: adaptive timing (`ATAT`) is the
@@ -56,9 +72,10 @@ public struct ValidatedELMCommand: Hashable, Sendable {
 ///
 /// "Any `AT…`" would not be safe. `ATCAF0` turns off CAN auto-formatting, after
 /// which an innocent-looking `0104` goes out verbatim as a frame for service
-/// 04 (clear DTCs). `ATSH`/`ATCRA` retarget requests, `ATPP` writes the
-/// adapter's EEPROM, `ATMA`/`ATBRD` break the one-command-in-flight protocol.
-/// Modes 04, 08, 2E, 31, 3B and anything UDS are never valid.
+/// 04 (clear DTCs). `ATSH` to anything but an OBD request ID and `ATCRA`
+/// retarget requests or replies, `ATPP` writes the adapter's EEPROM,
+/// `ATMA`/`ATBRD` break the one-command-in-flight protocol. Modes 04, 08, 2E,
+/// 22, 31, 3B and anything UDS are never valid.
 ///
 /// Input must be printable ASCII (0x21–0x7E) and is checked **before** any
 /// case mapping, so lookalikes such as fullwidth digits (`０４`) or ligatures
@@ -100,12 +117,12 @@ public enum ELMCommandPolicy {
         (try? validate(wire, scope: scope)) != nil
     }
 
-    static let sessionATCommands: Set<String> = [
+    static let sessionATCommands: Set<String> = Set([
         "ATZ", "ATI", "AT@1",
         "ATE0", "ATE1", "ATL0", "ATL1", "ATS0", "ATS1", "ATH0", "ATH1",
         "ATSP0", "ATDP", "ATDPN", "ATRV",
         "ATAT0", "ATAT1", "ATAT2",
-    ]
+    ]).union(CANRequestHeader.all.map { ELM327Command.setHeader($0).wireFormat })
 
     static let manualATCommands: Set<String> = ["ATI", "AT@1", "ATDP", "ATDPN", "ATRV"]
 
