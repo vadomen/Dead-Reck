@@ -323,6 +323,65 @@ struct LogFileWriterFailureTests {
         #expect(try WriterFixtures.read(summary.url).events.map(\.payload) == [.marker("a"), .marker("b")])
     }
 
+    /// Review finding 1: a success earlier in the same attempt must not clear
+    /// the failure that attempt then reports.
+    @Test("A write followed by a failing fsync, then another failing fsync, is reported once")
+    func repeatedSyncFailureReportedOnce() async throws {
+        let scratch = try ScratchDirectory()
+        defer { scratch.remove() }
+        let plan = FaultPlan()
+        let writer = try WriterFixtures.writer(in: scratch, plan: plan)
+        writer.sink.record(.marker("a", at: .zero))
+        plan.failNextSync(errno: EIO)
+        plan.failNextSync(errno: EIO)
+        await #expect(throws: LogWriteError.self) { try await writer.flush() }  // writes, fsync fails
+        await #expect(throws: LogWriteError.self) { try await writer.flush() }  // nothing to write, fsync fails
+        _ = await writer.finish()
+        let failures = await WriterFixtures.collect(writer.failures)
+        #expect(failures.count == 1, "\(failures)")
+    }
+
+    @Test("A split backlog failing on its second chunk is reported once across retries")
+    func splitBacklogFailureReportedOnce() async throws {
+        let scratch = try ScratchDirectory()
+        defer { scratch.remove() }
+        let plan = FaultPlan()
+        let writer = try WriterFixtures.writer(in: scratch, plan: plan, maxMemberInputBytes: 1_000)
+        let events = WriterFixtures.events(0..<200)
+        for event in events { writer.sink.record(event) }
+        // The disk fills mid-backlog: the first attempt writes one chunk and
+        // fails on the second; the disk stays full, so each retry fails on
+        // its first chunk. One failure, one report.
+        plan.failWrite(afterSuccessfulWrites: 1, afterBytes: 0, errno: ENOSPC)
+        await #expect(throws: LogWriteError.diskFull) { try await writer.flush() }
+        for _ in 0..<2 {
+            plan.failNextWrite(afterBytes: 7, errno: ENOSPC)
+            await #expect(throws: LogWriteError.diskFull) { try await writer.flush() }
+        }
+        let summary = await writer.finish()
+        let failures = await WriterFixtures.collect(writer.failures)
+        #expect(failures == [.diskFull], "\(failures)")
+        #expect(summary.failure == nil)
+        #expect(try WriterFixtures.read(summary.url).events == events)
+    }
+
+    @Test("A real success between two identical failures allows a second report")
+    func successBetweenFailuresReportsAgain() async throws {
+        let scratch = try ScratchDirectory()
+        defer { scratch.remove() }
+        let plan = FaultPlan()
+        let writer = try WriterFixtures.writer(in: scratch, plan: plan)
+        writer.sink.record(.marker("a", at: .zero))
+        plan.failNextSync(errno: EIO)
+        await #expect(throws: LogWriteError.self) { try await writer.flush() }
+        try await writer.flush()                                  // write nothing, fsync succeeds
+        plan.failNextSync(errno: EIO)
+        await #expect(throws: LogWriteError.self) { try await writer.flush() }
+        _ = await writer.finish()
+        let failures = await WriterFixtures.collect(writer.failures)
+        #expect(failures.count == 2, "\(failures)")
+    }
+
     /// R2-3: a truncate failure is `.writeFailed` whatever its errno — even
     /// ENOSPC, which only maps to `.diskFull` for `write`.
     @Test("ftruncate failing with ENOSPC is still .writeFailed")

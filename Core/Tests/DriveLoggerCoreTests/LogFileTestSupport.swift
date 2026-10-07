@@ -13,9 +13,9 @@ import Testing
 /// at any point, before or after hand-over.
 final class FaultPlan: Sendable {
     private let lock = NSLock()
-    /// Guarded by `lock`. Next write calls to fail, in order: bytes to let
-    /// through before the error, and the errno.
-    private nonisolated(unsafe) var writeFaults: [(bytes: Int, errno: Int32)] = []
+    /// Guarded by `lock`. Write faults, in order: successful writes to let
+    /// pass first, bytes to let through before the error, and the errno.
+    private nonisolated(unsafe) var writeFaults: [(skip: Int, bytes: Int, errno: Int32)] = []
     /// Guarded by `lock`. errnos for the next truncate calls, in order.
     private nonisolated(unsafe) var truncateFaults: [Int32] = []
     /// Guarded by `lock`. errnos for the next sync calls, in order.
@@ -24,7 +24,12 @@ final class FaultPlan: Sendable {
     private nonisolated(unsafe) var calls: [String] = []
 
     func failNextWrite(afterBytes bytes: Int, errno: Int32) {
-        lock.withLock { writeFaults.append((bytes, errno)) }
+        failWrite(afterSuccessfulWrites: 0, afterBytes: bytes, errno: errno)
+    }
+
+    /// Lets `skip` writes succeed, then fails the next one.
+    func failWrite(afterSuccessfulWrites skip: Int, afterBytes bytes: Int, errno: Int32) {
+        lock.withLock { writeFaults.append((skip, bytes, errno)) }
     }
 
     func failNextTruncate(errno: Int32) {
@@ -38,7 +43,15 @@ final class FaultPlan: Sendable {
     var log: [String] { lock.withLock { calls } }
 
     func takeWriteFault() -> (bytes: Int, errno: Int32)? {
-        lock.withLock { writeFaults.isEmpty ? nil : writeFaults.removeFirst() }
+        lock.withLock {
+            guard !writeFaults.isEmpty else { return nil }
+            if writeFaults[0].skip > 0 {
+                writeFaults[0].skip -= 1
+                return nil
+            }
+            let fault = writeFaults.removeFirst()
+            return (fault.bytes, fault.errno)
+        }
     }
 
     func takeTruncateFault() -> Int32? {

@@ -591,8 +591,10 @@ public actor LogFileWriter {
     /// actor runs in the middle of a member.
     private func writePending(sync: Bool) throws(LogWriteError) {
         guard let handle else { throw stoppedFailure ?? .alreadyFinished }
-        var didIO = false
-        defer { if didIO { lastReported = nil } }
+        // A failure is delivered again only after a write or fsync has
+        // succeeded since it was reported: clear `lastReported` right after
+        // each success, never at the end of the attempt (which would also
+        // erase a failure reported later in the same attempt).
 
         while let chunk = pending.nextChunk(maxBytes: maxMemberInputBytes) {
             let member: Data
@@ -625,13 +627,13 @@ public actor LogFileWriter {
             members += 1
             eventCount += chunk.count
             pending.commit(chunk)
-            didIO = true
+            lastReported = nil
         }
 
         if sync {
             do {
                 try handle.sync()
-                didIO = true
+                lastReported = nil
             } catch {
                 let failure = error.writeError
                 report(failure)
