@@ -9,15 +9,42 @@ import Testing
 // tests prove the service logic only. What CoreBluetooth and the real
 // adapter do is in docs/PLAN.md §6.
 
+/// Wraps a `MockELMAdapter`; the first write of `failing` throws
+/// `.writeFailed` without reaching the adapter, as `BLETransport.send` does
+/// when `canSendWriteWithoutResponse` stays false for its readiness timeout.
+/// The link itself stays up: no `.disconnected` follows.
+actor WriteFailingTransport: ELMTransport {
+    nonisolated let incoming: AsyncStream<ELMChunk>
+    private let inner: MockELMAdapter
+    private let failing: String
+    private var failed = false
+
+    init(_ inner: MockELMAdapter, failing: String) {
+        self.inner = inner
+        self.failing = failing
+        incoming = inner.incoming
+    }
+
+    func send(_ command: ValidatedELMCommand) async throws -> Double {
+        if !failed, command.wire.caseInsensitiveCompare(failing) == .orderedSame {
+            failed = true
+            throw ELMTransportError.writeFailed("not ready for a write without response within 1 s")
+        }
+        return try await inner.send(command)
+    }
+}
+
 /// A `BLECentralClient` that connects at once and hands over a
 /// `MockELMAdapter` per connection: `scripts[n]` for connection `n`, the
-/// last one repeating.
+/// last one repeating. `writeFailures[n]` names a command whose first write
+/// on connection `n` throws `.writeFailed` (`WriteFailingTransport`).
 final class FakeBLECentral: BLECentralClient {
     static let adapterID = UUID(uuidString: "0BD0B0D0-1111-4222-8333-944455556666")!
 
     let events: AsyncStream<BLECentralEvent>
     private let continuation: AsyncStream<BLECentralEvent>.Continuation
     private let scripts: [[MockELMAdapter.Rule]]
+    private let writeFailures: [Int: String]
     private let lock = NSLock()
     // Guarded by `lock`.
     private nonisolated(unsafe) var log: [String] = []
@@ -26,8 +53,9 @@ final class FakeBLECentral: BLECentralClient {
     // Guarded by `lock`.
     private nonisolated(unsafe) var current: MockELMAdapter?
 
-    init(scripts: [[MockELMAdapter.Rule]], poweredOn: Bool = true) {
+    init(scripts: [[MockELMAdapter.Rule]], writeFailures: [Int: String] = [:], poweredOn: Bool = true) {
         self.scripts = scripts
+        self.writeFailures = writeFailures
         (events, continuation) = AsyncStream.makeStream(of: BLECentralEvent.self)
         if poweredOn { send(.availability(.poweredOn, uptime: Self.now)) }
     }
@@ -51,17 +79,18 @@ final class FakeBLECentral: BLECentralClient {
     }
 
     func connect(_ id: UUID) {
-        let adapter = lock.withLock { () -> MockELMAdapter in
+        let transport = lock.withLock { () -> any ELMTransport in
             log.append("connect")
             let script = scripts[min(made.count, scripts.count - 1)]
             let adapter = MockELMAdapter(rules: script)
+            let failing = writeFailures[made.count]
             made.append(adapter)
             current = adapter
-            return adapter
+            return failing.map { WriteFailingTransport(adapter, failing: $0) } ?? adapter
         }
         send(.connected(id, uptime: Self.now))
         send(.ready(
-            BLELinkReady(id: id, name: "IOS-Vlink", transport: adapter, selection: SimulatedBLECentral.selection, table: SimulatedBLECentral.table),
+            BLELinkReady(id: id, name: "IOS-Vlink", transport: transport, selection: SimulatedBLECentral.selection, table: SimulatedBLECentral.table),
             uptime: Self.now
         ))
     }
@@ -279,6 +308,29 @@ struct OBDLinkServiceTests {
         link.connect(to: FakeBLECentral.adapterID)
         #expect(await eventually { central.adapters.count == 2 && link.state.isPolling })
         #expect(log.ble.contains { $0.to == .disconnected && $0.reason?.hasPrefix("initialisation failed") == true })
+        link.disconnect()
+    }
+
+    // R3.1-1: a write error is not link loss. BLE stays connected and no
+    // `.disconnected` ever arrives, so the service must reconnect itself.
+    @Test("A write failure during the handshake, with BLE still connected, reconnects; the next connection polls")
+    func initWriteFailureReconnects() async throws {
+        let central = FakeBLECentral(scripts: [LinkTestSupport.touareg()], writeFailures: [0: "ATZ"])
+        let link = LinkTestSupport.service(central)
+        let log = LinkEventLog(link.linkEvents())
+        link.connect(to: FakeBLECentral.adapterID)
+
+        #expect(await eventually { central.adapters.count == 2 && link.state.isPolling && !log.readings.isEmpty })
+        #expect(central.calls.filter { $0 == "connect" }.count == 2)
+        #expect(central.calls.contains("cancel"), "the stuck connection is cancelled")
+        #expect(log.ble.map(\.to).prefix(8) == [
+            .connecting, .discovering, .connected, .disconnected, .reconnecting, .connecting, .discovering, .connected,
+        ])
+        let drop = try #require(log.ble.first { $0.to == .disconnected })
+        #expect(drop.reason?.hasPrefix("initialisation failed") == true)
+        #expect(drop.reason?.contains("writeFailed") == true)
+        #expect(await central.adapters[0].sentCommands.isEmpty, "the failed ATZ never reached the adapter")
+        #expect(await central.adapters[1].sentCommands.first == "ATZ")
         link.disconnect()
     }
 

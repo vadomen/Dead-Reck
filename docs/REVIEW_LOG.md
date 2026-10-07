@@ -237,3 +237,21 @@ fixtures byte-identical, three mutations of the fix caught.
   ledger update.
 - Final tests: `cd Core && swift test` 453 tests in 67 suites, all pass;
   simulator build 0 errors / 0 warnings.
+
+## Run 3 — range `803db28..0c7eda5` (M2 part 1), started 2026-10-07
+
+### Round 1
+
+Reviewer: fresh `reviewer` agent. Result: **0 BLOCKER / 2 MAJOR / 5 MINOR**.
+Core 468/468, app tests 39/39, single `writeValue` site and `seq` continuity
+across reconnects verified.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R3.1-1 | MAJOR | `initialiseAndPoll` treats every `.transport` error as link loss; a `.writeFailed` during the handshake (e.g. `canSendWriteWithoutResponse` stalled 1 s) leaves BLE connected, the session failed and no reconnect scheduled — no OBD for the drive. | CONFIRMED | `OBDLinkService.swift:380-383`: `case .transport, .cancelled: return` with no `.disconnected` ever coming. Fixed in round 1: only `.cancelled`, `.transport(.disconnected)` and `.transport(.notConnected)` stay silent; every other error, `.writeFailed` included, goes to `requestReconnect`. Test `OBDLinkServiceTests/initWriteFailureReconnects` (fails before the fix: 5 issues, no reconnect). |
+| R3.1-2 | MAJOR | After Bluetooth goes `resetting`/`unknown`/`unauthorized`, `known` keeps invalidated `CBPeripheral`s and `connectNow` prefers them over `retrievePeripherals`; the never-timing-out connect can hang for the drive. | CONFIRMED | `BLECentral.swift` unavailable branch clears discovery/awaitingDisconnect/deferredConnect but not `known`; `connectNow` uses `known[id] ?? retrieve…`. Hardware confirmation added to PLAN §6. Fixed in round 1: `known` cleared (delegates nil'd) for every state but `poweredOn`/`poweredOff`, decided by `BLECentral.invalidatesPeripherals`. Test `BLECentralTests/invalidatingStates` (the decision only; the reset itself needs hardware, PLAN §6). |
+| R3.1-3 | MINOR | The disconnect BLECentral itself requested is emitted as `.disconnected`; landing after the backoff it causes a spurious extra reconnect cycle. | DEFERRED | BACKLOG |
+| R3.1-4 | MINOR | `reinitialise()` during the first initialisation joins the run, both callers `startPolling`, the second throws `.notInitialised` → full reconnect of a healthy link. | DEFERRED | BACKLOG |
+| R3.1-5 | MINOR | Backoff `attempt` resets on init success, so init-OK-but-polls-fail cycles reconnect every ~1 s + re-init budget indefinitely. | DEFERRED | BACKLOG |
+| R3.1-6 | MINOR | Acknowledged-write errors reach the console only, not the recording. | DEFERRED | BACKLOG |
+| R3.1-7 | MINOR | GATT discovery has no watchdog; a missing discovery/notify callback leaves the link in `discovering` forever. | DEFERRED | BACKLOG |

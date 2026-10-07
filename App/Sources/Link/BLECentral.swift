@@ -70,6 +70,9 @@ protocol BLECentralClient: AnyObject, Sendable {
 /// - State restoration: peripherals handed back in `willRestoreState` are
 ///   retained and adopted by the next `connect` for that identifier,
 ///   whether still connected or pending.
+/// - Every retained peripheral is dropped when Bluetooth goes resetting,
+///   unknown, unauthorized or unsupported (`invalidatesPeripherals`); the
+///   next `connect` retrieves the identifier again.
 ///
 /// Threading: CoreBluetooth calls and delegate callbacks run on `queue`.
 /// Mutable state is guarded by `lock` (docs/PLAN.md §4.0); CoreBluetooth is
@@ -340,6 +343,21 @@ final class BLECentral: NSObject, BLECentralClient, Sendable {
         ))
     }
 
+    /// Whether moving to `state` invalidates every `CBPeripheral` obtained
+    /// from the manager. CoreBluetooth: once the state drops below
+    /// `poweredOff` (resetting — bluetoothd restarted —, unknown,
+    /// unauthorized, unsupported) peripherals "become invalid and must be
+    /// retrieved or discovered again". `poweredOff` only disconnects them.
+    /// Unknown future states are treated as invalidating: re-retrieving a
+    /// peripheral costs nothing, a stale one can stall the drive.
+    nonisolated static func invalidatesPeripherals(_ state: CBManagerState) -> Bool {
+        switch state {
+        case .poweredOn, .poweredOff: false
+        case .resetting, .unknown, .unauthorized, .unsupported: true
+        @unknown default: true
+        }
+    }
+
     private func closeTransport(for id: UUID?, reason: String) -> UUID? {
         let closing = lock.withLock { () -> (UUID, BLETransport)? in
             guard let current = transport, id == nil || current.id == id else { return nil }
@@ -371,11 +389,18 @@ extension BLECentral: CBCentralManagerDelegate {
             if let id = closeTransport(for: nil, reason: reason) {
                 emit(.disconnected(id, reason: reason, uptime: now))
             }
-            lock.withLock {
+            let stale = lock.withLock { () -> [CBPeripheral] in
                 discovery = nil
                 awaitingDisconnect.removeAll()
                 deferredConnect = nil
+                // Below poweredOff every peripheral of this manager is
+                // invalid; a connect on one can hang for good. Forget them
+                // so `connectNow` retrieves fresh objects (R3.1-2).
+                guard Self.invalidatesPeripherals(central.state) else { return [] }
+                defer { known.removeAll() }
+                return Array(known.values)
             }
+            for peripheral in stale { peripheral.delegate = nil }
         }
         emit(.availability(availability, uptime: now))
         guard availability == .poweredOn else { return }

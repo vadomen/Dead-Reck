@@ -16,6 +16,7 @@
 		50CE5600479330B230E3E883 /* RecordingSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFF4735ED2E6C7340B224408 /* RecordingSession.swift */; };
 		6A100EA473833AB5B83E6974 /* AppInfoTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90AC7FA4AD498307B3C7D5C3 /* AppInfoTests.swift */; };
 		740AC40C242C54E79F09B42D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2EE4B1A7D0924DC9EBEBA99C /* Assets.xcassets */; };
+		80920D5FFE9F6525692A73C6 /* BLECentralTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18315FE7C7FFF70B0B2850DD /* BLECentralTests.swift */; };
 		877A22BD2347363272765DC5 /* MotionSources.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3E3CAE3C8FF82BB7ADEA4E5 /* MotionSources.swift */; };
 		9703F9AAE2A112783A148671 /* DriveLoggerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38660F590E620FC9E95617BC /* DriveLoggerApp.swift */; };
 		9CD669641E5B9757824C089F /* LocationSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BA5BC867600F8EB5512BC01 /* LocationSource.swift */; };
@@ -39,6 +40,7 @@
 
 /* Begin PBXFileReference section */
 		14F0D843A473920A9680FC04 /* SimulatedOBDLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimulatedOBDLink.swift; sourceTree = "<group>"; };
+		18315FE7C7FFF70B0B2850DD /* BLECentralTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BLECentralTests.swift; sourceTree = "<group>"; };
 		2EE4B1A7D0924DC9EBEBA99C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		34003681B191F41CE9CCAF3E /* Core */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Core; path = Core; sourceTree = SOURCE_ROOT; };
 		38660F590E620FC9E95617BC /* DriveLoggerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DriveLoggerApp.swift; sourceTree = "<group>"; };
@@ -77,6 +79,7 @@
 			isa = PBXGroup;
 			children = (
 				90AC7FA4AD498307B3C7D5C3 /* AppInfoTests.swift */,
+				18315FE7C7FFF70B0B2850DD /* BLECentralTests.swift */,
 				428FB84AE7F6B6AC6DAF1351 /* GATTDetectionTests.swift */,
 				4757331FF2FA81D7AC0192A2 /* OBDLinkServiceTests.swift */,
 			);
@@ -280,6 +283,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				6A100EA473833AB5B83E6974 /* AppInfoTests.swift in Sources */,
+				80920D5FFE9F6525692A73C6 /* BLECentralTests.swift in Sources */,
 				CF7DAFE188B603771CB0BE9C /* GATTDetectionTests.swift in Sources */,
 				9D68BF8B1CC07439C59B8590 /* OBDLinkServiceTests.swift in Sources */,
 			);

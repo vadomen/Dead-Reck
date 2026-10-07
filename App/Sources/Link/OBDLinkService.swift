@@ -48,7 +48,8 @@ struct ReconnectBackoff: Hashable, Sendable {
 ///   session has shut down and its last event has been forwarded — so
 ///   `seq` is unique and increasing for the whole recording.
 /// - Reconnect with backoff (`ReconnectBackoff`, 1 s doubling to 30 s) on a
-///   link loss, a failed connect, a failed initialisation, and on the
+///   link loss, a failed connect, a failed initialisation (a write error
+///   during the handshake included: BLE stays up then), and on the
 ///   session's `needsReconnect`. The attempt counter resets once an
 ///   initialisation succeeds. The connect itself never times out: iOS
 ///   keeps it pending until the adapter is back (unplugged and replugged),
@@ -378,10 +379,14 @@ class OBDLinkService: OBDLinkServicing {
         } catch {
             guard token == linkToken else { return }
             switch error {
-            case .transport, .cancelled:
-                // Link loss: the BLE layer reports it and reconnects.
+            case .cancelled, .transport(.disconnected), .transport(.notConnected):
+                // Link loss (or shutdown): the BLE layer reports it and the
+                // `.disconnected` handler reconnects.
                 return
             default:
+                // Everything else, `.transport(.writeFailed)` included (R3.1-1):
+                // BLE may still be connected and no `.disconnected` will come,
+                // so drop the connection and reconnect from here.
                 appendConsole(.status, "init failed: \(error)", uptime.uptimeSeconds)
                 requestReconnect(reason: "initialisation failed: \(error)")
             }
