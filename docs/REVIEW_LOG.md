@@ -255,3 +255,31 @@ across reconnects verified.
 | R3.1-5 | MINOR | Backoff `attempt` resets on init success, so init-OK-but-polls-fail cycles reconnect every ~1 s + re-init budget indefinitely. | DEFERRED | BACKLOG |
 | R3.1-6 | MINOR | Acknowledged-write errors reach the console only, not the recording. | DEFERRED | BACKLOG |
 | R3.1-7 | MINOR | GATT discovery has no watchdog; a missing discovery/notify callback leaves the link in `discovering` forever. | DEFERRED | BACKLOG |
+
+### Round 2
+
+Range `803db28..38db605` (part 1 + round-1 fix). Reviewer: fresh `reviewer`
+agent. Result: **0 BLOCKER / 0 MAJOR / 2 MINOR**. R3.1-1 verified complete
+(every transport-closing path traced; `.disconnected`/`.notConnected` always
+come with a BLE `.disconnected` event, every other error reconnects); R3.1-2
+verified correct and compatible with state restoration (`willRestoreState`
+precedes the first `didUpdateState`). Core 468/468, app tests 41/41.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R3.2-1 | MINOR | A `withoutResponse` write that stalls past the 1 s readiness limit is first logged as a `timeout` (the session timer starts before `send`, same 1 s) and leaves an owed prompt, so the retry writes it off and forces an `ATZ` re-init; the row claims a command was sent that never was. | DEFERRED | BACKLOG |
+| R3.2-2 | MINOR | On `poweredOn` both `BLECentral` (its own `target`) and the service connect; `connectNow` restarts discovery on an already-connected peripheral, and one interleaving can drop the notify callback and leave the link `discovering` (with R3.1-7). | DEFERRED | BACKLOG |
+
+**Loop stopped: no BLOCKER or MAJOR findings.**
+
+### Run 3 summary
+
+- Rounds run: 2.
+- Findings fixed: 2 (R3.1-1, R3.1-2, MAJOR, confirmed before fixing).
+  Rejected: 0. Deferred: 7 MINOR (R3.1-3…R3.1-7, R3.2-1, R3.2-2 in BACKLOG).
+- No finding came back after its fix.
+- Commits: 0b6da00 + 0c7eda5 (change under review), 38db605 (round 1), plus
+  this ledger update.
+- Final tests: `cd Core && swift test` 468 tests in 71 suites, all pass;
+  simulator build 0 errors / 0 warnings; app tests 41 in 8 suites, all pass
+  on iPhone 15 Pro simulator.
