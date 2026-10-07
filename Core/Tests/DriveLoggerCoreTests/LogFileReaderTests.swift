@@ -173,6 +173,62 @@ struct LogFileReaderTests {
         #expect(index == 2)
     }
 
+    /// Review finding 2: a damaged header member must not cost the drive,
+    /// and an event line must never be parsed as the header.
+    @Test("A header member with a bad CRC still yields the header and every event; member 0 is listed damaged")
+    func headerMemberBadCRC() throws {
+        let scratch = try ScratchDirectory()
+        defer { scratch.remove() }
+        let url = scratch.file("h.jsonl.gz")
+        var (bytes, starts) = try RecordingBytes.gzip(Self.groups)
+        bytes[starts[1] - 8] ^= 0x40                              // header member's stored CRC
+        try bytes.write(to: url)
+
+        let read = try WriterFixtures.read(url)
+        #expect(read.header == WriterFixtures.header)
+        #expect(read.events == Self.groups.flatMap { $0 })
+        #expect(read.report.damagedMemberIndices == [0])
+        #expect(read.report.members == 3)                         // intact members only
+    }
+
+    @Test("A garbled header member throws damagedMember(0), never misreads an event as the header")
+    func headerMemberGarbled() throws {
+        let scratch = try ScratchDirectory()
+        defer { scratch.remove() }
+        let url = scratch.file("g.jsonl.gz")
+        var (bytes, starts) = try RecordingBytes.gzip(Self.groups)
+        for index in GzipMember.headerLength..<(starts[1] - 8) {  // the header's DEFLATE body
+            bytes[index] = 0xFF
+        }
+        try bytes.write(to: url)
+        do {
+            _ = try LogFileReader(url: url)
+            Issue.record("expected a throw")
+        } catch LogDecodingError.damagedMember(let index, _) {
+            #expect(index == 0)
+        } catch {
+            Issue.record("expected .damagedMember(index: 0), got \(error)")
+        }
+    }
+
+    @Test("Strict reading refuses a header member with a bad CRC")
+    func headerMemberBadCRCStrict() throws {
+        let scratch = try ScratchDirectory()
+        defer { scratch.remove() }
+        let url = scratch.file("hs.jsonl.gz")
+        var (bytes, starts) = try RecordingBytes.gzip(Self.groups)
+        bytes[starts[1] - 8] ^= 0x40
+        try bytes.write(to: url)
+        do {
+            _ = try LogFileReader(url: url, recovery: .strict)
+            Issue.record("expected a throw")
+        } catch LogDecodingError.damagedMember(let index, _) {
+            #expect(index == 0)
+        } catch {
+            Issue.record("expected .damagedMember(index: 0), got \(error)")
+        }
+    }
+
     @Test("Malformed lines inside a member are skipped with their file-wide line index")
     func malformedLinesInMember() throws {
         let scratch = try ScratchDirectory()

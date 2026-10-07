@@ -176,8 +176,9 @@ enum GzipMember {
     }
 
     /// Decompresses one complete member (exactly its bytes) and verifies CRC
-    /// and ISIZE.
-    static func decode(_ member: some DataProtocol) throws(GzipMemberError) -> Data {
+    /// and ISIZE — unless `verifyingChecksums` is false, which only the
+    /// reader's salvage of a damaged header member uses.
+    static func decode(_ member: some DataProtocol, verifyingChecksums: Bool = true) throws(GzipMemberError) -> Data {
         let bytes = Data(member)
         guard case .complete(let header) = parseHeader(bytes) else { throw .notAMember }
         guard bytes.count >= header.totalLength else { throw .truncated }
@@ -191,6 +192,7 @@ enum GzipMember {
         } catch {
             throw .decompressionFailed(String(describing: error))
         }
+        guard verifyingChecksums else { return payload }
         let storedCRC = bytes.readLittleEndianUInt32(at: bodyEnd)
         let storedSize = bytes.readLittleEndianUInt32(at: bodyEnd + 4)
         let actualCRC = CRC32.checksum(payload)

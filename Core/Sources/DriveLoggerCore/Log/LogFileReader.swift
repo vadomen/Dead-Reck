@@ -19,7 +19,11 @@ public struct LogReadReport: Hashable, Sendable {
     /// to decompress or failed their CRC-32 / ISIZE check and were skipped
     /// under `LogRecovery.skipMalformedLines`. Not expected from
     /// `LogFileWriter`, which never leaves a partial member mid-file; this is
-    /// media corruption.
+    /// media corruption. Index 0 (the header member) is special: its content
+    /// is still used if it inflates despite the failed checksum, because
+    /// without a header no event in the file could be read. A header member
+    /// that doesn't even inflate makes `init` throw
+    /// `LogDecodingError.damagedMember(index: 0, …)`.
     public var damagedMemberIndices: [Int]
     /// Under `LogRecovery.strict`: the problem that ended iteration early
     /// (`.malformedLine` or `.damagedMember`). nil otherwise.
@@ -63,6 +67,11 @@ public enum LogFileReadError: Error, Hashable, Sendable {
 ///   member is handled the same way, member-wide.
 /// - A header from a newer format version is refused in `init`
 ///   (`LogDecodingError.unsupportedFormatVersion`), as `LogCodec` does.
+/// - The header is always the first line of member 0 (or of a plain file);
+///   an event line is never taken for it. A header member with a bad
+///   checksum is salvaged under `.skipMalformedLines` (listed in
+///   `damagedMemberIndices`) and refused under `.strict`; one that cannot be
+///   inflated is refused with `.damagedMember(index: 0, …)`.
 ///
 /// Single pass: the reader is its own cursor, so a second iterator continues
 /// where the first stopped. Not `Sendable`: owns a `LogCodec`.
@@ -72,10 +81,23 @@ public final class LogFileReader: Sequence {
 
     public init(url: URL, recovery: LogRecovery = .skipMalformedLines) throws {
         let cursor = try Cursor(url: url, recovery: recovery)
-        guard let line = try cursor.nextLine() else {
+        let line = try cursor.nextLine()
+        if let failure = cursor.headerMemberFailure {
+            throw failure
+        }
+        // In a gzip file the header is the first line of member 0. An event
+        // line from a later member is never taken for it.
+        guard let line, cursor.isPlain || cursor.lineSourceMember == 0 else {
             throw LogDecodingError.missingHeader
         }
-        header = try cursor.codec.header(from: line)
+        do {
+            header = try cursor.codec.header(from: line)
+        } catch LogDecodingError.missingHeader where cursor.report.damagedMemberIndices.contains(0) {
+            throw LogDecodingError.damagedMember(
+                index: 0,
+                description: "header member failed its checksum and its first line is not a header"
+            )
+        }
         self.cursor = cursor
     }
 
@@ -104,6 +126,11 @@ private final class Cursor {
     let codec = LogCodec()
     let recovery: LogRecovery
     private(set) var report = LogReadReport(members: 0, truncatedTail: false, skippedLineIndices: [])
+    /// Set when member 0 cannot be salvaged; `LogFileReader.init` throws it.
+    private(set) var headerMemberFailure: LogDecodingError?
+    /// Member index the current batch of lines came from (gzip only).
+    private(set) var lineSourceMember = -1
+    var isPlain: Bool { format == .plain }
 
     private let file: ChunkedFile
     private let format: Format
@@ -215,11 +242,28 @@ private final class Cursor {
             let payload: Data
             do {
                 payload = try GzipMember.decode(member)
+                report.members += 1
             } catch {
-                damaged(memberIndex, String(describing: error))
-                return
+                guard memberIndex == 0 else {
+                    damaged(memberIndex, String(describing: error))
+                    return
+                }
+                // The header member. Losing it would make every intact event
+                // member unreadable, so under recovery its content is used
+                // when it still inflates, checksum notwithstanding, and the
+                // member is listed as damaged. Otherwise the whole read fails
+                // with a specific error rather than guessing a header.
+                if recovery == .skipMalformedLines,
+                   let salvaged = try? GzipMember.decode(member, verifyingChecksums: false) {
+                    report.damagedMemberIndices.append(0)
+                    payload = salvaged
+                } else {
+                    headerMemberFailure = .damagedMember(index: 0, description: String(describing: error))
+                    exhausted = true
+                    return
+                }
             }
-            report.members += 1
+            lineSourceMember = memberIndex
             appendLines(payload)
         } catch {
             damaged(memberIndex, "read error: \(error)")
