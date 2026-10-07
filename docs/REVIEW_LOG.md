@@ -210,4 +210,30 @@ fallback".
 
 ### Round 2
 
-_Pending reviewer._ Range `189387e..HEAD`.
+Range `189387e..HEAD` (5644625 + 2a7ac61). Reviewer: fresh `reviewer`
+agent. Result: **0 BLOCKER / 0 MAJOR / 4 MINOR**. R2.1-1 verified fixed on
+init, probe, fallback, re-init, repeated `initialise()`, stale physical
+plans, late OK and the NO DATA rule; bench car unchanged (`ATSH7E0` →
+`010D0C1` at 7E0 with `A6` and `6`). 453/453 ×3, simulator build green,
+fixtures byte-identical, three mutations of the fix caught.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R2.2-1 | MINOR | After a re-init closes the gate (or `startPolling` with a physical plan on a closed gate), an `adapter` row announces the physical plan before the loop downgrades it; no poll goes out in between. | DEFERRED | BACKLOG |
+| R2.2-2 | MINOR | Losing physical addressing is one-way for the rest of polling: a later re-init that reopens the gate sends `ATSH7E0`, then the loop sends `ATSH7DF`. No data lost; slower poll until the next `initialise()`. | DEFERRED | BACKLOG |
+| R2.2-3 | MINOR | The new `ATSH7DF` step has no fallback: one timeout → baseline for the drive (B1-1 class); an adapter refusing `ATSH7DF` but accepting `ATSH7E0` would loop until `needsReconnect`. | DEFERRED | BACKLOG |
+| R2.2-4 | MINOR | `docs/SPEC_V1.md:30,32` and `docs/PLAN.md:20-21` still describe `ATSH7E0` as unconditional, with no functional re-selection. | DEFERRED | BACKLOG |
+
+**Loop stopped: no BLOCKER or MAJOR findings.**
+
+### Run 2 summary
+
+- Rounds run: 2.
+- Findings fixed: 1 (R2.1-1, MAJOR, confirmed before fixing). Rejected: 0.
+  Deferred: 9 MINOR (R2.1-2, R2.1-4, R2.1-5 in BACKLOG; R2.1-3 and R2.1-6
+  resolved by the R2.1-1 fix; R2.2-1…R2.2-4 in BACKLOG).
+- No finding came back after its fix.
+- Commits: 5644625 (change under review), 2a7ac61 (round 1), plus this
+  ledger update.
+- Final tests: `cd Core && swift test` 453 tests in 67 suites, all pass;
+  simulator build 0 errors / 0 warnings.
