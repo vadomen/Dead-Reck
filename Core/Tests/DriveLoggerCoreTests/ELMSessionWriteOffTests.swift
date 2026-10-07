@@ -173,8 +173,11 @@ struct ELMSessionWriteOffTests {
         #expect(await harness.session.state == .failed)
         let atz = await harness.log.exchanges.filter { $0.tx == "ATZ" && $0.rx == nil }
         #expect(atz.count == 2)
-        // Backoff before re-init attempt 2 is 100 ms (50 × 2).
-        #expect(atz[1].requestUptime - atz[0].completedUptime >= 0.1 - 1e-9)
+        // Between the first re-init ATZ timing out and the second going out:
+        // the 100 ms backoff before attempt 2 (50 × 2), then the 100 ms grace
+        // for the first ATZ's owed prompt. The grace alone is 100 ms, so a
+        // bound of 0.1 s would hold even without any backoff (M1-E5).
+        #expect(atz[1].requestUptime - atz[0].completedUptime >= 0.2 - 1e-9)
         let sent = await harness.mock.sentCommands.count
         await harness.clock.advance(by: .seconds(5))
         #expect(await harness.mock.sentCommands.count == sent)

@@ -246,8 +246,8 @@ is owed or in flight — is written with `outcome` `timeout`, `rx` present and
 `tx` `""`; `requestT == t`.
 
 **Partial text.** Text received without a `>` when the link ends, or when `ATZ`
-is sent, is written as a late row for the oldest written-off command still
-unanswered (else the oldest owed one), or as an unsolicited row.
+is sent, is written as a late row (routed like any late reply, below), or as
+an unsolicited row.
 
 **After a written-off prompt.** If a timed-out command's `>` doesn't arrive
 within the grace period (default: the command timeout), the command is written
@@ -255,7 +255,13 @@ off, and a `link` row with `from == to` and `reason` `no prompt for <tx> within
 <grace> of its timeout; written off` records it. From then on replies can't be
 matched to commands, so nothing but `ATZ` is sent until `ATZ` is answered with
 a banner. Replies arriving in the meantime are late rows for the written-off
-commands, oldest first, or unsolicited rows; none becomes data.
+commands, oldest first, or unsolicited rows; none becomes data. Late replies
+are routed by shape: banner-like text (see "ATZ banner") goes only to a
+written-off or owed `ATZ`, `ATI` or `AT@1` — an unsolicited row if there is
+none — and anything else to the oldest other command first; written-off
+commands before owed ones. Once `ATZ` is answered with a banner, output after
+it is unsolicited, and banners held while `ATZ` waited out its window when the
+session shuts down follow that `ATZ`'s own `timeout` row as late rows.
 - While polling, the logger re-initialises at once (`link` reason `link
   desynchronised: a prompt was written off`), counting towards the re-init
   limit.
@@ -317,7 +323,7 @@ polled.
 |---|---|
 | `layer` | `ble` or `elm`. |
 | `from`, `to` | State names. `elm` states: `idle`, `resetting`, `initialising`, `searching`, `probing`, `ready`, `polling`, `retrying`, `reinitialising`, `failed`. `ble` states: `unavailable`, `idle`, `scanning`, `connecting`, `discovering`, `connected`, `disconnected`, `reconnecting`, `restoring`. |
-| `reason` | Optional free text, e.g. `timeout`. `elm` `failed` reasons include `transport closed`, a re-init limit message, or a read-only-guard rejection of a session command (followed by no reconnect request). Rows with `from == to` are notes (write-offs, init restarts, non-`ELM` banners, addressing), not transitions. Addressing notes: `ATSH7E0 skipped: protocol <n> is not 11-bit ISO 15765-4 CAN (6, A6, 8, A8); requests stay functional (7DF), no response-count suffix`, `ATSH7E0 skipped: no 7E8 reply to 0100; …`, `ATSH7E0 not accepted (<outcome>); requests stay functional (7DF), no response-count suffix`, `late OK for ATSH7E0; requests go to 7E0`, `no poll command parsed with physical addressing (7E0); selecting again with functional addressing (7DF), no response-count suffix` (or `…; ATSH7DF not accepted (<outcome>); using the baseline plan`), and `physical addressing unavailable: <cause>; polling with functional addressing (7DF), no response-count suffix` (followed by an `adapter` row with the functional plan). While polling, a refused `ATSH<header>` is a failure with reason `ATSH<header>: <outcome>`; a suffixed poll under functional addressing is refused (an `elm` `rejected` row, then `failed`). |
+| `reason` | Optional free text, e.g. `timeout`. `elm` `failed` reasons include `transport closed`, a re-init limit message, or a read-only-guard rejection of a session command (followed by no reconnect request). Rows with `from == to` are notes (write-offs, init restarts, non-`ELM` banners, addressing), not transitions. Addressing notes: `ATSH7E0 skipped: protocol <n> is not 11-bit ISO 15765-4 CAN (6, A6, 8, A8); requests stay functional (7DF), no response-count suffix`, `ATSH7E0 skipped: no 7E8 reply to 0100; …`, `ATSH7E0 not accepted (<outcome>); requests stay functional (7DF), no response-count suffix`, `late OK for ATSH7E0; requests go to 7E0`, `late OK for ATSH7DF; requests go to 7DF`, `no poll command parsed with physical addressing (7E0); selecting again with functional addressing (7DF), no response-count suffix` (or, when `ATSH7DF` is refused or never answered, `…; ATSH7DF not accepted (<outcome>); physical addressing disabled for this session; re-initialising without ATSH7E0`, followed by a second handshake from `ATZ` and functional selection), `ATSH7E0 skipped: physical addressing disabled for this session: ATSH7DF not accepted (<outcome>); requests stay functional (7DF), no response-count suffix` (every handshake after that, for the rest of the connection), `physical addressing unavailable: <cause>; polling with functional addressing (7DF), no response-count suffix` and `physical addressing available again; polling <command> at 7E0` (the gate closed or reopened at a re-init, or a physical plan was started on a closed gate; each followed by an `adapter` row with the plan now polled — no `adapter` row ever carries a plan that isn't polled). While polling, a refused `ATSH<header>` is a failure with reason `ATSH<header>: <outcome>`, except a refused `ATSH7DF`, which re-initialises at once with reason `ATSH7DF not accepted (<outcome>); physical addressing disabled for this session; re-initialising without ATSH7E0`; a suffixed poll under functional addressing is refused (an `elm` `rejected` row, then `failed`). |
 
 ### `lifecycle`
 

@@ -68,9 +68,19 @@ import Foundation
 ///   with the chosen command and kept only if faster.
 /// - Physical addressing is abandoned if it reaches nothing: when no step
 ///   parses under `7E0` (or the only one that does has lost vehicle speed
-///   to the NO DATA rule), the session notes `no poll command parsed with
-///   physical addressing (7E0); …`, sends `ATSH7DF` (phase `probe`) and
-///   runs selection again functionally, starting from the full PID list.
+///   to the NO DATA rule), the session sends `ATSH7DF` (phase `probe`) and
+///   runs selection again functionally, starting from the full PID list,
+///   with a note `no poll command parsed with physical addressing (7E0);
+///   selecting again with functional addressing (7DF), no response-count
+///   suffix`. An `ATSH7DF` that times out still counts if its late `OK`
+///   arrives within the grace period. One that is refused, or never
+///   answered, leaves the adapter physical: the session notes `no poll
+///   command parsed with physical addressing (7E0); ATSH7DF not accepted
+///   (<outcome>); physical addressing disabled for this session;
+///   re-initialising without ATSH7E0`, re-runs the handshake from `ATZ`
+///   (which skips `ATSH7E0` with `ATSH7E0 skipped: physical addressing
+///   disabled for this session: …`) and then selects functionally. The
+///   disable lasts for the session: every later handshake skips `ATSH7E0`.
 /// - Nothing parses → `PollingPlan.baseline`: functional, no suffix. The
 ///   plan records the addressing (`requestHeader`).
 /// - The response-count suffix is never sent unless `ATSH7E0` was answered
@@ -79,16 +89,26 @@ import Foundation
 ///   addressing differs from the plan's — after every re-init too, since
 ///   `ATZ` resets it — and polls only once that is answered `OK`, and a
 ///   suffixed poll with the adapter functional is refused like a rejected
-///   session command (`rejected` exchange, `failed`).
-/// - A re-init re-runs the whole handshake, the `ATSH7E0` gate included,
-///   then restores the plan's addressing: a functional plan gets `ATSH7DF`;
-///   a physical plan whose `ATSH7E0` is now refused fails like any poll
-///   (retry → re-init → `failed` + `needsReconnect`).
-/// - The poll loop never sends a physical header while the gate is closed
-///   (after a re-init that closed it, or a physical plan passed to
-///   `startPolling` on such a car). The plan then becomes functional
-///   without the suffix, with a note `physical addressing unavailable: …`
-///   and a new `.adapter` event.
+///   session command (`rejected` exchange, `failed`). Before comparing,
+///   the loop lets owed prompts settle (B1-3, R2.1-2): a late `ATSH` `OK`
+///   changes the addressing, so it must land before the decision, not
+///   between the decision and the poll.
+/// - **Selected and polled plan.** `startPolling`'s plan is kept as given;
+///   the plan polled is derived from it and the gate, at `startPolling` and
+///   after every successful re-init (R2.2-1, R2.2-2). Gate closed → the
+///   physical plan is polled functionally without the suffix, with a note
+///   `physical addressing unavailable: <cause>; polling with functional
+///   addressing (7DF), no response-count suffix`. Gate open again at a
+///   later re-init → the physical plan is polled again, with a note
+///   `physical addressing available again; polling <command> at 7E0`. An
+///   `.adapter` event follows every change, and none ever announces a plan
+///   that isn't the one polled.
+/// - While polling, a functional plan restores its addressing with
+///   `ATSH7DF`; if the adapter refuses it (it accepted `ATSH7E0` at the
+///   re-init), physical addressing is disabled for the session and the
+///   session re-initialises at once, so `ATZ` makes it functional again
+///   (R2.2-3). A physical plan whose `ATSH7E0` is refused fails like any
+///   poll (retry → re-init → `failed` + `needsReconnect`).
 ///
 /// ## NO DATA
 ///
@@ -125,8 +145,12 @@ import Foundation
 ///   can be matched to a command any more.
 /// - **While desynchronised, only `ATZ` is sent.** Replies are paid to the
 ///   written-off commands (oldest first) or recorded as unsolicited; none
-///   answers a command. The link is trusted again once `ATZ` is answered
-///   with a banner. How each caller gets there:
+///   answers a command. Late replies are routed by shape (M1-E4): a
+///   banner-shaped one only to a banner command (`ATZ`, `ATI`, `AT@1`) —
+///   unsolicited if none is pending — anything else to the oldest
+///   non-banner command first; written-off commands before owed ones. The
+///   link is trusted again once `ATZ` is answered with a banner, from the
+///   actor step that takes the banner. How each caller gets there:
 ///   - **Polling:** re-initialises at once (`reinitialising`, reason
 ///     `link desynchronised: …`) through the normal re-init budget and
 ///     backoff. A wedged adapter still ends in `failed` + one
@@ -290,6 +314,11 @@ public actor ELMSession {
     /// Why a physical header may not be sent now; nil once the last
     /// handshake's gate passed. Closed from the moment `ATZ` is sent.
     private var physicalAddressingBlocked: String? = "no handshake yet"
+    /// Set when the adapter accepted `ATSH7E0` but refused (or lost)
+    /// `ATSH7DF`: physical addressing could not be undone, so the gate stays
+    /// closed for the rest of this session and every handshake skips
+    /// `ATSH7E0` (R2.2-3).
+    private var physicalAddressingDisabled: String?
     private var initialised = false
     /// What the last successful handshake found.
     private var adapterFacts: HandshakeResult?
@@ -301,6 +330,12 @@ public actor ELMSession {
 
     // MARK: Polling state
 
+    /// The plan `startPolling` was given. Never downgraded: the plan polled
+    /// (`plan`) is derived from it and the gate at every (re-)init, so
+    /// physical addressing lost at one re-init comes back at the next one
+    /// that reopens the gate (R2.2-2).
+    private var selectedPlan: PollingPlan?
+    /// The plan being polled: `selectedPlan` through `effective(_:)`.
     private var plan: PollingPlan?
     private var activePIDs: [OBDPID] = []
     private var multiPIDActive = false
@@ -355,9 +390,16 @@ public actor ELMSession {
     func beginPolling(_ plan: PollingPlan) throws(ELMSessionError) {
         try checkOpen()
         guard state == .ready, initialised, pollTask == nil else { throw .notInitialised }
-        self.plan = plan
+        selectedPlan = plan
+        self.plan = effective(plan)
         activePIDs = plan.pids
         multiPIDActive = plan.multiPID
+        // A physical plan on a closed gate is noted and never announced
+        // (R2.2-1): the `adapter` row below already carries the functional
+        // plan actually polled.
+        if plan.requestHeader != nil, self.plan?.requestHeader == nil, let cause = physicalAddressingBlocked {
+            noteState(reason: Self.physicalAddressingUnavailable(cause))
+        }
         // The log must say what is polled: announce a plan other than the
         // one `initialise()` (or the last change) reported.
         if currentPlan != announcedPlan { emitCurrentAdapterInfo() }
@@ -545,7 +587,9 @@ public actor ELMSession {
     private func applyPhysicalAddressingIfAllowed(_ found: HandshakeResult) async throws(ELMSessionError) {
         let command = ELM327Command.physicalAddressing
         guard case .setHeader(let header) = command else { return }
-        if let cause = Self.physicalAddressingCause(protocolNumber: found.protocolNumber, supportedPIDs: found.supportedPIDs) {
+        let disabled = physicalAddressingDisabled.map { "physical addressing disabled for this session: \($0)" }
+        if let cause = disabled
+            ?? Self.physicalAddressingCause(protocolNumber: found.protocolNumber, supportedPIDs: found.supportedPIDs) {
             physicalAddressingBlocked = cause
             noteState(reason: "\(command.wireFormat) skipped: \(cause); " + Self.staysFunctional)
             return
@@ -563,6 +607,39 @@ public actor ELMSession {
     }
 
     static let staysFunctional = "requests stay functional (\(CANRequestHeader.functional)), no response-count suffix"
+
+    /// The note written when a physical plan is polled functionally because
+    /// the gate is closed.
+    static func physicalAddressingUnavailable(_ cause: String) -> String {
+        "physical addressing unavailable: \(cause); polling with functional addressing "
+            + "(\(CANRequestHeader.functional)), no response-count suffix"
+    }
+
+    /// `plan` as it may be polled now: unchanged while the gate is open, else
+    /// functional without the response-count suffix.
+    private func effective(_ plan: PollingPlan) -> PollingPlan {
+        guard plan.requestHeader != nil, physicalAddressingBlocked != nil else { return plan }
+        var functional = plan
+        functional.requestHeader = nil
+        functional.responseCount = nil
+        return functional
+    }
+
+    /// Re-derives the plan polled from `selectedPlan` after a successful
+    /// re-init, noting a change of addressing either way. The caller
+    /// announces the result.
+    private func rederivePlan() {
+        guard let selectedPlan else { return }
+        let before = plan
+        plan = effective(selectedPlan)
+        guard let now = plan, before?.requestHeader != now.requestHeader else { return }
+        if let header = now.requestHeader {
+            let command = currentPlan?.primaryCommand.wireFormat ?? now.primaryCommand.wireFormat
+            noteState(reason: "physical addressing available again; polling \(command) at \(header)")
+        } else if let cause = physicalAddressingBlocked {
+            noteState(reason: Self.physicalAddressingUnavailable(cause))
+        }
+    }
 
     /// Protocols on which `ATSH7E0` is the 11-bit OBD request ID `7E0`:
     /// ISO 15765-4 CAN 11-bit at 500 or 250 kbaud, auto-detected or not.
@@ -692,17 +769,28 @@ public actor ELMSession {
                 return try await finishSelection(chosen, pids: physical.pids, header: header)
             }
             let outcome = try await setRequestHeader(.functional, phase: .probe)
-            guard outcome == .ok else {
+            // A timed-out ATSH7DF may still be answered: wait out its grace
+            // period, so a late OK counts (it sets the header itself).
+            if outcome == .timeout { try await settleOwedPromptsInSlot() }
+            if requestHeader == .functional {
                 noteState(
-                    reason: "no poll command parsed with physical addressing (\(header)); ATSH7DF not accepted "
-                        + "(\(outcome.rawValue)); using the baseline plan"
+                    reason: "no poll command parsed with physical addressing (\(header)); "
+                        + "selecting again with functional addressing (7DF), no response-count suffix"
                 )
-                return fallbackPlan(pids: PollingPlan.baseline.pids)
+            } else {
+                // Refused, or lost (written off: only ATZ may go out now).
+                // ATZ is the one sure way back to functional; the gate stays
+                // closed for the session so no handshake re-sends ATSH7E0.
+                let refusal = "ATSH7DF not accepted (\(outcome.rawValue))"
+                physicalAddressingDisabled = refusal
+                noteState(
+                    reason: "no poll command parsed with physical addressing (\(header)); \(refusal); "
+                        + "physical addressing disabled for this session; re-initialising without ATSH7E0"
+                )
+                _ = try await runHandshake(tracksStates: true)
+                setState(.probing, reason: nil)
+                _ = try await setAdaptiveTiming(1, phase: .probe)
             }
-            noteState(
-                reason: "no poll command parsed with physical addressing (\(header)); "
-                    + "selecting again with functional addressing (7DF), no response-count suffix"
-            )
         }
         let functional = try await select(physical: false)
         guard let chosen = functional.chosen else {
@@ -864,6 +952,8 @@ public actor ELMSession {
         case failure(String)
         /// A prompt was written off: nothing but ATZ may go out, re-init now.
         case desynchronised
+        /// Re-initialise now, without spending retries (reason).
+        case reinitialise(String)
         case ended
     }
 
@@ -878,9 +968,21 @@ public actor ELMSession {
             for (command, pids) in commands {
                 attempts: while true {
                     if stopRequested || Task.isCancelled { break cycles }
+                    // Let late prompts land before comparing the adapter's
+                    // addressing with the plan's: a late ATSH OK changes it
+                    // (B1-3, R2.1-2). Nothing after this can: only polls and
+                    // manual commands (never ATSH) go out until the next
+                    // iteration.
+                    do throws(ELMSessionError) {
+                        try await settleOwedPromptsInSlot()
+                    } catch {
+                        // Only a closed or shut-down session throws here.
+                        break cycles
+                    }
                     // Never a physical header while the gate is closed: the
                     // plan becomes functional, and the cycle is rebuilt
-                    // without the suffix.
+                    // without the suffix. Unreachable while `plan` is
+                    // re-derived at every re-init; kept as a defence.
                     if plan.requestHeader != nil, let cause = physicalAddressingBlocked {
                         abandonPhysicalAddressing(because: cause)
                         continue cycles
@@ -907,9 +1009,14 @@ public actor ELMSession {
                         guard await reinitialiseForPolling(after: "link desynchronised: a prompt was written off") else {
                             break cycles
                         }
+                    case .reinitialise(let reason):
+                        guard await reinitialiseForPolling(after: reason) else { break cycles }
                     case .ended:
                         break cycles
                     }
+                    // A re-init may have changed the plan polled (the gate
+                    // closed or reopened): rebuild the cycle from it.
+                    if self.plan != plan { continue cycles }
                 }
             }
             cycle += 1
@@ -1029,17 +1136,26 @@ public actor ELMSession {
     private func abandonPhysicalAddressing(because cause: String) {
         plan?.requestHeader = nil
         plan?.responseCount = nil
-        noteState(
-            reason: "physical addressing unavailable: \(cause); polling with functional addressing "
-                + "(\(CANRequestHeader.functional)), no response-count suffix"
-        )
+        noteState(reason: Self.physicalAddressingUnavailable(cause))
         emitCurrentAdapterInfo()
     }
 
+    /// `ATSH<header>` from the poll loop. A refused `ATSH7DF` means the
+    /// adapter took `ATSH7E0` but won't go back: physical addressing is
+    /// disabled for the session and the session re-initialises at once, so
+    /// `ATZ` restores functional addressing and no handshake re-sends
+    /// `ATSH7E0` (R2.2-3). A timeout is an ordinary failure: its late OK may
+    /// still settle it.
     private func applyPlanHeader(_ header: CANRequestHeader) async -> PollStep {
         do {
             let outcome = try await setRequestHeader(header, phase: .poll)
-            return outcome == .ok ? .success : .failure("ATSH\(header): \(outcome.rawValue)")
+            if outcome == .ok { return .success }
+            if header == .functional, outcome != .timeout {
+                let refusal = "ATSH\(header) not accepted (\(outcome.rawValue))"
+                physicalAddressingDisabled = refusal
+                return .reinitialise("\(refusal); physical addressing disabled for this session; re-initialising without ATSH7E0")
+            }
+            return .failure("ATSH\(header): \(outcome.rawValue)")
         } catch {
             return step(for: error)
         }
@@ -1097,6 +1213,9 @@ public actor ELMSession {
                 _ = try await runHandshake(tracksStates: false)
                 initialised = true
                 consecutiveFailures = 0
+                // The gate was re-evaluated: derive the plan polled from the
+                // selected one before announcing it (R2.2-1, R2.2-2).
+                rederivePlan()
                 emitCurrentAdapterInfo()
                 setState(.polling, reason: "re-initialised")
                 return true
@@ -1343,6 +1462,7 @@ public actor ELMSession {
         // last banner-shaped reply.
         if flight.requiresBanner, let banner = releaseBannerCandidates(choosing: true) {
             resolve(token, with: .reply(banner))
+            resynchronised()
             return
         }
         // One actor step: emit the timeout row, record the owed prompt, take
@@ -1507,6 +1627,7 @@ public actor ELMSession {
             if hasELM, !waitFullWindow {
                 releaseBannerCandidates(choosing: false)
                 resolve(flight.token, with: .reply(reply))
+                resynchronised()
                 return true
             }
             guard bannerShaped else { return false }
@@ -1523,20 +1644,46 @@ public actor ELMSession {
         if owedPrompts.isEmpty { finishOwedWait(nil, drained: true) }
     }
 
-    /// A reply no command in flight takes: the oldest written-off command's,
-    /// else the oldest owed one's, else unsolicited.
+    /// A reply no command in flight takes: a late row for the command that
+    /// most plausibly produced it (`takeLateOwner`), else unsolicited.
     private func payLateOrUnsolicited(_ reply: ELMRawReply) {
-        if !writtenOff.isEmpty {
-            recordLateReply(writtenOff.removeFirst(), text: reply.text, completedUptime: reply.completedUptime)
-        } else if !owedPrompts.isEmpty {
-            payOwedPrompt(reply)
+        if let owner = takeLateOwner(for: reply.text) {
+            recordLateReply(owner, text: reply.text, completedUptime: reply.completedUptime)
         } else {
             recordUnsolicited(text: reply.text, completedUptime: reply.completedUptime)
         }
     }
 
+    /// Removes and returns the command a late reply belongs to, routed by
+    /// shape (M1-E4), oldest first, written-off commands before owed ones:
+    /// - banner-shaped text (contains `ELM`, or `isBannerCandidate`) goes
+    ///   only to a banner command (`ATZ`, `ATI`, `AT@1`); with none pending
+    ///   it is unsolicited — a data command never prints a banner, and an
+    ///   adapter that rebooted on its own does;
+    /// - anything else goes to the oldest non-banner command, else to the
+    ///   oldest command of any kind.
+    private func takeLateOwner(for text: String) -> SentCommand? {
+        let banner = text.uppercased().contains("ELM") || Self.isBannerCandidate(text, command: "")
+        func isMatch(_ sent: SentCommand) -> Bool { Self.bannerCommands.contains(sent.tx) == banner }
+        if let index = writtenOff.firstIndex(where: isMatch) { return writtenOff.remove(at: index) }
+        if let index = owedPrompts.firstIndex(where: isMatch) { return takeOwed(at: index) }
+        guard !banner else { return nil }
+        if !writtenOff.isEmpty { return writtenOff.removeFirst() }
+        if !owedPrompts.isEmpty { return takeOwed(at: owedPrompts.startIndex) }
+        return nil
+    }
+
+    private func takeOwed(at index: Int) -> SentCommand {
+        let owed = owedPrompts.remove(at: index)
+        if owedPrompts.isEmpty { finishOwedWait(nil, drained: true) }
+        return owed
+    }
+
     /// `ATZ` was answered with a banner: replies line up with commands again.
     /// Written-off commands still unpaid lost their replies to the reset.
+    /// Called in the actor step that resolves the `ATZ` (M1-E4), so output
+    /// arriving right behind the banner, before `run()` resumes, is already
+    /// unsolicited rather than paid to a written-off command.
     private func resynchronised() {
         desynchronised = false
         writtenOff.removeAll()
@@ -1560,9 +1707,14 @@ public actor ELMSession {
     /// Ends the command in flight without its reply (shutdown, link loss):
     /// a final `timeout` exchange without `rx`, completed now, so every sent
     /// command has a row. Partial text received for it follows as a late row.
+    ///
+    /// An `ATZ` waiting out its full window may hold banners. They are paid
+    /// only after the `ATZ` itself is recorded as owed (M1-E4), so its own
+    /// banner becomes its late row instead of an unsolicited one.
     private func abandonInFlight(with resolution: Resolution) {
         guard let flight = inFlight, flight.resolution == nil else { return }
-        releaseBannerCandidates(choosing: false)
+        let held = flight.bannerCandidates
+        inFlight?.bannerCandidates = []
         let now = uptime.uptimeSeconds
         let requestUptime = flight.requestUptime
         emitExchange(
@@ -1574,6 +1726,7 @@ public actor ELMSession {
             outcome: .timeout
         )
         owedPrompts.append(SentCommand(tx: flight.wire, phase: flight.phase, requestUptime: requestUptime))
+        for reply in held { payLateOrUnsolicited(reply) }
         resolve(flight.token, with: resolution)
     }
 
@@ -1620,12 +1773,24 @@ public actor ELMSession {
         framer.reset()
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let now = uptime.uptimeSeconds
-        // Oldest first: written-off commands were sent before any owed one.
-        if let owed = writtenOff.first ?? owedPrompts.first {
-            recordLateReply(owed, text: text, completedUptime: now)
+        // Same routing as a complete late reply: by shape, oldest first,
+        // written-off commands (sent before any owed one) first.
+        if let owner = takeLateOwner(for: text) {
+            recordLateReply(owner, text: text, completedUptime: now)
         } else {
             recordUnsolicited(text: text, completedUptime: now)
         }
+    }
+
+    /// `settleOwedPrompts` under the command slot, without sending anything:
+    /// for decisions that depend on what a late reply may still change (the
+    /// adapter's addressing). Throws only if the session is closed.
+    private func settleOwedPromptsInSlot() async throws(ELMSessionError) {
+        guard !owedPrompts.isEmpty else { return }
+        try await acquireSlot()
+        defer { releaseSlot() }
+        await settleOwedPrompts()
+        try checkOpen()
     }
 
     /// Waits up to the grace period for owed prompts; writes off the ones
