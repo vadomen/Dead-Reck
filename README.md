@@ -30,9 +30,12 @@ aligned when replayed.
 
 Experimental. v1 is the logger.
 
-The project scaffold, the ELM327 reply parser, OBD-II decoding and the log
-format exist and are tested. The sensor capture and recording UI are not
-implemented yet; the app currently shows a placeholder screen.
+The log format, the ELM327 layer, the Bluetooth link, the sensor sources and
+the recorder exist and are tested; on the simulator the app records a fully
+simulated drive end to end. The recording screens are not implemented yet
+(milestone M3): the app shows a placeholder screen, and a DEBUG launch
+argument records without UI (see "Simulated recording" below). Nothing has
+been verified on a phone in a car yet.
 
 ## Hardware
 
@@ -63,7 +66,8 @@ cp Config/Local.xcconfig.example Config/Local.xcconfig
 
 Run on a real iPhone: open `DriveLogger.xcodeproj`, select your connected
 iPhone as the destination, and run the `DriveLogger` scheme. The simulator has
-no Bluetooth LE and no motion sensors, so it is only useful for build checks:
+no Bluetooth LE and no motion sensors; simulator builds use a simulated OBD
+adapter and simulated sensors instead (see "Simulated recording"):
 
 ```bash
 xcodebuild -project DriveLogger.xcodeproj -scheme DriveLogger \
@@ -118,7 +122,20 @@ Run from the repository root unless the command starts with `cd Core`.
 
 The simulator has no Bluetooth LE and no real motion sensors, so it only proves
 that the app builds and its logic works. Anything about the adapter, the
-sensors or background recording has to be checked on an iPhone in the car.
+sensors or background recording has to be checked on an iPhone in the car
+(the checklist is `docs/PLAN.md` §6).
+
+### Simulated recording (DEBUG builds)
+
+| Command | What it does |
+|---|---|
+| `xcrun simctl launch --console-pty <UDID> <bundle id> -autoRecordSeconds 75` | Launches the app and records for 75 s with no UI: connects the simulated adapter, waits for it to poll, starts (5 s calibration included), stops, and prints the file path. DEBUG builds only. |
+| `… -autoRecordSeconds 75 -autoRecordLinkLossAt 40` | Also "unplugs" the simulated adapter 40 s in, so the file shows the drop, the reconnect and a fresh handshake. |
+| `xcrun simctl get_app_container <UDID> <bundle id> data` | The app's data directory; recordings are in `Documents/logs`. Copy one **outside the repo** before running `inspect_log` on it. |
+
+Simulated recordings say so: the header `notes` names the simulated sensors
+and adapter, the adapter is called `Simulated Vlink`, and every `location` row
+has `simulated: true`.
 
 ### Reading a recording
 
@@ -236,16 +253,51 @@ easier to verify.
 | `31` | UDS routine control: starts built-in routines (tests, adaptations, erase). |
 | `3B` | KWP2000 write data by local identifier. |
 
+## Permissions and what the app does while recording
+
+| Permission | Asked | Used for |
+|---|---|---|
+| Bluetooth | at first launch (the Bluetooth link is created at launch so iOS can restore it) | the OBD-II adapter. Background mode `bluetooth-central` keeps the link alive with the screen locked; CoreBluetooth state restoration lets iOS relaunch the app for it. |
+| Motion & Fitness | at the first recording, when the barometer starts | the altimeter (pressure, relative altitude). Accelerometer, gyroscope, magnetometer and device motion need no permission. |
+| Location (While Using) | at the first recording | the reference GPS track. Background mode `location` plus a live location session (`CLBackgroundActivitySession`) keep recording with the screen locked; the blue location indicator shows while recording. "Always" is not needed. |
+
+A permission that is refused does not stop the recording: the missing stream
+is written as an `error` row at the start of the file and everything else is
+recorded.
+
+While a recording runs the app:
+- stamps every sample from one clock (seconds since boot, CoreMotion's) and
+  writes the wall clock only once, in the header;
+- records device motion, raw accelerometer and gyroscope at 100 Hz,
+  magnetometer at 10 Hz, the barometer at about 1 Hz, GPS at about 1 Hz
+  (reference only), and every OBD exchange;
+- writes the file in the background, compressed, flushing at least every 2 s,
+  when the app goes to the background and on memory warnings — a crash loses
+  at most the last couple of seconds;
+- writes a `stats` row every 10 s (rows per stream, achieved rates, gaps over
+  50 ms, writer queue depth) — the health record of the drive;
+- writes app lifecycle events (background/foreground, memory warnings,
+  thermal state, screen lock) as rows;
+- keeps the screen awake (you can still lock it; recording continues);
+- warns below 200 MB free, stops cleanly below 50 MB, and won't start below
+  200 MB. A failed write stops the recording and the app shows how many
+  events were lost.
+
+Recordings are named `Drive_<yyyyMMdd-HHmmss>.jsonl.gz`, in the app's
+`Documents/logs` folder; an existing file is never overwritten.
+
 ## Recording a drive
 
-> The recording UI is not implemented yet. This is the intended procedure.
+> The recording screens are not implemented yet (M3). This is the intended procedure.
 
 1. Fix the phone in the rigid mount in portrait. Don't move it until the
    recording is stopped.
 2. Plug the adapter into the car's OBD-II port and switch on the ignition.
 3. Open DriveLogger. On first launch, allow Bluetooth, Motion & Fitness and
-   Location access.
+   Location (While Using) access.
 4. Connect to the adapter and start recording while the car is stationary.
+   The first 5 seconds are a keep-still calibration: don't touch the phone
+   and don't move the car.
 5. Drive. Leave the phone alone; recording continues with the screen locked.
 6. After parking, stop the recording.
 7. Copy the log off the phone using the Files app

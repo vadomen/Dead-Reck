@@ -11,7 +11,12 @@ What remains as stubs is App code, `fatalError("M2: …")`: **next is M2**
 (`WORKFLOW.md`). All seven decisions in §5 were approved as written.
 **M2 part 1 done** (BLE transport, `OBDLinkService`, `SimulatedOBDLink`, ELM
 backlog items; see `docs/BACKLOG.md`); its hardware-only checks are at the end
-of §6. Part 2 (sensors, recording) is next.
+of §6. **M2 part 2 done** (sensor sources and simulated twins, `LogStore`,
+`RecordingSession`, launch wiring with a DEBUG `-autoRecordSeconds N`; the
+recording backlog items; see `docs/BACKLOG.md`). A simulated end-to-end
+recording reads with `inspect_log --strict` and no warnings. Its
+hardware-only checks are at the end of §6. M2 awaits `/review-loop` on part 2;
+M3 (UI) is next.
 
 **Decisions taken during M1 (by the user, after review):**
 - `NO DATA`: a PID that has answered OK in the session (poll or probe) is
@@ -428,6 +433,10 @@ public actor LogFileWriter {
     public func finish() async -> LogFileSummary      // final write regardless of free space;
                                                       // always closes; reports unwrittenEvents + failure
     public var bytesWritten: Int { get }
+    /// Added in M2 part 2: the writer owns the `StatsAccumulator` (it is the one
+    /// place every event passes, in write order) and fills in peak queue depth
+    /// (measured at every `record`), drops and bytes written.
+    public func closeStatsWindow(at end: MonotonicTimestamp) async -> StatsSample
 }
 
 public protocol DiskSpaceProvider: Sendable { func availableBytes(for url: URL) throws -> Int64 }
@@ -534,10 +543,16 @@ public enum SensorAvailability: Sendable, Hashable { case available, unavailable
 
 Core: `SimulatedMotionSource`, `SimulatedLocationSource` (deterministic,
 for previews and the simulator). App: `DeviceMotionSource`, `RawIMUSource`
-(accel + gyro + mag), `AltimeterSource`, `LocationSource` (`CLLocationManager`,
-best accuracy, `allowsBackgroundLocationUpdates`, no auto-pause, plus
-`CLBackgroundActivitySession` while recording). Each converts at the boundary into
-Core sample types and stamps with `clock.timestamp(uptimeSeconds: item.timestamp)`.
+(accel + gyro + mag), `AltimeterSource`, `ReferenceLocationSource` (renamed
+from `LocationSource` in M2 so nobody mistakes it for an input;
+`CLLocationManager`, `kCLLocationAccuracyBest`, activity `otherNavigation`,
+`allowsBackgroundLocationUpdates`, no auto-pause, plus
+`CLBackgroundActivitySession` while recording), and `SimulatedMagBaroSource`
+(the simulator's mag + baro). `SensorSuite.makeDefault()` picks the real ones
+on a device and the simulated twins on the simulator. CoreMotion sources stamp
+with `clock.timestamp(uptimeSeconds: item.timestamp)`; the location source
+stamps fixes per §3.4. Every source delivers through a `SampleGate`, so no
+event reaches the sink after `stop()` returns.
 
 `StatsAccumulator` (Core, struct): `mutating func observe(_ event: LogEvent)`,
 `mutating func closeWindow(at:queueDepthMax:dropped:bytesWritten:) -> StatsSample`.
@@ -619,8 +634,20 @@ policy (the doc comment on `RecordingSession` is authoritative):
 4. A write failure on `failures` (`ENOSPC`, I/O error): `lifecycle` `error`
    row, `finish()`, `failed(reason:unwrittenEvents:)` — so the user sees it
    even if the row never reached the disk. The only way into `failed`,
-   including when the final `finish()` of a rule-2 stop fails. `LogStore` lists, sizes and deletes
-files in `Documents/logs`, and picks a file name that doesn't exist yet.
+   including when the final `finish()` of any stop (user or rule 2) fails;
+   then no further row is written (R3-3).
+
+`LogStore` lists, sizes and deletes files in `Documents/logs`, and picks a
+file name that doesn't exist yet (R3-6: split back out of rule 4).
+
+M2 part 2 additions (the code is authoritative): `start` also throws
+`RecordingStartBlocker.recordingInProgress`; `startBlocker` is derived from a
+stored `availableDiskBytes` refreshed off the main actor (R3-5) and from
+`allowsRecordingWithoutOBD`; `deleteRecording(_:)` and `refreshDiskSpace()`;
+`init` also takes the header's `sensorConfiguration` and `notes`, and test
+intervals. The session subscribes to `linkEvents()` once, in `init`, for the
+app's lifetime. `AppServices` creates the link and the session once at launch
+(`DriveLoggerApp`), which forwards scene phase and memory warnings.
 
 ### 4.7 `inspect_log` (Core package, executable target)
 
@@ -682,3 +709,20 @@ check. Exit status 0 read, 1 unreadable, 2 usage.
 - **Double discovery after Bluetooth off/on (R3.2-2):** count `→ discovering` transitions in the console per reconnect; two in a row, or a duplicated GATT table, means both layers connected. Confirm the link still reaches `connected` every time.
 - **Retrieval after a bluetoothd reset (R3.1-2):** after a reset, does `retrievePeripherals(withIdentifiers:)` still find the remembered adapter? If every attempt fails with `not known to this phone; scan and pick it again`, only a rescan recovers.
 - **First state after restoration:** whether the first `didUpdateState` after a system relaunch is ever `resetting`/`unknown` (restored peripherals are then dropped and re-retrieved); confirm the reconnect still completes.
+
+### Added by M2 part 2 (sensors, recording) — none of this is verified; the simulator has no motion sensors, no GNSS and no real background behaviour
+- **Real sensor rates:** `stats.motionHz` ≈ 100 and `inspect_log` rates for `motion`, `accel`, `gyro` ≈ 100 Hz, `mag` ≈ 10 Hz, `baro` ≈ 1 Hz (device-driven), `location` ≈ 1 Hz; `gaps` and `maxGapMs` in the `stats` rows, screen on and screen locked. Note any `out-of-order` count from CoreMotion batches.
+- **One CMMotionManager:** device motion and raw IMU share one manager (`SharedMotionManager`). Confirm neither stream's rate drops when both run, compared with either alone.
+- **Device-motion magnetic field:** with `xArbitraryZVertical` CoreMotion is expected to report `magneticAccuracy` −1 and no `magneticField` in `motion` rows (the raw field is in `mag`). Record what the phone actually reports.
+- **CoreMotion timestamps:** `motion`/`accel`/`gyro` `t` must track `clock.now()` (no offset of seconds). Check the first samples after start: a small negative `t` from a buffered batch is legal; a large offset would mean CoreMotion's timebase is not `ProcessInfo.systemUptime` on this iOS version.
+- **Permissions:** first start prompts for Motion & Fitness (altimeter) and Location When In Use. Denying either must give a `lifecycle` `error` row (`altimeter unavailable: …`, `referenceLocation unavailable: …`) and the recording must still run. Revoking location mid-drive must give `referenceLocation: authorization denied while recording …`.
+- **Background survival (`CLBackgroundActivitySession`):** with When-In-Use authorisation only, lock the screen for 5+ minutes (M4) and ≥ 1 h on a drive (M5): rows continue, `stats` rows every 10 s without holes, `background`/`foreground` rows bracket the lock, the blue location indicator shows. If the app is suspended, `stats` `t` values jump — that is the signature to look for.
+- **Reference fix quality:** `location` `ageS` (expect 0–1 s), `horizontalAccuracy`, and whether `activityType = .otherNavigation` with `kCLLocationAccuracyBest` avoids road snapping (compare a drive's track with the road geometry at a junction). Also whether fixes keep arriving at 1 Hz while stationary (no auto-pause).
+- **Fix time:** `t = receivedT − ageS`; on the phone `receivedT − t` should be a fraction of a second. Large or negative ages on most fixes would mean the wall clock and CoreLocation disagree.
+- **Flush on background / memory warning:** after locking the screen, the file on disk grows within a second (a member is written inside a background task). Copy the file off while recording (Files app) and confirm it reads with `inspect_log` (only a truncated tail allowed).
+- **Disk full on a real phone:** fill the phone to < 250 MB free (R2-8, R3-5): Start is refused below 200 MB; while recording, the `warning` row appears below 200 MB and a clean `lowDiskSpace` stop below 50 MB. Note how long the free-space query takes on the phone (it runs off the main actor) and whether purgeable space makes iOS free space before our floor is reached.
+- **Write failure UI:** if a real write failure ever happens, the app must show `failed` with an unwritten count, and the file must still read up to the failure.
+- **Thermal and lock rows:** `thermalState` rows on a hot dashboard; `protectedDataUnavailable` when a passcode-locked phone locks — and recording continues (files are `completeUntilFirstUserAuthentication`).
+- **Idle timer:** the screen does not dim while recording; dims normally after stop.
+- **State restoration with a recording running:** the link is created at launch (`AppServices`), so a system relaunch can restore the BLE central. But a relaunch is a new process: the recording that was running is gone (its file ends with a truncated tail at most; no `stop` row) and no new recording starts by itself. Confirm that is what happens, and decide whether auto-resume is wanted (a user decision, not implemented).
+- **Writer queue:** `stats.queueDepthMax` stays small (tens of events) on the phone; a `writer queue peaked …` error row would mean the writer can't keep up.
