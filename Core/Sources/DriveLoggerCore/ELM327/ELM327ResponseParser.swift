@@ -174,14 +174,165 @@ extension ELM327ResponseParser {
     /// a CAN header and a PCI byte: `7E803410D3C`. With `headers: false` lines
     /// are bare payload: `410D3C`. Multi-frame answers are reassembled per ECU.
     /// Status lines (`NO DATA`, …) throw, as in `dataBytes(in:mode:pid:)`.
+    ///
+    /// Header-on lines: an odd number of hex digits is an 11-bit header (3
+    /// digits), an even number a 29-bit header (8 digits, e.g. `18DAF110`).
+    /// The PCI byte decides the rest: `0L` single frame of `L` bytes (padding
+    /// after them dropped), `1L LL` ISO-TP first frame with a 12-bit length,
+    /// `2N` consecutive frame `N`. Frames are reassembled per header, so two
+    /// ECUs may interleave. Replies come back in order of each ECU's first
+    /// line.
+    ///
+    /// Header-off lines: a 3-digit line is an ISO-TP byte count that opens a
+    /// block, `N:` lines belong to the open block (sorted by index, padding
+    /// trimmed to the count), and any other line is one ECU's single frame.
+    ///
+    /// Echo lines — anything shaped like a command the session could send
+    /// (`010D`, `ATRV`) — are dropped: no reply line has that shape.
+    /// `SEARCHING...` and informational `BUS INIT` lines are dropped too.
     public static func replies(in raw: String, headers: Bool) throws -> [ECUReply] {
-        fatalError("M1: ELM327ResponseParser.replies")
+        let lines = lines(in: raw).filter { !ELMCommandPolicy.looksLikeSessionCommand($0) }
+        for line in lines {
+            if let error = error(for: line) { throw error }
+        }
+        guard !lines.isEmpty else { throw ELM327Error.emptyResponse }
+        return headers ? try headerOnReplies(lines) : try headerOffReplies(lines)
     }
 
     /// Classifies the reply to an `AT` command. `command` is the wire text that
     /// was sent, used to pick the interpretation (`ATRV` → voltage).
+    ///
+    /// The echo (a line equal to `command`) is dropped and the last remaining
+    /// line is interpreted, so leftovers before the answer don't matter.
+    /// `ATZ`/`ATI` → `.banner` (whatever the clone calls itself), `ATDPN` →
+    /// `.protocolNumber`, `ATRV` → `.voltage` if it parses, `OK` → `.ok`,
+    /// anything else → `.other`. Status lines throw.
     public static func textReply(to command: String, raw: String) throws -> ELMTextReply {
-        fatalError("M1: ELM327ResponseParser.textReply")
+        let upperCommand = command.uppercased()
+        let lines = lines(in: raw).filter { $0.uppercased() != upperCommand }
+        for line in lines {
+            if let error = error(for: line) { throw error }
+        }
+        guard let line = lines.last else { throw ELM327Error.emptyResponse }
+
+        switch upperCommand {
+        case "ATZ", "ATI":
+            return .banner(line)
+        case "ATDPN":
+            return .protocolNumber(line)
+        case "ATRV":
+            var digits = String(line.filter { !$0.isWhitespace })
+            if digits.last == "V" || digits.last == "v" { digits.removeLast() }
+            if let volts = Double(digits), volts.isFinite { return .voltage(volts) }
+            return .other(line)
+        default:
+            return line.uppercased() == "OK" ? .ok : .other(line)
+        }
+    }
+
+    private static func isASCIIHex(_ character: Character) -> Bool {
+        character.isASCII && character.isHexDigit
+    }
+
+    private static func headerOnReplies(_ lines: [String]) throws -> [ECUReply] {
+        struct OpenTransfer {
+            var replyIndex: Int
+            var declaredLength: Int
+            var nextSequence: UInt8
+        }
+        var replies: [ECUReply] = []
+        var open: [String: OpenTransfer] = [:]
+
+        for line in lines {
+            let digits = String(line.filter { !$0.isWhitespace })
+            guard digits.allSatisfy(isASCIIHex) else { throw ELM327Error.malformedHex(line) }
+            let headerLength = digits.count.isMultiple(of: 2) ? 8 : 3
+            guard digits.count >= headerLength + 2 else { throw ELM327Error.malformedFrame(line) }
+            let header = String(digits.prefix(headerLength))
+            let frame = try Hex.bytes(in: digits.dropFirst(headerLength))
+            let pci = frame[0]
+
+            switch pci >> 4 {
+            case 0x0:
+                let length = Int(pci & 0x0F)
+                guard (1...7).contains(length), open[header] == nil else { throw ELM327Error.malformedFrame(line) }
+                let data = frame.dropFirst()
+                guard data.count >= length else {
+                    throw ELM327Error.truncatedFrame(expected: length, actual: data.count)
+                }
+                replies.append(ECUReply(header: header, bytes: Array(data.prefix(length))))
+            case 0x1:
+                guard frame.count >= 2, open[header] == nil else { throw ELM327Error.malformedFrame(line) }
+                let length = Int(pci & 0x0F) << 8 | Int(frame[1])
+                guard length > 7 else { throw ELM327Error.malformedFrame(line) }
+                open[header] = OpenTransfer(replyIndex: replies.count, declaredLength: length, nextSequence: 1)
+                replies.append(ECUReply(header: header, bytes: Array(frame.dropFirst(2).prefix(length))))
+            case 0x2:
+                guard var transfer = open[header], pci & 0x0F == transfer.nextSequence else {
+                    throw ELM327Error.malformedFrame(line)
+                }
+                let missing = transfer.declaredLength - replies[transfer.replyIndex].bytes.count
+                replies[transfer.replyIndex].bytes += frame.dropFirst().prefix(missing)
+                if replies[transfer.replyIndex].bytes.count >= transfer.declaredLength {
+                    open[header] = nil
+                } else {
+                    transfer.nextSequence = (transfer.nextSequence + 1) & 0x0F
+                    open[header] = transfer
+                }
+            default:
+                throw ELM327Error.malformedFrame(line)
+            }
+        }
+
+        if let unfinished = open.values.min(by: { $0.replyIndex < $1.replyIndex }) {
+            throw ELM327Error.truncatedFrame(
+                expected: unfinished.declaredLength,
+                actual: replies[unfinished.replyIndex].bytes.count
+            )
+        }
+        return replies
+    }
+
+    private static func headerOffReplies(_ lines: [String]) throws -> [ECUReply] {
+        var replies: [ECUReply] = []
+        var block: (declared: Int?, frames: [(index: Int, bytes: [UInt8])])?
+
+        func closeBlock() throws {
+            guard let open = block else { return }
+            block = nil
+            let payload = open.frames.sorted { $0.index < $1.index }.flatMap(\.bytes)
+            guard let declared = open.declared else {
+                replies.append(ECUReply(header: nil, bytes: payload))
+                return
+            }
+            guard payload.count >= declared else {
+                throw ELM327Error.truncatedFrame(expected: declared, actual: payload.count)
+            }
+            // Trailing bytes are ISO-TP padding.
+            replies.append(ECUReply(header: nil, bytes: Array(payload.prefix(declared))))
+        }
+
+        for line in lines {
+            if let colon = line.firstIndex(of: ":") {
+                let indexText = line[line.startIndex..<colon].filter { !$0.isWhitespace }
+                guard !indexText.isEmpty, indexText.allSatisfy(isASCIIHex), let index = Int(indexText, radix: 16) else {
+                    throw ELM327Error.malformedHex(line)
+                }
+                if block == nil { block = (nil, []) }
+                block?.frames.append((index, try Hex.bytes(in: line[line.index(after: colon)...])))
+                continue
+            }
+            let digits = String(line.filter { !$0.isWhitespace })
+            try closeBlock()
+            if digits.count == 3, digits.allSatisfy(isASCIIHex) {
+                block = (Int(digits, radix: 16), [])
+            } else {
+                guard digits.allSatisfy(isASCIIHex) else { throw ELM327Error.malformedHex(line) }
+                replies.append(ECUReply(header: nil, bytes: try Hex.bytes(in: line)))
+            }
+        }
+        try closeBlock()
+        return replies
     }
 }
 

@@ -39,6 +39,11 @@ public enum ELM327Error: Error, Hashable, Sendable {
     /// The reply contained something that wasn't valid ASCII hex.
     case malformedHex(String)
 
+    /// A line that is valid hex but not a valid CAN frame: a bad PCI byte, a
+    /// line too short for its header, or an ISO-TP consecutive frame that is
+    /// out of sequence or has no first frame. Kept verbatim.
+    case malformedFrame(String)
+
     /// The reply ended before the expected number of bytes arrived.
     case truncatedFrame(expected: Int, actual: Int)
 

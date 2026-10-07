@@ -60,16 +60,42 @@ public struct ELMRawReply: Hashable, Sendable {
 ///
 /// A reply is complete only when the `>` prompt arrives. One chunk may complete
 /// several replies (rare, after a stall) or none.
+///
+/// Works on bytes, not text: a multi-byte sequence or a CRLF pair split across
+/// two notifications is only decoded once the reply is whole. NUL bytes (some
+/// clones pad notifications with them) and the prompt are dropped; everything
+/// else, line endings included, is kept so the raw record stays faithful.
+/// Invalid UTF-8 decodes to U+FFFD rather than losing the reply.
 public struct ELMFramer: Sendable {
+    private var buffer: [UInt8] = []
+
     public init() {}
 
     /// Appends a fragment and returns any replies it completed, in order.
+    /// Each is stamped with this chunk's uptime: the moment the prompt arrived.
     public mutating func append(_ chunk: ELMChunk) -> [ELMRawReply] {
-        fatalError("M1: ELMFramer.append")
+        var replies: [ELMRawReply] = []
+        for byte in chunk.bytes {
+            switch byte {
+            case 0x00:
+                continue
+            case UInt8(ascii: ">"):
+                replies.append(ELMRawReply(text: String(decoding: buffer, as: UTF8.self), completedUptime: chunk.uptime))
+                buffer.removeAll(keepingCapacity: true)
+            default:
+                buffer.append(byte)
+            }
+        }
+        return replies
     }
 
-    /// Discards a partial reply, e.g. after a timeout or reconnect.
+    /// Text received since the last prompt, not yet a complete reply.
+    public var pendingText: String {
+        String(decoding: buffer, as: UTF8.self)
+    }
+
+    /// Discards a partial reply, e.g. after a reconnect.
     public mutating func reset() {
-        fatalError("M1: ELMFramer.reset")
+        buffer.removeAll()
     }
 }
