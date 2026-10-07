@@ -38,6 +38,13 @@ public enum LogDecodingError: Error, Hashable, Sendable {
 
     /// A line failed to decode under `LogRecovery.strict`.
     case malformedLine(index: Int, description: String)
+
+    /// A complete gzip member failed to decompress or failed its CRC-32 /
+    /// ISIZE check, or could not be read. `index` counts members from 0 (the
+    /// header member). `LogFileReader` only; under
+    /// `LogRecovery.skipMalformedLines` the member is skipped and listed in
+    /// `LogReadReport.damagedMemberIndices` instead.
+    case damagedMember(index: Int, description: String)
 }
 
 /// Reads and writes the JSON-lines recording format.

@@ -19,10 +19,18 @@ public enum DiskSpaceError: Error, Hashable, Sendable {
 
 /// Production provider backed by `URLResourceValues`.
 ///
-/// Uses `volumeAvailableCapacityForImportantUsage` — what iOS will actually
-/// let the app write, counting purgeable space the system frees on demand —
-/// and falls back to `volumeAvailableCapacity` when the volume doesn't report
-/// it.
+/// **The reading is the smaller of `volumeAvailableCapacityForImportantUsage`
+/// and `volumeAvailableCapacity`** (either alone when the volume reports only
+/// one). Important-usage capacity counts purgeable space — caches iOS can
+/// delete for an important write — but iOS purges asynchronously, so a write
+/// can fail with `ENOSPC` while that figure still reads far above the floor
+/// (on the development Mac it read ~32 GB above plain capacity; review
+/// finding R2-8). The thresholds exist to leave room for a clean stop *now*,
+/// and only plain free space is there now. The cost is conservatism: on a
+/// phone whose free space is mostly purgeable, the warning, the floor and the
+/// start refusal (`DiskSpacePolicy.canStart`) trigger earlier than iOS would
+/// strictly require. A clean stop with an intact file beats a write failure,
+/// so that is the side to err on. To verify on a nearly full iPhone (M4).
 ///
 /// **Every call reads through a freshly built `URL`, never the caller's.**
 /// Foundation caches resource values on a `URL` instance and only discards
@@ -50,13 +58,24 @@ public struct VolumeDiskSpaceProvider: DiskSpaceProvider {
             .volumeAvailableCapacityForImportantUsageKey,
             .volumeAvailableCapacityKey,
         ])
-        if let important = values.volumeAvailableCapacityForImportantUsage {
-            return important
+        guard let reading = Self.reading(
+            important: values.volumeAvailableCapacityForImportantUsage,
+            plain: values.volumeAvailableCapacity
+        ) else {
+            throw DiskSpaceError.capacityUnavailable(path: target.path)
         }
-        if let plain = values.volumeAvailableCapacity {
-            return Int64(plain)
+        return reading
+    }
+
+    /// The combining rule: the smaller of the two readings, or whichever the
+    /// volume reported. See the type's doc comment for why.
+    static func reading(important: Int64?, plain: Int?) -> Int64? {
+        switch (important, plain.map(Int64.init)) {
+        case let (important?, plain?): min(important, plain)
+        case let (important?, nil): important
+        case let (nil, plain?): plain
+        case (nil, nil): nil
         }
-        throw DiskSpaceError.capacityUnavailable(path: target.path)
     }
 }
 
