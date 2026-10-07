@@ -64,15 +64,39 @@ protocol OBDLinkServicing: AnyObject, Observable {
     /// Most recent console lines, bounded.
     var console: [ConsoleLine] { get }
 
+    /// Clears `discovered` and scans for advertising adapters (every named
+    /// peripheral, likely OBD adapters first). Needs Bluetooth on.
     func startScan()
     func stopScan()
-    /// Connects, initialises and starts polling; remembers the adapter.
+    /// Connects, initialises and starts polling; remembers the adapter by
+    /// identifier (`rememberedAdapterID`). After a link loss or an ELM
+    /// session's `needsReconnect` it reconnects by itself, with backoff,
+    /// until `disconnect()` or `forget()`.
     func connect(to id: UUID)
+    /// Drops the link and stops reconnecting. The adapter stays remembered.
     func disconnect()
     /// Forgets the remembered adapter and disconnects.
     func forget()
-    /// Debug console. Rejected unless `ELMCommandPolicy` allows it.
+    /// Debug console. Validated with `ELMCommandPolicy` scope **`.manual`**
+    /// — the read-only queries `ATI`, `AT@1`, `ATDP`, `ATDPN`, `ATRV` and
+    /// mode 01 — never `.session`: the settings the session relies on
+    /// (echo, headers, protocol, addressing, timing) can't be changed from
+    /// the console. A rejected command is recorded as a `rejected` exchange
+    /// and throws `.forbiddenCommand`; nothing reaches the adapter. While
+    /// polling, the command is queued between polls (one command in
+    /// flight).
+    ///
+    /// Throws `.desynchronised` without sending when a written-off prompt
+    /// has left replies unmatchable; the link then re-initialises (by
+    /// itself while polling; otherwise the service starts `reinitialise()`)
+    /// and the command can be retried once it is polling again. Throws
+    /// `.notInitialised` when no adapter is connected.
     func sendManual(_ command: String) async throws(ELMSessionError) -> ELMExchange
+    /// Re-runs the ELM init sequence on the current connection (from `ATZ`)
+    /// and resumes polling; the console offers it after `.desynchronised`.
+    /// If init fails the link reconnects with backoff. Does nothing without
+    /// a connection.
+    func reinitialise() async
     /// BLE transitions and ELM session events for the recorder, in order,
     /// across reconnects (each new `ELMSession` is seeded with the previous
     /// one's `nextSeq`). One subscriber at a time; a new call finishes the

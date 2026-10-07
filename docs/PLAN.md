@@ -9,6 +9,9 @@ the ELM327 layer (framer, parser, multi-PID decoding, `MockELMAdapter`,
 protocol and adapter; its findings are in the ELM layer (5644625, 2a7ac61).
 What remains as stubs is App code, `fatalError("M2: …")`: **next is M2**
 (`WORKFLOW.md`). All seven decisions in §5 were approved as written.
+**M2 part 1 done** (BLE transport, `OBDLinkService`, `SimulatedOBDLink`, ELM
+backlog items; see `docs/BACKLOG.md`); its hardware-only checks are at the end
+of §6. Part 2 (sensors, recording) is next.
 
 **Decisions taken during M1 (by the user, after review):**
 - `NO DATA`: a PID that has answered OK in the session (poll or probe) is
@@ -655,3 +658,15 @@ check. Exit status 0 read, 1 unreadable, 2 usage.
 - **Background survival:** 5+ minutes locked with BLE + location (M4); ≥ 1 h locked on a drive (M5).
 - **GATT:** actual Vgate layout and max write length.
 - From the bench update, also to confirm with our app: `ATSH7E0` → `OK` after our handshake; only `7E8` replies under physical addressing while driving; how often write-offs and re-inits happen; `ATRV` under-reads (11.0 / 11.8 V).
+
+### Added by M2 part 1 (BLE transport, link service) — none of this is verified; the simulator has no Bluetooth
+- **Scan / pick:** `IOS-Vlink` appears in the list (named advertisers only, likely adapters sorted first); picking it connects; the identifier is remembered and a relaunch reconnects without a scan.
+- **GATT detection:** which layout `GATTDetection` picks on the Vgate (`vgate`, `fff0`, `ffe0` or `generic` — console line `ble: discovering → connected (…)`), the full `gattTable` in the header, and whether notifications on the chosen characteristic actually carry the replies.
+- **Write type and length:** `adapter.gatt.writeType` (we prefer `withResponse` when offered) and `maxWriteLength` (capped at the without-response length, expected 20 on BLE 4.0 unless the MTU is negotiated up). Check that acknowledged writes don't produce `ble: write failed` lines, and compare poll Hz with `withoutResponse` if both are offered.
+- **Write splitting:** no command is longer than 20 bytes today, so splitting only runs on a smaller MTU; if `maxWriteLength` < 9 is ever seen, confirm split commands are answered.
+- **Timestamps:** OBD reply uptime is taken first thing in `didUpdateValueFor` on the private BLE queue; check `inspect_log` OBD latency is plausible (tens of ms) and not dominated by main-thread stalls.
+- **State restoration:** with a recording running and the app terminated by the system (not swiped away), the app relaunches, a `ble` `restoring` row appears and polling resumes. Note: restoration only works if `OBDLinkService` (via `OBDLinkFactory.makeDefault()`) is created at launch — part 2 / M3 wiring.
+- **Reconnect:** unplug/replug the adapter while recording → `connected → disconnected → reconnecting → connecting → discovering → connected`, a new `ATZ` handshake with `ATSH7E0`, polling resumes, `seq` continues without repeats. Also Bluetooth off/on in Control Centre (→ `unavailable`, then reconnect). Backoff is 1 s doubling to 30 s; the pending connect never times out.
+- **needsReconnect:** if a session ever gives up (`elm` `failed` + reconnect), confirm the BLE cancel/reconnect cycle restores polling.
+- **`ATSH7DF` refusal (R2.2-3):** whether the Vgate ever refuses or drops `ATSH7DF`; if a note `physical addressing disabled for this session` appears, record when.
+- **Desynchronised console:** after a manual command times out, the console shows `link desynchronised …` and the link re-initialises; nothing is sent in between but `ATZ`.
