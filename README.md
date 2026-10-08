@@ -30,12 +30,10 @@ aligned when replayed.
 
 Experimental. v1 is the logger.
 
-The log format, the ELM327 layer, the Bluetooth link, the sensor sources and
-the recorder exist and are tested; on the simulator the app records a fully
-simulated drive end to end. The recording screens are not implemented yet
-(milestone M3): the app shows a placeholder screen, and a DEBUG launch
-argument records without UI (see "Simulated recording" below). Nothing has
-been verified on a phone in a car yet.
+The log format, the ELM327 layer, the Bluetooth link, the sensor sources, the
+recorder and the screens (M3, review pending) exist and are tested; on the
+simulator the app records a fully simulated drive end to end, with a yellow
+"simulated" badge. Nothing has been verified on a phone in a car yet.
 
 ## Hardware
 
@@ -286,21 +284,55 @@ While a recording runs the app:
 Recordings are named `Drive_<yyyyMMdd-HHmmss>.jsonl.gz`, in the app's
 `Documents/logs` folder; an existing file is never overwritten.
 
-## Recording a drive
+## Screens
 
-> The recording screens are not implemented yet (M3). This is the intended procedure.
+Three tabs, portrait only.
+
+- **Record.** A big banner (red NOT RECORDING, orange KEEP STILL with a
+  countdown, green RECORDING with elapsed time), the adapter status
+  (scanning, connecting, initialising, or polling with protocol and
+  voltage), OBD speed and GPS speed side by side (GPS is a reference, never
+  an input), OBD Hz, motion Hz and file size. START, MARK and STOP are large
+  buttons pinned to the bottom. MARK opens presets (tunnel, traffic jam,
+  junction, bad road, parking, stop) and a free-text field. Warnings appear
+  as notices: low disk space, a write failure (reason and number of unwritten
+  events), no background location session, unavailable sensors. Before
+  Start, the checklist and the mount and vehicle notes are shown (the notes
+  are remembered). If Start is refused, the reason is shown; with no polling
+  adapter, "Record without OBD" is an explicit per-recording switch. The
+  screen stays awake while recording (the recorder turns the idle timer off).
+- **Sessions.** Recordings with date, duration and size. Share icon exports
+  through the share sheet; trash asks for confirmation. The list refreshes on
+  appear and after a recording ends. The recording in progress can't be
+  shared or deleted.
+- **Console.** Scan, pick, connect, disconnect and forget the adapter,
+  Re-initialise, and the raw ELM traffic (TX, RX and status lines, newest at
+  the bottom). A manual field and quick buttons send only the read-only
+  queries (`ATI`, `AT@1`, `ATDP`, `ATDPN`, `ATRV`, mode 01). A rejected command
+  is shown as rejected and never sent. After "link out of sync" a
+  Re-initialise button appears.
+
+On the simulator the adapter and sensors are simulated and labelled so;
+Bluetooth or a sensor being unavailable is shown as a red or orange state, not
+a crash.
+
+## Recording a drive
 
 1. Fix the phone in the rigid mount in portrait. Don't move it until the
    recording is stopped.
 2. Plug the adapter into the car's OBD-II port and switch on the ignition.
 3. Open DriveLogger. On first launch, allow Bluetooth, Motion & Fitness and
    Location (While Using) access.
-4. Connect to the adapter and start recording while the car is stationary.
-   The first 5 seconds are a keep-still calibration: don't touch the phone
-   and don't move the car.
-5. Drive. Leave the phone alone; recording continues with the screen locked.
-6. After parking, stop the recording.
-7. Copy the log off the phone using the Files app
+4. Console tab: Scan, tap the adapter (first time only; it is remembered).
+   Wait for "Polling OBD" on the Record tab.
+5. Record tab: tick "rigid mount" and "fixed orientation", optionally fill in
+   the notes, and press START while the car is stationary. The first 5
+   seconds are a keep-still calibration (orange banner): don't touch the
+   phone and don't move the car.
+6. Drive. Press MARK for events (tunnel, traffic jam). Recording continues
+   with the screen locked.
+7. After parking, press STOP.
+8. Sessions tab: share the file, or copy it with the Files app
    (On My iPhone → DriveLogger).
 
 ## Log format

@@ -17,7 +17,8 @@ recording backlog items; see `docs/BACKLOG.md`). A simulated end-to-end
 recording reads with `inspect_log --strict` and no warnings. Its
 hardware-only checks are at the end of §6. **M2 done:** part 1 reviewed in
 review run 3 (2 MAJOR fixed, 38db605), part 2 in review run 4 (no BLOCKER or
-MAJOR; MINORs in `docs/BACKLOG.md`). M3 (UI) is next.
+MAJOR; MINORs in `docs/BACKLOG.md`). **M3 screens done** (record dashboard, pre-drive
+checklist, sessions list, ELM console in `App/Sources/UI/`); review pending.
 
 **Decisions taken during M1 (by the user, after review):**
 - `NO DATA`: a PID that has answered OK in the session (poll or probe) is
@@ -735,3 +736,11 @@ check. Exit status 0 read, 1 unreadable, 2 usage.
 - **Stop while locked (R4.1-3):** trigger a stop with the phone locked (floor via a debug fake provider, or a forced write failure); confirm the `stop` row, the final `stats` row and an intact tail.
 - **Swipe-away while recording in background (R4.1-4):** measure tail loss and whether `willTerminate` arrives.
 - **Delete path matching on device:** `URL.documentsDirectory` (`/var/mobile/…`) vs `contentsOfDirectory` (possibly `/private/var/…`); confirm Delete works from the M3 list and the "being recorded" guard matches (a mismatch fails safe with `.notInStore` but makes Delete unusable).
+
+### Added by M3 (UI) — simulator screenshots only; none of this is verified on a phone
+- **Readability at arm's length:** in the real mount, speed numbers (84 pt), banner and adapter status readable at a glance, driver's seat, day and night; note which text is too small (stats row, notices, console).
+- **Glare and sunlight:** red/orange/green banner and tile outlines still distinguishable in direct sun and with polarised sunglasses; consider a forced dark or high-contrast mode if not.
+- **Tap targets while mounted:** START, MARK and STOP (72 pt) and the checklist toggles hit reliably one-handed with the phone in the mount; the Mark sheet presets are usable without looking; no accidental STOP (there is no confirmation on STOP).
+- **Idle timer:** screen does not dim while calibrating or recording on the Record tab and on the other tabs, and dims normally after stop and after a failed recording.
+- **Permissions and unavailable states:** deny Motion and Location and turn Bluetooth off; the Record tab shows the matching notices and red adapter state, and the checklist and Start still behave.
+- **Keyboard:** mount and vehicle note fields and the console field with the on-screen keyboard in the mount; the Start bar stays reachable.

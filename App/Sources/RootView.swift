@@ -1,32 +1,32 @@
-import DriveLoggerCore
 import SwiftUI
 
-/// Placeholder screen. Stands in for the recording UI, and proves the app links
-/// against `DriveLoggerCore` and reads its own build identity.
+/// Composes the tabs from the app's services. Each tab owns a thin view
+/// model; the screens themselves take plain values (see `UI/`).
 struct RootView: View {
-    private let info = AppInfo.read()
+    @State private var recording: RecordingViewModel
+    @State private var sessions: SessionsViewModel
+    @State private var console: ConsoleViewModel
+    @State private var tab: MainTabView<RecordingScreen, SessionsScreen, ConsoleScreen>.Tab
+
+    init(services: AppServices) {
+        _recording = State(initialValue: RecordingViewModel(services: services))
+        _sessions = State(initialValue: SessionsViewModel(services: services))
+        _console = State(initialValue: ConsoleViewModel(services: services))
+        var initial = MainTabView<RecordingScreen, SessionsScreen, ConsoleScreen>.Tab.record
+        #if DEBUG
+        // `-uiTab 1|2` opens Sessions or Console at launch (simulator screenshots).
+        initial = .init(rawValue: UserDefaults.standard.integer(forKey: "uiTab")) ?? .record
+        #endif
+        _tab = State(initialValue: initial)
+    }
 
     var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "car.side")
-                .font(.system(size: 56))
-                .foregroundStyle(.tint)
-
-            Text(info.name)
-                .font(.largeTitle.weight(.semibold))
-
-            Text(info.displayVersion)
-                .font(.body.monospacedDigit())
-                .foregroundStyle(.secondary)
-
-            Text("Log format v\(LogFormatVersion.current.rawValue)")
-                .font(.footnote)
-                .foregroundStyle(.tertiary)
+        MainTabView(selection: $tab) {
+            RecordingScreen(model: recording)
+        } sessions: {
+            SessionsScreen(model: sessions)
+        } console: {
+            ConsoleScreen(model: console)
         }
-        .padding()
     }
-}
-
-#Preview {
-    RootView()
 }

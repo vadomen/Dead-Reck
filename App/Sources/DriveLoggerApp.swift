@@ -18,7 +18,7 @@ struct DriveLoggerApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView()
+            RootView(services: services)
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
                     services.session.handleMemoryWarning()
                 }

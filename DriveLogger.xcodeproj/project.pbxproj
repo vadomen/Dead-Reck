@@ -8,32 +8,45 @@
 
 /* Begin PBXBuildFile section */
 		021437D0ADA8922B1B169500 /* BLETransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB34BE123D31801692F944B4 /* BLETransport.swift */; };
+		0DDF3F44B95E394C930CA120 /* ConsoleViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0C9CA67A7C6A7722FA6AB4F /* ConsoleViewModel.swift */; };
+		12828BB3574A085AEC880462 /* AdapterStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76540D48788C021E6D218414 /* AdapterStatus.swift */; };
+		14D387CC7919E9F9DCB82114 /* DashboardState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 377D8FCE4EF2F5BD5BAB89D0 /* DashboardState.swift */; };
 		18A38A449D726D739B90B39D /* ReferenceLocationSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = 982E965A8FFF8D4E784FD5CE /* ReferenceLocationSource.swift */; };
 		1C31445913116014F08A1FAC /* LogStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3A91D607CBA7DFAE670A9FE /* LogStore.swift */; };
 		2F1269035331B798C267E34E /* SensorSourceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DCCAAFA3667C0100BDF5237 /* SensorSourceTests.swift */; };
+		334ABA2ADB6B7D4D855335DB /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9B85968A88D580969C514E6 /* MainTabView.swift */; };
 		3694EB7DA52ABEFA3E9F4C58 /* DriveLoggerCore in Frameworks */ = {isa = PBXBuildFile; productRef = A3ADC0CF90EB1C47CE68194B /* DriveLoggerCore */; };
 		393A3F2A13CD36052F5A83A5 /* SensorSuite.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEFF9BD9CEEC81754C8361C5 /* SensorSuite.swift */; };
+		3C23CBB6199A9489E557826E /* Tone.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53A5A2CA16E92EC7B59DF9B2 /* Tone.swift */; };
 		3D3B63CFFF7CF663AF5AE10E /* GATTDetection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48CA0FF0B046021F1A35D010 /* GATTDetection.swift */; };
 		40698D092849D7C8D7638F33 /* BLECentral.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB71BCF14220670F95ADDBBE /* BLECentral.swift */; };
 		4E301479F940B6C5F374BAC0 /* AppInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7085FAEE943E57E7A189FF74 /* AppInfo.swift */; };
 		50CE5600479330B230E3E883 /* RecordingSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFF4735ED2E6C7340B224408 /* RecordingSession.swift */; };
+		5AD961AA5E9A34D760419C63 /* PreDriveChecklist.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D8E9CE2BABC8A226F6FC03A /* PreDriveChecklist.swift */; };
 		6333D46FA0A28C814543135B /* SimulatedSensors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 854C803C3B72C76C94BDE3BF /* SimulatedSensors.swift */; };
 		6869A4090D28752582396966 /* SampleGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 167B09C43FC2B04D92DCB6B2 /* SampleGate.swift */; };
+		68EE396506DED1C709414CA6 /* RecordingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1995CA170A05E96A1DA0885 /* RecordingViewModel.swift */; };
 		6A100EA473833AB5B83E6974 /* AppInfoTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90AC7FA4AD498307B3C7D5C3 /* AppInfoTests.swift */; };
+		6C3B28883344D00A044DCACF /* UIPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E673B5E664BA56EBFD878D08 /* UIPresentationTests.swift */; };
 		740AC40C242C54E79F09B42D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2EE4B1A7D0924DC9EBEBA99C /* Assets.xcassets */; };
 		7AC8D2001A8B6452A3F6D8FE /* RecordingSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 054B04838405BB2A03DF2023 /* RecordingSessionTests.swift */; };
 		7D86BAE1CF116B5844B7377F /* LogStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2B377149F824738057BC395 /* LogStoreTests.swift */; };
+		7DD66338B59A7A207D14CEA0 /* DisplayFormat.swift in Sources */ = {isa = PBXBuildFile; fileRef = B53946399BBD92F429878756 /* DisplayFormat.swift */; };
 		80920D5FFE9F6525692A73C6 /* BLECentralTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18315FE7C7FFF70B0B2850DD /* BLECentralTests.swift */; };
 		877A22BD2347363272765DC5 /* MotionSources.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3E3CAE3C8FF82BB7ADEA4E5 /* MotionSources.swift */; };
+		8B0089338F96B96E3F665026 /* ConsoleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9265F3575667230ECE67A93 /* ConsoleView.swift */; };
 		9703F9AAE2A112783A148671 /* DriveLoggerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38660F590E620FC9E95617BC /* DriveLoggerApp.swift */; };
 		9D68BF8B1CC07439C59B8590 /* OBDLinkServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4757331FF2FA81D7AC0192A2 /* OBDLinkServiceTests.swift */; };
 		9FA3198C111CA9BCE762F2B4 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5487E70F68E5078A7332C59 /* RootView.swift */; };
+		A3454D74A222F4E38D629D46 /* RecordingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5C0DEF85C7492AD06A4497D /* RecordingView.swift */; };
 		ABF23677C8A5547DF21AB88A /* OBDLinkServicing.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE394D78D64D4538558929AB /* OBDLinkServicing.swift */; };
 		BD669916C0B963DBAE025373 /* DebugAutoRecord.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01C7240C90AC580E17CB5B05 /* DebugAutoRecord.swift */; };
 		C595401ECC2ECBFDD58C1F07 /* AppServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6A7B2B4C3A009CAC7FAB6CD /* AppServices.swift */; };
 		CB124DE702CBA6B493AAA28F /* SimulatedOBDLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14F0D843A473920A9680FC04 /* SimulatedOBDLink.swift */; };
 		CF7DAFE188B603771CB0BE9C /* GATTDetectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 428FB84AE7F6B6AC6DAF1351 /* GATTDetectionTests.swift */; };
 		D635E988DAD0AF2AA509EA4D /* OBDLinkService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFEAEF116B2672D8E2E88275 /* OBDLinkService.swift */; };
+		DB397B3DFC6D0ECD860B9ED0 /* SessionsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51E41306C0E8CC802CFDBB09 /* SessionsViewModel.swift */; };
+		EB54AA0B95B0D269E74ADD6A /* SessionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEC07B5D8472C3B9B0953238 /* SessionsView.swift */; };
 		EB69D658A35BEC3DCD84D1EB /* RecordingTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B03770A2F4197C0EC3E1CACE /* RecordingTestSupport.swift */; };
 /* End PBXBuildFile section */
 
@@ -55,6 +68,7 @@
 		18315FE7C7FFF70B0B2850DD /* BLECentralTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BLECentralTests.swift; sourceTree = "<group>"; };
 		2EE4B1A7D0924DC9EBEBA99C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		34003681B191F41CE9CCAF3E /* Core */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Core; path = Core; sourceTree = SOURCE_ROOT; };
+		377D8FCE4EF2F5BD5BAB89D0 /* DashboardState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardState.swift; sourceTree = "<group>"; };
 		38660F590E620FC9E95617BC /* DriveLoggerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DriveLoggerApp.swift; sourceTree = "<group>"; };
 		3B4CFB2197F8A96D56C50C74 /* DriveLoggerAppTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = DriveLoggerAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3DCCAAFA3667C0100BDF5237 /* SensorSourceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SensorSourceTests.swift; sourceTree = "<group>"; };
@@ -62,21 +76,33 @@
 		428FB84AE7F6B6AC6DAF1351 /* GATTDetectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GATTDetectionTests.swift; sourceTree = "<group>"; };
 		4757331FF2FA81D7AC0192A2 /* OBDLinkServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OBDLinkServiceTests.swift; sourceTree = "<group>"; };
 		48CA0FF0B046021F1A35D010 /* GATTDetection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GATTDetection.swift; sourceTree = "<group>"; };
+		4D8E9CE2BABC8A226F6FC03A /* PreDriveChecklist.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreDriveChecklist.swift; sourceTree = "<group>"; };
+		51E41306C0E8CC802CFDBB09 /* SessionsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsViewModel.swift; sourceTree = "<group>"; };
+		53A5A2CA16E92EC7B59DF9B2 /* Tone.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tone.swift; sourceTree = "<group>"; };
 		7085FAEE943E57E7A189FF74 /* AppInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppInfo.swift; sourceTree = "<group>"; };
+		76540D48788C021E6D218414 /* AdapterStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdapterStatus.swift; sourceTree = "<group>"; };
 		854C803C3B72C76C94BDE3BF /* SimulatedSensors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimulatedSensors.swift; sourceTree = "<group>"; };
 		90AC7FA4AD498307B3C7D5C3 /* AppInfoTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppInfoTests.swift; sourceTree = "<group>"; };
 		982E965A8FFF8D4E784FD5CE /* ReferenceLocationSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReferenceLocationSource.swift; sourceTree = "<group>"; };
 		A258E57C132D921130E6EC80 /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
 		B03770A2F4197C0EC3E1CACE /* RecordingTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingTestSupport.swift; sourceTree = "<group>"; };
+		B1995CA170A05E96A1DA0885 /* RecordingViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingViewModel.swift; sourceTree = "<group>"; };
 		B3E3CAE3C8FF82BB7ADEA4E5 /* MotionSources.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MotionSources.swift; sourceTree = "<group>"; };
+		B53946399BBD92F429878756 /* DisplayFormat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayFormat.swift; sourceTree = "<group>"; };
 		B5487E70F68E5078A7332C59 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		BFEAEF116B2672D8E2E88275 /* OBDLinkService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OBDLinkService.swift; sourceTree = "<group>"; };
 		C2B377149F824738057BC395 /* LogStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogStoreTests.swift; sourceTree = "<group>"; };
 		C3A91D607CBA7DFAE670A9FE /* LogStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogStore.swift; sourceTree = "<group>"; };
 		C6A7B2B4C3A009CAC7FAB6CD /* AppServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppServices.swift; sourceTree = "<group>"; };
+		C9B85968A88D580969C514E6 /* MainTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabView.swift; sourceTree = "<group>"; };
 		CE394D78D64D4538558929AB /* OBDLinkServicing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OBDLinkServicing.swift; sourceTree = "<group>"; };
+		D5C0DEF85C7492AD06A4497D /* RecordingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingView.swift; sourceTree = "<group>"; };
+		D9265F3575667230ECE67A93 /* ConsoleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConsoleView.swift; sourceTree = "<group>"; };
+		E673B5E664BA56EBFD878D08 /* UIPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIPresentationTests.swift; sourceTree = "<group>"; };
 		EB34BE123D31801692F944B4 /* BLETransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BLETransport.swift; sourceTree = "<group>"; };
+		F0C9CA67A7C6A7722FA6AB4F /* ConsoleViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConsoleViewModel.swift; sourceTree = "<group>"; };
 		FB71BCF14220670F95ADDBBE /* BLECentral.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BLECentral.swift; sourceTree = "<group>"; };
+		FEC07B5D8472C3B9B0953238 /* SessionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsView.swift; sourceTree = "<group>"; };
 		FEFF9BD9CEEC81754C8361C5 /* SensorSuite.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SensorSuite.swift; sourceTree = "<group>"; };
 		FFF4735ED2E6C7340B224408 /* RecordingSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingSession.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -104,6 +130,7 @@
 				054B04838405BB2A03DF2023 /* RecordingSessionTests.swift */,
 				B03770A2F4197C0EC3E1CACE /* RecordingTestSupport.swift */,
 				3DCCAAFA3667C0100BDF5237 /* SensorSourceTests.swift */,
+				E673B5E664BA56EBFD878D08 /* UIPresentationTests.swift */,
 			);
 			path = AppTests;
 			sourceTree = "<group>";
@@ -124,6 +151,15 @@
 			name = Packages;
 			sourceTree = "<group>";
 		};
+		27CD52EC9412510BC8C351DE /* Console */ = {
+			isa = PBXGroup;
+			children = (
+				D9265F3575667230ECE67A93 /* ConsoleView.swift */,
+				F0C9CA67A7C6A7722FA6AB4F /* ConsoleViewModel.swift */,
+			);
+			path = Console;
+			sourceTree = "<group>";
+		};
 		3D4A199247E99A9E8E4FD696 /* Sensors */ = {
 			isa = PBXGroup;
 			children = (
@@ -136,12 +172,34 @@
 			path = Sensors;
 			sourceTree = "<group>";
 		};
+		466B45429585B26D0A9AB0F5 /* UI */ = {
+			isa = PBXGroup;
+			children = (
+				27CD52EC9412510BC8C351DE /* Console */,
+				BB141237944DE2F2E21F6B0C /* Record */,
+				4715005DA69EE119AAD0B588 /* Sessions */,
+				87757690C66C9AA81F92B3FB /* Support */,
+				C9B85968A88D580969C514E6 /* MainTabView.swift */,
+			);
+			path = UI;
+			sourceTree = "<group>";
+		};
+		4715005DA69EE119AAD0B588 /* Sessions */ = {
+			isa = PBXGroup;
+			children = (
+				FEC07B5D8472C3B9B0953238 /* SessionsView.swift */,
+				51E41306C0E8CC802CFDBB09 /* SessionsViewModel.swift */,
+			);
+			path = Sessions;
+			sourceTree = "<group>";
+		};
 		57FC3430BD081C5F71D65887 /* Sources */ = {
 			isa = PBXGroup;
 			children = (
 				98F640FA33573761602D6F4A /* Link */,
 				9529D6F6FEE89537731D45E9 /* Recording */,
 				3D4A199247E99A9E8E4FD696 /* Sensors */,
+				466B45429585B26D0A9AB0F5 /* UI */,
 				7085FAEE943E57E7A189FF74 /* AppInfo.swift */,
 				38660F590E620FC9E95617BC /* DriveLoggerApp.swift */,
 				B5487E70F68E5078A7332C59 /* RootView.swift */,
@@ -156,6 +214,16 @@
 				3B4CFB2197F8A96D56C50C74 /* DriveLoggerAppTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		87757690C66C9AA81F92B3FB /* Support */ = {
+			isa = PBXGroup;
+			children = (
+				76540D48788C021E6D218414 /* AdapterStatus.swift */,
+				B53946399BBD92F429878756 /* DisplayFormat.swift */,
+				53A5A2CA16E92EC7B59DF9B2 /* Tone.swift */,
+			);
+			path = Support;
 			sourceTree = "<group>";
 		};
 		9529D6F6FEE89537731D45E9 /* Recording */ = {
@@ -191,6 +259,17 @@
 				1EE5B2A46FC4D10ACF10990D /* Packages */,
 				85D84EC6B19BB7C02B3F5F96 /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		BB141237944DE2F2E21F6B0C /* Record */ = {
+			isa = PBXGroup;
+			children = (
+				377D8FCE4EF2F5BD5BAB89D0 /* DashboardState.swift */,
+				4D8E9CE2BABC8A226F6FC03A /* PreDriveChecklist.swift */,
+				D5C0DEF85C7492AD06A4497D /* RecordingView.swift */,
+				B1995CA170A05E96A1DA0885 /* RecordingViewModel.swift */,
+			);
+			path = Record;
 			sourceTree = "<group>";
 		};
 		F418D58440E8F154F17EE857 /* Resources */ = {
@@ -317,6 +396,7 @@
 				7AC8D2001A8B6452A3F6D8FE /* RecordingSessionTests.swift in Sources */,
 				EB69D658A35BEC3DCD84D1EB /* RecordingTestSupport.swift in Sources */,
 				2F1269035331B798C267E34E /* SensorSourceTests.swift in Sources */,
+				6C3B28883344D00A044DCACF /* UIPresentationTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -324,24 +404,36 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				12828BB3574A085AEC880462 /* AdapterStatus.swift in Sources */,
 				4E301479F940B6C5F374BAC0 /* AppInfo.swift in Sources */,
 				C595401ECC2ECBFDD58C1F07 /* AppServices.swift in Sources */,
 				40698D092849D7C8D7638F33 /* BLECentral.swift in Sources */,
 				021437D0ADA8922B1B169500 /* BLETransport.swift in Sources */,
+				8B0089338F96B96E3F665026 /* ConsoleView.swift in Sources */,
+				0DDF3F44B95E394C930CA120 /* ConsoleViewModel.swift in Sources */,
+				14D387CC7919E9F9DCB82114 /* DashboardState.swift in Sources */,
 				BD669916C0B963DBAE025373 /* DebugAutoRecord.swift in Sources */,
+				7DD66338B59A7A207D14CEA0 /* DisplayFormat.swift in Sources */,
 				9703F9AAE2A112783A148671 /* DriveLoggerApp.swift in Sources */,
 				3D3B63CFFF7CF663AF5AE10E /* GATTDetection.swift in Sources */,
 				1C31445913116014F08A1FAC /* LogStore.swift in Sources */,
+				334ABA2ADB6B7D4D855335DB /* MainTabView.swift in Sources */,
 				877A22BD2347363272765DC5 /* MotionSources.swift in Sources */,
 				D635E988DAD0AF2AA509EA4D /* OBDLinkService.swift in Sources */,
 				ABF23677C8A5547DF21AB88A /* OBDLinkServicing.swift in Sources */,
+				5AD961AA5E9A34D760419C63 /* PreDriveChecklist.swift in Sources */,
 				50CE5600479330B230E3E883 /* RecordingSession.swift in Sources */,
+				A3454D74A222F4E38D629D46 /* RecordingView.swift in Sources */,
+				68EE396506DED1C709414CA6 /* RecordingViewModel.swift in Sources */,
 				18A38A449D726D739B90B39D /* ReferenceLocationSource.swift in Sources */,
 				9FA3198C111CA9BCE762F2B4 /* RootView.swift in Sources */,
 				6869A4090D28752582396966 /* SampleGate.swift in Sources */,
 				393A3F2A13CD36052F5A83A5 /* SensorSuite.swift in Sources */,
+				EB54AA0B95B0D269E74ADD6A /* SessionsView.swift in Sources */,
+				DB397B3DFC6D0ECD860B9ED0 /* SessionsViewModel.swift in Sources */,
 				CB124DE702CBA6B493AAA28F /* SimulatedOBDLink.swift in Sources */,
 				6333D46FA0A28C814543135B /* SimulatedSensors.swift in Sources */,
+				3C23CBB6199A9489E557826E /* Tone.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
