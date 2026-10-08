@@ -371,3 +371,104 @@ struct SessionsTextTests {
         #expect(SessionsText.deleteError(LogStoreError.recordingInProgress(path: "x")).contains("Stop it first"))
     }
 }
+
+@Suite("Console link gating (R5.1-1)")
+@MainActor
+struct ConsoleGatingTests {
+    private func make(
+        _ recording: RecordingState,
+        link state: OBDLinkState = .polling(protocolNumber: "A6", voltage: 12.4)
+    ) -> (ConsoleViewModel, FakeLink) {
+        let link = FakeLink()
+        link.state = state
+        let model = ConsoleViewModel(link: link, recordingState: { recording })
+        return (model, link)
+    }
+
+    @Test("While recording, Disconnect needs confirmation and only then reaches the link")
+    func disconnectWhileRecording() {
+        for state in [RecordingState.calibrating, .recording, .stopping] {
+            let (model, link) = make(state)
+            model.disconnect()
+            #expect(link.disconnectCalls == 0)
+            #expect(model.pendingChange == .disconnect)
+            model.cancelPendingChange()
+            #expect(link.disconnectCalls == 0)
+            model.disconnect()
+            model.confirmPendingChange()
+            #expect(link.disconnectCalls == 1)
+            #expect(model.pendingChange == nil)
+        }
+    }
+
+    @Test("While recording, connecting to a different adapter needs confirmation; the targeted one is harmless")
+    func connectWhileRecording() {
+        let (model, link) = make(.recording)
+        let current = UUID(), other = UUID()
+        link.rememberedAdapterID = current
+
+        model.connect(other)
+        #expect(link.connectCalls.isEmpty)
+        #expect(model.pendingChange == .connect(other))
+        model.confirmPendingChange()
+        #expect(link.connectCalls == [other])
+
+        model.connect(current)
+        #expect(link.connectCalls == [other, current])
+        #expect(model.pendingChange == nil)
+    }
+
+    @Test("Scan is refused while recording and while an adapter is held")
+    func scanRefused() {
+        let (recording, link1) = make(.recording, link: .idle)
+        recording.scan()
+        #expect(!recording.canScan)
+        #expect(link1.startScanCalls == 0)
+
+        for state in [OBDLinkState.connecting, .initialising, .ready, .polling(protocolNumber: "6", voltage: nil), .reconnecting(attempt: 1)] {
+            let (model, link) = make(.idle, link: state)
+            model.scan()
+            #expect(!model.canScan)
+            #expect(link.startScanCalls == 0)
+        }
+
+        let (idle, link2) = make(.idle, link: .idle)
+        idle.scan()
+        #expect(idle.canScan)
+        #expect(link2.startScanCalls == 1)
+    }
+
+    @Test("When not recording, Disconnect and connect go straight to the link")
+    func idleIsDirect() {
+        let (model, link) = make(.idle)
+        let id = UUID()
+        model.disconnect()
+        model.connect(id)
+        #expect(link.disconnectCalls == 1)
+        #expect(link.connectCalls == [id])
+        #expect(model.pendingChange == nil)
+    }
+
+    @Test("Starting a recording stops a scan that is still running")
+    func startStopsScan() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let suite = "drivelogger.test.\(UUID().uuidString)"
+        let d = try #require(UserDefaults(suiteName: suite))
+        defer { d.removePersistentDomain(forName: suite) }
+        let link = FakeLink()
+        link.state = .scanning
+        let source = FakeSource()
+        let session = RecordingFixtures.session(link: link, sources: [source], store: scratch.store)
+        session.allowsRecordingWithoutOBD = true
+        let model = RecordingViewModel(
+            session: session, link: link, sources: [source], simulatedSensors: false,
+            store: ChecklistStore(defaults: d)
+        )
+        model.checklist.mountConfirmed = true
+        model.checklist.orientationConfirmed = true
+        await model.start()
+        #expect(link.stopScanCalls == 1)
+        await session.stop()
+    }
+}

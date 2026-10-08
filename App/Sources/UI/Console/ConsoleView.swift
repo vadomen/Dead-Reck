@@ -14,15 +14,19 @@ struct ConsoleScreen: View {
             lines: model.lines,
             result: model.result,
             canReinitialise: model.canReinitialise,
+            isRecording: model.isRecording,
+            canScan: model.canScan,
             canSend: model.canSend,
             commandText: $model.commandText,
             isForgetConfirmationPresented: $model.isForgetConfirmationPresented,
+            isLinkChangeConfirmationPresented: $model.isLinkChangeConfirmationPresented,
             actions: .init(
                 scan: model.scan,
                 stopScan: model.stopScan,
                 connect: model.connect,
                 disconnect: model.disconnect,
                 forget: model.forget,
+                confirmLinkChange: model.confirmPendingChange,
                 reinitialise: model.reinitialise,
                 send: { model.send($0) }
             )
@@ -36,6 +40,7 @@ struct ConsoleActions {
     var connect: (UUID) -> Void = { _ in }
     var disconnect: () -> Void = {}
     var forget: () -> Void = {}
+    var confirmLinkChange: () -> Void = {}
     var reinitialise: () -> Void = {}
     /// nil sends the text field's content.
     var send: (String?) -> Void = { _ in }
@@ -51,9 +56,12 @@ struct ConsoleContent: View {
     let lines: [ConsoleLine]
     var result: ManualResult?
     var canReinitialise = true
+    var isRecording = false
+    var canScan = true
     var canSend = false
     @Binding var commandText: String
     @Binding var isForgetConfirmationPresented: Bool
+    @Binding var isLinkChangeConfirmationPresented: Bool
     var actions = ConsoleActions()
 
     var body: some View {
@@ -71,7 +79,15 @@ struct ConsoleContent: View {
                 Button("Forget adapter", role: .destructive, action: actions.forget)
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("The app will stop reconnecting to it. You can pick it again from a scan.")
+                Text(isRecording
+                    ? "The app will stop reconnecting to it. \(ConsoleText.recordingWarning)"
+                    : "The app will stop reconnecting to it. You can pick it again from a scan.")
+            }
+            .confirmationDialog("Drop the OBD connection?", isPresented: $isLinkChangeConfirmationPresented, titleVisibility: .visible) {
+                Button("Drop OBD", role: .destructive, action: actions.confirmLinkChange)
+                Button("Keep connection", role: .cancel) {}
+            } message: {
+                Text(ConsoleText.recordingWarning)
             }
         }
     }
@@ -90,7 +106,7 @@ struct ConsoleContent: View {
                     Button("Stop scan", action: actions.stopScan)
                 } else {
                     Button("Scan", action: actions.scan)
-                        .disabled(isUnavailable)
+                        .disabled(!canScan)
                 }
                 Button("Disconnect", action: actions.disconnect)
                     .disabled(!isConnectedish)
@@ -122,11 +138,6 @@ struct ConsoleContent: View {
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
-    }
-
-    private var isUnavailable: Bool {
-        if case .unavailable = state { return true }
-        return false
     }
 
     private var isConnectedish: Bool {
@@ -258,6 +269,8 @@ private struct ConsolePreviewHost: View {
     var result: ManualResult?
     @State var text = ""
     @State var forget = false
+    @State var linkChange = false
+    var recording = false
 
     var body: some View {
         ConsoleContent(
@@ -269,9 +282,12 @@ private struct ConsolePreviewHost: View {
             remembered: discovered.first?.id,
             lines: lines,
             result: result,
+            isRecording: recording,
+            canScan: ConsoleText.canScan(link: state, recording: recording),
             canSend: !text.isEmpty,
             commandText: $text,
-            isForgetConfirmationPresented: $forget
+            isForgetConfirmationPresented: $forget,
+            isLinkChangeConfirmationPresented: $linkChange
         )
     }
 }
@@ -299,4 +315,8 @@ private struct ConsolePreviewHost: View {
         ],
         lines: []
     )
+}
+
+#Preview("Console, recording in progress") {
+    ConsolePreviewHost(recording: true)
 }

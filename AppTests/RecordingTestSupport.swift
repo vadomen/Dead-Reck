@@ -31,11 +31,17 @@ final class FakeLink: OBDLinkServicing {
     @ObservationIgnored private(set) var subscriptions = 0
     @ObservationIgnored private var continuation: AsyncStream<LinkEvent>.Continuation?
 
-    func startScan() {}
-    func stopScan() {}
-    func connect(to id: UUID) {}
-    func disconnect() {}
-    func forget() {}
+    @ObservationIgnored private(set) var startScanCalls = 0
+    @ObservationIgnored private(set) var stopScanCalls = 0
+    @ObservationIgnored private(set) var connectCalls: [UUID] = []
+    @ObservationIgnored private(set) var disconnectCalls = 0
+    @ObservationIgnored private(set) var forgetCalls = 0
+
+    func startScan() { startScanCalls += 1 }
+    func stopScan() { stopScanCalls += 1 }
+    func connect(to id: UUID) { connectCalls.append(id) }
+    func disconnect() { disconnectCalls += 1 }
+    func forget() { forgetCalls += 1 }
     func sendManual(_ command: String) async throws(ELMSessionError) -> ELMExchange { throw .notInitialised }
     func reinitialise() async {}
 

@@ -318,3 +318,35 @@ R4.1-1…3 in the loop; per the review-loop rules MINORs are deferred instead.
 - Final tests: `cd Core && swift test` 477 tests in 75 suites, all pass;
   simulator build green, no Swift warnings; app tests 65 in 11 suites, all
   pass.
+
+## Run 5 — range `641cdbd..c6a6368` (M3: prep fixes + UI), started 2026-10-08
+
+### Round 1
+
+Reviewer: fresh `reviewer` agent. Result: **0 BLOCKER / 1 MAJOR / 7 MINOR**.
+Verified clean: console reaches the adapter only via `sendManual` (`.manual`),
+no UI `linkEvents()` or log-data `Date()`, simulated GPS tap display-only,
+R4.1-1 / R4.1-2 / R3.1-4 fixes correct, no double start, live file not
+deletable, `failed` and blockers surfaced. Core 478/478, app tests 103/103.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R5.1-1 | MAJOR | Console Disconnect / Scan + tap another adapter are live while recording; `disconnect()` clears `target` and cancels reconnect, so one tap ends OBD for the rest of the drive. A scan left running competes with the link. | CONFIRMED | `ConsoleView.swift:88-121`, `OBDLinkService.disconnect()` sets `target = nil`. Fix: confirmation while recording, Scan disabled while connected/recording. |
+| R5.1-2 | MINOR | "Record without OBD" toggle disappears once on (shown only while the blocker is `.obdNotReady`), so the choice is invisible and sticky until the next Start. | DEFERRED | BACKLOG |
+| R5.1-3 | MINOR | `RecordingViewModel.isStartRequested` lasts through calibration: re-Start after a stop during calibration is silently ignored, and the late `defer` clears the new checklist. | DEFERRED | BACKLOG |
+| R5.1-4 | MINOR | `writeFailureEntersFailed` flake: sources still tick until `performFail`'s Task runs, so a row can land after the "write failed" row. Test over-asserts; not data loss. | DEFERRED | BACKLOG |
+| R5.1-5 | MINOR | `failureRightAfterStop` `yields == 1` case doesn't assert it reached `.stopping` first. | DEFERRED | BACKLOG |
+| R5.1-6 | MINOR | Mark sheet confirms ("Marked: …" + haptic) marks the session dropped after stop/failure. | DEFERRED | BACKLOG |
+| R5.1-7 | MINOR | Re-initialise enabled in `.failed` / `.reconnecting`, where `reinitialise()` is a no-op. | DEFERRED | BACKLOG |
+| R5.1-8 | MINOR | Sessions list marks the live file by full URL equality; a `/private/var` vs `/var` mismatch would allow sharing a partial file (delete still refused). | DEFERRED | BACKLOG |
+
+Fix (R5.1-1, `ios-ui-engineer`): `ConsoleViewModel` takes the session state;
+while calibrating/recording/stopping, Disconnect, Forget and connecting to a
+non-remembered adapter go through a destructive confirmation ("The recording
+continues without OBD for the rest of the drive."); Scan only while the link
+holds no adapter and nothing records; Start stops a running scan.
+Re-initialise unchanged. 5 regression tests in `UIPresentationTests` ("Console
+link gating"); they need the new VM init, so on the old code they fail to
+compile rather than assert. Core 478/478, app tests 108/108. The R5.1-4 flake
+showed once more during the fix run (passed on rerun).
+

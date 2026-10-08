@@ -90,6 +90,40 @@ enum ConsoleText {
     }
 }
 
+/// A link change that, during a recording, ends or replaces the OBD feed
+/// and so needs the user's confirmation first.
+enum LinkChange: Equatable {
+    case disconnect
+    case connect(UUID)
+}
+
+extension ConsoleText {
+    /// Shown whenever a confirmation concerns a recording in progress.
+    static let recordingWarning = "The recording continues without OBD for the rest of the drive."
+
+    static func isRecordingActive(_ state: RecordingState) -> Bool {
+        switch state {
+        case .calibrating, .recording, .stopping: true
+        default: false
+        }
+    }
+
+    /// Connected, initialising, polling or reconnecting: anything that holds
+    /// or is acquiring an adapter.
+    static func holdsAdapter(_ state: OBDLinkState) -> Bool {
+        switch state {
+        case .idle, .scanning, .unavailable: false
+        default: true
+        }
+    }
+
+    /// Scan only finds an adapter: not while one is held, not while recording.
+    static func canScan(link: OBDLinkState, recording: Bool) -> Bool {
+        if case .unavailable = link { return false }
+        return !recording && !holdsAdapter(link)
+    }
+}
+
 @MainActor
 @Observable
 final class ConsoleViewModel {
@@ -97,11 +131,27 @@ final class ConsoleViewModel {
     private(set) var result: ManualResult?
     private(set) var isSending = false
     var isForgetConfirmationPresented = false
+    /// Set while a Disconnect / switch-adapter confirmation is on screen.
+    var pendingChange: LinkChange?
 
     @ObservationIgnored private let link: any OBDLinkServicing
+    @ObservationIgnored private let recordingState: @MainActor () -> RecordingState
 
-    init(services: AppServices) {
-        link = services.link
+    init(link: any OBDLinkServicing, recordingState: @escaping @MainActor () -> RecordingState) {
+        self.link = link
+        self.recordingState = recordingState
+    }
+
+    convenience init(services: AppServices) {
+        let session = services.session
+        self.init(link: services.link, recordingState: { session.state })
+    }
+
+    var isRecording: Bool { ConsoleText.isRecordingActive(recordingState()) }
+    var canScan: Bool { ConsoleText.canScan(link: link.state, recording: isRecording) }
+    var isLinkChangeConfirmationPresented: Bool {
+        get { pendingChange != nil }
+        set { if !newValue { pendingChange = nil } }
     }
 
     var state: OBDLinkState { link.state }
@@ -114,10 +164,37 @@ final class ConsoleViewModel {
     var canReinitialise: Bool { ConsoleText.canReinitialise(link.state) }
     var canSend: Bool { !isSending && !commandText.trimmingCharacters(in: .whitespaces).isEmpty }
 
-    func scan() { link.startScan() }
+    func scan() {
+        guard canScan else { return }
+        link.startScan()
+    }
     func stopScan() { link.stopScan() }
-    func connect(_ id: UUID) { link.connect(to: id) }
-    func disconnect() { link.disconnect() }
+
+    /// Tapping an adapter row. The already-targeted adapter is harmless; any
+    /// other one, while an adapter is held during a recording, asks first.
+    func connect(_ id: UUID) {
+        if isRecording, ConsoleText.holdsAdapter(link.state), id != link.rememberedAdapterID {
+            pendingChange = .connect(id)
+        } else {
+            link.connect(to: id)
+        }
+    }
+
+    func disconnect() {
+        if isRecording { pendingChange = .disconnect } else { link.disconnect() }
+    }
+
+    func confirmPendingChange() {
+        guard let change = pendingChange else { return }
+        pendingChange = nil
+        switch change {
+        case .disconnect: link.disconnect()
+        case .connect(let id): link.connect(to: id)
+        }
+    }
+
+    func cancelPendingChange() { pendingChange = nil }
+
     func forget() { link.forget() }
     func reinitialise() { Task { await link.reinitialise() } }
 

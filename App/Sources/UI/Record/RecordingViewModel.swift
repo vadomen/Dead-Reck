@@ -98,6 +98,8 @@ final class RecordingViewModel {
         isStartRequested = true
         startError = nil
         store.save(checklist)
+        // A scan left running would compete with the OBD link for the radio.
+        if link.state == .scanning { link.stopScan() }
         let allowWithoutOBD = session.allowsRecordingWithoutOBD
         defer {
             isStartRequested = false
