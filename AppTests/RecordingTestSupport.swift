@@ -55,7 +55,7 @@ final class FakeLink: OBDLinkServicing {
 /// A source that records `accel` rows at 100 Hz on the session clock
 /// (through the app's `SimulatedSampleTicker`), or fails as told.
 @MainActor
-final class FakeSource: SensorSource {
+class FakeSource: SensorSource {
     let name: String
     var availability: SensorAvailability = .available
     var startError: (any Error)?
@@ -83,6 +83,18 @@ final class FakeSource: SensorSource {
         stops += 1
         ticker?.stop()
         ticker = nil
+    }
+}
+
+/// A `FakeSource` standing in for `ReferenceLocationSource` as the one that
+/// keeps the app running while locked (R4.1-5). Setting `availability`
+/// reports the change, as a location authorisation change does.
+@MainActor
+final class FakeBackgroundSource: FakeSource, BackgroundExecutionProviding {
+    var onAvailabilityChange: (@MainActor () -> Void)?
+
+    override var availability: SensorAvailability {
+        didSet { onAvailabilityChange?() }
     }
 }
 

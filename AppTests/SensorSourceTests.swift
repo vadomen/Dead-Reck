@@ -182,6 +182,12 @@ struct SensorSourceTests {
         #expect(device.sources.map(\.name) == ["deviceMotion", "rawIMU", "altimeter", "referenceLocation"])
         #expect(device.note == nil)
         #expect(simulated.configuration == device.configuration)
+        // Live GPS speed on both (M2-S2); background execution only on the
+        // phone, so the simulator makes no background claim (R4.1-5).
+        #expect(simulated.sources.filter { $0 is any LiveReferenceFixReporting }.map(\.name) == ["simulatedLocation"])
+        #expect(device.sources.filter { $0 is any LiveReferenceFixReporting }.map(\.name) == ["referenceLocation"])
+        #expect(device.sources.filter { $0 is any BackgroundExecutionProviding }.map(\.name) == ["referenceLocation"])
+        #expect(!simulated.sources.contains { $0 is any BackgroundExecutionProviding })
         #expect(device.configuration.referenceFrame == "xArbitraryZVertical")
         // No motion hardware on the simulator: the real sources say so.
         #if targetEnvironment(simulator)

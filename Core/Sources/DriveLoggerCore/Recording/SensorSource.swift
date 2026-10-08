@@ -88,12 +88,26 @@ public final class SimulatedMotionSource: SensorSource {
 /// header's wall clock (`SessionClock.wallClock(for:)`), so the v2 fields are
 /// all exercised; no `Date()` is read per sample. Delivered from a private
 /// queue, never the main actor.
+///
+/// `latestReferenceFix` is a display hook (M2-S2), like the app's real
+/// reference source: a copy of each fix handed to the sink, published on the
+/// main actor as it is delivered. It is never written anywhere and changes
+/// nothing that is recorded.
 @MainActor
 public final class SimulatedLocationSource: SensorSource {
     public let name = "simulatedLocation"
     public let availability = SensorAvailability.available
     public let interval: Duration
+    /// The most recent fix delivered to the sink, for display only (the
+    /// dashboard's GPS speed on the simulator). Reference data, never an
+    /// input. nil
+    /// before the first fix and after `stop()`. Updated asynchronously on
+    /// the main actor, so it may lag the sink by a main-actor turn.
+    public private(set) var latestReferenceFix: LocationSample?
     private var ticker: SimulatedTicker?
+    /// Bumped by every `start` and `stop`, so a display update queued by an
+    /// earlier run never lands after `stop()` cleared the fix.
+    private var displayRun = 0
 
     public init(interval: Duration = .seconds(1)) {
         self.interval = interval
@@ -101,23 +115,37 @@ public final class SimulatedLocationSource: SensorSource {
 
     public func start(clock: SessionClock, sink: LogSink) throws {
         stop()
+        displayRun += 1
+        let run = displayRun
         let (seconds, attoseconds) = interval.components
         let intervalS = Double(seconds) + Double(attoseconds) / 1e18
-        let ticker = SimulatedTicker(label: name, clock: clock, sink: sink, period: interval) { index, t in
+        let ticker = SimulatedTicker(label: name, clock: clock, sink: sink, period: interval) { [weak self] index, t in
             var fix = SimulatedLocationModel.fix(index: index, intervalS: intervalS)
             fix.receivedT = t
             fix.ageS = 0
             fix.fixTime = clock.wallClock(for: t).formatted(Date.ISO8601FormatStyle(includingFractionalSeconds: true))
             fix.simulated = true
+            // Display hook: a copy of the fix being recorded. It never
+            // feeds back into the row.
+            let shown = fix
+            Task { @MainActor in self?.show(shown, run: run) }
             return [.location(fix, at: t)]
         }
         self.ticker = ticker
         ticker.begin()
     }
 
-    /// Idempotent. No event reaches the sink after it returns.
+    /// Idempotent. No event reaches the sink after it returns, and
+    /// `latestReferenceFix` is nil and stays nil until the next `start`.
     public func stop() {
         ticker?.stop()
         ticker = nil
+        displayRun += 1
+        latestReferenceFix = nil
+    }
+
+    private func show(_ fix: LocationSample, run: Int) {
+        guard run == displayRun else { return }
+        latestReferenceFix = fix
     }
 }

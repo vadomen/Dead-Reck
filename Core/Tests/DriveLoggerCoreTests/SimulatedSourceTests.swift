@@ -216,6 +216,31 @@ struct SimulatedLocationSourceTests {
         #expect(count > 0)
     }
 
+    @Test("latestReferenceFix mirrors a recorded fix for display, and is cleared by stop (M2-S2)")
+    func displayHook() async throws {
+        let sink = LogSink()
+        let source = SimulatedLocationSource(interval: .milliseconds(20))
+        #expect(source.latestReferenceFix == nil)
+        try source.start(clock: SessionClock(), sink: sink)
+        try await Task.sleep(for: .milliseconds(150))
+        let shown = try #require(source.latestReferenceFix)
+        #expect(shown.simulated == true)
+        #expect(shown.speed == SimulatedLocationModel.speed)
+        source.stop()
+        #expect(source.latestReferenceFix == nil)
+
+        // Display only: the hook is one of the recorded fixes, and adds no row.
+        let events = await drain(sink)
+        #expect(events.allSatisfy { $0.payload.kind == "location" })
+        let recorded = events.compactMap { event -> LocationSample? in
+            if case .location(let fix) = event.payload { fix } else { nil }
+        }
+        #expect(recorded.contains(shown))
+        // Updates queued before stop never land after it.
+        try await Task.sleep(for: .milliseconds(60))
+        #expect(source.latestReferenceFix == nil)
+    }
+
     @Test("Default is 1 Hz")
     func defaults() {
         let source = SimulatedLocationSource()

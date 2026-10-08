@@ -358,6 +358,7 @@ What the app writes (all at `clock.now()` when written):
 | `protectedDataUnavailable` | free text | The device was locked with a passcode. Recording continues: files are `completeUntilFirstUserAuthentication`. |
 | `error` | `<source> unavailable: <reason>` | A sensor source could not run at start (e.g. no permission, no barometer). The rest of the recording goes on. |
 | `error` | `<source> failed to start: <error>` | A sensor source threw when started. |
+| `error` | `no background location session; recording may pause while locked` | The source that keeps the app running with the phone locked (`referenceLocation`, holding a background location session) is unavailable or did not start at start — location denied or restricted — or became unavailable during the recording. At most once per recording; written right after the source rows at start, or when the loss is noticed. The recording goes on; while the phone was locked, rows may stop and resume (look for a jump in `stats` `t`). Never written by simulator builds, which have no such source. |
 | `error` | `<source>: <error>` | A sensor reported an error while running; once per distinct error per source. Also `rawIMU: magnetometer unavailable; recording accel and gyro only`. |
 | `error` | `writer queue peaked at <n> events, more than 2 s of data (<m>)` | The writer fell behind in that `stats` window (written after the `stats` row). |
 | `error` | `write failed: <description>` | A write failure (below). |

@@ -21,6 +21,8 @@ struct RecordingSessionTests {
         let session = RecordingFixtures.session(link: link, sources: [source], store: scratch.store, idle: idle)
         #expect(link.subscriptions == 1)
         #expect(session.canStart)
+        // No source provides background execution: no claim, no warning (R4.1-5).
+        #expect(session.backgroundRiskWarning == nil)
 
         try await session.start(mount: "windscreen, portrait", vehicle: "Touareg", allowWithoutOBD: false, calibration: .milliseconds(200))
         #expect(session.state == .recording)
@@ -171,13 +173,30 @@ struct RecordingSessionTests {
         let url = try #require(session.currentFile)
         await session.stop()
         #expect(session.state == .idle)
+        // Start is free at once, while the old `start` is still in its
+        // calibration wait (R4.1-2).
+        #expect(session.startBlocker == nil)
+        #expect(!session.isStarting)
+        try await session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
+        #expect(session.state == .recording)
+        let second = try #require(session.currentFile)
+        #expect(second != url)
+        // The old call's wake-up leaves the new recording alone.
         try await start.value
+        #expect(session.state == .recording)
+        #expect(session.currentFile == second)
+        await session.stop()
         #expect(session.state == .idle)
+        #expect(session.lastStopReason == .user)
 
         let (_, events, _) = try RecordingFixtures.read(url)
         let lifecycle = RecordingFixtures.lifecycle(events).map(\.sample)
         #expect(lifecycle.map(\.event) == ["start", "calibrationStart", "calibrationEnd", "stop"])
         #expect(lifecycle[2].detail == "interrupted by stop")
+        let (_, secondEvents, _) = try RecordingFixtures.read(second)
+        let secondLifecycle = RecordingFixtures.lifecycle(secondEvents).map(\.sample)
+        #expect(secondLifecycle.map(\.event) == ["start", "calibrationStart", "calibrationEnd", "stop"])
+        #expect(secondLifecycle[2].detail == nil)
     }
 
     @Test("Rule 2 during calibration stops cleanly too, and start returns without recording")
@@ -247,6 +266,32 @@ struct RecordingSessionTests {
         await stopping.value
         #expect(session.state == .failed(reason: "fsync failed: errno 5", unwrittenEvents: 0))
         #expect(session.lastStopReason == nil)
+    }
+
+    @Test("A failure delivered right after stop() is called, before its end path runs, still ends in failed (R4.1-1)")
+    func failureRightAfterStop() async throws {
+        // Two interleavings: the failure before `stop()` has run at all, and
+        // after `stop()` has queued its end path but before that path's body
+        // ran (one yield). Both must end in `failed`, never `idle`.
+        for yields in 0...1 {
+            let scratch = try ScratchStore("failureRightAfterStop\(yields)")
+            defer { scratch.remove() }
+            let session = RecordingFixtures.session(store: scratch.store)
+            try await session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
+            let url = try #require(session.currentFile)
+            let generation = try #require(session.currentGeneration)
+            let stopping = Task { await session.stop() }
+            for _ in 0..<yields { await Task.yield() }
+            await session.handleWriteFailure(.writeFailed(description: "EIO"), generation: generation)
+            await stopping.value
+            #expect(session.state == .failed(reason: "EIO", unwrittenEvents: 0), "yields: \(yields)")
+            #expect(session.lastStopReason == nil)
+            #expect(session.currentFile == nil)
+
+            let (_, events, _) = try RecordingFixtures.read(url)
+            let errors = RecordingFixtures.lifecycle(events).filter { $0.sample.event == "error" }.map(\.sample.detail)
+            #expect(errors == ["write failed: EIO"], "yields: \(yields)")
+        }
     }
 
     @Test("Notices and failures from an earlier recording's writer are ignored (R3-2)")
@@ -351,6 +396,112 @@ struct RecordingSessionTests {
         let (_, events, _) = try RecordingFixtures.read(url)
         let errors = RecordingFixtures.lifecycle(events).filter { $0.sample.event == "error" }.map(\.sample.detail)
         #expect(errors == ["gyro unavailable: no gyroscope", "altimeter failed to start: permission denied"])
+    }
+
+    @Test("Location unavailable: warning before Start (not a blocker), one error row after the source rows, the recording runs (R4.1-5)")
+    func noBackgroundSession() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let imu = FakeSource()
+        let location = FakeBackgroundSource(name: "referenceLocation")
+        location.availability = .unavailable(reason: "Location access is denied")
+        let session = RecordingFixtures.session(sources: [imu, location], store: scratch.store)
+        let prefix = "No background location session, so the recording may pause while the phone is locked."
+        #expect(session.backgroundRiskWarning == "\(prefix) Location access is denied.")
+        #expect(session.canStart)
+
+        try await session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
+        let url = try #require(session.currentFile)
+        #expect(session.state == .recording)
+        #expect(imu.isRunning && location.starts == 0)
+        // Allowing location now doesn't give this recording a background
+        // session: its source never started. No second row.
+        location.availability = .available
+        #expect(session.backgroundRiskWarning == "\(prefix) referenceLocation did not start.")
+        await session.stop()
+        // Idle, and location is available: no warning for the next one.
+        #expect(session.backgroundRiskWarning == nil)
+
+        let (_, events, _) = try RecordingFixtures.read(url)
+        let lifecycle = RecordingFixtures.lifecycle(events).map(\.sample)
+        #expect(lifecycle.map(\.event) == ["start", "error", "error", "calibrationStart", "calibrationEnd", "stop"])
+        #expect(lifecycle[1].detail == "referenceLocation unavailable: Location access is denied")
+        #expect(lifecycle[2].detail == RecordingSession.backgroundRiskDetail)
+        #expect(RecordingSession.backgroundRiskDetail == "no background location session; recording may pause while locked")
+    }
+
+    @Test("Location lost mid-recording: warning and one error row; none while it is available (R4.1-5)")
+    func backgroundSessionLost() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let location = FakeBackgroundSource(name: "referenceLocation")
+        let session = RecordingFixtures.session(sources: [location], store: scratch.store)
+        #expect(session.backgroundRiskWarning == nil)
+        try await session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
+        let url = try #require(session.currentFile)
+        #expect(location.isRunning)
+        #expect(session.backgroundRiskWarning == nil)
+
+        location.availability = .unavailable(reason: "Location access is denied")
+        #expect(session.backgroundRiskWarning?.hasSuffix("Location access is denied.") == true)
+        location.availability = .unavailable(reason: "Location access is restricted on this device")
+        session.handleScenePhase(.active)
+        #expect(session.backgroundRiskWarning?.hasSuffix("Location access is restricted on this device.") == true)
+        #expect(session.state == .recording)
+        await session.stop()
+        // Still unavailable once idle.
+        #expect(session.backgroundRiskWarning?.hasSuffix("Location access is restricted on this device.") == true)
+        location.availability = .available
+        #expect(session.backgroundRiskWarning == nil)
+
+        let (_, events, _) = try RecordingFixtures.read(url)
+        let lifecycle = RecordingFixtures.lifecycle(events).map(\.sample)
+        #expect(lifecycle.map(\.event) == ["start", "calibrationStart", "calibrationEnd", "error", "stop"])
+        #expect(lifecycle[3].detail == RecordingSession.backgroundRiskDetail)
+    }
+
+    @Test("A background source that fails to start: its error row, then the background row (R4.1-5)")
+    func backgroundSourceFailsToStart() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let location = FakeBackgroundSource(name: "referenceLocation")
+        location.startError = FakeStartError()
+        let session = RecordingFixtures.session(sources: [location], store: scratch.store)
+        #expect(session.backgroundRiskWarning == nil)
+        try await session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
+        let url = try #require(session.currentFile)
+        #expect(session.backgroundRiskWarning?.hasSuffix("referenceLocation did not start.") == true)
+        await session.stop()
+        #expect(session.backgroundRiskWarning == nil)
+
+        let (_, events, _) = try RecordingFixtures.read(url)
+        let errors = RecordingFixtures.lifecycle(events).filter { $0.sample.event == "error" }.map(\.sample.detail)
+        #expect(errors == ["referenceLocation failed to start: permission denied", RecordingSession.backgroundRiskDetail])
+    }
+
+    @Test("Simulator GPS speed: live.gpsSpeedKmh from the simulated location source, display only (M2-S2)")
+    func simulatedGPSSpeed() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let location = SimulatedLocationSource(interval: .milliseconds(100))
+        let session = RecordingFixtures.session(sources: [location], store: scratch.store)
+        #expect(session.live.gpsSpeedKmh == nil)
+        try await session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
+        let url = try #require(session.currentFile)
+        #expect(await eventually(3) { session.live.gpsSpeedKmh != nil })
+        #expect(abs((session.live.gpsSpeedKmh ?? 0) - 13.9 * 3.6) < 1e-9)
+        await session.stop()
+        #expect(session.live.gpsSpeedKmh == nil)
+        #expect(location.latestReferenceFix == nil)
+
+        // What is recorded is the simulated source's rows and nothing else:
+        // simulated fixes at exactly 100 ms spacing.
+        let (_, events, _) = try RecordingFixtures.read(url)
+        let fixes = events.filter { $0.payload.kind == "location" }
+        #expect(fixes.count >= 10)
+        #expect(fixes.allSatisfy { if case .location(let fix) = $0.payload { fix.simulated == true } else { false } })
+        let times = fixes.map(\.timestamp.nanoseconds)
+        #expect(zip(times, times.dropFirst()).allSatisfy { $1 - $0 == 100_000_000 })
     }
 
     @Test("Link events: written only while recording; OBD speed from the engine ECU only")

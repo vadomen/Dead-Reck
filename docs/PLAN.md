@@ -603,6 +603,7 @@ simulator). Only `BLETransport.send` may call `writeValue`
     private(set) var live: LiveStatus         // obdSpeed, gpsSpeed, obdHz, motionHz, elapsed, fileBytes,
                                               // lowDiskSpaceWarning, availableDiskBytes
     private(set) var lastStopReason: RecordingStopReason?   // .user / .lowDiskSpace
+    private(set) var backgroundRiskWarning: String?         // R4.1-5: no background location session; not a blocker
     var canStart: Bool { get }                // startBlocker == nil
     var startBlocker: RecordingStartBlocker? { get }   // .lowDiskSpace(availableBytes:requiredBytes:) / .obdNotReady
     /// Starts clock, file and sources, then runs calibration as the first phase.
@@ -730,7 +731,7 @@ check. Exit status 0 read, 1 unreadable, 2 usage.
 
 ### Added by review run 4, round 1 (R4.1-x) — not verified
 - **Cached first fix:** whether the first CoreLocation fix after Start is cached with a large `ageS` (a `location` row well before `t = 0`; legal, not clamped). Confirm `inspect_log` tolerates it and note how often it happens.
-- **Location denied / "Allow Once" (R4.1-5):** with location denied, lock for 5 min with and without OBD; do motion and `stats` rows continue on BLE wakes alone? With "Allow Once" plus `CLBackgroundActivitySession`, do fixes continue after lock?
+- **Location denied / "Allow Once" (R4.1-5):** with location denied, lock for 5 min with and without OBD; do motion and `stats` rows continue on BLE wakes alone? With "Allow Once" plus `CLBackgroundActivitySession`, do fixes continue after lock? Since M3 prep: with location denied the dashboard must warn before Start (`backgroundRiskWarning`), and the file must hold `referenceLocation unavailable: …` followed by `no background location session; recording may pause while locked`. Revoke location in Settings mid-recording and confirm that row appears once on returning to the app, and whether the background session really ends (the row says "may").
 - **Stop while locked (R4.1-3):** trigger a stop with the phone locked (floor via a debug fake provider, or a forced write failure); confirm the `stop` row, the final `stats` row and an intact tail.
 - **Swipe-away while recording in background (R4.1-4):** measure tail loss and whether `willTerminate` arrives.
 - **Delete path matching on device:** `URL.documentsDirectory` (`/var/mobile/…`) vs `contentsOfDirectory` (possibly `/private/var/…`); confirm Delete works from the M3 list and the "being recorded" guard matches (a mismatch fails safe with `.notInStore` but makes Delete unusable).

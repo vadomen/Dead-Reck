@@ -39,11 +39,17 @@ import Foundation
 /// taken at the same moment, so a late delivery has a larger `ageS` and the
 /// same fix time.
 ///
+/// Background execution (R4.1-5): this is the source that keeps the app
+/// running while the phone is locked (`BackgroundExecutionProviding`). With
+/// location denied or restricted it is unavailable, there is no background
+/// session, and `RecordingSession` warns and writes a row. Authorisation
+/// changes are reported through `onAvailabilityChange`.
+///
 /// Untested on hardware: fix rate and accuracy in the car, background
 /// survival with `CLBackgroundActivitySession`, and whether `.otherNavigation`
 /// avoids road snapping (docs/PLAN.md §6).
 @MainActor
-final class ReferenceLocationSource: SensorSource, LiveReferenceFixReporting {
+final class ReferenceLocationSource: SensorSource, LiveReferenceFixReporting, BackgroundExecutionProviding {
     let name = "referenceLocation"
 
     /// The most recent fix, for the dashboard only. Never written anywhere
@@ -55,8 +61,16 @@ final class ReferenceLocationSource: SensorSource, LiveReferenceFixReporting {
     private var backgroundSession: CLBackgroundActivitySession?
     private var running = false
 
+    /// Called on the main actor after each authorisation change
+    /// (`locationManagerDidChangeAuthorization`, which CoreLocation also
+    /// calls once when the manager is created).
+    var onAvailabilityChange: (@MainActor () -> Void)?
+
     init() {
         manager.delegate = delegate
+        delegate.observeAuthorization { [weak self] in
+            Task { @MainActor in self?.onAvailabilityChange?() }
+        }
     }
 
     var availability: SensorAvailability {
@@ -109,10 +123,27 @@ final class ReferenceLocationSource: SensorSource, LiveReferenceFixReporting {
     }
 }
 
-/// A source that can show its latest reference fix on the dashboard.
+/// A source that can show its latest reference fix on the dashboard
+/// (`RecordingSession.live.gpsSpeedKmh`). Display only: the fix is a copy
+/// of one already handed to the sink, never written again and never an
+/// input. `ReferenceLocationSource` on a phone; Core's
+/// `SimulatedLocationSource` in simulator builds (M2-S2).
 @MainActor
 protocol LiveReferenceFixReporting: AnyObject {
     var latestReferenceFix: LocationSample? { get }
+}
+
+/// A source whose running keeps the app executing while the phone is locked
+/// (R4.1-5) — on a phone, `ReferenceLocationSource` with its
+/// `CLBackgroundActivitySession`. `RecordingSession` warns
+/// (`backgroundRiskWarning`) and writes a `lifecycle` `error` row when every
+/// such source is unavailable or did not start.
+@MainActor
+protocol BackgroundExecutionProviding: SensorSource {
+    /// Called on the main actor whenever `availability` may have changed
+    /// (the location prompt answered, authorisation changed in Settings).
+    /// Set by `RecordingSession`, its one observer.
+    var onAvailabilityChange: (@MainActor () -> Void)? { get set }
 }
 
 /// `CLLocationManagerDelegate` for `ReferenceLocationSource`. Not isolated to
@@ -123,6 +154,13 @@ final class ReferenceLocationDelegate: NSObject, CLLocationManagerDelegate, Send
     private nonisolated(unsafe) var gate: SampleGate?
     /// Guarded by `lock`. Display hook for each fix.
     private nonisolated(unsafe) var onFix: (@Sendable (LocationSample) -> Void)?
+    /// Guarded by `lock`. Called after every authorisation change, recording
+    /// or not.
+    private nonisolated(unsafe) var onAuthorizationChange: (@Sendable () -> Void)?
+
+    func observeAuthorization(_ handler: @escaping @Sendable () -> Void) {
+        lock.withLock { onAuthorizationChange = handler }
+    }
 
     func begin(gate: SampleGate, onFix: @escaping @Sendable (LocationSample) -> Void) {
         lock.withLock {
@@ -166,7 +204,7 @@ final class ReferenceLocationDelegate: NSObject, CLLocationManagerDelegate, Send
     }
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        let gate = lock.withLock { self.gate }
+        let (gate, onChange) = lock.withLock { (self.gate, self.onAuthorizationChange) }
         switch manager.authorizationStatus {
         case .denied:
             gate?.report("authorization denied while recording; no more reference fixes")
@@ -175,6 +213,7 @@ final class ReferenceLocationDelegate: NSObject, CLLocationManagerDelegate, Send
         default:
             break
         }
+        onChange?()
     }
 }
 

@@ -46,9 +46,12 @@ struct LiveStatus: Hashable, Sendable {
     /// Latest vehicle speed from the engine ECU (`7E8`), any time the link
     /// polls — before a recording too. nil when the link isn't connected.
     var obdSpeedKmh: Double?
-    /// Speed of the latest reference fix, while recording. Reference only.
-    /// nil on the simulator (the simulated location source has no live tap)
-    /// and whenever the fix has no valid speed.
+    /// Speed of the latest reference fix, while recording. Reference only,
+    /// never written. From any `LiveReferenceFixReporting` source: the
+    /// phone's `ReferenceLocationSource`, or on the simulator Core's
+    /// `SimulatedLocationSource` (a constant 50 km/h, M2-S2). nil when not
+    /// recording, before the first fix and whenever the fix has no valid
+    /// speed.
     var gpsSpeedKmh: Double?
     /// Successful polls per second, from the link.
     var obdHz: Double = 0
@@ -84,16 +87,17 @@ struct LiveStatus: Hashable, Sendable {
 /// `calibrationEnd`, `stop` (detail = stop reason), `background` /
 /// `foreground`, `memoryWarning`, `thermalState` (at start when not nominal,
 /// and on every change), `protectedDataUnavailable`, `lowDiskSpace`, `error`
-/// (a source that is unavailable or failed to start, a write failure, a
-/// writer queue backlog over 2 s of data), and a `stats` row every
-/// `statsInterval` (10 s) plus a final one after the `stop` row. Flushes on
-/// entering the background (inside a background task) and on memory
-/// warnings. Keeps the screen awake (idle timer off) from start until the
-/// recording ends.
+/// (a source that is unavailable or failed to start, no background location
+/// session, a write failure, a writer queue backlog over 2 s of data), and a
+/// `stats` row every `statsInterval` (10 s) plus a final one after the `stop`
+/// row. Flushes on entering the background (inside a background task) and on
+/// memory warnings. Keeps the screen awake (idle timer off) from start until
+/// the recording ends.
 ///
 /// **Ending a recording.** Two paths, each run once however many callers
 /// race into it (later callers wait for it):
-/// - *Stop* (`stop(reason:)`, the user or rule 2): state `stopping`; every
+/// - *Stop* (`stop(reason:)`, the user or rule 2): state `stopping`, set
+///   synchronously by `stop` before it first suspends (R4.1-1); every
 ///   source is stopped (no event reaches the sink after that) and link rows
 ///   are no longer written; an in-flight `stats` row is awaited so it lands
 ///   before the `stop` row; `calibrationEnd` (detail `interrupted by stop`)
@@ -139,9 +143,10 @@ struct LiveStatus: Hashable, Sendable {
 ///    writer (R1-9): write a `lifecycle` `error` row (detail `write failed:
 ///    …`; it may not reach the disk), stop every source, call `finish()`,
 ///    enter `failed(reason:unwrittenEvents:)`. No `stop` row and no final
-///    `stats` row. While *stopping*, a delivered failure only writes its
-///    `error` row and is remembered; the stop path then ends in `failed`
-///    (R3-2). A final `finish()` that reports a `failure` — after any stop,
+///    `stats` row. While *stopping* — from the moment `stop()` is called
+///    (it sets `stopping` synchronously, R4.1-1), or while any end path is
+///    in progress — a delivered failure only writes its `error` row and is
+///    remembered; the stop path then ends in `failed` (R3-2). A final `finish()` that reports a `failure` — after any stop,
 ///    user or rule 2 — also ends in `failed`, with no further row (R3-3).
 ///    This is the only way into `failed`. `flush()` throws are not reports
 ///    (the writer delivers each failure once on `failures`) and are ignored.
@@ -153,7 +158,24 @@ struct LiveStatus: Hashable, Sendable {
 /// suspension. Stop (or rule 2, or rule 4) during `calibrating` ends the
 /// recording; when the calibration wait then returns, `start` sees the
 /// recording is gone and neither writes `calibrationEnd` nor sets
-/// `recording`.
+/// `recording`. `isStarting` is cleared as soon as the recording exists
+/// (R4.1-2), so once such a stop returns, `startBlocker` no longer reports
+/// `.recordingInProgress` and a new recording can start while the old
+/// `start` call is still in its calibration wait.
+///
+/// **Background execution (R4.1-5).** The app keeps running with the phone
+/// locked only while a `BackgroundExecutionProviding` source runs (on a
+/// phone: `ReferenceLocationSource`, which holds a
+/// `CLBackgroundActivitySession`). When the sources include at least one
+/// such source and none of them can provide it — location denied or
+/// restricted, or (during a recording) it did not start —
+/// `backgroundRiskWarning` says so, before Start and during the recording,
+/// and the recording gets one `lifecycle` `error` row with detail
+/// `backgroundRiskDetail` ("no background location session; recording may
+/// pause while locked"): right after the source rows at start, or when the
+/// source's availability is lost mid-recording. The recording itself goes
+/// on. A suite with no such source (the simulator's, tests') makes no claim
+/// and produces neither.
 @MainActor
 @Observable
 final class RecordingSession {
@@ -174,6 +196,25 @@ final class RecordingSession {
     var allowsRecordingWithoutOBD = false
     /// A `start` call is between its checks and creating the file.
     private(set) var isStarting = false
+    /// Why the app may be suspended while the phone is locked, so the
+    /// recording may pause; nil when nothing is known to be wrong (R4.1-5).
+    /// For the dashboard to warn on, before Start and during a recording.
+    /// It does not block Start.
+    ///
+    /// Non-nil when the sources include at least one
+    /// `BackgroundExecutionProviding` source (on a phone,
+    /// `ReferenceLocationSource`) and none of them can keep the app running:
+    /// each is unavailable (location denied or restricted) or, during a
+    /// recording, did not start. The text is user-facing: a sentence that
+    /// begins "No background location session" followed by each source's
+    /// reason. Always nil when no source provides background execution (the
+    /// simulator suite).
+    ///
+    /// Kept current without the UI's help: refreshed at init, whenever such
+    /// a source reports an availability change (the location prompt
+    /// answered, authorisation changed), on `handleScenePhase(.active)`
+    /// (back from Settings), and when a recording starts and ends.
+    private(set) var backgroundRiskWarning: String?
 
     @ObservationIgnored private let link: any OBDLinkServicing
     @ObservationIgnored private let sources: [any SensorSource]
@@ -199,6 +240,12 @@ final class RecordingSession {
     @ObservationIgnored private var linkTask: Task<Void, Never>?
     @ObservationIgnored private var diskRefreshTask: Task<Void, Never>?
     @ObservationIgnored private var observers: [any NSObjectProtocol] = []
+
+    /// `detail` of the `lifecycle` `error` row written when a recording has
+    /// no background execution (R4.1-5). Free text under the existing
+    /// `error` event, not new on-disk vocabulary; docs/LOG_FORMAT.md lists
+    /// it with the other `error` details.
+    nonisolated static let backgroundRiskDetail = "no background location session; recording may pause while locked"
 
     /// - Parameters:
     ///   - sensorConfiguration: written to the header's `sensors` section.
@@ -260,6 +307,11 @@ final class RecordingSession {
             }
         }
         observeSystemNotifications()
+        for source in sources {
+            guard let keeper = source as? any BackgroundExecutionProviding else { continue }
+            keeper.onAvailabilityChange = { [weak self] in self?.backgroundAvailabilityChanged() }
+        }
+        refreshBackgroundRisk()
     }
 
     // MARK: - Start
@@ -309,7 +361,13 @@ final class RecordingSession {
     ) async throws {
         guard !isStarting, recording == nil, ending == nil else { throw RecordingStartBlocker.recordingInProgress }
         isStarting = true
-        defer { isStarting = false }
+        // Cleared on every throw before the recording exists, and as soon as
+        // it does (R4.1-2): from then on `recording` blocks a second start,
+        // and a stop or failure during calibration must free Start at once,
+        // not when the calibration wait returns. Never cleared on behalf of
+        // a later `start` that set it again meanwhile.
+        var ownsStartingFlag = true
+        defer { if ownsStartingFlag { isStarting = false } }
 
         // Rule 3, with a fresh reading.
         let reading = await readDiskSpace()
@@ -341,6 +399,8 @@ final class RecordingSession {
         generation += 1
         let rec = ActiveRecording(generation: generation, clock: clock, writer: writer, url: url)
         recording = rec
+        isStarting = false
+        ownsStartingFlag = false
         currentFile = url
         lastStopReason = nil
         live = LiveStatus(obdSpeedKmh: live.obdSpeedKmh, obdHz: live.obdHz, availableDiskBytes: nil)
@@ -354,6 +414,7 @@ final class RecordingSession {
         }
         watchWriter(rec)
         startSources(rec)
+        noteBackgroundRisk(rec)
         startTimers(rec)
 
         let seconds = Self.seconds(calibration)
@@ -394,6 +455,8 @@ final class RecordingSession {
         case .active, .inactive:
             if phase == .active {
                 Task { await refreshDiskSpace() }
+                // Back from Settings, or from a permission alert.
+                backgroundAvailabilityChanged()
             }
             guard previous == .background, let rec = recording, rec.isWritable else { return }
             rec.record(LifecycleSample(.foreground))
@@ -423,7 +486,12 @@ final class RecordingSession {
             return
         }
         guard let rec = recording, state == .calibrating || state == .recording else { return }
-        await end(rec) { session in await session.performStop(rec, reason: reason) }
+        // `stopping` from the moment stop is called, not when the end path's
+        // body first runs (R4.1-1): a write failure delivered in between is
+        // then remembered, and the UI never shows `recording` after Stop.
+        let wasCalibrating = state == .calibrating
+        state = .stopping
+        await end(rec) { session in await session.performStop(rec, reason: reason, wasCalibrating: wasCalibrating) }
     }
 
     /// Deletes a recording through `store`, refusing the one being written,
@@ -434,6 +502,15 @@ final class RecordingSession {
         }
         try store.delete(file)
         await refreshDiskSpace()
+    }
+
+    /// Re-evaluates `backgroundRiskWarning` from the background-execution
+    /// sources' `availability` and, during a recording, whether they
+    /// started. Writes no row. The session calls it itself (see
+    /// `backgroundRiskWarning`); the UI may call it too.
+    func refreshBackgroundRisk() {
+        let warning = currentBackgroundRisk()
+        if warning != backgroundRiskWarning { backgroundRiskWarning = warning }
     }
 
     /// Reads free space off the main actor and stores it in
@@ -472,6 +549,47 @@ final class RecordingSession {
                 attempts += 1
             }
         }
+    }
+
+    /// After `startSources`: remembers which background-execution sources
+    /// started, refreshes the warning and writes the row if there is none.
+    private func noteBackgroundRisk(_ rec: ActiveRecording) {
+        rec.backgroundSources = Set(rec.startedSources.filter { $0 is any BackgroundExecutionProviding }.map(ObjectIdentifier.init))
+        refreshBackgroundRisk()
+        recordBackgroundRiskIfNeeded(rec)
+    }
+
+    /// A background-execution source's availability may have changed, or
+    /// the app became active.
+    private func backgroundAvailabilityChanged() {
+        refreshBackgroundRisk()
+        if let rec = recording, state == .calibrating || state == .recording {
+            recordBackgroundRiskIfNeeded(rec)
+        }
+    }
+
+    /// The `error` row, at most once per recording, while `rec` is writable.
+    private func recordBackgroundRiskIfNeeded(_ rec: ActiveRecording) {
+        guard backgroundRiskWarning != nil, !rec.backgroundRiskRecorded, rec.isWritable else { return }
+        rec.backgroundRiskRecorded = true
+        rec.record(LifecycleSample(.error, detail: Self.backgroundRiskDetail))
+    }
+
+    private func currentBackgroundRisk() -> String? {
+        let keepers = sources.filter { $0 is any BackgroundExecutionProviding }
+        guard !keepers.isEmpty else { return nil }
+        var reasons: [String] = []
+        for keeper in keepers {
+            if case .unavailable(let reason) = keeper.availability {
+                reasons.append(reason)
+            } else if let rec = recording, !rec.backgroundSources.contains(ObjectIdentifier(keeper)) {
+                reasons.append("\(keeper.name) did not start")
+            } else {
+                return nil
+            }
+        }
+        let because = reasons.map { $0.hasSuffix(".") ? $0 : $0 + "." }.joined(separator: " ")
+        return "No background location session, so the recording may pause while the phone is locked. \(because)"
     }
 
     private func startSources(_ rec: ActiveRecording) {
@@ -599,8 +717,7 @@ final class RecordingSession {
         rec.startedSources = []
     }
 
-    private func performStop(_ rec: ActiveRecording, reason: RecordingStopReason) async {
-        let wasCalibrating = state == .calibrating
+    private func performStop(_ rec: ActiveRecording, reason: RecordingStopReason, wasCalibrating: Bool) async {
         state = .stopping
         quiesce(rec)
         // A periodic stats row in flight lands before the stop row.
@@ -647,6 +764,7 @@ final class RecordingSession {
         currentFile = nil
         live.gpsSpeedKmh = nil
         setIdleTimerDisabled(false)
+        refreshBackgroundRisk()
     }
 
     // MARK: - Internals: writer reports (internal for tests)
@@ -654,10 +772,12 @@ final class RecordingSession {
     /// Rule 4. Ignored for a writer that isn't the current recording's.
     func handleWriteFailure(_ failure: LogWriteError, generation: Int) async {
         guard let rec = recording, rec.generation == generation else { return }
-        if state == .stopping {
-            // An end path is already finishing the file (R3-2): remember the
-            // failure so it ends in `failed`, and explain it in the file
-            // unless the last row is already queued (R3-3).
+        if state == .stopping || ending != nil {
+            // An end path is already finishing the file (R3-2) — including
+            // one that `stop()` has queued but whose body hasn't run yet
+            // (R4.1-1): remember the failure so it ends in `failed`, and
+            // explain it in the file unless the last row is already queued
+            // (R3-3).
             if !rec.stopRowQueued {
                 rec.record(LifecycleSample(.error, detail: "write failed: \(Self.describe(failure))"))
             }
@@ -803,6 +923,11 @@ private final class ActiveRecording {
     var stopRowQueued = false
     /// A failure delivered while stopping (R3-2).
     var pendingFailure: LogWriteError?
+    /// The `BackgroundExecutionProviding` sources that started (R4.1-5).
+    /// Unlike `startedSources`, not cleared when the sources are stopped.
+    var backgroundSources: Set<ObjectIdentifier> = []
+    /// The `backgroundRiskDetail` row has been written.
+    var backgroundRiskRecorded = false
     var statsTimer: Task<Void, Never>?
     var statsTick: Task<Void, Never>?
     var liveTimer: Task<Void, Never>?
