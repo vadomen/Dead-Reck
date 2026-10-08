@@ -283,3 +283,38 @@ precedes the first `didUpdateState`). Core 468/468, app tests 41/41.
 - Final tests: `cd Core && swift test` 468 tests in 71 suites, all pass;
   simulator build 0 errors / 0 warnings; app tests 41 in 8 suites, all pass
   on iPhone 15 Pro simulator.
+
+## Run 4 — range `129c9d9..395aeac` (M2 part 2), started 2026-10-08
+
+### Round 1
+
+Reviewer: fresh `reviewer` agent. Result: **0 BLOCKER / 0 MAJOR / 8 MINOR**.
+Verified: one `SessionClock` per recording, CoreMotion stamped via
+`timestamp(uptimeSeconds:)` and never clamped, `Date()` only in the header and
+the §3.4 location pair, no row after `stop` (`SampleGate`, synchronous link
+cut-off, `isWritable`/`stopRowQueued`), idempotent `finish()`, stale writers
+ignored by generation, no `@unchecked Sendable`, frozen fixture untouched, no
+on-disk string changed. Core 477/477, app tests 65/65.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R4.1-1 | MINOR | A write failure queued before `stop()`'s Task body runs sees `state == .recording`, calls `end()` which only awaits; `pendingFailure` is never set and a successful final `finish()` ends `idle` with a "write failed" row in the file. | DEFERRED | BACKLOG |
+| R4.1-2 | MINOR | `isStarting` stays true through the 5 s calibration sleep, so Start is refused (`recordingInProgress`) after a stop or failure during calibration. | DEFERRED | BACKLOG |
+| R4.1-3 | MINOR | `quiesce` stops `ReferenceLocationSource` (and its `CLBackgroundActivitySession`) before the final `stats`/`finish()`; a floor stop or failure while locked has no background task covering the tail. | DEFERRED | BACKLOG |
+| R4.1-4 | MINOR | No `willTerminate` handling: swipe-away while recording in the background loses up to 2 s and leaves no row saying why the file ends. | DEFERRED | BACKLOG |
+| R4.1-5 | MINOR | With location unavailable no background session exists, but nothing in the file or the session API says capture may pause while locked. | DEFERRED | BACKLOG |
+| R4.1-6 | MINOR | `LogFileReadError.readFailed` is effectively unreachable: an I/O error at offset 0 surfaces as the raw Foundation error, contrary to the reader doc and LOG_FORMAT; untested. | DEFERRED | BACKLOG |
+| R4.1-7 | MINOR | LOG_FORMAT says every row of a cleanly stopped recording is counted in exactly one `stats` row; the final `stats` row is counted in none. | DEFERRED | BACKLOG |
+| R4.1-8 | MINOR | Writer-queue error row and its 200-event floor are undocumented and untested at App level. | DEFERRED | BACKLOG |
+
+**Loop stopped: no BLOCKER or MAJOR findings.** The reviewer suggested fixing
+R4.1-1…3 in the loop; per the review-loop rules MINORs are deferred instead.
+
+### Run 4 summary
+
+- Rounds run: 1.
+- Findings fixed: 0. Rejected: 0. Deferred: 8 MINOR (R4.1-1…R4.1-8 in BACKLOG).
+- Commits: 57d4de3 + 395aeac (change under review), plus this ledger update.
+- Final tests: `cd Core && swift test` 477 tests in 75 suites, all pass;
+  simulator build green, no Swift warnings; app tests 65 in 11 suites, all
+  pass.

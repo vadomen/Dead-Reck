@@ -15,8 +15,9 @@ of §6. **M2 part 2 done** (sensor sources and simulated twins, `LogStore`,
 `RecordingSession`, launch wiring with a DEBUG `-autoRecordSeconds N`; the
 recording backlog items; see `docs/BACKLOG.md`). A simulated end-to-end
 recording reads with `inspect_log --strict` and no warnings. Its
-hardware-only checks are at the end of §6. M2 awaits `/review-loop` on part 2;
-M3 (UI) is next.
+hardware-only checks are at the end of §6. **M2 done:** part 1 reviewed in
+review run 3 (2 MAJOR fixed, 38db605), part 2 in review run 4 (no BLOCKER or
+MAJOR; MINORs in `docs/BACKLOG.md`). M3 (UI) is next.
 
 **Decisions taken during M1 (by the user, after review):**
 - `NO DATA`: a PID that has answered OK in the session (poll or probe) is
@@ -726,3 +727,10 @@ check. Exit status 0 read, 1 unreadable, 2 usage.
 - **Idle timer:** the screen does not dim while recording; dims normally after stop.
 - **State restoration with a recording running:** the link is created at launch (`AppServices`), so a system relaunch can restore the BLE central. But a relaunch is a new process: the recording that was running is gone (its file ends with a truncated tail at most; no `stop` row) and no new recording starts by itself. Confirm that is what happens, and decide whether auto-resume is wanted (a user decision, not implemented).
 - **Writer queue:** `stats.queueDepthMax` stays small (tens of events) on the phone; a `writer queue peaked …` error row would mean the writer can't keep up.
+
+### Added by review run 4, round 1 (R4.1-x) — not verified
+- **Cached first fix:** whether the first CoreLocation fix after Start is cached with a large `ageS` (a `location` row well before `t = 0`; legal, not clamped). Confirm `inspect_log` tolerates it and note how often it happens.
+- **Location denied / "Allow Once" (R4.1-5):** with location denied, lock for 5 min with and without OBD; do motion and `stats` rows continue on BLE wakes alone? With "Allow Once" plus `CLBackgroundActivitySession`, do fixes continue after lock?
+- **Stop while locked (R4.1-3):** trigger a stop with the phone locked (floor via a debug fake provider, or a forced write failure); confirm the `stop` row, the final `stats` row and an intact tail.
+- **Swipe-away while recording in background (R4.1-4):** measure tail loss and whether `willTerminate` arrives.
+- **Delete path matching on device:** `URL.documentsDirectory` (`/var/mobile/…`) vs `contentsOfDirectory` (possibly `/private/var/…`); confirm Delete works from the M3 list and the "being recorded" guard matches (a mismatch fails safe with `.notInStore` but makes Delete unusable).
