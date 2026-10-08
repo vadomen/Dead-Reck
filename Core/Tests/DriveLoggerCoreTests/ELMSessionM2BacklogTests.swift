@@ -204,7 +204,7 @@ struct ELMSessionEffectivePlanTests {
             rules: [
                 .init(command: "0100", reply: "SEARCHING...\r7E8064100BE3FA813\r7E906410098180001\r\r>", delay: .milliseconds(30), times: 1),
                 .init(command: "0100", reply: "7E906410098180001\r\r>", delay: .milliseconds(30), times: 1),
-                .init(command: "010D0C1", reply: ok7E8, delay: .milliseconds(30), times: 8, requestHeader: "7E0"),
+                .init(command: "010D0C1", reply: ok7E8, delay: .milliseconds(30), times: probeSendsOfChosenCommand + 2, requestHeader: "7E0"),
                 .init(command: "010D0C1", reply: "CAN ERROR\r\r>", delay: .milliseconds(30), times: 3, requestHeader: "7E0"),
                 .init(command: "010D0C", reply: ok7E8, delay: .milliseconds(30), times: 2, requestHeader: "7DF"),
                 .init(command: "010D0C", reply: "CAN ERROR\r\r>", delay: .milliseconds(30), times: 3, requestHeader: "7DF"),

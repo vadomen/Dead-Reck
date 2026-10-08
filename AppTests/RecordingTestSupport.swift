@@ -28,6 +28,10 @@ final class FakeLink: OBDLinkServicing {
     var plan: PollingPlan? = .baseline
     var pollHz: Double = 0
     var console: [ConsoleLine] = []
+    /// Set by the test: what `lastInitEvents` returns.
+    var lastInitEvents: [LinkEvent] = []
+    /// Events `send` delivered on the current stream.
+    @ObservationIgnored private(set) var deliveredLinkEventCount = 0
     @ObservationIgnored private(set) var subscriptions = 0
     @ObservationIgnored private var continuation: AsyncStream<LinkEvent>.Continuation?
 
@@ -50,11 +54,12 @@ final class FakeLink: OBDLinkServicing {
         subscriptions += 1
         let (stream, continuation) = AsyncStream.makeStream(of: LinkEvent.self)
         self.continuation = continuation
+        deliveredLinkEventCount = 0
         return stream
     }
 
     func send(_ event: LinkEvent) {
-        continuation?.yield(event)
+        if case .enqueued = continuation?.yield(event) { deliveredLinkEventCount += 1 }
     }
 }
 

@@ -259,6 +259,12 @@ extension MockELMAdapter.Rule {
     }
 }
 
+/// How often start-up selection sends the winning command when it parses at
+/// both timing levels: selection's samples, then the `ATAT1`/`ATAT2`
+/// comparison's at each level. Scripts that let the probe pass and then fail
+/// polling answer this many times first.
+let probeSendsOfChosenCommand = ELMSession.probeSamples + 2 * ELMSession.adaptiveTimingSamples
+
 /// Short timeouts so state-machine tests need little virtual time.
 extension ELMSessionConfiguration {
     static let fastTest = ELMSessionConfiguration(

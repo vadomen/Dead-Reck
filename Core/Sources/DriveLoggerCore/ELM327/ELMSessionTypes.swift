@@ -292,8 +292,9 @@ public struct ELMAdapterInfo: Hashable, Sendable {
     public var supportedPIDs: String?
     /// The combination start-up selection chose: the first command in
     /// `010D0C1` → `010D0C` → `010D1` → `010D` whose reply carries the
-    /// primary ECU's value for every requested PID, at the faster of
-    /// `ATAT1`/`ATAT2` — with physical addressing if `ATSH7E0` was sent and
+    /// primary ECU's value for every requested PID, at `ATAT1` unless
+    /// `ATAT2` was clearly faster (median at least 10% lower over 10 samples
+    /// each, every reply complete) — with physical addressing if `ATSH7E0` was sent and
     /// answered `OK` and something parsed that way, else functionally
     /// (suffix steps skipped). If nothing parsed, or without probing, the
     /// baseline: functional, no suffix.

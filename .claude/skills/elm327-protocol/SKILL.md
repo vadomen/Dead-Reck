@@ -30,7 +30,7 @@ Things still marked (verify) haven't been checked on the device yet; clones diff
 
 ## Init sequence
 `ATZ` (reset, wait for banner; capture version string) -> `ATE0` (echo off) -> `ATL0` (linefeeds off) -> `ATS0` (spaces off) -> `ATH1` (headers ON: needed to tell ECUs apart) -> `ATSP0` (auto protocol) -> `0100` (forces search) -> `ATDPN` (log detected protocol; `6` on the test car, `A6` when auto-detected) -> `ATRV` (battery voltage) -> **`ATSH7E0`** (physical addressing to the engine ECU), only if `ATDPN` is `6`/`A6`/`8`/`A8` and `0100` had a `7E8` line. A 3-digit `ATSH` means header `00 0x yz`, which isn't an OBD ID on 29-bit CAN or K-line/J1850. Physical addressing engages only if it answers `OK`. If it doesn't, stay functional, record a note and carry on (see recipe step 4). If nothing parses at 7E0, send `ATSH7DF` and select again functionally.
-Optional speed tuning, try and measure: `ATAT2` (aggressive adaptive timing). If anything misbehaves, fall back to `ATAT1`.
+Optional speed tuning, try and measure: `ATAT2` (aggressive adaptive timing). **Keep `ATAT1` unless `ATAT2` is clearly better**: the session sends the chosen poll command 10 times at `ATAT1` and 10 times at `ATAT2` and keeps `ATAT2` only if every reply parses and its median latency is at least 10% lower (`ELMSession.adaptiveTimingSamples`, `adaptiveTimingMinimumGain`); a `link` note `adaptive timing: …` records the decision. Bench 2026-10-08: steady state identical at both levels (59 ms median, 16.4 Hz), and a 3-sample probe had flipped to `ATAT2` on noise.
 
 ## Recipe for the test car (bench-verified)
 1. Finish init with `ATSH7E0` → `OK`. From now on requests go to the engine ECU only; `7E9` stays silent.
@@ -69,7 +69,7 @@ Cheap clones: 3-10 Hz for one PID; with `ATAT2` + response-count suffix sometime
 ## Field checklist (hardware only - cannot be tested in the simulator)
 1. Parked, ignition ON, engine off: adapter visible in scan as `IOS-Vlink`, GATT table logged, `ATZ` banner (`ELM327 v2.3` expected), `ATDPN` = 6, `ATRV` logged (11–12 V on this clone, under-reads), `ATSH7E0` → `OK`. *Done 2026-10-07 in Car Scanner, except the GATT table and the app's own init.*
 2. `010D` returns `00` speed; `010C` returns 0 RPM with engine off, ~600-800 with engine idling. *Done: 663 rpm at idle via `010D0C1`.*
-3. Measure the poll rate (Hz) of `010D0C1` after `ATSH7E0`, and `ATAT1` vs `ATAT2`. Keep the fastest stable combo. *Not yet measured.*
+3. Measure the poll rate (Hz) of `010D0C1` after `ATSH7E0`, and `ATAT1` vs `ATAT2`. Keep the fastest stable combo. *Done 2026-10-08: 16.4 Hz, p50 59 ms either way; `ATAT2` cut no replies short. Since then the session keeps `ATAT1` unless `ATAT2` is ≥ 10% faster over 10 samples each: check the `adaptive timing:` note says `ATAT1 kept` on this car.*
 4. Lock the screen for 5 minutes while polling: rows must continue (check `stats`).
 5. Unplug/replug the adapter while recording: app must reconnect and re-init on its own and log both events.
 6. `ATDPN` after the app's own `ATSP0` (expect `A6`); `ATSH7E0` → `OK`; with 7E0, replies only from `7E8`. On a non-11-bit car, `ATSH7E0` must not appear in the `elm` rows.

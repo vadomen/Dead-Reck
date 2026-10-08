@@ -56,12 +56,17 @@ struct ReconnectBackoff: Hashable, Sendable {
 ///   in the background too.
 /// - Every session event and BLE transition goes to the `linkEvents()`
 ///   subscriber, in the order this service handles them, and to the console.
+/// - The latest connection's BLE connect and initialisation are also kept in
+///   `lastInitEvents` (see `OBDLinkServicing.lastInitEvents` for contents,
+///   lifetime and the recorder's dedup contract).
 @MainActor
 @Observable
 class OBDLinkService: OBDLinkServicing {
     static let restoreIdentifier = "DriveLogger.OBDLink"
     static let rememberedAdapterKey = "OBDLink.rememberedAdapterID"
     static let consoleLimit = 500
+    /// Default bound of `lastInitEvents`.
+    static let defaultInitEventLimit = 1_000
 
     private(set) var state: OBDLinkState = .idle
     private(set) var discovered: [DiscoveredAdapter] = []
@@ -72,6 +77,11 @@ class OBDLinkService: OBDLinkServicing {
     private(set) var console: [ConsoleLine] = []
     /// The BLE layer's state, as written in `link` rows.
     private(set) var bleState: LinkSample.BLEState = .idle
+
+    /// See `OBDLinkServicing.lastInitEvents`.
+    var lastInitEvents: [LinkEvent] { initCapture.events }
+    /// See `OBDLinkServicing.deliveredLinkEventCount`.
+    @ObservationIgnored private(set) var deliveredLinkEventCount = 0
 
     @ObservationIgnored private let central: any BLECentralClient
     @ObservationIgnored private let defaults: UserDefaults
@@ -104,6 +114,7 @@ class OBDLinkService: OBDLinkServicing {
     @ObservationIgnored private var bleRecord: AdapterRecord?
     @ObservationIgnored private var lastInfo: ELMAdapterInfo?
     @ObservationIgnored private var nextConsoleID = 0
+    @ObservationIgnored private var initCapture: InitCapture
 
     /// - Parameters:
     ///   - central: nil creates the CoreBluetooth `BLECentral` with
@@ -112,18 +123,21 @@ class OBDLinkService: OBDLinkServicing {
     ///   - defaults: where `rememberedAdapterID` is kept.
     ///   - uptime: stamps the service's own transitions and the sessions;
     ///     the same timebase as the transport.
+    ///   - initEventLimit: bound of `lastInitEvents`; smaller in tests.
     init(
         central: (any BLECentralClient)? = nil,
         defaults: UserDefaults = .standard,
         uptime: any UptimeSource = SystemUptimeSource(),
         sessionConfiguration: ELMSessionConfiguration = .default,
-        backoff: ReconnectBackoff = .default
+        backoff: ReconnectBackoff = .default,
+        initEventLimit: Int = OBDLinkService.defaultInitEventLimit
     ) {
         self.central = central ?? BLECentral(restoreIdentifier: Self.restoreIdentifier, uptime: uptime)
         self.defaults = defaults
         self.uptime = uptime
         self.sessionConfiguration = sessionConfiguration
         self.backoff = backoff
+        initCapture = InitCapture(limit: initEventLimit)
         rememberedAdapterID = defaults.string(forKey: Self.rememberedAdapterKey).flatMap(UUID.init(uuidString:))
         // Reconnected automatically once Bluetooth is on.
         target = rememberedAdapterID
@@ -225,7 +239,15 @@ class OBDLinkService: OBDLinkServicing {
         subscriber?.finish()
         let (stream, continuation) = AsyncStream.makeStream(of: LinkEvent.self)
         subscriber = continuation
+        deliveredLinkEventCount = 0
         return stream
+    }
+
+    /// Yields to the `linkEvents()` subscriber, counting what it accepted.
+    private func deliver(_ event: LinkEvent) {
+        if case .enqueued = subscriber?.yield(event) {
+            deliveredLinkEventCount += 1
+        }
     }
 
     // MARK: BLE events
@@ -352,6 +374,7 @@ class OBDLinkService: OBDLinkServicing {
     private func startSession(on transport: any ELMTransport) {
         linkToken += 1
         let token = linkToken
+        initCapture.sessionStarted(token: token)
         state = .initialising
         Task {
             // The previous connection's session must be gone, and its last
@@ -472,7 +495,9 @@ class OBDLinkService: OBDLinkServicing {
         }
         // After the state above, so a subscriber reading `adapter` when it
         // handles an `.adapter` event sees this one's BLE half.
-        subscriber?.yield(.session(event))
+        let linkEvent = LinkEvent.session(event)
+        initCapture.session(linkEvent, token: token)
+        deliver(linkEvent)
         appendConsole(for: event)
         if current, case .needsReconnect = event {
             requestReconnect(reason: "ELM session asked for a reconnect")
@@ -504,7 +529,9 @@ class OBDLinkService: OBDLinkServicing {
         let old = bleState
         bleState = new
         let stamp = at ?? uptime.uptimeSeconds
-        subscriber?.yield(.ble(from: old, to: new, reason: reason, uptime: stamp))
+        let event = LinkEvent.ble(from: old, to: new, reason: reason, uptime: stamp)
+        initCapture.ble(event, from: old, to: new)
+        deliver(event)
         appendConsole(.status, "ble: \(old.rawValue) → \(new.rawValue)" + (reason.map { " (\($0))" } ?? ""), stamp)
     }
 
@@ -566,5 +593,89 @@ class OBDLinkService: OBDLinkServicing {
         if left != right { return left }
         if lhs.rssi != rhs.rssi { return lhs.rssi > rhs.rssi }
         return lhs.name < rhs.name
+    }
+}
+
+/// The events behind `lastInitEvents`: the current connection attempt's BLE
+/// transitions up to `connected`, then the latest initialisation of that
+/// connection's session, from its first event to its transition into
+/// `polling` or `failed`. Fed by `OBDLinkService` in delivery order.
+///
+/// Session events are matched by the token of the session they come from,
+/// not by whether that session is still current: the end of a failed init
+/// (its `→ failed`) may be handled after the service has already dropped
+/// the link, and still belongs here. A previous connection's events, which
+/// can arrive after a new attempt has started, never match.
+struct InitCapture {
+    let limit: Int
+    private var connection: [LinkEvent] = []
+    private var initialisation: [LinkEvent] = []
+    /// Still collecting BLE transitions (`connecting` … `connected`).
+    private var connecting = false
+    /// The session of the captured connection; nil until it exists.
+    private var sessionToken: Int?
+    /// Collecting the init: from the session's first event, or the start of
+    /// a re-init, until `polling` or `failed`.
+    private var initialising = false
+
+    init(limit: Int) {
+        self.limit = max(limit, 1)
+    }
+
+    var events: [LinkEvent] { connection + initialisation }
+
+    mutating func ble(_ event: LinkEvent, from: LinkSample.BLEState, to: LinkSample.BLEState) {
+        if to == .restoring || (to == .connecting && from != .restoring) {
+            // A new connection attempt: everything starts again.
+            connection = [event]
+            initialisation = []
+            connecting = true
+            sessionToken = nil
+            initialising = false
+        } else if connecting {
+            connection.append(event)
+            // `connected` completes the part; anything else but discovery
+            // ends a failed attempt.
+            if ![.connecting, .discovering].contains(to) { connecting = false }
+        }
+        trim()
+    }
+
+    /// The connected transport got its session (`token`); its first event
+    /// starts the init.
+    mutating func sessionStarted(token: Int) {
+        sessionToken = token
+        initialisation = []
+        initialising = true
+    }
+
+    mutating func session(_ event: LinkEvent, token: Int) {
+        guard token == sessionToken, case .session(let sessionEvent) = event else { return }
+        switch sessionEvent {
+        case .pollRate, .needsReconnect:
+            return
+        case .state(let from, let to, _, _) where from != to && !initialising && (to == .resetting || to == .reinitialising):
+            // A new init on this connection replaces the last one.
+            initialisation = []
+            initialising = true
+        default:
+            break
+        }
+        guard initialising else { return }
+        initialisation.append(event)
+        if case .state(let from, let to, _, _) = sessionEvent, from != to, to == .polling || to == .failed {
+            initialising = false
+        }
+        trim()
+    }
+
+    /// Drops the oldest events beyond `limit`: the connection part first,
+    /// then the start of the init.
+    private mutating func trim() {
+        let excess = connection.count + initialisation.count - limit
+        guard excess > 0 else { return }
+        let fromConnection = min(excess, connection.count)
+        connection.removeFirst(fromConnection)
+        initialisation.removeFirst(excess - fromConnection)
     }
 }

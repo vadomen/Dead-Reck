@@ -265,18 +265,19 @@ struct ELMSessionBenchPollingTests {
 
     @Test("A re-init re-applies ATSH7E0 and polling resumes with 010D0C1 (after failures or a write-off)", arguments: [false, true])
     func reinitReappliesHeader(writeOff: Bool) async throws {
-        // Init sends 010D0C1 six times: three samples at ATAT1, three at ATAT2.
+        // Init sends 010D0C1 `probeSendsOfChosenCommand` times: selection's
+        // samples, then the ATAT1/ATAT2 comparison's.
         let failure = writeOff ? benchRule("010D0C1", nil, header: "7E0", times: 1)
             : benchRule("010D0C1", "CAN ERROR\r\r>", header: "7E0", times: 3)
         let harness = SessionHarness(
             rules: [
-                benchRule("010D0C1", BenchTranscript.speedRPMPhysicalSuffix010D0C1 + ">", header: "7E0", times: 6),
+                benchRule("010D0C1", BenchTranscript.speedRPMPhysicalSuffix010D0C1 + ">", header: "7E0", times: probeSendsOfChosenCommand),
                 failure,
             ] + MockELMAdapter.Rule.benchCar,
             configuration: Self.probing
         )
         let info = try await harness.initialise()
-        #expect(await harness.mock.sentCommands.filter { $0 == "010D0C1" }.count == 6)
+        #expect(await harness.mock.sentCommands.filter { $0 == "010D0C1" }.count == probeSendsOfChosenCommand)
         try await harness.session.startPolling(info.plan)
         await harness.run { await $0.readings.count >= 2 }
         try await harness.stopPolling()
@@ -297,7 +298,7 @@ struct ELMSessionBenchPollingTests {
     func reinitHeaderRefused() async throws {
         let harness = SessionHarness(
             rules: [
-                benchRule("010D0C1", BenchTranscript.speedRPMPhysicalSuffix010D0C1 + ">", header: "7E0", times: 6),
+                benchRule("010D0C1", BenchTranscript.speedRPMPhysicalSuffix010D0C1 + ">", header: "7E0", times: probeSendsOfChosenCommand),
                 benchRule("010D0C1", "CAN ERROR\r\r>", header: "7E0", times: 3),
                 benchRule("ATSH7E0", "OK\r\r>", times: 1),
                 refuseATSH7E0,

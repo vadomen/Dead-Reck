@@ -380,7 +380,8 @@ public actor ELMSession {
     public private(set) var state: ELMState
     public private(set) var nextSeq: Int
     /// ATZ → ATE0 → ATL0 → ATS0 → ATH1 → ATSP0 → 0100 (10 s) → ATDPN → ATRV,
-    /// then probes multi-PID / count suffix / ATAT2 and picks the fastest that parses.
+    /// then probes multi-PID / count suffix and picks the first that parses; keeps ATAT1
+    /// unless ATAT2's median is ≥ 10% lower over 10 samples each (M4).
     public func initialise() async throws(ELMSessionError) -> ELMAdapterInfo
     public func startPolling(_ plan: PollingPlan) throws(ELMSessionError)
     public func stopPolling() async

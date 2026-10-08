@@ -64,8 +64,23 @@ import Foundation
 ///   → `010D1` → `010D` (single-PID steps also send `010C1` / `010C`) and
 ///   takes the first whose every sample carries the primary ECU's value for
 ///   every requested PID. Under functional addressing the suffix steps are
-///   skipped: `010D0C` → `010D`. Then `ATAT2` is measured against `ATAT1`
-///   with the chosen command and kept only if faster.
+///   skipped: `010D0C` → `010D`. Selection sends each command
+///   `probeSamples` (3) times.
+/// - **`ATAT1` unless `ATAT2` is clearly better** (M4 bench: a 3-sample
+///   probe flipped to `ATAT2` on a 4.6 ms edge that the steady state did not
+///   show). The chosen command is sent `adaptiveTimingSamples` (10) times at
+///   `ATAT1`, then 10 times at `ATAT2`, back to back. `ATAT2` is kept only
+///   if all 10 replies parse with the primary ECU's value for every PID (a
+///   reply cut short rejects it) and its **median** cost is at least
+///   `adaptiveTimingMinimumGain` (10%) below `ATAT1`'s; otherwise the
+///   adapter goes back to `ATAT1`. About 20 extra polls, ~1.2 s at the bench
+///   car's 60 ms. A note (`from == to`) records the decision: `adaptive
+///   timing: ATAT2 kept, median <a> ms at ATAT2 vs <b> ms at ATAT1 (10
+///   samples each; ATAT2 must be at least 10% lower)`, the same with `ATAT1 kept, …`,
+///   `adaptive timing: ATAT1 kept, ATAT2 replies did not parse`, `adaptive
+///   timing: ATAT1 kept, ATAT2 not accepted (<outcome>)`, or `adaptive
+///   timing: ATAT1 kept, ATAT1 replies did not parse in the timing
+///   comparison; ATAT2 not tried`.
 /// - Physical addressing is abandoned if it reaches nothing: when no step
 ///   parses under `7E0` (or the only one that does has lost vehicle speed
 ///   to the NO DATA rule), the session sends `ATSH7DF` (phase `probe`) and
@@ -233,8 +248,29 @@ public actor ELMSession {
     /// session for the next connection.
     public private(set) var nextSeq: Int
 
-    /// Probe samples per candidate command; the median latency is compared.
+    /// Probe samples per candidate command during selection (does it parse
+    /// from the primary ECU?); their median latency is the candidate's cost.
     static let probeSamples = 3
+
+    /// Samples per timing level when `ATAT2` is compared with `ATAT1`: the
+    /// chosen command is sent this many times at `ATAT1`, then this many at
+    /// `ATAT2`, back to back. Ten each costs about 1.2 s at the bench car's
+    /// 60 ms per poll. The 3 selection samples are not reused: the first
+    /// poll after a header change can be slow, and one slow sample in three
+    /// is what flipped the bench re-init to `ATAT2` (M4).
+    static let adaptiveTimingSamples = 10
+
+    /// `ATAT2` is kept only if its median cost is at least this fraction
+    /// below `ATAT1`'s (`isClearlyFaster`). The bench car's steady state was
+    /// identical at both levels (59.3 vs 59.2 ms median), so a smaller edge
+    /// is noise, and `ATAT2` risks replies cut short for no gain.
+    static let adaptiveTimingMinimumGain = 0.10
+
+    /// Whether a median cost of `atat2` at `ATAT2` beats `atat1` at `ATAT1`
+    /// by at least `adaptiveTimingMinimumGain`.
+    static func isClearlyFaster(_ atat2: Double, than atat1: Double) -> Bool {
+        atat2 <= atat1 * (1 - adaptiveTimingMinimumGain)
+    }
 
     // MARK: Link state
 
@@ -353,7 +389,8 @@ public actor ELMSession {
     /// reply to `0100`), then (if configured) start-up selection: the first
     /// of `010D0C1` → `010D0C` → `010D1` → `010D` that parses (suffix steps
     /// only if `ATSH7E0` was answered `OK`; functionally again if nothing
-    /// parses physically), at the faster of `ATAT1` and `ATAT2`. See
+    /// parses physically), at `ATAT1` unless `ATAT2` is clearly faster
+    /// (`adaptiveTimingSamples`, `adaptiveTimingMinimumGain`). See
     /// "Addressing and start-up selection".
     ///
     /// `ATZ` waits up to `resetTimeout`, the `0100` search `searchTimeout`,
@@ -755,10 +792,11 @@ public actor ELMSession {
     /// ever answered NO DATA is dropped by the functional pass only if it
     /// answers NO DATA there too.
     ///
-    /// The chosen candidate is then measured at `ATAT2`, kept only if
-    /// strictly faster (ties keep `ATAT1`). Cost per speed sample:
-    /// `latency(all)` for multi-PID, `latency(speed) + latency(others) /
-    /// rpmEvery` for single PIDs. Nothing parses → the functional baseline.
+    /// The chosen candidate is then timed at `ATAT1` and at `ATAT2`
+    /// (`finishSelection`); `ATAT2` is kept only if clearly faster. Cost per
+    /// speed sample, from median latencies: `latency(all)` for multi-PID,
+    /// `latency(speed) + latency(others) / rpmEvery` for single PIDs.
+    /// Nothing parses → the functional baseline.
     /// Leaves the adapter at the chosen timing level. The addressing is
     /// read after `ATAT1`, which settles a late `ATSH7E0` reply.
     private func probe() async throws(ELMSessionError) -> PollingPlan {
@@ -827,21 +865,55 @@ public actor ELMSession {
     }
 
     /// `ATAT2` against `ATAT1` for the chosen candidate, then the plan.
+    ///
+    /// The candidate is sent `adaptiveTimingSamples` times at `ATAT1` (where
+    /// the adapter is after selection), then, if `ATAT2` is answered `OK`,
+    /// as many times at `ATAT2`. `ATAT2` is kept only if every sample parsed
+    /// with the primary ECU's value for every PID and its median cost is at
+    /// least `adaptiveTimingMinimumGain` below `ATAT1`'s
+    /// (`isClearlyFaster`); otherwise the adapter goes back to `ATAT1`. The
+    /// decision is recorded as a note (`.state`, `from == to`) starting
+    /// `adaptive timing: `.
     private func finishSelection(
         _ chosen: (candidate: Candidate, cost: Double),
         pids: [OBDPID],
         header: CANRequestHeader?
     ) async throws(ELMSessionError) -> PollingPlan {
         let rpmEvery = PollingPlan.baseline.rpmEvery
+        let samples = Self.adaptiveTimingSamples
         var level = 1
-        if try await setAdaptiveTiming(2, phase: .probe) == .ok,
-           case .valid(let cost) = try await measure(chosen.candidate, pids: pids, rpmEvery: rpmEvery, mayDrop: false),
-           cost < chosen.cost {
-            level = 2
+        var sentATAT2 = false
+        let note: String
+        if case .valid(let atat1) = try await measure(
+            chosen.candidate, pids: pids, rpmEvery: rpmEvery, mayDrop: false, samples: samples
+        ) {
+            let outcome = try await setAdaptiveTiming(2, phase: .probe)
+            sentATAT2 = true
+            if outcome != .ok {
+                note = "ATAT1 kept, ATAT2 not accepted (\(outcome.rawValue))"
+            } else if case .valid(let atat2) = try await measure(
+                chosen.candidate, pids: pids, rpmEvery: rpmEvery, mayDrop: false, samples: samples
+            ) {
+                let comparison = "median \(Self.milliseconds(atat2)) at ATAT2 vs \(Self.milliseconds(atat1)) at ATAT1 "
+                    + "(\(samples) samples each; ATAT2 must be at least \(Int((Self.adaptiveTimingMinimumGain * 100).rounded()))% lower)"
+                if Self.isClearlyFaster(atat2, than: atat1) {
+                    level = 2
+                    note = "ATAT2 kept, " + comparison
+                } else {
+                    note = "ATAT1 kept, " + comparison
+                }
+            } else {
+                note = "ATAT1 kept, ATAT2 replies did not parse"
+            }
+        } else {
+            note = "ATAT1 kept, ATAT1 replies did not parse in the timing comparison; ATAT2 not tried"
         }
-        if adaptiveTimingLevel != level {
+        // Back to ATAT1 after any ATAT2 that wasn't kept: a timed-out ATAT2
+        // may still have taken effect.
+        if adaptiveTimingLevel != level || (sentATAT2 && level == 1) {
             _ = try await setAdaptiveTiming(level, phase: .probe)
         }
+        noteState(reason: "adaptive timing: " + note)
         return PollingPlan(
             pids: pids,
             multiPID: chosen.candidate.multiPID,
@@ -853,22 +925,23 @@ public actor ELMSession {
         )
     }
 
-    /// Sends a candidate's commands, `probeSamples` times each, stopping at
-    /// the first that doesn't parse.
+    /// Sends a candidate's commands, `samples` times each, stopping at the
+    /// first that doesn't parse. Each command's cost is its median latency.
     private func measure(
         _ candidate: Candidate,
         pids: [OBDPID],
         rpmEvery: Int,
-        mayDrop: Bool
+        mayDrop: Bool,
+        samples: Int = probeSamples
     ) async throws(ELMSessionError) -> CandidateResult {
         if candidate.multiPID {
             let command = ELM327Command.currentDataMany(pids, responseCount: candidate.responseCount)
-            guard case .valid(let latency) = try await measure(command, pids: pids) else { return .invalid }
+            guard case .valid(let latency) = try await measure(command, pids: pids, samples: samples) else { return .invalid }
             return .valid(cost: latency)
         }
         var latencies: [Double] = []
         for pid in pids {
-            switch try await measure(.currentDataMany([pid], responseCount: candidate.responseCount), pids: [pid]) {
+            switch try await measure(.currentDataMany([pid], responseCount: candidate.responseCount), pids: [pid], samples: samples) {
             case .valid(let latency):
                 latencies.append(latency)
             case .noData where mayDrop && candidate.responseCount == nil && isDroppableOnNoData(pid):
@@ -899,9 +972,10 @@ public actor ELMSession {
         return plan
     }
 
-    private func measure(_ command: ELM327Command, pids: [OBDPID]) async throws(ELMSessionError) -> ProbeResult {
+    /// `command` sent `samples` times; its median latency, or why not.
+    private func measure(_ command: ELM327Command, pids: [OBDPID], samples: Int) async throws(ELMSessionError) -> ProbeResult {
         var latencies: [Double] = []
-        for _ in 0..<Self.probeSamples {
+        for _ in 0..<max(samples, 1) {
             let headers = headersOn
             let (exchange, decoded) = try await perform(command, phase: .probe, timeout: configuration.commandTimeout) { raw in
                 Self.interpretPoll(raw, pids: pids, headers: headers)
@@ -914,7 +988,20 @@ public actor ELMSession {
             guard fromPrimary.isSuperset(of: pids) else { return .invalid }
             latencies.append(exchange.completedUptime - exchange.requestUptime)
         }
-        return .valid(latency: latencies.sorted()[latencies.count / 2])
+        return .valid(latency: Self.median(latencies))
+    }
+
+    /// Median of a non-empty list; the mean of the middle two for an even
+    /// count.
+    static func median(_ values: [Double]) -> Double {
+        let sorted = values.sorted()
+        let middle = sorted.count / 2
+        return sorted.count % 2 == 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle]
+    }
+
+    /// Seconds as milliseconds with one decimal, for notes: `59.3 ms`.
+    static func milliseconds(_ seconds: Double) -> String {
+        String(format: "%.1f ms", seconds * 1_000)
     }
 
     /// Sends `ATATn`; on `OK` records the adapter's new level.

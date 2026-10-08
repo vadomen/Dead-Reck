@@ -212,11 +212,11 @@ struct ELMSessionProbeTests {
 
     @Test("ATAT2 is kept when it makes polls faster")
     func aggressiveTimingWins() async throws {
-        // At level 1 every PID command takes 95 ms; once ATAT2 is on, 50 ms.
-        // The suffix and multi-PID are refused.
+        // At level 1 every PID command takes 95 ms; once ATAT2 is on, 50 ms
+        // (the mock tracks the level). The suffix and multi-PID are refused.
         let level1: [MockELMAdapter.Rule] = [
-            .init(command: "010D", reply: "7E803410D3C\r\r>", delay: .milliseconds(95), times: 3),
-            .init(command: "010C", reply: "7E804410C0BB8\r\r>", delay: .milliseconds(95), times: 3),
+            .init(command: "010D", reply: "7E803410D3C\r\r>", delay: .milliseconds(95), adaptiveTiming: 1),
+            .init(command: "010C", reply: "7E804410C0BB8\r\r>", delay: .milliseconds(95), adaptiveTiming: 1),
         ]
         let refused: [MockELMAdapter.Rule] = ["010D1", "010C1", "010D0C", "010D0C1"].map {
             .init(command: $0, reply: "?\r\r>", delay: .milliseconds(5))

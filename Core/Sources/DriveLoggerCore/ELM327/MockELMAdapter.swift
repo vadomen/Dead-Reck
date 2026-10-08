@@ -17,6 +17,11 @@ import Foundation
 /// A rule can be limited to one header, so the same command can answer
 /// differently before and after `ATSH7E0`, as on the bench car.
 ///
+/// It also tracks the adaptive timing level: `1` after `ATZ` (the ELM327
+/// default), `n` once `ATATn` is answered `OK`. A rule can be limited to one
+/// level, so a test can script how fast (or how completely) the adapter
+/// answers at `ATAT1` and at `ATAT2`.
+///
 /// An actor, so its mutable script state needs no locks.
 public actor MockELMAdapter: ELMTransport {
     /// One scripted behaviour: when a command matching `command` arrives, reply
@@ -37,6 +42,10 @@ public actor MockELMAdapter: ELMTransport {
         /// (`7DF` = functional, the state after `ATZ`; `7E0` after `ATSH7E0`
         /// was answered `OK`). Nil = any.
         public var requestHeader: String?
+        /// The rule only matches while the adapter's adaptive timing level
+        /// is this (`1` after `ATZ`, `n` after `ATATn` was answered `OK`).
+        /// Nil = any.
+        public var adaptiveTiming: Int?
 
         public init(
             command: String,
@@ -44,7 +53,8 @@ public actor MockELMAdapter: ELMTransport {
             delay: Duration = .milliseconds(30),
             fragmentSizes: [Int] = [],
             times: Int? = nil,
-            requestHeader: String? = nil
+            requestHeader: String? = nil,
+            adaptiveTiming: Int? = nil
         ) {
             self.command = command
             self.reply = reply
@@ -52,6 +62,7 @@ public actor MockELMAdapter: ELMTransport {
             self.fragmentSizes = fragmentSizes
             self.times = times
             self.requestHeader = requestHeader
+            self.adaptiveTiming = adaptiveTiming
         }
     }
 
@@ -78,6 +89,10 @@ public actor MockELMAdapter: ELMTransport {
     /// CAN header requests currently go out with: `7DF` after `ATZ` (and
     /// initially), else the header of the last `ATSH` answered `OK`.
     public private(set) var requestHeader = CANRequestHeader.functional.rawValue
+
+    /// Adaptive timing level: `1` after `ATZ` (and initially), else the
+    /// level of the last `ATATn` answered `OK`.
+    public private(set) var adaptiveTiming = 1
 
     /// - Parameters:
     ///   - rules: first match wins; unmatched commands get `?\r\r>`.
@@ -168,14 +183,20 @@ public actor MockELMAdapter: ELMTransport {
         continuation.finish()
     }
 
-    /// `ATZ` resets to functional (on receipt, like a real reset); `ATSHxxx`
-    /// takes effect when its scripted reply is `OK`.
+    /// `ATZ` resets to functional and `ATAT1` (on receipt, like a real
+    /// reset); `ATSHxxx` and `ATATn` take effect when their scripted reply
+    /// is `OK`.
     private func updateAddressing(_ wire: String, reply: String?) {
         if wire == ELM327Command.reset.wireFormat {
             requestHeader = CANRequestHeader.functional.rawValue
-        } else if wire.hasPrefix("ATSH"), let reply,
-                  (try? ELM327ResponseParser.textReply(to: wire, raw: reply)) == .ok {
+            adaptiveTiming = 1
+            return
+        }
+        guard let reply, (try? ELM327ResponseParser.textReply(to: wire, raw: reply)) == .ok else { return }
+        if wire.hasPrefix("ATSH") {
             requestHeader = String(wire.dropFirst(4))
+        } else if wire.hasPrefix("ATAT"), let level = Int(wire.dropFirst(4)) {
+            adaptiveTiming = level
         }
     }
 
@@ -184,6 +205,7 @@ public actor MockELMAdapter: ELMTransport {
         guard let index = rules.firstIndex(where: {
             $0.command.uppercased() == upper && ($0.times ?? 1) > 0
                 && ($0.requestHeader.map { $0.uppercased() == requestHeader } ?? true)
+                && ($0.adaptiveTiming.map { $0 == adaptiveTiming } ?? true)
         }) else {
             return Rule(command: wire, reply: "?\r\r>", delay: .zero)
         }

@@ -238,6 +238,27 @@ struct MockELMAdapterAddressingTests {
         ])
         #expect(try await asker.ask("010D0C1") == "?\r\r")
     }
+
+    @Test("Adaptive timing: starts at 1; ATATn answered OK switches the level; a refusal doesn't; ATZ resets it")
+    func adaptiveTimingState() async throws {
+        let asker = MockAsker(rules: [
+            .init(command: "ATAT0", reply: "?\r\r>", delay: .zero),
+            .init(command: "ATAT1", reply: "OK\r\r>", delay: .zero),
+            .init(command: "ATAT2", reply: "OK\r\r>", delay: .zero),
+            .init(command: "010D", reply: "7E803410D01\r\r>", delay: .zero, adaptiveTiming: 1),
+            .init(command: "010D", reply: "7E803410D02\r\r>", delay: .zero, adaptiveTiming: 2),
+        ] + Self.rules)
+        #expect(await asker.mock.adaptiveTiming == 1)
+        #expect(try await asker.ask("010D") == "7E803410D01\r\r")
+        #expect(try await asker.ask("ATAT2") == "OK\r\r")
+        #expect(await asker.mock.adaptiveTiming == 2)
+        #expect(try await asker.ask("010D") == "7E803410D02\r\r")
+        #expect(try await asker.ask("ATAT0") == "?\r\r")
+        #expect(await asker.mock.adaptiveTiming == 2)
+        #expect(try await asker.ask("ATZ") == "ELM327 v2.3\r\r")
+        #expect(await asker.mock.adaptiveTiming == 1)
+        #expect(try await asker.ask("010D") == "7E803410D01\r\r")
+    }
 }
 
 @Suite("MockELMAdapter bench-car script", .timeLimit(.minutes(1)))

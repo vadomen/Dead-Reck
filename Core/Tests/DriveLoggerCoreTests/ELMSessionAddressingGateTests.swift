@@ -226,7 +226,7 @@ struct ELMSessionAddressingGateTests {
             rules: [
                 .init(command: "0100", reply: "SEARCHING...\r7E8064100BE3FA813\r7E906410098180001\r\r>", delay: .milliseconds(30), times: 1),
                 .init(command: "0100", reply: "7E906410098180001\r\r>", delay: .milliseconds(30)),
-                .init(command: "010D0C1", reply: "7E806410D3C0C0BB8\r\r>", delay: .milliseconds(30), times: 6, requestHeader: "7E0"),
+                .init(command: "010D0C1", reply: "7E806410D3C0C0BB8\r\r>", delay: .milliseconds(30), times: probeSendsOfChosenCommand, requestHeader: "7E0"),
                 .init(command: "010D0C1", reply: "CAN ERROR\r\r>", delay: .milliseconds(30), times: 3, requestHeader: "7E0"),
             ] + MockELMAdapter.Rule.touareg,
             configuration: Self.probing
