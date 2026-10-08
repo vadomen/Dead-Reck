@@ -685,6 +685,15 @@ check. Exit status 0 read, 1 unreadable, 2 usage.
 - **Multi-PID works:** `010D0C` / `010D0C1` → speed and RPM in one frame (663 rpm at idle).
 - **OBDonUDS (`22F40D`) not needed:** `NO DATA`, while mode 01 works.
 
+### Resolved by the M4 bench test (2026-10-08, our app, `docs/BENCH_TEST_2026-10-08.md`)
+- **GATT:** Vgate layout `E7810A71-…` / `BEF8D6C9-…` (one characteristic, notify + write), `withResponse`, `maxWriteLength` 182. No write failures.
+- **Poll plan and Hz:** `010D0C1` with `requestHeader` `7E0`; 16.4–16.5 exchanges/s, p50 latency 59 ms, p95 74 ms; `7E8` replies only. `ATDPN` → `A6` after our `ATSP0`; `ATSH7E0` → `OK` (re-init; start-up init not in the file).
+- **`ATAT1` vs `ATAT2`:** no difference in steady state (59 ms median, 16.4 Hz either way); `ATAT2` does not cut replies short.
+- **Lock:** 165 s locked (not 5 min) with no loss in any kind and `stats` every 10 s.
+- **Unplug/replug:** BLE timeout → one reconnect attempt → connected +23.1 s → re-init with `ATSH7E0` → polling +30.3 s; `seq` continuous.
+- **Also:** `ATZ` banner `ELM327 v2.3`; `ATRV` 12.2 V / 11.8 V; write-off/re-init only from the unplug; no `7E9` under physical addressing.
+- **Still open from it:** start-up init not recorded; location `Code=1` error with no authorization info (both fixed in M4). The ≥ 5 min lock was not run; by the user's decision it is superseded by M5's ≥ 1 h screen-locked drive.
+
 ### Still open (M4 unless noted)
 - **Real poll Hz** of `010D0C1` after `ATSH7E0`, and which plan start-up selection picks with our own init (the bench used Car Scanner's init).
 - **`ATAT1` vs `ATAT2`:** which is faster and stable, and whether `ATAT2` cuts replies short.
