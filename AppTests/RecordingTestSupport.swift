@@ -1,3 +1,4 @@
+import CoreLocation
 import DriveLoggerCore
 import Foundation
 import Observation
@@ -29,9 +30,26 @@ final class FakeLink: OBDLinkServicing {
     var pollHz: Double = 0
     var console: [ConsoleLine] = []
     /// Set by the test: what `lastInitEvents` returns.
-    var lastInitEvents: [LinkEvent] = []
+    var lastInitEvents: [LinkEvent] {
+        get {
+            takeSnapshotHook()
+            return storedInitEvents
+        }
+        set { storedInitEvents = newValue }
+    }
     /// Events `send` delivered on the current stream.
-    @ObservationIgnored private(set) var deliveredLinkEventCount = 0
+    var deliveredLinkEventCount: Int {
+        takeSnapshotHook()
+        return storedDeliveredCount
+    }
+    /// Run once, the first time the recorder reads `lastInitEvents` or
+    /// `deliveredLinkEventCount` after it is set (whichever it reads first):
+    /// lets a test deliver events at that instant, so they sit in the
+    /// recorder's stream buffer unconsumed while it takes its snapshot — the
+    /// race the M4 dedup contract must handle.
+    @ObservationIgnored var onNextInitSnapshot: (@MainActor () -> Void)?
+    @ObservationIgnored private var storedInitEvents: [LinkEvent] = []
+    @ObservationIgnored private var storedDeliveredCount = 0
     @ObservationIgnored private(set) var subscriptions = 0
     @ObservationIgnored private var continuation: AsyncStream<LinkEvent>.Continuation?
 
@@ -54,12 +72,18 @@ final class FakeLink: OBDLinkServicing {
         subscriptions += 1
         let (stream, continuation) = AsyncStream.makeStream(of: LinkEvent.self)
         self.continuation = continuation
-        deliveredLinkEventCount = 0
+        storedDeliveredCount = 0
         return stream
     }
 
     func send(_ event: LinkEvent) {
-        if case .enqueued = continuation?.yield(event) { deliveredLinkEventCount += 1 }
+        if case .enqueued = continuation?.yield(event) { storedDeliveredCount += 1 }
+    }
+
+    private func takeSnapshotHook() {
+        guard let hook = onNextInitSnapshot else { return }
+        onNextInitSnapshot = nil
+        hook()
     }
 }
 
@@ -101,11 +125,29 @@ class FakeSource: SensorSource {
 /// keeps the app running while locked (R4.1-5). Setting `availability`
 /// reports the change, as a location authorisation change does.
 @MainActor
-final class FakeBackgroundSource: FakeSource, BackgroundExecutionProviding {
+class FakeBackgroundSource: FakeSource, BackgroundExecutionProviding {
     var onAvailabilityChange: (@MainActor () -> Void)?
 
     override var availability: SensorAvailability {
         didSet { onAvailabilityChange?() }
+    }
+}
+
+/// A `FakeBackgroundSource` that also reports location authorisation, as
+/// `ReferenceLocationSource` does on a phone (M4).
+@MainActor
+final class FakeLocationSource: FakeBackgroundSource, LocationAuthorizationReporting {
+    var locationAuthorizationDetail = "authorizationStatus=authorizedWhenInUse, accuracyAuthorization=full, backgroundActivitySession=held"
+}
+
+/// `LocationAuthorizationProviding` whose answers the test sets.
+final class FakeLocationAuthorization: LocationAuthorizationProviding {
+    var authorizationStatus: CLAuthorizationStatus
+    var accuracyAuthorization: CLAccuracyAuthorization
+
+    init(_ status: CLAuthorizationStatus, accuracy: CLAccuracyAuthorization = .fullAccuracy) {
+        authorizationStatus = status
+        accuracyAuthorization = accuracy
     }
 }
 

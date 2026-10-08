@@ -303,6 +303,15 @@ public struct LifecycleSample: Hashable, Sendable, Codable {
         /// sit between them). Built by `lowDiskSpaceWarning(availableBytes:)`
         /// and `lowDiskSpaceFloor(availableBytes:)`.
         case lowDiskSpace
+        /// Location authorisation as the app read it (M4). Informational,
+        /// not an error: written by phone builds once at start, after the
+        /// sensor sources' rows, and again whenever authorisation changes
+        /// while recording. `detail` is free text,
+        /// `authorizationStatus=<…>, accuracyAuthorization=<…>` plus, at
+        /// start, `, backgroundActivitySession=<held|none>`. Added to v2
+        /// without a version bump: `event` is an open string set, so older
+        /// readers decode the row unchanged.
+        case locationAuthorization
     }
 
     /// Why a recording ended through the normal stop path: the `detail` of

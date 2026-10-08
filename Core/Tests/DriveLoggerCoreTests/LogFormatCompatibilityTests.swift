@@ -349,6 +349,8 @@ struct LogFormatCompatibilityV2Tests {
             (.thermalState, "thermalState"), (.protectedDataUnavailable, "protectedDataUnavailable"),
             // Added before any v2 recording was written (review R2-2).
             (.lowDiskSpace, "lowDiskSpace"),
+            // Added in M4, within v2 (open string set; no version bump).
+            (.locationAuthorization, "locationAuthorization"),
         ]
         for (value, string) in lifecycle { #expect(value.rawValue == string) }
 

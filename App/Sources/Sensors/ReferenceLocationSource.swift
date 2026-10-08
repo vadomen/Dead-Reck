@@ -45,19 +45,37 @@ import Foundation
 /// session, and `RecordingSession` warns and writes a row. Authorisation
 /// changes are reported through `onAvailabilityChange`.
 ///
+/// Authorisation in the file (M4, docs/BENCH_TEST_2026-10-08.md): the
+/// session writes `locationAuthorizationDetail` as a `lifecycle`
+/// `locationAuthorization` row at start; the delegate writes another on
+/// every authorisation change while recording; and a CoreLocation error row
+/// carries the authorisation read when it arrived. A `kCLErrorDenied`
+/// (`Code=1`) does not stop the source (it never did): it can be
+/// transient — the bench saw fixes keep coming after one — and while
+/// authorisation is really denied CoreLocation delivers nothing anyway. It is a
+/// background risk only if authorisation really reads denied or restricted;
+/// then the delegate reports an availability change, `availability` says
+/// unavailable, and the session warns and writes its row. While
+/// authorisation reads `authorizedWhenInUse`/`authorizedAlways` it is only
+/// the error row.
+///
 /// Untested on hardware: fix rate and accuracy in the car, background
 /// survival with `CLBackgroundActivitySession`, and whether `.otherNavigation`
 /// avoids road snapping (docs/PLAN.md §6).
 @MainActor
-final class ReferenceLocationSource: SensorSource, LiveReferenceFixReporting, BackgroundExecutionProviding {
+final class ReferenceLocationSource: SensorSource, LiveReferenceFixReporting, BackgroundExecutionProviding,
+    LocationAuthorizationReporting {
     let name = "referenceLocation"
 
     /// The most recent fix, for the dashboard only. Never written anywhere
     /// and never an input.
     private(set) var latestReferenceFix: LocationSample?
 
-    private let manager = CLLocationManager()
-    private let delegate = ReferenceLocationDelegate()
+    private let manager: CLLocationManager
+    /// Internal for tests (`handleFailure(_:authorization:)`).
+    let delegate = ReferenceLocationDelegate()
+    /// Where authorisation is read: `manager` in the app, a fake in tests.
+    private let authorization: any LocationAuthorizationProviding
     private var backgroundSession: CLBackgroundActivitySession?
     private var running = false
 
@@ -66,7 +84,12 @@ final class ReferenceLocationSource: SensorSource, LiveReferenceFixReporting, Ba
     /// calls once when the manager is created).
     var onAvailabilityChange: (@MainActor () -> Void)?
 
-    init() {
+    /// - Parameter authorization: nil reads the source's own
+    ///   `CLLocationManager`; tests pass a fake.
+    init(authorization: (any LocationAuthorizationProviding)? = nil) {
+        let manager = CLLocationManager()
+        self.manager = manager
+        self.authorization = authorization ?? manager
         manager.delegate = delegate
         delegate.observeAuthorization { [weak self] in
             Task { @MainActor in self?.onAvailabilityChange?() }
@@ -74,7 +97,7 @@ final class ReferenceLocationSource: SensorSource, LiveReferenceFixReporting, Ba
     }
 
     var availability: SensorAvailability {
-        switch manager.authorizationStatus {
+        switch authorization.authorizationStatus {
         case .denied:
             .unavailable(reason: "Location access is denied, or Location Services are off (Settings → Privacy & Security → Location Services)")
         case .restricted:
@@ -103,12 +126,21 @@ final class ReferenceLocationSource: SensorSource, LiveReferenceFixReporting, Ba
         manager.pausesLocationUpdatesAutomatically = false
         manager.allowsBackgroundLocationUpdates = true
         manager.showsBackgroundLocationIndicator = true
-        if manager.authorizationStatus == .notDetermined {
+        if authorization.authorizationStatus == .notDetermined {
             manager.requestWhenInUseAuthorization()
         }
         backgroundSession = CLBackgroundActivitySession()
         manager.startUpdatingLocation()
         running = true
+    }
+
+    /// `detail` of the `locationAuthorization` row: authorisation now and
+    /// whether this source holds a `CLBackgroundActivitySession` (`held`
+    /// after a successful `start`; `none` before, after `stop`, or when it
+    /// could not start). "held" means the app holds one; iOS does not
+    /// confirm that it keeps the app running.
+    var locationAuthorizationDetail: String {
+        LocationAuthorizationSnapshot(authorization).detail(backgroundActivitySessionHeld: backgroundSession != nil)
     }
 
     func stop() {
@@ -144,6 +176,76 @@ protocol BackgroundExecutionProviding: SensorSource {
     /// (the location prompt answered, authorisation changed in Settings).
     /// Set by `RecordingSession`, its one observer.
     var onAvailabilityChange: (@MainActor () -> Void)? { get set }
+}
+
+/// A source that reports location authorisation for the `lifecycle`
+/// `locationAuthorization` row `RecordingSession` writes at start (M4).
+@MainActor
+protocol LocationAuthorizationReporting: SensorSource {
+    /// Free text: `authorizationStatus=<…>, accuracyAuthorization=<…>,
+    /// backgroundActivitySession=<held|none>`.
+    var locationAuthorizationDetail: String { get }
+}
+
+/// Where location authorisation is read. `CLLocationManager` in the app; a
+/// fake in tests.
+protocol LocationAuthorizationProviding: AnyObject {
+    var authorizationStatus: CLAuthorizationStatus { get }
+    var accuracyAuthorization: CLAccuracyAuthorization { get }
+}
+
+extension CLLocationManager: LocationAuthorizationProviding {}
+
+/// Location authorisation at one moment, as written in rows. The names are
+/// the Swift case names (`authorizedWhenInUse`, not the raw number), so the
+/// text stays readable without the SDK headers.
+struct LocationAuthorizationSnapshot: Hashable, Sendable {
+    var status: CLAuthorizationStatus
+    var accuracy: CLAccuracyAuthorization
+
+    init(status: CLAuthorizationStatus, accuracy: CLAccuracyAuthorization) {
+        self.status = status
+        self.accuracy = accuracy
+    }
+
+    init(_ provider: any LocationAuthorizationProviding) {
+        self.init(status: provider.authorizationStatus, accuracy: provider.accuracyAuthorization)
+    }
+
+    /// Denied (by the user, or Location Services off) or restricted: no
+    /// fixes and no background location session.
+    var isDeniedOrRestricted: Bool {
+        status == .denied || status == .restricted
+    }
+
+    var statusName: String {
+        switch status {
+        case .notDetermined: "notDetermined"
+        case .restricted: "restricted"
+        case .denied: "denied"
+        case .authorizedWhenInUse: "authorizedWhenInUse"
+        case .authorizedAlways: "authorizedAlways"
+        @unknown default: "unknown(\(status.rawValue))"
+        }
+    }
+
+    var accuracyName: String {
+        switch accuracy {
+        case .fullAccuracy: "full"
+        case .reducedAccuracy: "reduced"
+        @unknown default: "unknown(\(accuracy.rawValue))"
+        }
+    }
+
+    /// `authorizationStatus=<…>, accuracyAuthorization=<…>`.
+    var detail: String {
+        "authorizationStatus=\(statusName), accuracyAuthorization=\(accuracyName)"
+    }
+
+    /// `detail` plus `, backgroundActivitySession=<held|none>`.
+    func detail(backgroundActivitySessionHeld held: Bool) -> String {
+        "\(detail), backgroundActivitySession=\(held ? "held" : "none")"
+    }
 }
 
 /// `CLLocationManagerDelegate` for `ReferenceLocationSource`. Not isolated to
@@ -197,15 +299,48 @@ final class ReferenceLocationDelegate: NSObject, CLLocationManagerDelegate, Send
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: any Error) {
-        let gate = lock.withLock { self.gate }
-        // `locationUnknown` is transient: CoreLocation keeps trying.
-        if let error = error as? CLError, error.code == .locationUnknown { return }
-        gate?.report(error)
+        handleFailure(error, authorization: LocationAuthorizationSnapshot(manager))
+    }
+
+    /// `didFailWithError` with the authorisation read when it arrived;
+    /// internal so tests can pass a fake one.
+    ///
+    /// - `locationUnknown`: nothing (transient; CoreLocation keeps trying).
+    /// - Anything else: an `error` row `referenceLocation: <error>
+    ///   (authorizationStatus=<…>, accuracyAuthorization=<…>)`, once per
+    ///   distinct text. Updates are never stopped here.
+    /// - `denied` while authorisation reads denied or restricted: also an
+    ///   availability change, so the session re-reads `availability` and
+    ///   writes its background-risk row. While authorisation reads
+    ///   anything else the `denied` is treated as transient: no change is
+    ///   reported, so no background-risk row.
+    func handleFailure(_ error: any Error, authorization: LocationAuthorizationSnapshot) {
+        let (gate, onChange) = lock.withLock { (self.gate, self.onAuthorizationChange) }
+        let code = (error as? CLError)?.code
+        if code == .locationUnknown { return }
+        gate?.report("\(String(describing: error)) (\(authorization.detail))")
+        if code == .denied, authorization.isDeniedOrRestricted {
+            onChange?()
+        }
     }
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        handleAuthorizationChange(LocationAuthorizationSnapshot(manager))
+    }
+
+    /// `locationManagerDidChangeAuthorization`; internal so tests can pass a
+    /// fake authorisation. While recording: a `locationAuthorization` row
+    /// with the new authorisation, plus the existing `error` row when it is
+    /// denied or restricted. Always: an availability change.
+    func handleAuthorizationChange(_ authorization: LocationAuthorizationSnapshot) {
         let (gate, onChange) = lock.withLock { (self.gate, self.onAuthorizationChange) }
-        switch manager.authorizationStatus {
+        if let gate {
+            gate.deliver(LogEvent(
+                timestamp: gate.clock.now(),
+                payload: .lifecycle(LifecycleSample(.locationAuthorization, detail: authorization.detail))
+            ))
+        }
+        switch authorization.status {
         case .denied:
             gate?.report("authorization denied while recording; no more reference fixes")
         case .restricted:

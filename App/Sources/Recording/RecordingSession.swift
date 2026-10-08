@@ -82,8 +82,29 @@ struct LiveStatus: Hashable, Sendable {
 /// while a recording is calibrating or recording and drive `live.obdSpeedKmh`
 /// / `live.obdHz` at all times.
 ///
+/// **Start-up init (M4).** The link usually connects and initialises before
+/// Start, so at Start the session writes `link.lastInitEvents` — the latest
+/// connection's BLE transitions and init (`ATZ` … `ATSH7E0`, probe,
+/// `adapter`) — following that property's dedup contract: replay only at
+/// Start, live events after that. In one synchronous main-actor step (no
+/// suspension between the reads and the writes) it reads `lastInitEvents`
+/// and `deliveredLinkEventCount`, writes the replay rows through
+/// `LogEvent.rows(for:adapter:clock:)` with `adapter: link.adapter` on the
+/// recording's clock — stamped from each event's own uptime, so they have
+/// negative `t`, never clamped — and then lets its link-event loop skip the
+/// next `deliveredLinkEventCount − consumed` events (delivered before Start:
+/// either in the replay or pre-Start poll traffic, which is not written).
+/// Placement: right after the `start` row, before any other row; the `start`
+/// row stays the first line, and the first `stats` window still starts at
+/// `t ≈ 0` (the writer starts it at the first row it sees). Each recording
+/// replays once, at its own Start; an init during a recording arrives live.
+/// Nothing is replayed when the link has never connected.
+///
 /// **Rows it writes** (`lifecycle` unless noted): `start` (detail `without
-/// OBD: …` when started without a polling link), `calibrationStart` /
+/// OBD: …` when started without a polling link), the replayed start-up
+/// init (`link`, `elm`, `adapter`; above), `locationAuthorization` (one per
+/// `LocationAuthorizationReporting` source, after the source rows: phone
+/// builds), `calibrationStart` /
 /// `calibrationEnd`, `stop` (detail = stop reason), `background` /
 /// `foreground`, `memoryWarning`, `thermalState` (at start when not nominal,
 /// and on every change), `protectedDataUnavailable`, `lowDiskSpace`, `error`
@@ -212,7 +233,10 @@ final class RecordingSession {
     ///
     /// Kept current without the UI's help: refreshed at init, whenever such
     /// a source reports an availability change (the location prompt
-    /// answered, authorisation changed), on `handleScenePhase(.active)`
+    /// answered, authorisation changed, or — M4 — a `kCLErrorDenied` while
+    /// authorisation reads denied or restricted; a `kCLErrorDenied` while
+    /// authorised is transient and changes nothing, since `availability`
+    /// still reads available), on `handleScenePhase(.active)`
     /// (back from Settings), and when a recording starts and ends.
     private(set) var backgroundRiskWarning: String?
 
@@ -240,6 +264,10 @@ final class RecordingSession {
     @ObservationIgnored private var linkTask: Task<Void, Never>?
     @ObservationIgnored private var diskRefreshTask: Task<Void, Never>?
     @ObservationIgnored private var observers: [any NSObjectProtocol] = []
+    /// Events the `linkEvents()` loop has handled since the subscription,
+    /// whether or not a recording was running: `consumed` in the
+    /// `lastInitEvents` dedup contract. Internal for tests.
+    @ObservationIgnored private(set) var consumedLinkEvents = 0
 
     /// `detail` of the `lifecycle` `error` row written when a recording has
     /// no background execution (R4.1-5). Free text under the existing
@@ -408,12 +436,17 @@ final class RecordingSession {
         setIdleTimerDisabled(true)
 
         rec.record(LifecycleSample(.start, detail: polling ? nil : "without OBD: link \(Self.describe(link.state))"))
+        // Still the same synchronous step: no suspension since `polling` was
+        // read, so no link event can be consumed between the reads and the
+        // replay rows, and no live link row precedes them.
+        replayStartupInit(rec)
         let thermal = ProcessInfo.processInfo.thermalState
         if thermal != .nominal {
             rec.record(LifecycleSample(.thermalState, detail: Self.name(of: thermal)))
         }
         watchWriter(rec)
         startSources(rec)
+        recordLocationAuthorization(rec)
         noteBackgroundRisk(rec)
         startTimers(rec)
 
@@ -548,6 +581,39 @@ final class RecordingSession {
             } catch .fileExists where attempts < 20 {
                 attempts += 1
             }
+        }
+    }
+
+    /// The start-up init, written once per recording, at Start (M4; see the
+    /// type's doc and `OBDLinkServicing.lastInitEvents`). Must run in the
+    /// same synchronous main-actor step as the `start` row, before anything
+    /// can suspend.
+    private func replayStartupInit(_ rec: ActiveRecording) {
+        // Once per recording, never again while it runs.
+        guard !rec.replayedStartupInit else { return }
+        rec.replayedStartupInit = true
+        let replay = link.lastInitEvents
+        let delivered = link.deliveredLinkEventCount
+        // Delivered before Start and not yet handled by the loop: each is in
+        // the replay or is pre-Start traffic. `delivered < consumed` can't
+        // happen with one subscription; never skip a negative count.
+        rec.linkEventsToSkip = max(0, delivered - consumedLinkEvents)
+        let adapter = link.adapter
+        for event in replay {
+            for row in LogEvent.rows(for: event, adapter: adapter, clock: rec.clock) {
+                rec.sink.record(row)
+            }
+        }
+    }
+
+    /// After `startSources`: one `locationAuthorization` row per source that
+    /// reports location authorisation (on a phone, `ReferenceLocationSource`),
+    /// started or not, so a recording always says what the authorisation
+    /// was. Informational; problems get their own `error` rows.
+    private func recordLocationAuthorization(_ rec: ActiveRecording) {
+        for source in sources {
+            guard let reporter = source as? any LocationAuthorizationReporting else { continue }
+            rec.record(LifecycleSample(.locationAuthorization, detail: reporter.locationAuthorizationDetail))
         }
     }
 
@@ -814,6 +880,7 @@ final class RecordingSession {
     // MARK: - Internals: link and system events
 
     private func handleLinkEvent(_ event: LinkEvent) {
+        consumedLinkEvents += 1
         switch event {
         case .session(.reading(let reading)) where reading.measurement.pid == .vehicleSpeed && reading.isFromPrimaryECU:
             live.obdSpeedKmh = reading.measurement.value
@@ -826,6 +893,12 @@ final class RecordingSession {
             break
         }
         guard let rec = recording, rec.acceptsLinkEvents else { return }
+        if rec.linkEventsToSkip > 0 {
+            // Delivered before Start: replayed already, or not part of the
+            // recording (M4 dedup contract).
+            rec.linkEventsToSkip -= 1
+            return
+        }
         for row in LogEvent.rows(for: event, adapter: link.adapter, clock: rec.clock) {
             rec.sink.record(row)
         }
@@ -918,6 +991,11 @@ private final class ActiveRecording {
     var startedSources: [any SensorSource] = []
     /// Link events are written while true.
     var acceptsLinkEvents = true
+    /// The start-up init has been written (once, at Start).
+    var replayedStartupInit = false
+    /// Link events still to be skipped by the loop: delivered before Start
+    /// (M4 dedup contract).
+    var linkEventsToSkip = 0
     /// The `stop` (or failure) end path has queued its last rows; nothing
     /// else may be written.
     var stopRowQueued = false

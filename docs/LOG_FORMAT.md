@@ -64,7 +64,9 @@ Current version: **2** (`LogFormatVersion.current`). Readable: **1, 2**.
   started. Wall-clock time appears only in the header (`startedAt`) and in
   `location.fixTime`.
 - **Order.** Lines are in write order, which is close to but not strictly `t`
-  order. Sort by `t` when aligning streams.
+  order. Sort by `t` when aligning streams. In particular the start-up init
+  (below, "Start-up init") is written right after the `start` row with `t`
+  well before it.
 - **Units** are those of the source framework: CoreMotion g, rad/s, µT;
   CoreLocation degrees, metres, m/s; OBD values in the PID's native unit.
 - **Absent fields** are omitted, never `null`. A field missing from a v1 file
@@ -137,7 +139,7 @@ verbatim (`LogEvent.Payload.unrecognized`) instead of dropping it.
 | `gyro` | 2 | `CMGyroData.timestamp` | 100 Hz |
 | `mag` | 2 | `CMMagnetometerData.timestamp` | ~10 Hz |
 | `baro` | 2 | `CMAltitudeData.timestamp` | ~1 Hz |
-| `elm` | 2 | reply complete, or timeout fired | every exchange |
+| `elm` | 2 | reply complete, or timeout fired | every exchange (before Start: the start-up init only) |
 | `adapter` | 2 | init finished, or polled combination changed | each (re-)init and change |
 | `link` | 2 | state transition | rare |
 | `lifecycle` | 2 | occurrence | rare |
@@ -335,6 +337,38 @@ whenever the polled combination changes (a PID dropped, the multi-PID
 fallback). Its `polling` section is always the combination actually being
 polled.
 
+### Start-up init
+
+The adapter usually connects and initialises before the user taps Start
+(M4 bench, `docs/BENCH_TEST_2026-10-08.md`). Since M4 the app writes that
+connection's start-up init into the recording, right after the `start` row
+and before any other row: the BLE `link` transitions of the latest
+connection attempt (`connecting` → `discovering` → `connected`, or the one
+that ended a failed attempt), then its latest initialisation — every `elm`
+exchange of phase `init` and `probe` (`ATZ` … `ATRV`, `ATSH7E0`, selection,
+the `ATAT1`/`ATAT2` comparison), the `elm` `link` transitions and notes, and
+the `adapter` row — up to the transition into `polling` (or `failed`).
+
+- They are ordinary rows of the existing kinds, identical to what a
+  recording running at the time would have written, stamped from the events'
+  own uptimes on the recording's clock. Their **`t` is negative** (before
+  the `start` row's `t ≈ 0`), sometimes by minutes; it is never clamped.
+- **Pre-Start poll traffic is not written.** Polls between the end of the
+  init and Start are dropped, so `elm.seq` has **one gap** after the init's
+  last exchange; from then on it increases as usual.
+- An init still running at Start is complete: its first part is in these
+  rows, the rest follows live. Each init appears exactly once.
+- Written once per recording, at Start. A re-init or reconnect during the
+  recording is written live, as before.
+- Nothing is written when the adapter has never connected. If the
+  connection has since dropped (started with `without OBD: link …`), these
+  rows describe that last connection: the drop itself is not among them.
+- The first `stats` window starts at the `start` row; these rows are
+  counted in it (`counts`, `timeouts`), not in a window of their own.
+- Recordings made before M4 begin with `poll` rows instead.
+
+No format version change: no new kind, field or string.
+
 ### `link`
 
 | Field | Meaning |
@@ -347,14 +381,14 @@ polled.
 
 | Field | Meaning |
 |---|---|
-| `event` | `start`, `stop`, `pause`, `resume`, `background`, `foreground`, `calibrationStart`, `calibrationEnd`, `error`, `memoryWarning`, `thermalState`, `protectedDataUnavailable`, `lowDiskSpace`. Calibration is the first phase of a recording: the samples between `calibrationStart` and `calibrationEnd` were taken with the car and phone still. |
+| `event` | `start`, `stop`, `pause`, `resume`, `background`, `foreground`, `calibrationStart`, `calibrationEnd`, `error`, `memoryWarning`, `thermalState`, `protectedDataUnavailable`, `lowDiskSpace`, `locationAuthorization` (since M4). Calibration is the first phase of a recording: the samples between `calibrationStart` and `calibrationEnd` were taken with the car and phone still. |
 | `detail` | Optional free text (error description, thermal state name, stop reason). An event that couldn't be encoded (e.g. a NaN or infinite value) is replaced by an `error` row at the same `t` with detail `encodingFailed <kind>: <description>`. |
 
 What the app writes (all at `clock.now()` when written):
 
 | `event` | `detail` | When |
 |---|---|---|
-| `start` | absent, or `without OBD: link <state>` | First row. The second form when the user chose to record without a polling adapter (the header then has no `adapter`/`polling`). |
+| `start` | absent, or `without OBD: link <state>` | First row. The second form when the user chose to record without a polling adapter (the header then has no `adapter`/`polling`). Followed by the start-up init rows, if any (above). |
 | `calibrationStart` | `keep still for <s> s` | Right after `start`: the keep-still phase begins. |
 | `calibrationEnd` | absent; `cut short after <s> s`; `interrupted by stop` | End of the keep-still phase. Back to back with `calibrationStart` when calibration was skipped. `interrupted by stop` when the recording was stopped during calibration (it is then followed by `stop`). |
 | `background` / `foreground` | absent | The app entered the background / left it. Each `background` is followed by a flush. |
@@ -363,8 +397,10 @@ What the app writes (all at `clock.now()` when written):
 | `protectedDataUnavailable` | free text | The device was locked with a passcode. Recording continues: files are `completeUntilFirstUserAuthentication`. |
 | `error` | `<source> unavailable: <reason>` | A sensor source could not run at start (e.g. no permission, no barometer). The rest of the recording goes on. |
 | `error` | `<source> failed to start: <error>` | A sensor source threw when started. |
-| `error` | `no background location session; recording may pause while locked` | The source that keeps the app running with the phone locked (`referenceLocation`, holding a background location session) is unavailable or did not start at start — location denied or restricted — or became unavailable during the recording. At most once per recording; written right after the source rows at start, or when the loss is noticed. The recording goes on; while the phone was locked, rows may stop and resume (look for a jump in `stats` `t`). Never written by simulator builds, which have no such source. |
-| `error` | `<source>: <error>` | A sensor reported an error while running; once per distinct error per source. Also `rawIMU: magnetometer unavailable; recording accel and gyro only`. |
+| `locationAuthorization` | `authorizationStatus=<status>, accuracyAuthorization=<accuracy>, backgroundActivitySession=<held\|none>` | Phone builds, at start, after the source rows (also when location is unavailable). Informational, not an error. `<status>`: `notDetermined`, `restricted`, `denied`, `authorizedWhenInUse`, `authorizedAlways`; `<accuracy>`: `full`, `reduced` (an unknown future value is written `unknown(<raw>)`). `held`: `referenceLocation` started and holds a `CLBackgroundActivitySession`; iOS gives no confirmation that it keeps the app running. `none`: it does not (not started, or unavailable). |
+| `locationAuthorization` | `authorizationStatus=<status>, accuracyAuthorization=<accuracy>` | Location authorisation changed while recording (e.g. the permission prompt answered after Start, precise location turned off). A change to denied or restricted is also followed by the `referenceLocation: authorization … while recording` error below. |
+| `error` | `no background location session; recording may pause while locked` | The source that keeps the app running with the phone locked (`referenceLocation`, holding a background location session) is unavailable or did not start at start — location denied or restricted — or became unavailable during the recording (an authorisation change, or a `kCLErrorDenied` while authorisation reads denied or restricted; never for a `kCLErrorDenied` while authorised). At most once per recording; written right after the source rows at start, or when the loss is noticed. The recording goes on; while the phone was locked, rows may stop and resume (look for a jump in `stats` `t`). Never written by simulator builds, which have no such source. |
+| `error` | `<source>: <error>` | A sensor reported an error while running; once per distinct error per source. Also `rawIMU: magnetometer unavailable; recording accel and gyro only`, and `referenceLocation: authorization denied while recording; no more reference fixes` (or `restricted`). Since M4 a CoreLocation error carries the authorisation read when it arrived: `referenceLocation: <error> (authorizationStatus=<status>, accuracyAuthorization=<accuracy>)`, e.g. `referenceLocation: Error Domain=kCLErrorDomain Code=1 "(null)" (authorizationStatus=authorizedWhenInUse, accuracyAuthorization=full)`. `Code=1` (`kCLErrorDenied`) can be transient: the source keeps running, and only when authorisation reads `denied`/`restricted` does it lead to the background-risk row. |
 | `error` | `writer queue peaked at <n> events, more than 2 s of data (<m>)` | The writer fell behind in that `stats` window (written after the `stats` row). |
 | `error` | `write failed: <description>` | A write failure (below). |
 | `lowDiskSpace` | see below | Free space crossed a threshold. |
@@ -445,6 +481,12 @@ the window.
 |---|---|
 | 1 | Header (`formatVersion`, `sessionID`, `startedAt`, `referenceUptimeSeconds`, `app`, `device`, `notes`); kinds `motion`, `location`, `obd`, `marker`. |
 | 2 | Header `adapter`, `polling`, `sensors`, `mount`, `vehicle`, `timeZone`. `motion.magneticAccuracy`. `location` `receivedT`, `fixTime`, `ageS`, `ellipsoidalAltitude`, `simulated`, `accessory`; `t` defined as fix time. `obd` `requestT`, `command`, `ecu`, `seq`; `raw` becomes the full header-on reply. New kinds `accel`, `gyro`, `mag`, `baro`, `elm`, `adapter`, `link`, `lifecycle`, `stats`. |
+
+Within v2, without a version bump (both read unchanged by every v2 reader):
+M4 added the `lifecycle` value `locationAuthorization` (`event` is an open
+string set, pinned in Core as `LifecycleSample.Event.locationAuthorization`)
+and the start-up init rows at the head of a recording (existing kinds and
+strings only).
 
 Every version stays readable. v2 only adds optional fields, so DriveLogger
 decodes a v1 file into the same types with those fields absent. Frozen fixtures
