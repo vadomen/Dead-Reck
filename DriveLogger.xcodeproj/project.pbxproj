@@ -8,10 +8,13 @@
 
 /* Begin PBXBuildFile section */
 		021437D0ADA8922B1B169500 /* BLETransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB34BE123D31801692F944B4 /* BLETransport.swift */; };
+		0D1EA0DD6A68CA29A25C8D1A /* MapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF0EB1CAD11D010AD8056BBD /* MapView.swift */; };
 		0DDF3F44B95E394C930CA120 /* ConsoleViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0C9CA67A7C6A7722FA6AB4F /* ConsoleViewModel.swift */; };
 		12828BB3574A085AEC880462 /* AdapterStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76540D48788C021E6D218414 /* AdapterStatus.swift */; };
+		14819D41731633582485ECFE /* GPSTrack.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DF88D705418C3CDC31A11FE /* GPSTrack.swift */; };
 		14D387CC7919E9F9DCB82114 /* DashboardState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 377D8FCE4EF2F5BD5BAB89D0 /* DashboardState.swift */; };
 		18A38A449D726D739B90B39D /* ReferenceLocationSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = 982E965A8FFF8D4E784FD5CE /* ReferenceLocationSource.swift */; };
+		1B778626CF8504BCD4128FC4 /* MapViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79BD174ED6261D2946AA43BC /* MapViewModel.swift */; };
 		1C31445913116014F08A1FAC /* LogStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3A91D607CBA7DFAE670A9FE /* LogStore.swift */; };
 		2F1269035331B798C267E34E /* SensorSourceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DCCAAFA3667C0100BDF5237 /* SensorSourceTests.swift */; };
 		334ABA2ADB6B7D4D855335DB /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9B85968A88D580969C514E6 /* MainTabView.swift */; };
@@ -51,6 +54,7 @@
 		DB397B3DFC6D0ECD860B9ED0 /* SessionsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51E41306C0E8CC802CFDBB09 /* SessionsViewModel.swift */; };
 		EB54AA0B95B0D269E74ADD6A /* SessionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEC07B5D8472C3B9B0953238 /* SessionsView.swift */; };
 		EB69D658A35BEC3DCD84D1EB /* RecordingTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B03770A2F4197C0EC3E1CACE /* RecordingTestSupport.swift */; };
+		FC673B69DBDB4E4311B6B23C /* MapTrackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10D65817793B02936D47090 /* MapTrackTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -82,10 +86,12 @@
 		4757331FF2FA81D7AC0192A2 /* OBDLinkServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OBDLinkServiceTests.swift; sourceTree = "<group>"; };
 		48CA0FF0B046021F1A35D010 /* GATTDetection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GATTDetection.swift; sourceTree = "<group>"; };
 		4D8E9CE2BABC8A226F6FC03A /* PreDriveChecklist.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreDriveChecklist.swift; sourceTree = "<group>"; };
+		4DF88D705418C3CDC31A11FE /* GPSTrack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GPSTrack.swift; sourceTree = "<group>"; };
 		51E41306C0E8CC802CFDBB09 /* SessionsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsViewModel.swift; sourceTree = "<group>"; };
 		53A5A2CA16E92EC7B59DF9B2 /* Tone.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tone.swift; sourceTree = "<group>"; };
 		7085FAEE943E57E7A189FF74 /* AppInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppInfo.swift; sourceTree = "<group>"; };
 		76540D48788C021E6D218414 /* AdapterStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdapterStatus.swift; sourceTree = "<group>"; };
+		79BD174ED6261D2946AA43BC /* MapViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapViewModel.swift; sourceTree = "<group>"; };
 		854C803C3B72C76C94BDE3BF /* SimulatedSensors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimulatedSensors.swift; sourceTree = "<group>"; };
 		90AC7FA4AD498307B3C7D5C3 /* AppInfoTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppInfoTests.swift; sourceTree = "<group>"; };
 		982E965A8FFF8D4E784FD5CE /* ReferenceLocationSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReferenceLocationSource.swift; sourceTree = "<group>"; };
@@ -103,8 +109,10 @@
 		CE394D78D64D4538558929AB /* OBDLinkServicing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OBDLinkServicing.swift; sourceTree = "<group>"; };
 		D5C0DEF85C7492AD06A4497D /* RecordingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingView.swift; sourceTree = "<group>"; };
 		D9265F3575667230ECE67A93 /* ConsoleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConsoleView.swift; sourceTree = "<group>"; };
+		E10D65817793B02936D47090 /* MapTrackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapTrackTests.swift; sourceTree = "<group>"; };
 		E673B5E664BA56EBFD878D08 /* UIPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIPresentationTests.swift; sourceTree = "<group>"; };
 		EB34BE123D31801692F944B4 /* BLETransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BLETransport.swift; sourceTree = "<group>"; };
+		EF0EB1CAD11D010AD8056BBD /* MapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapView.swift; sourceTree = "<group>"; };
 		EFB4D769B7E12E237DC8FD7E /* LinkInitReplayTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LinkInitReplayTests.swift; sourceTree = "<group>"; };
 		F0C9CA67A7C6A7722FA6AB4F /* ConsoleViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConsoleViewModel.swift; sourceTree = "<group>"; };
 		FB71BCF14220670F95ADDBBE /* BLECentral.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BLECentral.swift; sourceTree = "<group>"; };
@@ -134,6 +142,7 @@
 				EFB4D769B7E12E237DC8FD7E /* LinkInitReplayTests.swift */,
 				2B37347FFA3D8D050EAC3981 /* LinkPlanReuseTests.swift */,
 				C2B377149F824738057BC395 /* LogStoreTests.swift */,
+				E10D65817793B02936D47090 /* MapTrackTests.swift */,
 				4757331FF2FA81D7AC0192A2 /* OBDLinkServiceTests.swift */,
 				054B04838405BB2A03DF2023 /* RecordingSessionTests.swift */,
 				B03770A2F4197C0EC3E1CACE /* RecordingTestSupport.swift */,
@@ -169,6 +178,16 @@
 			path = Console;
 			sourceTree = "<group>";
 		};
+		3A304246D3F3404B6D068C8C /* Map */ = {
+			isa = PBXGroup;
+			children = (
+				4DF88D705418C3CDC31A11FE /* GPSTrack.swift */,
+				EF0EB1CAD11D010AD8056BBD /* MapView.swift */,
+				79BD174ED6261D2946AA43BC /* MapViewModel.swift */,
+			);
+			path = Map;
+			sourceTree = "<group>";
+		};
 		3D4A199247E99A9E8E4FD696 /* Sensors */ = {
 			isa = PBXGroup;
 			children = (
@@ -185,6 +204,7 @@
 			isa = PBXGroup;
 			children = (
 				27CD52EC9412510BC8C351DE /* Console */,
+				3A304246D3F3404B6D068C8C /* Map */,
 				BB141237944DE2F2E21F6B0C /* Record */,
 				4715005DA69EE119AAD0B588 /* Sessions */,
 				87757690C66C9AA81F92B3FB /* Support */,
@@ -403,6 +423,7 @@
 				6E1F7D1FD58FBD0186AAFF11 /* LinkInitReplayTests.swift in Sources */,
 				D8B3767F4C9463E941E14A3A /* LinkPlanReuseTests.swift in Sources */,
 				7D86BAE1CF116B5844B7377F /* LogStoreTests.swift in Sources */,
+				FC673B69DBDB4E4311B6B23C /* MapTrackTests.swift in Sources */,
 				9D68BF8B1CC07439C59B8590 /* OBDLinkServiceTests.swift in Sources */,
 				7AC8D2001A8B6452A3F6D8FE /* RecordingSessionTests.swift in Sources */,
 				EB69D658A35BEC3DCD84D1EB /* RecordingTestSupport.swift in Sources */,
@@ -428,8 +449,11 @@
 				7DD66338B59A7A207D14CEA0 /* DisplayFormat.swift in Sources */,
 				9703F9AAE2A112783A148671 /* DriveLoggerApp.swift in Sources */,
 				3D3B63CFFF7CF663AF5AE10E /* GATTDetection.swift in Sources */,
+				14819D41731633582485ECFE /* GPSTrack.swift in Sources */,
 				1C31445913116014F08A1FAC /* LogStore.swift in Sources */,
 				334ABA2ADB6B7D4D855335DB /* MainTabView.swift in Sources */,
+				0D1EA0DD6A68CA29A25C8D1A /* MapView.swift in Sources */,
+				1B778626CF8504BCD4128FC4 /* MapViewModel.swift in Sources */,
 				877A22BD2347363272765DC5 /* MotionSources.swift in Sources */,
 				D635E988DAD0AF2AA509EA4D /* OBDLinkService.swift in Sources */,
 				ABF23677C8A5547DF21AB88A /* OBDLinkServicing.swift in Sources */,

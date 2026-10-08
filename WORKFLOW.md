@@ -221,6 +221,8 @@ Here is a bench-test log from the parked car: <path outside the repo>. Use drive
 
 **Stop after M4 — don't start the next milestone.**
 
+## M4.1 - GPS map screen (UI only, read-only)
+
 ---
 
 ## M5 - Drives

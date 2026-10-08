@@ -504,6 +504,31 @@ struct RecordingSessionTests {
         #expect(zip(times, times.dropFirst()).allSatisfy { $1 - $0 == 100_000_000 })
     }
 
+    @Test("Map fix: live.referenceFix is the simulated source's latest fix while recording, nil after stop")
+    func simulatedReferenceFix() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        // A long interval: only fix 0 (delivered at start) exists while the
+        // test runs, so the 1 Hz live copy and the source cannot race.
+        let location = SimulatedLocationSource(interval: .seconds(60))
+        let session = RecordingFixtures.session(sources: [location], store: scratch.store)
+        #expect(session.live.referenceFix == nil)
+        try await session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
+        let url = try #require(session.currentFile)
+        #expect(await eventually(3) { session.live.referenceFix != nil })
+        let shown = try #require(session.live.referenceFix)
+        #expect(shown == location.latestReferenceFix)
+        await session.stop()
+        #expect(session.live.referenceFix == nil)
+        #expect(location.latestReferenceFix == nil)
+
+        // Display only: the fix shown is the one recorded, and nothing extra
+        // was written for it.
+        let (_, events, _) = try RecordingFixtures.read(url)
+        let recorded = events.compactMap { if case .location(let fix) = $0.payload { fix } else { nil } }
+        #expect(recorded == [shown])
+    }
+
     @Test("Link events: written only while recording; OBD speed from the engine ECU only")
     func linkEvents() async throws {
         let scratch = try ScratchStore()

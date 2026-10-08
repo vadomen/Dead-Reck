@@ -53,6 +53,12 @@ struct LiveStatus: Hashable, Sendable {
     /// recording, before the first fix and whenever the fix has no valid
     /// speed.
     var gpsSpeedKmh: Double?
+    /// The latest reference fix, while recording (for the Map tab). Display
+    /// only: never written and never an input. Same source, 1 Hz cadence and
+    /// nil rules as `gpsSpeedKmh` — nil when not recording and before the
+    /// first fix. Unlike `gpsSpeedKmh` it is the whole fix, kept even when
+    /// its speed is invalid (negative).
+    var referenceFix: LocationSample?
     /// Successful polls per second, from the link.
     var obdHz: Double = 0
     /// `motion` rows per second over the last `stats` window (every 10 s).
@@ -746,6 +752,7 @@ final class RecordingSession {
         live.elapsed = max(0, rec.clock.now().seconds)
         let fix = sources.lazy.compactMap { ($0 as? any LiveReferenceFixReporting)?.latestReferenceFix }.first
         live.gpsSpeedKmh = fix.flatMap { $0.speed >= 0 ? $0.speed * 3.6 : nil }
+        live.referenceFix = fix
         let bytes = await rec.writer.bytesWritten
         if recording === rec { live.fileBytes = bytes }
     }
@@ -831,6 +838,7 @@ final class RecordingSession {
         recording = nil
         currentFile = nil
         live.gpsSpeedKmh = nil
+        live.referenceFix = nil
         setIdleTimerDisabled(false)
         refreshBackgroundRisk()
     }

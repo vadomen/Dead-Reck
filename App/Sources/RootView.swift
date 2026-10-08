@@ -4,17 +4,21 @@ import SwiftUI
 /// model; the screens themselves take plain values (see `UI/`).
 struct RootView: View {
     @State private var recording: RecordingViewModel
+    @State private var map: MapViewModel
     @State private var sessions: SessionsViewModel
     @State private var console: ConsoleViewModel
-    @State private var tab: MainTabView<RecordingScreen, SessionsScreen, ConsoleScreen>.Tab
+    private let session: RecordingSession
+    @State private var tab: MainTabView<RecordingScreen, MapScreen, SessionsScreen, ConsoleScreen>.Tab
 
     init(services: AppServices) {
         _recording = State(initialValue: RecordingViewModel(services: services))
+        session = services.session
+        _map = State(initialValue: MapViewModel())
         _sessions = State(initialValue: SessionsViewModel(services: services))
         _console = State(initialValue: ConsoleViewModel(services: services))
-        var initial = MainTabView<RecordingScreen, SessionsScreen, ConsoleScreen>.Tab.record
+        var initial = MainTabView<RecordingScreen, MapScreen, SessionsScreen, ConsoleScreen>.Tab.record
         #if DEBUG
-        // `-uiTab 1|2` opens Sessions or Console at launch (simulator screenshots).
+        // `-uiTab 1|2|3` opens Sessions, Console or Map at launch (simulator screenshots).
         initial = .init(rawValue: UserDefaults.standard.integer(forKey: "uiTab")) ?? .record
         #endif
         _tab = State(initialValue: initial)
@@ -23,10 +27,15 @@ struct RootView: View {
     var body: some View {
         MainTabView(selection: $tab) {
             RecordingScreen(model: recording)
+        } map: {
+            MapScreen(model: map, isSelected: tab == .map)
         } sessions: {
             SessionsScreen(model: sessions)
         } console: {
             ConsoleScreen(model: console)
         }
+        // Ingest at the root so the track keeps filling on other tabs. The
+        // feed is its own view so only it observes the 16 Hz `live` status.
+        .background(MapFeed(session: session, model: map))
     }
 }
