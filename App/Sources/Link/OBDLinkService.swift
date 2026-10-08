@@ -94,6 +94,12 @@ class OBDLinkService: OBDLinkServicing {
     @ObservationIgnored private var sessionTask: Task<Void, Never>?
     @ObservationIgnored private var retiring: Task<Void, Never>?
     @ObservationIgnored private var nextSeq = 0
+    /// The init-and-poll run in progress, tagged with its connection's
+    /// `linkToken`. A `reinitialise()` on the same connection while it runs
+    /// waits for it instead of starting a second (R3.1-4). Cleared by the
+    /// run itself when it ends.
+    @ObservationIgnored private var initRun: (token: Int, id: Int, task: Task<Void, Never>)?
+    @ObservationIgnored private var nextInitRunID = 0
     /// What the BLE layer knows about the connected adapter.
     @ObservationIgnored private var bleRecord: AdapterRecord?
     @ObservationIgnored private var lastInfo: ELMAdapterInfo?
@@ -370,7 +376,31 @@ class OBDLinkService: OBDLinkServicing {
         }
     }
 
+    /// Initialises `session` and starts polling — or, if a run for this
+    /// connection is already going (the first one after connecting, or an
+    /// earlier `reinitialise()`), waits for that one. `ELMSession.initialise()`
+    /// shares concurrent calls too, but each caller would then call
+    /// `startPolling`: the second gets `.notInitialised` and its error path
+    /// reconnected a healthy link (R3.1-4). Registering is synchronous, so
+    /// there is no window for a second run.
     private func initialiseAndPoll(_ session: ELMSession, token: Int) async {
+        if let run = initRun, run.token == token {
+            await run.task.value
+            return
+        }
+        nextInitRunID += 1
+        let id = nextInitRunID
+        let task = Task {
+            await self.runInitialiseAndPoll(session, token: token)
+            // Cleared here, not by the awaiting caller, so a reinitialise()
+            // after the run ends can't join a finished run.
+            if self.initRun?.id == id { self.initRun = nil }
+        }
+        initRun = (token, id, task)
+        await task.value
+    }
+
+    private func runInitialiseAndPoll(_ session: ELMSession, token: Int) async {
         do throws(ELMSessionError) {
             let info = try await session.initialise()
             guard token == linkToken else { return }

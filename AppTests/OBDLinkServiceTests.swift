@@ -165,6 +165,12 @@ enum LinkTestSupport {
         }
     }
 
+    /// `touareg` with a 200 ms `ATZ` (inside the test `resetTimeout`), so a
+    /// test can act while the first initialisation is running.
+    static func slowReset() -> [MockELMAdapter.Rule] {
+        [MockELMAdapter.Rule(command: "ATZ", reply: "ATZ\r\r\rELM327 v2.1\r\r>", delay: .milliseconds(200))] + touareg()
+    }
+
     static func benchCar(ms: Int = 3) -> [MockELMAdapter.Rule] {
         MockELMAdapter.Rule.benchCar.map { rule in
             var rule = rule
@@ -395,6 +401,72 @@ struct OBDLinkServiceTests {
         link.disconnect()
     }
 
+    // R3.1-4: a reinitialise() during the first initialisation used to join
+    // the session's init run; both callers then called startPolling, the
+    // second got .notInitialised, and the service reconnected a healthy link.
+    @Test("reinitialise() during the first initialisation joins it: polls, no reconnect, one ATZ")
+    func reinitialiseDuringFirstInit() async throws {
+        let central = FakeBLECentral(scripts: [LinkTestSupport.slowReset()])
+        let link = LinkTestSupport.service(central)
+        let log = LinkEventLog(link.linkEvents())
+        link.connect(to: FakeBLECentral.adapterID)
+        // The session exists and its ATZ is in flight (200 ms).
+        #expect(await eventually { link.console.contains { $0.text == "elm: idle → resetting" } })
+        #expect(link.state == .initialising)
+
+        await link.reinitialise()
+        #expect(await eventually { link.state.isPolling && !log.readings.isEmpty })
+        try await Task.sleep(for: .milliseconds(300))
+
+        #expect(link.state.isPolling)
+        #expect(!log.ble.contains { $0.to == .disconnected }, "the healthy link is not torn down")
+        #expect(central.calls.filter { $0 == "connect" }.count == 1)
+        #expect(!central.calls.contains("cancel"))
+        #expect(!link.console.contains { $0.text.hasPrefix("init failed") })
+        #expect(await central.adapters[0].sentCommands.filter { $0 == "ATZ" }.count == 1, "one init run, shared")
+        link.disconnect()
+    }
+
+    @Test("Two concurrent reinitialise() calls while polling share one run: one ATZ, polling again, no reconnect")
+    func concurrentReinitialise() async throws {
+        let central = FakeBLECentral(scripts: [LinkTestSupport.slowReset()])
+        let link = LinkTestSupport.service(central)
+        let log = LinkEventLog(link.linkEvents())
+        link.connect(to: FakeBLECentral.adapterID)
+        #expect(await eventually { link.state.isPolling && !log.readings.isEmpty })
+
+        let first = Task { await link.reinitialise() }
+        let second = Task { await link.reinitialise() }
+        await first.value
+        await second.value
+        let readings = log.readings.count
+        #expect(await eventually { link.state.isPolling && log.readings.count > readings })
+        try await Task.sleep(for: .milliseconds(300))
+
+        #expect(link.state.isPolling)
+        #expect(!log.ble.contains { $0.to == .disconnected })
+        #expect(central.calls.filter { $0 == "connect" }.count == 1)
+        #expect(!link.console.contains { $0.text.hasPrefix("init failed") })
+        #expect(await central.adapters[0].sentCommands.filter { $0 == "ATZ" }.count == 2, "connect + one shared re-init")
+        link.disconnect()
+    }
+
+    @Test("reinitialise() after the first initialisation has finished runs a fresh one")
+    func reinitialiseAfterInit() async throws {
+        let central = FakeBLECentral(scripts: [LinkTestSupport.touareg()])
+        let link = LinkTestSupport.service(central)
+        let log = LinkEventLog(link.linkEvents())
+        link.connect(to: FakeBLECentral.adapterID)
+        #expect(await eventually { link.state.isPolling && !log.readings.isEmpty })
+
+        await link.reinitialise()
+        await link.reinitialise()
+        #expect(await eventually { link.state.isPolling })
+        #expect(await central.adapters[0].sentCommands.filter { $0 == "ATZ" }.count == 3, "connect + two sequential re-inits")
+        #expect(!log.ble.contains { $0.to == .disconnected })
+        link.disconnect()
+    }
+
     @Test("disconnect() stops reconnecting; forget() also clears the remembered adapter")
     func disconnectAndForget() async throws {
         let central = FakeBLECentral(scripts: [LinkTestSupport.touareg()])
@@ -501,6 +573,32 @@ struct SimulatedOBDLinkTests {
         #expect(log.ble.map(\.to).suffix(5) == [.disconnected, .reconnecting, .connecting, .discovering, .connected])
         let seqs = log.exchanges.map(\.seq)
         #expect(Set(seqs).count == seqs.count && seqs == seqs.sorted())
+        link.disconnect()
+    }
+
+    // R3.1-4 through the simulator's link, which the console runs against.
+    @Test("Simulated Vlink: reinitialise() during the first initialisation joins it, no reconnect")
+    func reinitialiseDuringFirstInit() async throws {
+        let slowReset = MockELMAdapter.Rule(command: "ATZ", reply: "ATZ\r\r\rELM327 v2.3\r\r>", delay: .milliseconds(200))
+        let link = SimulatedOBDLink(
+            rules: [slowReset] + LinkTestSupport.benchCar(),
+            defaults: LinkTestSupport.defaults(),
+            // The bench car only answers the probed plan (010D0C1 at 7E0).
+            sessionConfiguration: LinkTestSupport.probing,
+            backoff: LinkTestSupport.backoff,
+            latency: .milliseconds(10)
+        )
+        let log = LinkEventLog(link.linkEvents())
+        link.connect(to: SimulatedBLECentral.adapterID)
+        #expect(await eventually { link.console.contains { $0.text == "elm: idle → resetting" } })
+
+        await link.reinitialise()
+        #expect(await eventually { link.state.isPolling && !log.readings.isEmpty })
+        try await Task.sleep(for: .milliseconds(300))
+
+        #expect(link.state.isPolling)
+        #expect(!log.ble.contains { $0.to == .disconnected })
+        #expect(link.console.filter { $0.direction == .tx && $0.text == "ATZ" }.count == 1)
         link.disconnect()
     }
 

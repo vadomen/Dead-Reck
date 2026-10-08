@@ -95,7 +95,11 @@ protocol OBDLinkServicing: AnyObject, Observable {
     /// Re-runs the ELM init sequence on the current connection (from `ATZ`)
     /// and resumes polling; the console offers it after `.desynchronised`.
     /// If init fails the link reconnects with backoff. Does nothing without
-    /// a connection.
+    /// a connection. While an initialisation is already running on this
+    /// connection (the one after connecting, or an earlier
+    /// `reinitialise()`), it starts no second one: it waits for that run
+    /// and returns when it has ended (polling, or the failure handled), so
+    /// pressing it repeatedly is harmless.
     func reinitialise() async
     /// BLE transitions and ELM session events for the recorder, in order,
     /// across reconnects (each new `ELMSession` is seeded with the previous
