@@ -408,3 +408,36 @@ tests 127/127.
 - Final tests: `cd Core && swift test` 488 tests in 77 suites, all pass; simulator
   build green; app tests 127 in 23 suites, all pass (R5.1-4 flake seen once by
   the fix agent, passed on rerun).
+
+## Run 7 — range `f885836..21aada9` (M4 follow-up: replay scope, plan reuse), started 2026-10-08
+
+### Round 1
+
+Reviewer: fresh `reviewer` agent. Result: **0 BLOCKER / 0 MAJOR / 6 MINOR**.
+Verified clean: a reused plan reaches the wire only through `validate()` and
+the addressing check, so the `1` suffix can't go out under `7DF`; only
+allowlisted `ATAT0–2` and mode 01 added; fallback at most once per init; ATAT
+level recorded equals the adapter's after a reuse; NO DATA rule and `seq`
+continuity kept; `forget()` epoch guard sound; replay reset on every exit from
+`connected`, no loss or duplicate for Start at/around `connected`, empty
+replay safe; free-text notes only. Core 499/499, affected app suites 23/23
+(full app run by the fix agent 139/139).
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| M7.1-1 | MINOR | A degraded start-up selection (fallback command or a dropped PID) is remembered and reused on every reconnect, so a PID dropped once no longer gets a fresh chance per connection. | DEFERRED | BACKLOG |
+| M7.1-2 | MINOR | A plan that passes the one-poll check but fails while polling is stored again on `needsReconnect`; selection/ATAT comparison never re-runs. | DEFERRED | BACKLOG |
+| M7.1-3 | MINOR | Reuse key (peripheral id + banner) doesn't identify the vehicle; moving the adapter to another car reuses car A's ATAT level. | DEFERRED | BACKLOG |
+| M7.1-4 | MINOR | After a successful reuse, a same-connection `reinitialise()` notes "from the previous connection", contradicting LOG_FORMAT ("previous initialisation"). | DEFERRED | BACKLOG |
+| M7.1-5 | MINOR | Replay stops at `→ polling`, so a later `.adapter` re-announcement (PID dropped while polling) or ELM `retrying` isn't replayed; header and last replayed `adapter` row can disagree. Predates this commit. | DEFERRED | BACKLOG |
+| M7.1-6 | MINOR | Untested: `ATAT<n> not accepted` reuse failure, single-PID remembered plan, late `ATSH7E0` OK before the reuse check; `forget()` epoch test relies on a fixed 200 ms sleep. | DEFERRED | BACKLOG |
+
+**Loop stopped: no BLOCKER or MAJOR findings.**
+
+### Run 7 summary
+
+- Rounds run: 1.
+- Findings fixed: 0. Rejected: 0. Deferred: 6 MINOR (M7.1-1…6 in BACKLOG).
+- Commits: 21aada9 (change under review), plus this ledger update.
+- Final tests: `cd Core && swift test` 499 tests in 78 suites, all pass;
+  simulator build green; app tests 139 in 25 suites, all pass.
