@@ -18,7 +18,10 @@ recording reads with `inspect_log --strict` and no warnings. Its
 hardware-only checks are at the end of §6. **M2 done:** part 1 reviewed in
 review run 3 (2 MAJOR fixed, 38db605), part 2 in review run 4 (no BLOCKER or
 MAJOR; MINORs in `docs/BACKLOG.md`). **M3 screens done** (record dashboard, pre-drive
-checklist, sessions list, ELM console in `App/Sources/UI/`); review pending.
+checklist, sessions list, ELM console in `App/Sources/UI/`). **M3 done:**
+reviewed in review run 5 (1 MAJOR fixed, e576601; MINORs in
+`docs/BACKLOG.md`), tagged `logger-v1-rc1` (local). UI hardware checks are at
+the end of §6. M4 (bench test with our app) is next.
 
 **Decisions taken during M1 (by the user, after review):**
 - `NO DATA`: a PID that has answered OK in the session (poll or probe) is

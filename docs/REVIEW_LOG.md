@@ -350,3 +350,27 @@ link gating"); they need the new VM init, so on the old code they fail to
 compile rather than assert. Core 478/478, app tests 108/108. The R5.1-4 flake
 showed once more during the fix run (passed on rerun).
 
+### Round 2
+
+Reviewer: fresh `reviewer` agent. Result: **0 BLOCKER / 0 MAJOR / 4 MINOR**.
+R5.1-1 fix verified (dialog confirm ordering probed with a throwaway XCUITest:
+the button action runs before the binding resets). Core 478/478, app tests
+108/108; the R5.1-4 flake did not show.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R5.2-1 | MINOR | Connect-to-other skips the confirmation while recording when the link is `.unavailable`/`.idle` (`holdsAdapter` false); stale scan rows stay listed after connect. | DEFERRED | BACKLOG |
+| R5.2-2 | MINOR | Start stops a scan only if `state == .scanning`; a scan pending while Bluetooth is off resumes mid-drive. | DEFERRED | BACKLOG |
+| R5.2-3 | MINOR | Scan disabled in `.failed`, exactly where `.unusable` tells the user to pick another adapter. | DEFERRED | BACKLOG |
+| R5.2-4 | MINOR | Guard tests cover only a polling link; Forget guard is view-only and untested; README Console paragraph omits the recording-time confirmation. | DEFERRED | BACKLOG |
+
+**Loop stopped: no BLOCKER or MAJOR findings.**
+
+### Run 5 summary
+
+- Rounds run: 2.
+- Findings fixed: 1 MAJOR (R5.1-1). Rejected: 0. Deferred: 11 MINOR (R5.1-2…8, R5.2-1…4 in BACKLOG).
+- Commits: 60a37cc, 0087cdb, c6a6368 (change under review), e576601 (round 1), plus this ledger update.
+- Final tests: `cd Core && swift test` 478 tests in 75 suites, all pass; simulator
+  build green; app tests 108 in 19 suites, all pass (R5.1-4 is a known
+  timing flake in `writeFailureEntersFailed`, seen twice under load, deferred).
