@@ -22,6 +22,12 @@ checklist, sessions list, ELM console in `App/Sources/UI/`). **M3 done:**
 reviewed in review run 5 (1 MAJOR fixed, e576601; MINORs in
 `docs/BACKLOG.md`), tagged `logger-v1-rc1` (local). UI hardware checks are at
 the end of §6. M4 (bench test with our app) is next.
+**M4 done** (2026-10-08): bench session `docs/BENCH_TEST_2026-10-08.md`
+debriefed, results in §6; fixes reviewed in review run 6 (no BLOCKER or
+MAJOR; MINORs in `docs/BACKLOG.md`): the start-up init is now written at Start
+(2437416, a7a5006), location authorisation is logged, and `ATAT1` is kept
+unless `ATAT2` is ≥ 10% faster by median. The ≥ 5 min lock is superseded by
+M5's ≥ 1 h screen-locked drive (user decision). M5 (drives) is next.
 
 **Decisions taken during M1 (by the user, after review):**
 - `NO DATA`: a PID that has answered OK in the session (poll or probe) is

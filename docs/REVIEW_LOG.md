@@ -374,3 +374,37 @@ the button action runs before the binding resets). Core 478/478, app tests
 - Final tests: `cd Core && swift test` 478 tests in 75 suites, all pass; simulator
   build green; app tests 108 in 19 suites, all pass (R5.1-4 is a known
   timing flake in `writeFailureEntersFailed`, seen twice under load, deferred).
+
+## Run 6 — range `1af3a48..a7a5006` (M4 bench fixes), started 2026-10-08
+
+### Round 1
+
+Reviewer: fresh `reviewer` agent. Result: **0 BLOCKER / 0 MAJOR / 6 MINOR**.
+Verified clean: replay dedup (reads and writes in one main-actor step, skip =
+delivered − consumed, per-recording, replay once; `seq` unique and increasing
+for Start while polling / mid-init / after a drop / reconnect during a
+recording), replay rows on the recording's `SessionClock` unclamped, first
+`stats` window from the `start` row, ATAT rule and restores, `locationAuthorization`
+decodes in older readers (`event` is a String), frozen fixture untouched,
+`inspect_log --strict` accepts negative-`t` replay rows. Core 488/488, app
+tests 127/127.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| M6.1-1 | MINOR | Stale replay: Start after a drop replays the old connection ending at `connected`/`polling`; the drop events are skipped, so the first live row (`reconnecting → connecting`) doesn't follow. Documented in LOG_FORMAT. | DEFERRED | BACKLOG; user decision on stale replay pending |
+| M6.1-2 | MINOR | `inspect_log` Duration and the 30 s no-stats check span the pre-Start replay. | DEFERRED | BACKLOG |
+| M6.1-3 | MINOR | Every init now sends 23 probe polls (was 6); probe exchanges yield no `obd` rows, so each reconnect widens the `obd` gap by ~1 s. | DEFERRED | BACKLOG |
+| M6.1-4 | MINOR | `ATAT2` timeout with a late `OK` plus a refused `ATAT1` restore leaves the adapter at level 2 while the plan says 1; no test for a mute `ATAT2`. | DEFERRED | BACKLOG |
+| M6.1-5 | MINOR | A replay burst > ~720 rows can trip the "writer queue peaked" error row in window 1. | DEFERRED | BACKLOG |
+| M6.1-6 | MINOR | Every authorisation callback while recording writes a "changed" row without comparing; a grant after a denied Start writes none. | DEFERRED | BACKLOG |
+
+**Loop stopped: no BLOCKER or MAJOR findings.**
+
+### Run 6 summary
+
+- Rounds run: 1.
+- Findings fixed: 0. Rejected: 0. Deferred: 6 MINOR (M6.1-1…6 in BACKLOG).
+- Commits: 2437416, a7a5006 (change under review), plus this ledger update.
+- Final tests: `cd Core && swift test` 488 tests in 77 suites, all pass; simulator
+  build green; app tests 127 in 23 suites, all pass (R5.1-4 flake seen once by
+  the fix agent, passed on rerun).
