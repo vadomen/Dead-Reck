@@ -7,7 +7,9 @@ import Testing
 
 // M4 fixes (docs/BENCH_TEST_2026-10-08.md), recorder side:
 // A — the link's start-up init is written at Start (`lastInitEvents`, with
-//     the dedup contract in `OBDLinkServicing`), with negative `t`;
+//     the dedup contract in `OBDLinkServicing`), with negative `t`; since
+//     M6.1-1 only the current connection's, from `→ connected`, and nothing
+//     when the link is down at Start;
 // B — location authorisation is in the file.
 
 /// Link events as the real link would deliver them, on the uptime base.
@@ -19,7 +21,8 @@ enum InitScript {
         )))
     }
 
-    /// BLE `connecting → discovering → connected`.
+    /// BLE `connecting → discovering → connected`, as delivered live. Only
+    /// the last one is in `lastInitEvents` (M6.1-1).
     static func connection(at uptime: Double) -> [LinkEvent] {
         [
             .ble(from: .idle, to: .connecting, reason: nil, uptime: uptime),
@@ -96,16 +99,17 @@ struct LinkRows {
 struct StartupInitRecordingTests {
     typealias S = InitScript
 
-    @Test("Start while polling: the init right after the start row, negative t, once; pre-Start polls not written; seq unique, increasing, one gap")
+    @Test("Start while polling: the init right after the start row, from → connected, negative t, once; pre-Start polls not written; seq unique, increasing, one gap")
     func startWhilePolling() async throws {
         let scratch = try ScratchStore()
         defer { scratch.remove() }
         let link = FakeLink()
         let session = RecordingFixtures.session(link: link, store: scratch.store)
         let base = S.now
-        let initEvents = S.connection(at: base - 20) + S.initialisation(firstSeq: 0) { base - 19 + Double($0) * 0.1 }
+        let connection = S.connection(at: base - 20)
+        let initEvents = [connection[2]] + S.initialisation(firstSeq: 0) { base - 19 + Double($0) * 0.1 }
         link.lastInitEvents = initEvents
-        for event in initEvents { link.send(event) }
+        for event in connection.prefix(2) + initEvents { link.send(event) }
         // Pre-Start polls (seq 11…20), consumed by the session for the
         // dashboard, never written.
         for index in 0..<10 {
@@ -139,7 +143,7 @@ struct StartupInitRecordingTests {
         #expect(replay.count == initEvents.count)
         #expect(Array(events.dropFirst().prefix(replay.count)) == replay)
         #expect(replay.allSatisfy { $0.timestamp.nanoseconds < 0 }, "negative t, not clamped")
-        #expect(replay.first?.timestamp == MonotonicTimestamp(seconds: base - 20 - header.referenceUptimeSeconds))
+        #expect(replay.first?.timestamp == MonotonicTimestamp(seconds: base - 20 + 0.6 - header.referenceUptimeSeconds))
 
         let rows = LinkRows(events: events)
         #expect(rows.seqs == Array(0...10) + Array(30...34), "init once, then live only")
@@ -147,6 +151,7 @@ struct StartupInitRecordingTests {
         #expect(rows.seqs == rows.seqs.sorted())
         #expect(rows.speeds == [50, 51, 52, 53, 54], "no pre-Start poll")
         #expect(rows.bleTransitions(to: "connected") == 1)
+        #expect(rows.bleTransitions(to: "connecting") == 0 && rows.bleTransitions(to: "discovering") == 0)
         #expect(rows.count("adapter") == 1)
         #expect(rows.elm("ATZ").count == 1 && rows.elm("ATSH7E0").count == 1)
         #expect(events.dropFirst(replay.count + 1).allSatisfy { $0.timestamp.nanoseconds >= -50_000_000 || $0.payload.kind != "elm" })
@@ -172,8 +177,10 @@ struct StartupInitRecordingTests {
         }
         let base = S.now
         let initEvents = S.connection(at: base - 5) + S.initialisation(firstSeq: 0) { base - 4 + Double($0) * 0.1 }
-        // Delivered and consumed: the connection, → resetting, ATZ, ATE0.
-        deliver(Array(initEvents[0..<6]))
+        // Delivered and consumed: the connection (only `connected` is kept
+        // in `lastInitEvents`), → resetting, ATZ, ATE0.
+        for event in initEvents[0..<2] { link.send(event) }
+        deliver(Array(initEvents[2..<6]))
         #expect(await eventually(2) { session.consumedLinkEvents == link.deliveredLinkEventCount })
         // Delivered at the snapshot, unconsumed: ATL0, ATS0.
         link.onNextInitSnapshot = { deliver(Array(initEvents[6..<8])) }
@@ -202,9 +209,9 @@ struct StartupInitRecordingTests {
         #expect(rows.elmTransitions(to: "polling") == 1)
         #expect(rows.count("adapter") == 1)
         #expect(rows.speeds == [60, 61, 62])
-        // ATZ … ATS0 were replayed (before Start); the rest are live.
+        // connected, ATZ … ATS0 were replayed (before Start); the rest are live.
         let clock = SessionClock(header: header)
-        let replayed = Array(initEvents[0..<8]).flatMap { LogEvent.rows(for: $0, adapter: link.adapter, clock: clock) }
+        let replayed = Array(initEvents[2..<8]).flatMap { LogEvent.rows(for: $0, adapter: link.adapter, clock: clock) }
         #expect(Array(events.dropFirst().prefix(replayed.count)) == replayed)
         #expect(replayed.allSatisfy { $0.timestamp.nanoseconds < 0 })
     }
@@ -218,7 +225,7 @@ struct StartupInitRecordingTests {
         let base = S.now
         let connection = S.connection(at: base - 30)
         let initA = S.initialisation(firstSeq: 0) { base - 29 + Double($0) * 0.1 }
-        link.lastInitEvents = connection + initA
+        link.lastInitEvents = [connection[2]] + initA
         for event in connection + initA { link.send(event) }
         #expect(await eventually(2) { session.consumedLinkEvents == link.deliveredLinkEventCount })
 
@@ -231,7 +238,7 @@ struct StartupInitRecordingTests {
         // the init part of `lastInitEvents` and delivers it live.
         let now = S.now
         let initB = S.initialisation(firstSeq: 13, from: .polling) { now + Double($0) * 0.001 }
-        link.lastInitEvents = connection + initB
+        link.lastInitEvents = [connection[2]] + initB
         for event in initB { link.send(event) }
         for index in 0..<2 {
             for event in S.poll(seq: 24 + index, speed: 21, at: S.now) { link.send(event) }
@@ -277,6 +284,113 @@ struct StartupInitRecordingTests {
         #expect(!events.contains { ["link", "elm", "adapter", "obd"].contains($0.payload.kind) })
         #expect(RecordingFixtures.lifecycle(events).map(\.sample.event) == ["start", "calibrationStart", "calibrationEnd", "stop"])
         #expect(RecordingFixtures.lifecycle(events).first?.sample.detail == "without OBD: link idle")
+    }
+
+    // MARK: M6.1-1 with the real link service (FakeBLECentral + MockELMAdapter)
+
+    static func realLink(backoff: Duration = .milliseconds(20)) -> (OBDLinkService, FakeBLECentral) {
+        let central = FakeBLECentral(scripts: [LinkTestSupport.touareg()])
+        let link = OBDLinkService(
+            central: central, defaults: LinkTestSupport.defaults(),
+            sessionConfiguration: LinkTestSupport.configuration,
+            backoff: ReconnectBackoff(initial: backoff, maximum: backoff)
+        )
+        return (link, central)
+    }
+
+    static func linkRows(_ events: [LogEvent]) -> [LinkSample] {
+        events.compactMap { if case .link(let row) = $0.payload { row } else { nil } }
+    }
+
+    @Test("Real link, Start while polling: the replay begins at → connected; no connecting/discovering rows")
+    func realLinkStartWhilePolling() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let (link, _) = Self.realLink()
+        let session = RecordingFixtures.session(link: link, store: scratch.store)
+        link.connect(to: FakeBLECentral.adapterID)
+        #expect(await eventually { link.state.isPolling && session.consumedLinkEvents > 40 })
+
+        try await session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
+        let url = try #require(session.currentFile)
+        #expect(await eventually { session.consumedLinkEvents > link.lastInitEvents.count + 80 })
+        await session.stop()
+        link.disconnect()
+
+        let (_, events, report) = try RecordingFixtures.read(url)
+        #expect(report.failure == nil)
+        let first = try #require(events.dropFirst().first)
+        if case .link(let row) = first.payload {
+            #expect(row.layer == "ble" && row.from == "discovering" && row.to == "connected")
+            #expect(first.timestamp.nanoseconds < 0)
+        } else {
+            Issue.record("the row after start is the replayed → connected, got \(first.payload.kind)")
+        }
+        let rows = LinkRows(events: events)
+        #expect(rows.bleTransitions(to: "connected") == 1)
+        #expect(rows.bleTransitions(to: "connecting") == 0 && rows.bleTransitions(to: "discovering") == 0)
+        #expect(rows.elm("ATZ").count == 1)
+        #expect(rows.count("adapter") >= 1)
+        #expect(rows.seqs == rows.seqs.sorted() && Set(rows.seqs).count == rows.seqs.count)
+    }
+
+    @Test("Real link dropped before Start (reconnecting): nothing replayed; the first link row is the live reconnecting → connecting")
+    func realLinkStartAfterDrop() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let (link, central) = Self.realLink(backoff: .milliseconds(500))
+        let session = RecordingFixtures.session(link: link, store: scratch.store)
+        link.connect(to: FakeBLECentral.adapterID)
+        #expect(await eventually { link.state.isPolling && session.consumedLinkEvents > 40 })
+        await central.loseLink()
+        // The dropped session's last event (`→ failed`, transport closed)
+        // is delivered and consumed before Start.
+        #expect(await eventually {
+            link.bleState == .reconnecting && link.console.contains { $0.text.hasSuffix("→ failed (transport closed)") }
+                && session.consumedLinkEvents == link.deliveredLinkEventCount
+        })
+
+        try await session.start(mount: "", vehicle: "", allowWithoutOBD: true, calibration: .zero)
+        let url = try #require(session.currentFile)
+        #expect(await eventually { link.state.isPolling && session.live.obdSpeedKmh != nil && central.adapters.count == 2 })
+        #expect(await eventually { session.consumedLinkEvents == link.deliveredLinkEventCount })
+        await session.stop()
+        link.disconnect()
+
+        let (_, events, report) = try RecordingFixtures.read(url)
+        #expect(report.failure == nil)
+        let start = try #require(RecordingFixtures.lifecycle(events).first?.sample)
+        #expect(start.detail?.hasPrefix("without OBD: link reconnecting") == true)
+        #expect(!events.contains { $0.timestamp.nanoseconds < 0 && ["link", "elm", "adapter", "obd"].contains($0.payload.kind) },
+                "no replayed rows")
+        let link0 = try #require(Self.linkRows(events).first)
+        #expect(link0.layer == "ble" && link0.from == "reconnecting" && link0.to == "connecting")
+        let rows = LinkRows(events: events)
+        #expect(rows.bleTransitions(to: "connected") == 1)
+        #expect(rows.elm("ATZ").count == 1, "the new connection's init only")
+        #expect(rows.seqs == rows.seqs.sorted() && Set(rows.seqs).count == rows.seqs.count)
+    }
+
+    @Test("Real link, Disconnect, then Start without OBD: nothing replayed")
+    func realLinkStartAfterDisconnect() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let (link, _) = Self.realLink()
+        let session = RecordingFixtures.session(link: link, store: scratch.store)
+        link.connect(to: FakeBLECentral.adapterID)
+        #expect(await eventually { link.state.isPolling && session.consumedLinkEvents > 40 })
+        link.disconnect()
+        #expect(await eventually { session.consumedLinkEvents == link.deliveredLinkEventCount })
+
+        try await session.start(mount: "", vehicle: "", allowWithoutOBD: true, calibration: .zero)
+        let url = try #require(session.currentFile)
+        try await Task.sleep(for: .milliseconds(200))
+        await session.stop()
+
+        let (_, events, _) = try RecordingFixtures.read(url)
+        #expect(RecordingFixtures.lifecycle(events).first?.sample.detail == "without OBD: link idle")
+        #expect(!events.contains { ["elm", "adapter", "obd"].contains($0.payload.kind) })
+        #expect(LinkRows(events: events).bleTransitions(to: "connected") == 0)
     }
 }
 

@@ -13,11 +13,15 @@ struct SessionHarness {
     init(
         rules: [MockELMAdapter.Rule] = MockELMAdapter.Rule.touaregInstant,
         configuration: ELMSessionConfiguration = .fastTest,
-        firstSeq: Int = 0
+        firstSeq: Int = 0,
+        rememberedPlan: RememberedPollingPlan? = nil
     ) {
         clock = TestClock()
         mock = MockELMAdapter(rules: rules, uptime: clock, clock: clock)
-        session = ELMSession(transport: mock, configuration: configuration, uptime: clock, clock: clock, firstSeq: firstSeq)
+        session = ELMSession(
+            transport: mock, configuration: configuration, uptime: clock, clock: clock,
+            firstSeq: firstSeq, rememberedPlan: rememberedPlan
+        )
         log = EventLog.start(session.events)
     }
 

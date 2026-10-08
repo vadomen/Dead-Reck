@@ -7,9 +7,14 @@ import Testing
 // M4 bench (docs/BENCH_TEST_2026-10-08.md): the link connects and
 // initialises before the user taps Start, and the recorder only writes link
 // events while recording, so the file began with `poll` rows and no
-// start-up `adapter` row. `lastInitEvents` keeps the latest connection's
+// start-up `adapter` row. `lastInitEvents` keeps the current connection's
 // init so the recorder can write it at Start; `deliveredLinkEventCount`
 // lets it skip, exactly, what it already got that way.
+//
+// M6.1-1 (user decision 2): only the current connection, from its BLE
+// `→ connected` on, and only while BLE is `connected`. A link that is down
+// at Start replays nothing (no stale connection ending at `polling`
+// followed by live drop rows that don't follow from it).
 
 extension LinkEvent {
     /// Events that produce no rows and are never retained.
@@ -78,15 +83,15 @@ final class ContractRecorder {
 @Suite("OBDLinkService lastInitEvents (M4)", .serialized, .timeLimit(.minutes(1)))
 struct LinkInitReplayTests {
     /// The span a recording running from the connect would have written for
-    /// the init: from the BLE transition into `connecting` to the ELM
+    /// the init: from the BLE transition into `connected` to the ELM
     /// transition into `polling`, display-only events left out.
-    static func initSpan(_ events: [LinkEvent], connectingIndex: Int? = nil) throws -> [LinkEvent] {
-        let start = try #require(connectingIndex ?? events.lastIndex { $0.bleTarget == .connecting })
+    static func initSpan(_ events: [LinkEvent], connectedIndex: Int? = nil) throws -> [LinkEvent] {
+        let start = try #require(connectedIndex ?? events.lastIndex { $0.bleTarget == .connected })
         let end = try #require(events[start...].firstIndex { $0.isELMTransition(to: .polling) })
         return events[start...end].filter { !$0.isDisplayOnly }
     }
 
-    @Test("After connect and init: BLE connect, init and probe exchanges, ATSH7E0, the adapter event, in order, original uptimes")
+    @Test("After connect and init: BLE connected, init and probe exchanges, ATSH7E0, the adapter event, in order, original uptimes; no connecting/discovering")
     func afterConnectAndInit() async throws {
         let central = FakeBLECentral(scripts: [LinkTestSupport.benchCar()])
         let link = LinkTestSupport.service(central, configuration: LinkTestSupport.probing)
@@ -99,7 +104,9 @@ struct LinkInitReplayTests {
         let replay = link.lastInitEvents
         // Exactly the events the subscriber got for the init, unchanged.
         #expect(replay == (try Self.initSpan(log.events)))
-        #expect(replay.compactMap(\.bleTarget) == [.connecting, .discovering, .connected])
+        #expect(replay.compactMap(\.bleTarget) == [.connected], "no connecting or discovering rows")
+        #expect(replay.first?.bleTarget == .connected, "begins at → connected")
+        #expect(log.ble.map(\.to).suffix(3) == [.connecting, .discovering, .connected], "they were delivered live")
 
         let exchanges = replay.compactMap(\.exchange)
         #expect(Array(exchanges.map(\.tx).prefix(10)) == [
@@ -154,9 +161,9 @@ struct LinkInitReplayTests {
         #expect(await eventually { link.state.isPolling && link.lastInitEvents.last?.isELMTransition(to: .polling) == true })
         let second = link.lastInitEvents
         #expect(second != first)
-        #expect(second.compactMap(\.bleTarget) == [.connecting, .discovering, .connected])
-        #expect(Array(second.prefix(3)) == Array(first.prefix(3)), "same connection")
-        let init2 = Array(second.dropFirst(3))
+        #expect(second.compactMap(\.bleTarget) == [.connected])
+        #expect(second.first == first.first, "same connection")
+        let init2 = Array(second.dropFirst(1))
         #expect(init2.first?.isELMTransition(to: .resetting) == true)
         let exchanges = init2.compactMap(\.exchange)
         #expect(exchanges.filter { $0.tx == "ATZ" }.count == 1)
@@ -189,8 +196,8 @@ struct LinkInitReplayTests {
         })
 
         let replay = link.lastInitEvents
-        #expect(replay.compactMap(\.bleTarget) == [.connecting, .discovering, .connected])
-        let init2 = Array(replay.dropFirst(3))
+        #expect(replay.compactMap(\.bleTarget) == [.connected])
+        let init2 = Array(replay.dropFirst(1))
         #expect(init2.first?.isELMTransition(to: .reinitialising) == true)
         if case .session(.state(_, .polling, let reason, _)) = try #require(init2.last) {
             #expect(reason == "re-initialised")
@@ -220,22 +227,22 @@ struct LinkInitReplayTests {
                 && link.lastInitEvents.last?.isELMTransition(to: .polling) == true
         })
         let replay = link.lastInitEvents
-        #expect(replay.compactMap(\.bleTarget) == [.connecting, .discovering, .connected])
+        #expect(replay.compactMap(\.bleTarget) == [.connected])
         if case .ble(let from, _, let reason, _) = try #require(replay.first) {
-            #expect(from == .reconnecting)
-            #expect(reason == "reconnect attempt 1")
+            #expect(from == .discovering)
+            #expect(reason?.contains("notify") == true, "names the GATT selection")
         }
         let seqs = replay.compactMap(\.exchange).map(\.seq)
         #expect(firstSeqs.isDisjoint(with: seqs))
         #expect(seqs.min()! > firstSeqs.max()!)
         #expect(await eventually { log.events.count == link.deliveredLinkEventCount })
-        let secondConnecting = try #require(log.events.lastIndex { $0.bleTarget == .connecting })
-        #expect(replay == (try Self.initSpan(log.events, connectingIndex: secondConnecting)))
+        let secondConnected = try #require(log.events.lastIndex { $0.bleTarget == .connected })
+        #expect(replay == (try Self.initSpan(log.events, connectedIndex: secondConnected)))
         link.disconnect()
     }
 
-    @Test("A connection that never initialises leaves its BLE transitions only")
-    func failedInitKeepsConnection() async throws {
+    @Test("A connection whose init fails: nothing once it has dropped, also while reconnecting")
+    func failedInitDropsIt() async throws {
         let mute = LinkTestSupport.touareg(overrides: [MockELMAdapter.Rule(command: "ATZ", reply: nil)])
         let central = FakeBLECentral(scripts: [mute])
         // No reconnect within the test: the next `connecting` would reset it.
@@ -244,21 +251,19 @@ struct LinkInitReplayTests {
             sessionConfiguration: LinkTestSupport.configuration,
             backoff: ReconnectBackoff(initial: .seconds(30), maximum: .seconds(30))
         )
+        let log = LinkEventLog(link.linkEvents())
         link.connect(to: FakeBLECentral.adapterID)
-        #expect(await eventually { link.lastInitEvents.contains { $0.isELMTransition(to: .failed) } })
-        let replay = link.lastInitEvents
-        #expect(Array(replay.compactMap(\.bleTarget).prefix(3)) == [.connecting, .discovering, .connected])
-        #expect(replay.compactMap(\.exchange).first?.tx == "ATZ")
-        #expect(!replay.contains { $0.isAdapter })
-        #expect(await eventually { link.bleState == .reconnecting })
-        #expect(link.lastInitEvents == replay, "the drop after connected is not part of it")
+        #expect(await eventually { link.bleState == .reconnecting && log.events.contains { $0.isELMTransition(to: .failed) } })
+        #expect(log.exchanges.first?.tx == "ATZ")
+        #expect(link.lastInitEvents.isEmpty, "the link is down: no stale init")
         link.disconnect()
     }
 
     @Test("Bounded: at most initEventLimit events, the newest kept")
     func bounded() async throws {
         // A normal init is ~20 events here (no probing); a limit of 12
-        // keeps its last 12, the end of the init, adapter event included.
+        // keeps its last 12, the end of the init, adapter event included
+        // (the `connected` event is the oldest, so it goes first).
         #expect(OBDLinkService.defaultInitEventLimit >= 200, "room for a full init with fallbacks")
         let central = FakeBLECentral(scripts: [LinkTestSupport.touareg()])
         let link = OBDLinkService(
@@ -295,6 +300,8 @@ struct LinkInitReplayTests {
 
         let written = recorder.written
         #expect(Array(written.prefix(replayed.count)) == replayed)
+        #expect(written.first?.bleTarget == .connected, "the replay begins at → connected")
+        #expect(!written.contains { $0.bleTarget == .connecting || $0.bleTarget == .discovering })
         let seqs = written.compactMap(\.exchange).map(\.seq)
         #expect(Set(seqs).count == seqs.count, "no exchange written twice")
         #expect(seqs == seqs.sorted())
@@ -335,6 +342,96 @@ struct LinkInitReplayTests {
         #expect(written.filter { $0.isAdapter }.count == 1)
         link.disconnect()
     }
+
+    // MARK: M6.1-1: only the current connection, only while connected
+
+    /// A service that waits `backoff` before reconnecting, so a test can act
+    /// while the link is down.
+    static func slowReconnecting(_ central: FakeBLECentral, backoff: Duration = .milliseconds(600)) -> OBDLinkService {
+        OBDLinkService(
+            central: central, defaults: LinkTestSupport.defaults(),
+            sessionConfiguration: LinkTestSupport.configuration,
+            backoff: ReconnectBackoff(initial: backoff, maximum: backoff)
+        )
+    }
+
+    @Test("The link dropped before Start (reconnecting): nothing is replayed, and the first written event is the live reconnecting → connecting")
+    func startAfterDrop() async throws {
+        let central = FakeBLECentral(scripts: [LinkTestSupport.touareg()])
+        let link = Self.slowReconnecting(central)
+        let recorder = ContractRecorder()
+        recorder.consume(link.linkEvents())
+        link.connect(to: FakeBLECentral.adapterID)
+        #expect(await eventually { link.state.isPolling && recorder.consumed > 30 })
+        let firstConnectionSeqs = Set(link.lastInitEvents.compactMap(\.exchange).map(\.seq))
+        #expect(!firstConnectionSeqs.isEmpty)
+
+        await central.loseLink()
+        // The dropped session's last event (`→ failed`, transport closed)
+        // is delivered before Start, so the first live event is the reconnect.
+        #expect(await eventually {
+            link.bleState == .reconnecting && link.console.contains { $0.text.hasSuffix("→ failed (transport closed)") }
+        })
+        #expect(link.lastInitEvents.isEmpty, "the link is down")
+        recorder.start(link)
+        #expect(recorder.written.isEmpty, "nothing replayed")
+
+        #expect(await eventually { link.state.isPolling && recorder.written.contains { $0.exchange?.phase == .poll } })
+        let written = recorder.written
+        if case .ble(let from, let to, let reason, _) = try #require(written.first) {
+            #expect(from == .reconnecting && to == .connecting)
+            #expect(reason == "reconnect attempt 1")
+        } else {
+            Issue.record("the first written event is the live BLE reconnect, got \(String(describing: written.first))")
+        }
+        #expect(written.compactMap(\.bleTarget).prefix(3) == [.connecting, .discovering, .connected])
+        let seqs = written.compactMap(\.exchange).map(\.seq)
+        #expect(firstConnectionSeqs.isDisjoint(with: seqs), "nothing from the dropped connection")
+        #expect(seqs == seqs.sorted() && Set(seqs).count == seqs.count)
+        #expect(written.compactMap(\.exchange).first?.tx == "ATZ")
+        link.disconnect()
+    }
+
+    @Test("Disconnect, then Start without OBD: nothing is replayed, and nothing is written while idle")
+    func startAfterDisconnect() async throws {
+        let central = FakeBLECentral(scripts: [LinkTestSupport.touareg()])
+        let link = LinkTestSupport.service(central)
+        let recorder = ContractRecorder()
+        recorder.consume(link.linkEvents())
+        link.connect(to: FakeBLECentral.adapterID)
+        #expect(await eventually { link.state.isPolling && !link.lastInitEvents.isEmpty })
+
+        link.disconnect()
+        #expect(link.bleState == .idle)
+        #expect(link.lastInitEvents.isEmpty)
+        recorder.start(link)
+        #expect(recorder.written.isEmpty)
+        let delivered = link.deliveredLinkEventCount
+        #expect(await eventually { recorder.consumed >= delivered })
+        try await Task.sleep(for: .milliseconds(100))
+        // The retired session's last events (its final `→ idle`) may arrive
+        // after Start; they are live and from no connection's init.
+        #expect(!recorder.written.contains { $0.exchange != nil && $0.exchange?.phase != .poll }, "no replayed init")
+        #expect(!recorder.written.contains { $0.bleTarget == .connected })
+
+        // And forget(): the same.
+        link.connect(to: FakeBLECentral.adapterID)
+        #expect(await eventually { link.state.isPolling && !link.lastInitEvents.isEmpty })
+        link.forget()
+        #expect(link.lastInitEvents.isEmpty)
+    }
+
+    @Test("Bluetooth off while polling: nothing to replay")
+    func unavailable() async throws {
+        let central = FakeBLECentral(scripts: [LinkTestSupport.touareg()])
+        let link = LinkTestSupport.service(central)
+        link.connect(to: FakeBLECentral.adapterID)
+        #expect(await eventually { link.state.isPolling && !link.lastInitEvents.isEmpty })
+        central.send(.availability(.unavailable("Bluetooth is off"), uptime: FakeBLECentral.now))
+        #expect(await eventually { link.bleState == .unavailable })
+        #expect(link.lastInitEvents.isEmpty)
+        link.disconnect()
+    }
 }
 
 @MainActor
@@ -356,11 +453,38 @@ struct SimulatedLinkInitReplayTests {
 
         let replay = link.lastInitEvents
         #expect(replay == (try LinkInitReplayTests.initSpan(log.events)))
-        #expect(replay.compactMap(\.bleTarget) == [.connecting, .discovering, .connected])
+        #expect(replay.compactMap(\.bleTarget) == [.connected])
         let exchanges = replay.compactMap(\.exchange)
         #expect(exchanges.first?.tx == "ATZ")
         #expect(exchanges.contains { $0.tx == "ATSH7E0" && $0.outcome == .ok })
         #expect(replay.contains { $0.isAdapter })
+        link.disconnect()
+    }
+
+    @Test("A connection attempt in progress (connecting, discovering): nothing; from connected on: connected + the init")
+    func attemptInProgress() async throws {
+        let link = SimulatedOBDLink(
+            rules: LinkTestSupport.benchCar(),
+            defaults: LinkTestSupport.defaults(),
+            sessionConfiguration: LinkTestSupport.configuration,
+            backoff: LinkTestSupport.backoff,
+            latency: .milliseconds(300)
+        )
+        let log = LinkEventLog(link.linkEvents())
+        link.connect(to: SimulatedBLECentral.adapterID)
+        // Connects once the simulated central reports Bluetooth on.
+        #expect(await eventually { link.bleState == .connecting })
+        #expect(link.lastInitEvents.isEmpty)
+        #expect(await eventually { link.bleState == .discovering })
+        #expect(link.lastInitEvents.isEmpty)
+        #expect(await eventually { link.bleState == .connected })
+        #expect(link.lastInitEvents.first?.bleTarget == .connected)
+        #expect(await eventually { link.state.isPolling && log.readings.count >= 2 })
+        #expect(link.lastInitEvents.compactMap(\.bleTarget) == [.connected])
+
+        await link.simulateLinkLoss()
+        #expect(await eventually { link.bleState != .connected })
+        #expect(link.lastInitEvents.isEmpty)
         link.disconnect()
     }
 }

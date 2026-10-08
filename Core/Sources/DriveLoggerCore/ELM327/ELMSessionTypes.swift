@@ -41,7 +41,8 @@ public enum ELMState: String, Hashable, Sendable, CaseIterable {
     case searching
     /// Selecting the poll command (`010D0C1` → `010D0C` → `010D1` → `010D`,
     /// suffix steps only with physical addressing) and comparing `ATAT1`
-    /// with `ATAT2`.
+    /// with `ATAT2` — or checking a remembered plan (`ATAT<n>` and one check
+    /// poll cycle) instead.
     case probing
     /// Initialised, not polling.
     case ready
@@ -280,6 +281,25 @@ public struct PollingPlan: Hashable, Sendable {
     }
 }
 
+/// A poll plan chosen by start-up selection, and the adapter it was chosen
+/// on, carried into the next initialisation so it can skip selection and
+/// the `ATAT1`/`ATAT2` comparison (M6.1-3). See `ELMSession`, "Remembered
+/// poll plan".
+public struct RememberedPollingPlan: Hashable, Sendable {
+    /// The plan selection chose, `adaptiveTiming` and `requestHeader`
+    /// included.
+    public var plan: PollingPlan
+    /// The `ATZ` banner of the adapter it was chosen on, e.g. `ELM327 v2.3`.
+    /// A different banner at the next `ATZ` means a different adapter (or
+    /// firmware): the plan is not reused.
+    public var elmVersion: String
+
+    public init(plan: PollingPlan, elmVersion: String) {
+        self.plan = plan
+        self.elmVersion = elmVersion
+    }
+}
+
 /// What `initialise()` found.
 public struct ELMAdapterInfo: Hashable, Sendable {
     /// `ATZ` banner, e.g. `ELM327 v2.1`.
@@ -297,7 +317,9 @@ public struct ELMAdapterInfo: Hashable, Sendable {
     /// each, every reply complete) — with physical addressing if `ATSH7E0` was sent and
     /// answered `OK` and something parsed that way, else functionally
     /// (suffix steps skipped). If nothing parsed, or without probing, the
-    /// baseline: functional, no suffix.
+    /// baseline: functional, no suffix. Or a remembered plan, reused
+    /// without selection because it still fit and its check poll passed
+    /// (`ELMSession`, "Remembered poll plan").
     public var plan: PollingPlan
 
     public init(

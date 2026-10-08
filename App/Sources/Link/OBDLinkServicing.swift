@@ -107,24 +107,32 @@ protocol OBDLinkServicing: AnyObject, Observable {
     /// previous stream.
     func linkEvents() -> AsyncStream<LinkEvent>
 
-    /// The latest connection's initialisation, for the recorder to write at
+    /// The current connection's initialisation, for the recorder to write at
     /// Start: the link usually connects and initialises before the user taps
     /// Start, and those events have already gone by on `linkEvents()` (M4
     /// bench, docs/BENCH_TEST_2026-10-08.md).
     ///
+    /// **Only while connected (M6.1-1, user decision).** Empty whenever BLE
+    /// isn't `connected`: disconnected, reconnecting, idle after
+    /// `disconnect()`/`forget()`, unavailable, or a connection attempt in
+    /// progress (`connecting`, `discovering`, `restoring`). A connection that
+    /// has dropped is never replayed: its rows would end at `polling`, and
+    /// the live rows after Start (`reconnecting → connecting` …) would not
+    /// follow from them. A recording started then gets no replay; the
+    /// connection that comes up later is written live.
+    ///
     /// **Contents.** `LinkEvent`s exactly as delivered on `linkEvents()`,
     /// unchanged — same values, same original uptimes, same `seq` — in
     /// delivery order, in two parts:
-    /// 1. **Connection:** the BLE transitions of the current connection
-    ///    attempt, from the one into `connecting` (or `restoring`) up to and
-    ///    including the one into `connected` (its reason names the GATT
-    ///    selection) — or, for an attempt that failed, the one that ended
-    ///    it.
+    /// 1. **Connection:** the BLE transition into `connected` that started
+    ///    the current connection (its reason names the GATT selection). The
+    ///    `connecting` and `discovering` transitions before it are not kept.
     /// 2. **Init:** the latest initialisation on that connection, from its
     ///    first ELM event up to and including the ELM transition into
     ///    `polling` (or into `failed`): every `.exchange` (phases `init` and
-    ///    `probe`: `ATZ` … `ATRV`, `ATSH7E0`, selection, the `ATAT1`/`ATAT2`
-    ///    comparison), every `.state` transition and note, and the
+    ///    `probe`: `ATZ` … `ATRV`, `ATSH7E0`, selection and the
+    ///    `ATAT1`/`ATAT2` comparison, or the remembered plan's `ATATn` and
+    ///    check poll), every `.state` transition and note, and the
     ///    `.adapter` event. For the first init after connecting it starts
     ///    with the session's first event (`idle → resetting`, or output the
     ///    adapter had buffered); for a re-init with `→ resetting`
@@ -141,19 +149,15 @@ protocol OBDLinkServicing: AnyObject, Observable {
     /// uptimes, which is what the mapping does, they get negative `t` when
     /// they precede Start. That is legal and must not be clamped.
     ///
-    /// **Lifetime.** Reset when a new connection attempt starts (BLE `→
-    /// connecting`, `→ restoring`): both parts start again. A new init on
-    /// the same connection (`reinitialise()`, or the session's own
-    /// `reinitialising`) replaces the init part and keeps the connection
-    /// part. A connection that drops keeps its events until the next
-    /// attempt starts; an init cut short by the drop still gets its own
-    /// session's last events (`→ failed`, the abandoned command's row). The
-    /// BLE transitions after `connected` are not kept, and neither is
-    /// anything from a previous connection's session delivered after the
-    /// reset. Bounded (`OBDLinkService.defaultInitEventLimit`, 1 000; a full
-    /// init with selection fallbacks is ~100–200 events): beyond that the
-    /// oldest are dropped, so the end of the init (the `adapter` event) is
-    /// always kept.
+    /// **Lifetime.** Starts again at every BLE transition into `connected`
+    /// and is emptied when BLE leaves `connected`. A new init on the same
+    /// connection (`reinitialise()`, or the session's own `reinitialising`)
+    /// replaces the init part and keeps the `connected` event. Nothing from
+    /// a previous connection's session delivered after that is kept.
+    /// Bounded (`OBDLinkService.defaultInitEventLimit`, 1 000; a full init
+    /// with selection fallbacks is ~100–200 events): beyond that the oldest
+    /// are dropped, so the end of the init (the `adapter` event) is always
+    /// kept.
     ///
     /// **Dedup contract for the recorder** ("replay only at Start; live
     /// events after that"). Every event here has already been delivered on
@@ -168,6 +172,10 @@ protocol OBDLinkServicing: AnyObject, Observable {
     ///    before Start — each is either in the replay or (poll traffic
     ///    before Start) not part of the recording — so it writes none of
     ///    them, and writes every event after them.
+    ///
+    /// The same steps apply when the replay is empty (the link is down at
+    /// Start): nothing is replayed, and the skip still keeps every event
+    /// delivered before Start out of the file.
     ///
     /// No event is then written twice, none delivered after Start is lost,
     /// and an init still running at Start is complete: its first part from

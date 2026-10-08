@@ -47,6 +47,7 @@
 		CF7DAFE188B603771CB0BE9C /* GATTDetectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 428FB84AE7F6B6AC6DAF1351 /* GATTDetectionTests.swift */; };
 		D4DD5D4CB3D6495E37F012AA /* StartupInitRecordingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12C8F6E577D688ED09523263 /* StartupInitRecordingTests.swift */; };
 		D635E988DAD0AF2AA509EA4D /* OBDLinkService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFEAEF116B2672D8E2E88275 /* OBDLinkService.swift */; };
+		D8B3767F4C9463E941E14A3A /* LinkPlanReuseTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B37347FFA3D8D050EAC3981 /* LinkPlanReuseTests.swift */; };
 		DB397B3DFC6D0ECD860B9ED0 /* SessionsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51E41306C0E8CC802CFDBB09 /* SessionsViewModel.swift */; };
 		EB54AA0B95B0D269E74ADD6A /* SessionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEC07B5D8472C3B9B0953238 /* SessionsView.swift */; };
 		EB69D658A35BEC3DCD84D1EB /* RecordingTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B03770A2F4197C0EC3E1CACE /* RecordingTestSupport.swift */; };
@@ -69,6 +70,7 @@
 		14F0D843A473920A9680FC04 /* SimulatedOBDLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimulatedOBDLink.swift; sourceTree = "<group>"; };
 		167B09C43FC2B04D92DCB6B2 /* SampleGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SampleGate.swift; sourceTree = "<group>"; };
 		18315FE7C7FFF70B0B2850DD /* BLECentralTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BLECentralTests.swift; sourceTree = "<group>"; };
+		2B37347FFA3D8D050EAC3981 /* LinkPlanReuseTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LinkPlanReuseTests.swift; sourceTree = "<group>"; };
 		2EE4B1A7D0924DC9EBEBA99C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		34003681B191F41CE9CCAF3E /* Core */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Core; path = Core; sourceTree = SOURCE_ROOT; };
 		377D8FCE4EF2F5BD5BAB89D0 /* DashboardState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardState.swift; sourceTree = "<group>"; };
@@ -130,6 +132,7 @@
 				18315FE7C7FFF70B0B2850DD /* BLECentralTests.swift */,
 				428FB84AE7F6B6AC6DAF1351 /* GATTDetectionTests.swift */,
 				EFB4D769B7E12E237DC8FD7E /* LinkInitReplayTests.swift */,
+				2B37347FFA3D8D050EAC3981 /* LinkPlanReuseTests.swift */,
 				C2B377149F824738057BC395 /* LogStoreTests.swift */,
 				4757331FF2FA81D7AC0192A2 /* OBDLinkServiceTests.swift */,
 				054B04838405BB2A03DF2023 /* RecordingSessionTests.swift */,
@@ -398,6 +401,7 @@
 				80920D5FFE9F6525692A73C6 /* BLECentralTests.swift in Sources */,
 				CF7DAFE188B603771CB0BE9C /* GATTDetectionTests.swift in Sources */,
 				6E1F7D1FD58FBD0186AAFF11 /* LinkInitReplayTests.swift in Sources */,
+				D8B3767F4C9463E941E14A3A /* LinkPlanReuseTests.swift in Sources */,
 				7D86BAE1CF116B5844B7377F /* LogStoreTests.swift in Sources */,
 				9D68BF8B1CC07439C59B8590 /* OBDLinkServiceTests.swift in Sources */,
 				7AC8D2001A8B6452A3F6D8FE /* RecordingSessionTests.swift in Sources */,

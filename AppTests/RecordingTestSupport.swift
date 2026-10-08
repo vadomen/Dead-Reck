@@ -212,7 +212,7 @@ enum RecordingFixtures {
 
     @MainActor
     static func session(
-        link: FakeLink? = nil,
+        link: (any OBDLinkServicing)? = nil,
         sources: [any SensorSource]? = nil,
         store: LogStore,
         disk: FakeDisk = FakeDisk(roomy),

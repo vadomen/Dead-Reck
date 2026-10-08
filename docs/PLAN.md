@@ -28,6 +28,13 @@ MAJOR; MINORs in `docs/BACKLOG.md`): the start-up init is now written at Start
 (2437416, a7a5006), location authorisation is logged, and `ATAT1` is kept
 unless `ATAT2` is ≥ 10% faster by median. The ≥ 5 min lock is superseded by
 M5's ≥ 1 h screen-locked drive (user decision). M5 (drives) is next.
+**M4 follow-up** (user decisions on M6.1-1 and M6.1-3): the start-up init is
+replayed at Start only while the adapter is connected, and only the current
+connection from its `→ connected`; and the poll plan with its `ATAT` level is
+remembered per adapter across reconnects, so a re-init skips selection and
+the timing comparison unless the remembered plan fails its check poll
+(`ELMSession` "Remembered poll plan", `docs/LOG_FORMAT.md`). Hardware checks
+at the end of §6.
 
 **Decisions taken during M1 (by the user, after review):**
 - `NO DATA`: a PID that has answered OK in the session (poll or probe) is
@@ -49,7 +56,13 @@ M5's ≥ 1 h screen-locked drive (user decision). M5 (drives) is next.
   - **Poll command.** Chosen at start-up as the first of `010D0C1` →
     `010D0C` → `010D1` → `010D` that returns the engine's (`7E8`) values.
     The `1` suffix is used only after `ATSH7E0` answered `OK`: under
-    functional addressing the suffix returned the gearbox's reply.
+    functional addressing the suffix returned the gearbox's reply. Since
+    the M4 follow-up (M6.1-3) the chosen plan and `ATAT` level are
+    remembered per adapter for the app session: a reconnect to the same
+    adapter reuses them after the full handshake if the `ATSH7E0` gate gives
+    the same addressing, with `ATAT<n>` and one check poll instead of
+    selection and the `ATAT1`/`ATAT2` comparison; if the check fails,
+    selection runs as before (once per init).
   - **Functional fallback.** If nothing parses at `7E0` (or only without
     speed), the session sends `ATSH7DF` and selects again functionally
     (`010D0C` → `010D`, no suffix). Every fallback plan is functional. The
@@ -381,13 +394,16 @@ public actor ELMSession {
                 configuration: ELMSessionConfiguration = .default,   // timeouts, retry N, re-init N
                 uptime: any UptimeSource = SystemUptimeSource(),     // stamps events
                 clock: any Clock<Duration> = ContinuousClock(),      // timeouts only, injectable
-                firstSeq: Int = 0)                                   // = previous session's nextSeq
+                firstSeq: Int = 0,                                   // = previous session's nextSeq
+                rememberedPlan: RememberedPollingPlan? = nil)        // = previous session's, same adapter (M6.1-3)
     public nonisolated let events: AsyncStream<ELMSessionEvent>     // single consumer
     public private(set) var state: ELMState
     public private(set) var nextSeq: Int
+    public private(set) var rememberedPlan: RememberedPollingPlan?   // plan + ATZ banner, for the next session
     /// ATZ → ATE0 → ATL0 → ATS0 → ATH1 → ATSP0 → 0100 (10 s) → ATDPN → ATRV,
     /// then probes multi-PID / count suffix and picks the first that parses; keeps ATAT1
-    /// unless ATAT2's median is ≥ 10% lower over 10 samples each (M4).
+    /// unless ATAT2's median is ≥ 10% lower over 10 samples each (M4). With a fitting
+    /// rememberedPlan: ATAT<n> + one check poll instead; selection only if the check fails.
     public func initialise() async throws(ELMSessionError) -> ELMAdapterInfo
     public func startPolling(_ plan: PollingPlan) throws(ELMSessionError)
     public func stopPolling() async
@@ -597,7 +613,8 @@ become format types. `LinkEvent` = `.ble(from:to:reason:uptime:)` |
 ```
 
 `OBDLinkService` (CoreBluetooth, restore identifier, reconnect with backoff,
-each new `ELMSession` seeded with the previous `nextSeq`) and
+each new `ELMSession` seeded with the previous `nextSeq` and, on the same
+adapter, its `rememberedPlan`; `lastInitEvents` only while connected) and
 `SimulatedOBDLink` (wraps `MockELMAdapter`; chosen automatically on the
 simulator). Only `BLETransport.send` may call `writeValue`
 (`RepositoryInvariantTests`).
@@ -766,7 +783,7 @@ check. Exit status 0 read, 1 unreadable, 2 usage.
 
 ### Added by M4 fixes (not verified)
 Start-up init written at Start (link side 2437416, recorder side in this fix) and location authorisation in the file. Tested only against fakes on the simulator; none of this has been seen on the phone.
-1. **Start after polling:** the file begins with the `start` row, then negative-`t` `link` rows `connecting → discovering → connected` and `elm` rows `ATZ` … `ATSH7E0`, then the probe and an `adapter` row, then live rows. `inspect_log --strict` is clean, and `seq` increases with exactly one gap (after the init's last exchange; the pre-Start polls are not written).
+1. **Start after polling:** the file begins with the `start` row, then negative-`t` `link` rows `connecting → discovering → connected` (since the M4 follow-up only `discovering → connected`) and `elm` rows `ATZ` … `ATSH7E0`, then the probe and an `adapter` row, then live rows. `inspect_log --strict` is clean, and `seq` increases with exactly one gap (after the init's last exchange; the pre-Start polls are not written).
 2. **Start during init** (allow without OBD): every init exchange appears exactly once: the first part replayed with negative `t`, the rest live.
 3. **ATAT on the Touareg:** the `adaptive timing:` note says `ATAT1 kept`, with both medians around 59 ms. Measure the extra start-up and re-init time (about 1.2 s).
 4. **Unplug and replug while not recording, then Start:** the replayed init is the reconnect's (one `connected`, its `ATZ`), not the first connection's.
@@ -776,3 +793,11 @@ Start-up init written at Start (link side 2437416, recorder side in this fix) an
 8. **The bench's `Code=1` again:** if `referenceLocation: Error Domain=kCLErrorDomain Code=1 …` reappears, note the authorisation in its parentheses. With `authorizedWhenInUse`/`authorizedAlways`, fixes must keep coming and no background-risk row is written. With `denied`/`restricted`, the background-risk row must follow. Also check whether it comes right after Start on a fresh install, while `authorizationStatus=notDetermined`. That is the leading hypothesis for the bench, and if it holds it is a startup ordering issue, not a denial.
 9. **Prompt answered after Start:** on a fresh install, Start, then answer the location prompt. You should get a `locationAuthorization` row with the new authorisation at the moment of the answer, and fixes start. If the answer was "Allow Once" or "Allow While Using", check whether `backgroundActivitySession=held` (created before the answer) actually keeps the app running when locked. The `stats` `t` values must continue across the lock.
 10. **Precise Location off mid-recording:** gives `locationAuthorization` `…, accuracyAuthorization=reduced` and the recording continues. Note `horizontalAccuracy` afterwards.
+
+### Added by M4 follow-up (not verified)
+Replay only the current connection's init (M6.1-1) and remembered poll plan and `ATAT` across reconnects (M6.1-3). Tested against `MockELMAdapter`, `FakeBLECentral` and `SimulatedOBDLink` only; none of this has been seen on the phone.
+1. **Unplug and replug while recording:** after the reconnect the `link` notes show `poll plan reused from the previous connection: 010D0C1, ATAT1, requestHeader 7E0` (with the level the start-up init chose), the `elm` rows of the re-init are the handshake with `ATSH7E0` → `OK`, then `ATAT1` and one `010D0C1` (phase `probe`), with no selection samples and no `adaptive timing:` note; polling resumes faster than the bench's 7.2 s init (`connected` → `polling`; most of it is still `0100` `SEARCHING...`, so expect roughly 7.2 s minus the ~1.2–1.5 s of probing). Note the `connected` → `polling` time.
+2. **Start after a drop:** unplug the adapter, wait for `reconnecting`, tap Start (allow without OBD): the file has no negative-`t` `link`/`elm`/`adapter` rows (no replay); the first `link` row is the live `reconnecting → connecting` (or the next transition); replug, and the whole new connection is written live, `seq` increasing.
+3. **Start while connected:** the replay begins with the `link` row `discovering → connected`; no `connecting`/`discovering` rows precede it.
+4. **Reused plan failing on the car:** if a `reused plan failed (…); selecting again` note ever appears, record the reason and whether the following selection picked a different plan; the next reconnect must then show the newly selected plan in its `poll plan reused …` note.
+5. **Forget / another adapter:** after Forget and re-pairing the same adapter, or after picking a different one, the first init runs the full selection and the `adaptive timing:` note (no `poll plan reused` note).

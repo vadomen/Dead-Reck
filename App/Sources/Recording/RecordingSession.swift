@@ -83,8 +83,8 @@ struct LiveStatus: Hashable, Sendable {
 /// / `live.obdHz` at all times.
 ///
 /// **Start-up init (M4).** The link usually connects and initialises before
-/// Start, so at Start the session writes `link.lastInitEvents` — the latest
-/// connection's BLE transitions and init (`ATZ` … `ATSH7E0`, probe,
+/// Start, so at Start the session writes `link.lastInitEvents` — the current
+/// connection's BLE `→ connected` and init (`ATZ` … `ATSH7E0`, probe,
 /// `adapter`) — following that property's dedup contract: replay only at
 /// Start, live events after that. In one synchronous main-actor step (no
 /// suspension between the reads and the writes) it reads `lastInitEvents`
@@ -98,7 +98,9 @@ struct LiveStatus: Hashable, Sendable {
 /// row stays the first line, and the first `stats` window still starts at
 /// `t ≈ 0` (the writer starts it at the first row it sees). Each recording
 /// replays once, at its own Start; an init during a recording arrives live.
-/// Nothing is replayed when the link has never connected.
+/// Nothing is replayed when the link isn't connected at Start (M6.1-1: the
+/// link then returns an empty `lastInitEvents`); the skip still applies, so
+/// no pre-Start event is written either way.
 ///
 /// **Rows it writes** (`lifecycle` unless noted): `start` (detail `without
 /// OBD: …` when started without a polling link), the replayed start-up

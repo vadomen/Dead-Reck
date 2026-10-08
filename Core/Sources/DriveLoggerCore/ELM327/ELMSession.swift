@@ -14,13 +14,16 @@ import Foundation
 ///
 /// One session lives for one transport connection. After a reconnect the owner
 /// creates a new session with `firstSeq: previous.nextSeq` so exchange numbers
-/// stay unique for the whole recording.
+/// stay unique for the whole recording, and — on the same adapter — with
+/// `rememberedPlan: previous.rememberedPlan` so it can skip start-up
+/// selection (see "Remembered poll plan").
 ///
 /// ## State machine
 ///
 /// ```
 /// idle ─initialise()→ resetting (ATZ) → initialising (ATE0…ATSP0)
 ///      → searching (0100) → initialising (ATDPN, ATRV[, ATSH7E0]) → probing → ready
+///      (probing: start-up selection, or a remembered plan's ATATn + check poll)
 /// ready ─startPolling()→ polling
 /// polling ─failure→ retrying ─failure × failuresBeforeReinit→ reinitialising
 /// retrying/reinitialising ─success→ polling
@@ -125,6 +128,59 @@ import Foundation
 ///   (R2.2-3). A physical plan whose `ATSH7E0` is refused fails like any
 ///   poll (retry → re-init → `failed` + `needsReconnect`).
 ///
+/// ## Remembered poll plan
+///
+/// M6.1-3 (review run 6; user decision): selection plus the `ATAT1`/`ATAT2`
+/// comparison sends ~23 probe polls, none of which yields an `obd` row, so
+/// each reconnect widened the OBD gap by ~1 s. A plan chosen on the same
+/// adapter is now reused.
+/// - **What is remembered.** `rememberedPlan`: the plan selection chose
+///   (`adaptiveTiming` and `requestHeader` included) and the `ATZ` banner
+///   it was chosen on. Passed in by the owner (the previous session's, on
+///   the same peripheral), and replaced by every `initialise()`: the plan
+///   its selection chose, nil if nothing parsed. Only plans from selection
+///   are remembered (`probe` configured); without probing it is ignored and
+///   left as it is.
+/// - **The handshake always runs in full** (`ATZ` … `ATSP0`, `0100`,
+///   `ATDPN`, `ATRV`), and the `ATSH7E0` gate is re-evaluated as on every
+///   init. Then (state `probing`, after letting a late `ATSH7E0` reply
+///   land) the remembered plan is **not reused** — note `remembered poll
+///   plan not reused: <why>; selecting again`, then selection as usual — if
+///   it fails `PollingPlan.validate()` (`invalid (<error>)`), if the banner
+///   differs (`chosen on <old>, this adapter reports <new>`), or if its
+///   addressing isn't what the gate produced this time (`chosen with
+///   requestHeader <7E0|7DF>, this handshake left requests at <7DF|7E0>`: a
+///   7E0 plan whose `ATSH7E0` was skipped or refused, or a functional plan
+///   whose `ATSH7E0` was answered `OK`).
+/// - **Otherwise it is reused**, with a note `poll plan reused from the
+///   previous connection: <command>, ATAT<n>, requestHeader <7E0|7DF>`
+///   (`from the previous initialisation` when this session's own selection
+///   chose it, e.g. on `initialise()` again after a desynchronised link).
+///   Selection and the timing comparison are skipped. Two exchanges, phase
+///   `probe`: `ATAT<n>`, the one exchange that applies the remembered level,
+///   and **one check poll cycle**: the plan's command once (multi-PID), or
+///   each PID's command once (single-PID: cycle 0 polls every PID).
+/// - **Failure rule.** The reused plan fails if `ATAT<n>` isn't answered
+///   `OK`, or if any check exchange doesn't return the primary ECU's value
+///   for every PID it requested: `NO DATA`, a timeout, any other status, an
+///   unparseable reply, or values from another ECU only. The first failure
+///   stops the check. Then: note `reused plan failed (<reason>); selecting
+///   again`, with `<reason>` `ATAT<n> not accepted (<outcome>)`, `<tx>:
+///   <outcome>` (e.g. `010D0C1: noData`, `010D0C1: timeout`) or `<tx>: no
+///   primary-ECU value for every requested PID`; `rememberedPlan` is
+///   cleared; and the full selection and `ATAT` comparison run, as without
+///   a remembered plan (they start with `ATAT1`).
+/// - **One fallback per init.** The remembered plan is tried at most once
+///   per `initialise()`: if the check's timeout desynchronises the link and
+///   init restarts from `ATZ`, the restart selects. A failed plan is not
+///   offered to the next connection unless selection chose it again.
+/// - The `.adapter` event carries the plan in use (the reused one, or the
+///   one selected after the fallback); exactly one per init, as before. A
+///   PID or command that answered OK in the check counts for the NO DATA
+///   rule like a probe or poll answer: it is never dropped afterwards.
+/// - Polling then starts with the remembered command at the remembered
+///   level: nothing else needs sending before the first poll.
+///
 /// ## NO DATA
 ///
 /// Every `NO DATA` is recorded as an `elm` row with outcome `noData`. What
@@ -224,18 +280,22 @@ public actor ELMSession {
     ///     (never timestamps); inject a test clock to run the state machine
     ///     without real waits.
     ///   - firstSeq: `seq` of the first exchange.
+    ///   - rememberedPlan: the previous session's `rememberedPlan`, if it
+    ///     was on the same adapter (peripheral). Tried before selection.
     public init(
         transport: any ELMTransport,
         configuration: ELMSessionConfiguration = .default,
         uptime: any UptimeSource = SystemUptimeSource(),
         clock: any Clock<Duration> = ContinuousClock(),
-        firstSeq: Int = 0
+        firstSeq: Int = 0,
+        rememberedPlan: RememberedPollingPlan? = nil
     ) {
         self.transport = transport
         self.configuration = configuration
         self.uptime = uptime
         self.clock = clock
         self.nextSeq = firstSeq
+        self.rememberedPlan = rememberedPlan
         (events, continuation) = AsyncStream.makeStream(of: ELMSessionEvent.self)
         // Listen from the start, so output buffered at connect is recorded as
         // unsolicited instead of being read as the reply to the first command.
@@ -247,6 +307,19 @@ public actor ELMSession {
     /// `seq` the next exchange will get. Read it after `shutdown()` to seed the
     /// session for the next connection.
     public private(set) var nextSeq: Int
+
+    /// The plan the next `initialise()` tries before selecting (see
+    /// "Remembered poll plan"): the one passed to `init`, then whatever each
+    /// `initialise()` leaves — the plan its selection chose, the remembered
+    /// one if its check passed, nil if it failed and nothing was selected.
+    /// Read it after `shutdown()` to seed the session for the next
+    /// connection to the same adapter, as with `nextSeq`.
+    public private(set) var rememberedPlan: RememberedPollingPlan?
+
+    /// Where `rememberedPlan` came from, for the `poll plan reused from …`
+    /// note: the previous connection's session (`init`), or this session's
+    /// own selection.
+    private var rememberedPlanOrigin = "previous connection"
 
     /// Probe samples per candidate command during selection (does it parse
     /// from the primary ECU?); their median latency is the candidate's cost.
@@ -386,7 +459,9 @@ public actor ELMSession {
 
     /// `ATZ` → `ATE0` → `ATL0` → `ATS0` → `ATH1` → `ATSP0` → `0100` → `ATDPN`
     /// → `ATRV` → `ATSH7E0` (only on 11-bit ISO 15765-4 CAN with a `7E8`
-    /// reply to `0100`), then (if configured) start-up selection: the first
+    /// reply to `0100`), then (if configured) the `rememberedPlan` if it
+    /// still fits and its check passes (`ATAT<n>` and one check poll cycle;
+    /// see "Remembered poll plan"), else start-up selection: the first
     /// of `010D0C1` → `010D0C` → `010D1` → `010D` that parses (suffix steps
     /// only if `ATSH7E0` was answered `OK`; functionally again if nothing
     /// parses physically), at `ATAT1` unless `ATAT2` is clearly faster
@@ -523,13 +598,16 @@ public actor ELMSession {
         // A write-off mid-sequence desynchronises the link; the sequence then
         // restarts from ATZ, at most `reinitsBeforeReconnect` times.
         var restarts = 0
+        // At most one attempt per initialise(), so a failed remembered plan
+        // falls back to selection once and never comes back in a restart.
+        var reusable = configuration.probe ? rememberedPlan : nil
         while true {
             do {
                 let found = try await runHandshake(tracksStates: true)
                 let plan: PollingPlan
                 if configuration.probe {
                     setState(.probing, reason: nil)
-                    plan = try await probe()
+                    plan = try await choosePlan(found, reusing: &reusable)
                 } else {
                     plan = fallbackPlan(pids: PollingPlan.baseline.pids)
                 }
@@ -799,12 +877,12 @@ public actor ELMSession {
     /// Nothing parses → the functional baseline.
     /// Leaves the adapter at the chosen timing level. The addressing is
     /// read after `ATAT1`, which settles a late `ATSH7E0` reply.
-    private func probe() async throws(ELMSessionError) -> PollingPlan {
+    private func probe() async throws(ELMSessionError) -> (plan: PollingPlan, selected: Bool) {
         _ = try await setAdaptiveTiming(1, phase: .probe)
         if let header = planHeader {
             let physical = try await select(physical: true)
             if let chosen = physical.chosen, physical.pids.first == PollingPlan.baseline.pids.first {
-                return try await finishSelection(chosen, pids: physical.pids, header: header)
+                return (try await finishSelection(chosen, pids: physical.pids, header: header), true)
             }
             let outcome = try await setRequestHeader(.functional, phase: .probe)
             // A timed-out ATSH7DF may still be answered: wait out its grace
@@ -832,9 +910,102 @@ public actor ELMSession {
         }
         let functional = try await select(physical: false)
         guard let chosen = functional.chosen else {
-            return fallbackPlan(pids: functional.pids.isEmpty ? PollingPlan.baseline.pids : functional.pids)
+            return (fallbackPlan(pids: functional.pids.isEmpty ? PollingPlan.baseline.pids : functional.pids), false)
         }
-        return try await finishSelection(chosen, pids: functional.pids, header: nil)
+        return (try await finishSelection(chosen, pids: functional.pids, header: nil), true)
+    }
+
+    // MARK: Remembered poll plan
+
+    /// The `probing` step of `initialise()`: the remembered plan if it is
+    /// still valid and its check passes, else start-up selection (`probe`).
+    /// `reusable` is consumed on the first call, so one `initialise()`
+    /// tries it at most once. Updates `rememberedPlan` either way.
+    private func choosePlan(
+        _ found: HandshakeResult,
+        reusing reusable: inout RememberedPollingPlan?
+    ) async throws(ELMSessionError) -> PollingPlan {
+        if let remembered = reusable {
+            reusable = nil
+            // A late ATSH7E0 OK changes the addressing: let it land first.
+            try await settleOwedPromptsInSlot()
+            if let mismatch = reuseMismatch(remembered, banner: found.banner) {
+                noteState(reason: "remembered poll plan not reused: \(mismatch); selecting again")
+            } else {
+                noteState(reason: "poll plan reused from the \(rememberedPlanOrigin): " + Self.describe(remembered.plan))
+                if let failure = try await checkRememberedPlan(remembered.plan) {
+                    // Never offered again unless selection below succeeds,
+                    // so a failing plan can't come back on the next
+                    // connection either.
+                    rememberedPlan = nil
+                    noteState(reason: "reused plan failed (\(failure)); selecting again")
+                } else {
+                    return remembered.plan
+                }
+            }
+        }
+        let (plan, selected) = try await probe()
+        rememberedPlan = selected ? RememberedPollingPlan(plan: plan, elmVersion: found.banner) : nil
+        rememberedPlanOrigin = "previous initialisation"
+        return plan
+    }
+
+    /// Why `remembered` can't be reused after this handshake, or nil if it
+    /// can: it must pass `validate()`, come from an adapter with the same
+    /// `ATZ` banner, and have the addressing the `ATSH7E0` gate produced
+    /// this time (a 7E0 plan needs `ATSH7E0` answered `OK`; a functional
+    /// plan needs it skipped or refused).
+    private func reuseMismatch(_ remembered: RememberedPollingPlan, banner: String) -> String? {
+        do {
+            try remembered.plan.validate()
+        } catch {
+            return "invalid (\(error))"
+        }
+        if !remembered.elmVersion.isEmpty, remembered.elmVersion != banner {
+            return "chosen on \(remembered.elmVersion), this adapter reports \(banner)"
+        }
+        if remembered.plan.requestHeader != planHeader {
+            let chosen = remembered.plan.requestHeader ?? .functional
+            return "chosen with requestHeader \(chosen), this handshake left requests at \(requestHeader)"
+        }
+        return nil
+    }
+
+    /// `010D0C1, ATAT1, requestHeader 7E0`: the remembered plan in a note.
+    static func describe(_ plan: PollingPlan) -> String {
+        "\(plan.primaryCommand.wireFormat), ATAT\(plan.adaptiveTiming), requestHeader \(plan.requestHeader ?? .functional)"
+    }
+
+    /// Applies the remembered plan's `ATAT` level and runs its first poll
+    /// cycle once, phase `probe`: one exchange for a multi-PID plan, one
+    /// per PID otherwise (cycle 0 polls every PID). Returns why it failed,
+    /// or nil if it passed. It fails if `ATATn` isn't answered `OK`, or if
+    /// any of those exchanges doesn't return the primary ECU's value for
+    /// every PID it requested: `NO DATA`, a timeout, any other status, an
+    /// unparseable reply, or values from another ECU only. The first
+    /// failure stops the check.
+    private func checkRememberedPlan(_ plan: PollingPlan) async throws(ELMSessionError) -> String? {
+        let level = plan.adaptiveTiming
+        let outcome = try await setAdaptiveTiming(level, phase: .probe)
+        guard outcome == .ok else { return "ATAT\(level) not accepted (\(outcome.rawValue))" }
+        let commands: [(ELM327Command, [OBDPID])] = plan.multiPID
+            ? [(.currentDataMany(plan.pids, responseCount: plan.responseCount), plan.pids)]
+            : plan.pids.map { (.currentDataMany([$0], responseCount: plan.responseCount), [$0]) }
+        for (command, pids) in commands {
+            let headers = headersOn
+            let (exchange, decoded) = try await perform(command, phase: .probe, timeout: plan.timeout) { raw in
+                Self.interpretPoll(raw, pids: pids, headers: headers)
+            }
+            guard exchange.outcome == .ok, let decoded else { return "\(exchange.tx): \(exchange.outcome.rawValue)" }
+            // Answered OK: the NO DATA rule must never drop these PIDs.
+            okPIDs.formUnion(decoded.map(\.measurement.pid))
+            okCommands.insert(exchange.tx)
+            let fromPrimary = Set(decoded.filter { OBDReading.isPrimaryECU($0.ecu) }.map(\.measurement.pid))
+            guard fromPrimary.isSuperset(of: pids) else {
+                return "\(exchange.tx): no primary-ECU value for every requested PID"
+            }
+        }
+        return nil
     }
 
     private struct Selection {

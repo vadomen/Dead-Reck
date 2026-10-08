@@ -325,10 +325,26 @@ it was faster at all. If nothing parses: `010D`, with `010C` every 5th
 cycle, at `ATAT1`, functional. `polling` records the combination, including
 `requestHeader`.
 
+**Remembered plan (since the M4 follow-up, M6.1-3).** Within one app
+session, a reconnect to the same adapter (same peripheral identifier, same
+`ATZ` banner) skips the selection and the `ATAT1`/`ATAT2` comparison when
+the plan chosen before still fits. The handshake runs in full, `ATSH7E0`
+gate included; the plan fits if its `requestHeader` is the addressing the
+gate produced this time. Then two `probe` exchanges replace the ~23:
+`ATAT<n>` (the remembered level) and one check poll cycle (the plan's
+command once; single-PID plans send each PID's command once). The plan is
+reused if `ATAT<n>` answers `OK` and every check exchange carries the
+engine's value for every requested PID; otherwise (`NO DATA`, timeout, any
+status, a reply from another ECU only) the full selection and comparison run
+after all, at most once per init. `link` notes record each case (below). The
+`adapter` row's `polling` is the plan in use either way. A different
+adapter, or Forget, clears the remembered plan; it is never stored on disk.
+
 `ATSH7E0` appears in `elm` rows with phase `init` (the conditional last
 handshake step); `ATSH7DF` with phase `probe` (physical selection found
 nothing) or `poll`; `ATSH7E0` with phase `poll` (restoring a physical plan's
-addressing, e.g. after a re-init).
+addressing, e.g. after a re-init). A reused plan's `ATAT<n>` and check poll
+have phase `probe`; like every `probe` exchange they produce no `obd` rows.
 
 `{adapter, polling}`, same shapes as the header sections. Written after every
 successful initialisation, including re-inits and reconnects mid-drive, when
@@ -342,12 +358,14 @@ polled.
 The adapter usually connects and initialises before the user taps Start
 (M4 bench, `docs/BENCH_TEST_2026-10-08.md`). Since M4 the app writes that
 connection's start-up init into the recording, right after the `start` row
-and before any other row: the BLE `link` transitions of the latest
-connection attempt (`connecting` → `discovering` → `connected`, or the one
-that ended a failed attempt), then its latest initialisation — every `elm`
-exchange of phase `init` and `probe` (`ATZ` … `ATRV`, `ATSH7E0`, selection,
-the `ATAT1`/`ATAT2` comparison), the `elm` `link` transitions and notes, and
-the `adapter` row — up to the transition into `polling` (or `failed`).
+and before any other row, **if the adapter is connected at Start**: the BLE
+`link` transition into `connected` that began the current connection (not
+the `connecting`/`discovering` rows before it; since the M4 follow-up), then
+its latest initialisation — every `elm` exchange of phase `init` and
+`probe` (`ATZ` … `ATRV`, `ATSH7E0`, selection and the `ATAT1`/`ATAT2`
+comparison, or a remembered plan's `ATAT<n>` and check poll), the `elm`
+`link` transitions and notes, and the `adapter` row — up to the transition
+into `polling` (or `failed`).
 
 - They are ordinary rows of the existing kinds, identical to what a
   recording running at the time would have written, stamped from the events'
@@ -360,12 +378,21 @@ the `adapter` row — up to the transition into `polling` (or `failed`).
   rows, the rest follows live. Each init appears exactly once.
 - Written once per recording, at Start. A re-init or reconnect during the
   recording is written live, as before.
-- Nothing is written when the adapter has never connected. If the
-  connection has since dropped (started with `without OBD: link …`), these
-  rows describe that last connection: the drop itself is not among them.
+- **Nothing is written when the adapter isn't connected at Start**
+  (`start` detail `without OBD: link …`): never connected, dropped and
+  reconnecting, disconnected or forgotten, Bluetooth off, or a connection
+  attempt still in `connecting`/`discovering`. The first `link` row is then
+  live (e.g. `reconnecting → connecting`), and the connection that comes up
+  is written live in full. Recordings made between M4 and the M4 follow-up
+  replay the last connection even after it had dropped (`connecting` →
+  `discovering` → `connected`, ending at `polling`), followed by live rows
+  that don't continue from it; readers must not assume the replay
+  describes a live link.
 - The first `stats` window starts at the `start` row; these rows are
   counted in it (`counts`, `timeouts`), not in a window of their own.
-- Recordings made before M4 begin with `poll` rows instead.
+- Recordings made before M4 begin with `poll` rows instead. Recordings made
+  between M4 and the M4 follow-up start the replay with `connecting` and
+  `discovering`.
 
 No format version change: no new kind, field or string.
 
@@ -375,7 +402,7 @@ No format version change: no new kind, field or string.
 |---|---|
 | `layer` | `ble` or `elm`. |
 | `from`, `to` | State names. `elm` states: `idle`, `resetting`, `initialising`, `searching`, `probing`, `ready`, `polling`, `retrying`, `reinitialising`, `failed`. `ble` states: `unavailable`, `idle`, `scanning`, `connecting`, `discovering`, `connected`, `disconnected`, `reconnecting`, `restoring`. |
-| `reason` | Optional free text, e.g. `timeout`. `elm` `failed` reasons include `transport closed`, a re-init limit message, or a read-only-guard rejection of a session command (followed by no reconnect request). Rows with `from == to` are notes (write-offs, init restarts, non-`ELM` banners, addressing), not transitions. Addressing notes: `ATSH7E0 skipped: protocol <n> is not 11-bit ISO 15765-4 CAN (6, A6, 8, A8); requests stay functional (7DF), no response-count suffix`, `ATSH7E0 skipped: no 7E8 reply to 0100; …`, `ATSH7E0 not accepted (<outcome>); requests stay functional (7DF), no response-count suffix`, `late OK for ATSH7E0; requests go to 7E0`, `late OK for ATSH7DF; requests go to 7DF`, `no poll command parsed with physical addressing (7E0); selecting again with functional addressing (7DF), no response-count suffix` (or, when `ATSH7DF` is refused or never answered, `…; ATSH7DF not accepted (<outcome>); physical addressing disabled for this session; re-initialising without ATSH7E0`, followed by a second handshake from `ATZ` and functional selection), `ATSH7E0 skipped: physical addressing disabled for this session: ATSH7DF not accepted (<outcome>); requests stay functional (7DF), no response-count suffix` (every handshake after that, for the rest of the connection), `physical addressing unavailable: <cause>; polling with functional addressing (7DF), no response-count suffix` and `physical addressing available again; polling <command> at 7E0` (the gate closed or reopened at a re-init, or a physical plan was started on a closed gate; each followed by an `adapter` row with the plan now polled — no `adapter` row ever carries a plan that isn't polled). Adaptive timing notes (start-up selection, since M4): `adaptive timing: ATAT2 kept, median <a> ms at ATAT2 vs <b> ms at ATAT1 (10 samples each; ATAT2 must be at least 10% lower)`, the same starting `adaptive timing: ATAT1 kept, …`, `adaptive timing: ATAT1 kept, ATAT2 replies did not parse`, `adaptive timing: ATAT1 kept, ATAT2 not accepted (<outcome>)`, `adaptive timing: ATAT1 kept, ATAT1 replies did not parse in the timing comparison; ATAT2 not tried`. While polling, a refused `ATSH<header>` is a failure with reason `ATSH<header>: <outcome>`, except a refused `ATSH7DF`, which re-initialises at once with reason `ATSH7DF not accepted (<outcome>); physical addressing disabled for this session; re-initialising without ATSH7E0`; a suffixed poll under functional addressing is refused (an `elm` `rejected` row, then `failed`). |
+| `reason` | Optional free text, e.g. `timeout`. `elm` `failed` reasons include `transport closed`, a re-init limit message, or a read-only-guard rejection of a session command (followed by no reconnect request). Rows with `from == to` are notes (write-offs, init restarts, non-`ELM` banners, addressing), not transitions. Addressing notes: `ATSH7E0 skipped: protocol <n> is not 11-bit ISO 15765-4 CAN (6, A6, 8, A8); requests stay functional (7DF), no response-count suffix`, `ATSH7E0 skipped: no 7E8 reply to 0100; …`, `ATSH7E0 not accepted (<outcome>); requests stay functional (7DF), no response-count suffix`, `late OK for ATSH7E0; requests go to 7E0`, `late OK for ATSH7DF; requests go to 7DF`, `no poll command parsed with physical addressing (7E0); selecting again with functional addressing (7DF), no response-count suffix` (or, when `ATSH7DF` is refused or never answered, `…; ATSH7DF not accepted (<outcome>); physical addressing disabled for this session; re-initialising without ATSH7E0`, followed by a second handshake from `ATZ` and functional selection), `ATSH7E0 skipped: physical addressing disabled for this session: ATSH7DF not accepted (<outcome>); requests stay functional (7DF), no response-count suffix` (every handshake after that, for the rest of the connection), `physical addressing unavailable: <cause>; polling with functional addressing (7DF), no response-count suffix` and `physical addressing available again; polling <command> at 7E0` (the gate closed or reopened at a re-init, or a physical plan was started on a closed gate; each followed by an `adapter` row with the plan now polled — no `adapter` row ever carries a plan that isn't polled). Adaptive timing notes (start-up selection, since M4): `adaptive timing: ATAT2 kept, median <a> ms at ATAT2 vs <b> ms at ATAT1 (10 samples each; ATAT2 must be at least 10% lower)`, the same starting `adaptive timing: ATAT1 kept, …`, `adaptive timing: ATAT1 kept, ATAT2 replies did not parse`, `adaptive timing: ATAT1 kept, ATAT2 not accepted (<outcome>)`, `adaptive timing: ATAT1 kept, ATAT1 replies did not parse in the timing comparison; ATAT2 not tried`. Remembered plan notes (since the M4 follow-up): `poll plan reused from the previous connection: <command>, ATAT<n>, requestHeader <7E0|7DF>` (or `… from the previous initialisation: …` when the same connection initialises again), `reused plan failed (<reason>); selecting again` with `<reason>` one of `ATAT<n> not accepted (<outcome>)`, `<command>: <outcome>` (e.g. `010D0C1: noData`, `010D0C1: timeout`) or `<command>: no primary-ECU value for every requested PID`, and `remembered poll plan not reused: <why>; selecting again` with `<why>` one of `chosen with requestHeader <7E0|7DF>, this handshake left requests at <7DF|7E0>`, `chosen on <banner>, this adapter reports <banner>` or `invalid (<error>)`; after the last two kinds the usual selection notes follow. While polling, a refused `ATSH<header>` is a failure with reason `ATSH<header>: <outcome>`, except a refused `ATSH7DF`, which re-initialises at once with reason `ATSH7DF not accepted (<outcome>); physical addressing disabled for this session; re-initialising without ATSH7E0`; a suffixed poll under functional addressing is refused (an `elm` `rejected` row, then `failed`). |
 
 ### `lifecycle`
 

@@ -47,6 +47,14 @@ struct ReconnectBackoff: Hashable, Sendable {
 ///   and seeded with the previous session's `nextSeq`, read after that
 ///   session has shut down and its last event has been forwarded — so
 ///   `seq` is unique and increasing for the whole recording.
+/// - The same way, the previous session's `rememberedPlan` (poll plan with
+///   its `ATAT` level and `requestHeader`, and the `ATZ` banner it was
+///   chosen on) seeds the next session **on the same adapter** (peripheral
+///   identifier), which then skips start-up selection and the
+///   `ATAT1`/`ATAT2` comparison if the plan still fits and its check poll
+///   passes (M6.1-3; `ELMSession`, "Remembered poll plan"). A session
+///   started on a different adapter clears it, and so does `forget()`;
+///   `disconnect()` keeps it. In memory only, for this app session.
 /// - Reconnect with backoff (`ReconnectBackoff`, 1 s doubling to 30 s) on a
 ///   link loss, a failed connect, a failed initialisation (a write error
 ///   during the handshake included: BLE stays up then), and on the
@@ -56,8 +64,9 @@ struct ReconnectBackoff: Hashable, Sendable {
 ///   in the background too.
 /// - Every session event and BLE transition goes to the `linkEvents()`
 ///   subscriber, in the order this service handles them, and to the console.
-/// - The latest connection's BLE connect and initialisation are also kept in
-///   `lastInitEvents` (see `OBDLinkServicing.lastInitEvents` for contents,
+/// - The current connection's `→ connected` and its latest initialisation
+///   are also kept in `lastInitEvents`, returned only while BLE is
+///   `connected` (see `OBDLinkServicing.lastInitEvents` for contents,
 ///   lifetime and the recorder's dedup contract).
 @MainActor
 @Observable
@@ -78,10 +87,29 @@ class OBDLinkService: OBDLinkServicing {
     /// The BLE layer's state, as written in `link` rows.
     private(set) var bleState: LinkSample.BLEState = .idle
 
-    /// See `OBDLinkServicing.lastInitEvents`.
-    var lastInitEvents: [LinkEvent] { initCapture.events }
+    /// See `OBDLinkServicing.lastInitEvents`. Empty unless BLE is
+    /// `connected` (M6.1-1).
+    var lastInitEvents: [LinkEvent] { bleState == .connected ? initCapture.events : [] }
     /// See `OBDLinkServicing.deliveredLinkEventCount`.
     @ObservationIgnored private(set) var deliveredLinkEventCount = 0
+
+    /// A poll plan remembered for one adapter (peripheral identifier).
+    struct RememberedPollPlan: Hashable {
+        var adapterID: UUID
+        var plan: RememberedPollingPlan
+    }
+
+    /// The plan the next session on `adapterID` tries before selecting
+    /// (M6.1-3; `ELMSession` "Remembered poll plan"). Taken from each
+    /// session when it retires, like `nextSeq`; cleared when a session
+    /// starts on a different adapter and by `forget()`. Memory only, for
+    /// this app session. Internal for tests.
+    @ObservationIgnored private(set) var rememberedPollPlan: RememberedPollPlan?
+    /// Bumped by `forget()`, so a session retired after it can't store its
+    /// plan again.
+    @ObservationIgnored private var pollPlanEpoch = 0
+    /// The current session's adapter and the `pollPlanEpoch` it started in.
+    @ObservationIgnored private var sessionAdapter: (id: UUID, epoch: Int)?
 
     @ObservationIgnored private let central: any BLECentralClient
     @ObservationIgnored private let defaults: UserDefaults
@@ -200,6 +228,8 @@ class OBDLinkService: OBDLinkServicing {
 
     func forget() {
         disconnect()
+        rememberedPollPlan = nil
+        pollPlanEpoch += 1
         rememberedAdapterID = nil
         defaults.removeObject(forKey: Self.rememberedAdapterKey)
     }
@@ -285,7 +315,7 @@ class OBDLinkService: OBDLinkServicing {
             bleRecord = AdapterRecord(
                 name: link.name, identifier: link.id.uuidString, gatt: link.selection, gattTable: link.table
             )
-            startSession(on: link.transport)
+            startSession(on: link.transport, adapterID: link.id)
         case .unusable(let id, _, let reason, let at):
             guard id == target else { return }
             // Not retried: the adapter's GATT layout doesn't change between
@@ -371,23 +401,27 @@ class OBDLinkService: OBDLinkServicing {
 
     // MARK: ELM sessions
 
-    private func startSession(on transport: any ELMTransport) {
+    private func startSession(on transport: any ELMTransport, adapterID: UUID) {
         linkToken += 1
         let token = linkToken
         initCapture.sessionStarted(token: token)
         state = .initialising
         Task {
             // The previous connection's session must be gone, and its last
-            // `seq` known, before this one numbers anything.
+            // `seq` and remembered plan known, before this one starts.
             await retireSession()
             guard token == linkToken else { return }
+            // A plan chosen on another adapter is never offered.
+            if rememberedPollPlan?.adapterID != adapterID { rememberedPollPlan = nil }
             let session = ELMSession(
                 transport: transport,
                 configuration: sessionConfiguration,
                 uptime: uptime,
-                firstSeq: nextSeq
+                firstSeq: nextSeq,
+                rememberedPlan: rememberedPollPlan?.plan
             )
             self.session = session
+            sessionAdapter = (adapterID, pollPlanEpoch)
             let events = session.events
             // Ends when the session's events finish (shutdown or link loss).
             sessionTask = Task {
@@ -455,18 +489,25 @@ class OBDLinkService: OBDLinkServicing {
     }
 
     /// Shuts the current session down, waits until its last event has been
-    /// forwarded, and keeps its `nextSeq`. Concurrent calls share one run.
+    /// forwarded, and keeps its `nextSeq` and its remembered plan (unless
+    /// `forget()` came after it started). Concurrent calls share one run.
     private func retireSession() async {
         if let old = session {
             session = nil
             let consumer = sessionTask
             sessionTask = nil
+            let adapter = sessionAdapter
+            sessionAdapter = nil
             let previous = retiring
             retiring = Task {
                 await previous?.value
                 await old.shutdown()
                 await consumer?.value
                 self.nextSeq = max(self.nextSeq, await old.nextSeq)
+                let plan = await old.rememberedPlan
+                if let adapter, adapter.epoch == self.pollPlanEpoch {
+                    self.rememberedPollPlan = plan.map { RememberedPollPlan(adapterID: adapter.id, plan: $0) }
+                }
             }
         }
         await retiring?.value
@@ -596,22 +637,19 @@ class OBDLinkService: OBDLinkServicing {
     }
 }
 
-/// The events behind `lastInitEvents`: the current connection attempt's BLE
-/// transitions up to `connected`, then the latest initialisation of that
+/// The events behind `lastInitEvents`: the current connection's BLE
+/// transition into `connected`, then the latest initialisation of that
 /// connection's session, from its first event to its transition into
 /// `polling` or `failed`. Fed by `OBDLinkService` in delivery order.
 ///
-/// Session events are matched by the token of the session they come from,
-/// not by whether that session is still current: the end of a failed init
-/// (its `→ failed`) may be handled after the service has already dropped
-/// the link, and still belongs here. A previous connection's events, which
-/// can arrive after a new attempt has started, never match.
+/// Emptied when BLE leaves `connected` (M6.1-1): a connection that has
+/// dropped is never replayed. Session events are matched by the token of
+/// the session they come from, so a previous connection's events, which can
+/// arrive after a new connection is up, never match.
 struct InitCapture {
     let limit: Int
     private var connection: [LinkEvent] = []
     private var initialisation: [LinkEvent] = []
-    /// Still collecting BLE transitions (`connecting` … `connected`).
-    private var connecting = false
     /// The session of the captured connection; nil until it exists.
     private var sessionToken: Int?
     /// Collecting the init: from the session's first event, or the start of
@@ -625,20 +663,22 @@ struct InitCapture {
     var events: [LinkEvent] { connection + initialisation }
 
     mutating func ble(_ event: LinkEvent, from: LinkSample.BLEState, to: LinkSample.BLEState) {
-        if to == .restoring || (to == .connecting && from != .restoring) {
-            // A new connection attempt: everything starts again.
+        if to == .connected {
+            // A new connection: everything starts again from here.
+            reset()
             connection = [event]
-            initialisation = []
-            connecting = true
-            sessionToken = nil
-            initialising = false
-        } else if connecting {
-            connection.append(event)
-            // `connected` completes the part; anything else but discovery
-            // ends a failed attempt.
-            if ![.connecting, .discovering].contains(to) { connecting = false }
+        } else if from == .connected {
+            // The connection ended (dropped, disconnected, Bluetooth off).
+            reset()
         }
         trim()
+    }
+
+    private mutating func reset() {
+        connection = []
+        initialisation = []
+        sessionToken = nil
+        initialising = false
     }
 
     /// The connected transport got its session (`token`); its first event
