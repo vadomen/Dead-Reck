@@ -24,7 +24,10 @@ Core/                        DriveLoggerCore — local SwiftPM package, pure log
     OBD/                     PID table and J1979 scaling
     Log/                     Versioned JSONL format, codec, JSONValue, gzip file writer/reader
     Recording/               SensorSource, stats, ELM→log event mapping, simulated sources
+    Navigation/              Dead-reckoning engine (particle filter), config, RNG, local plane
+      Replay/                Replay of recordings through the engine, truth file, metrics, GeoJSON
   Sources/inspect_log/       Mac CLI that summarises a recording (`swift run inspect_log`)
+  Sources/replay_nav/        Mac CLI that replays recordings through the navigation engine
   Tests/DriveLoggerCoreTests/
 App/                         iOS app target — owns every Apple framework
   Sources/Link/              CoreBluetooth transport, OBD link service (+ simulated)
@@ -75,6 +78,16 @@ exports one CSV per kind). Recordings live outside the repo — never commit one
 
 ```bash
 cd Core && swift run -c release inspect_log <file.jsonl.gz> [--csv <dir>] [--strict]
+```
+
+Replay recordings through the navigation engine (docs/NAVIGATION.md). Output
+goes to the git-ignored `logs/` because it holds real positions; the truth file
+`logs/truth.json` is read at runtime and never committed:
+
+```bash
+cd Core && swift run -c release replay_nav <file.jsonl.gz>... [--gps use|mask-after <s>|none] \
+  [--hold-out-acc <m>] [--truth ../logs/truth.json] [--seed N] [--particles N] \
+  [--set <configKey>=<number>] [--out ../logs/out]
 ```
 
 Build the app for the simulator:
