@@ -524,3 +524,28 @@ observer. `TrackOverlay` isolation unprovable off-device (not a finding).
 | M10.1-7 | MINOR | WORKFLOW/PLAN docs stale (accessors, checklist). | FIXED c202225 | Cheap, in the fix's files |
 
 Tests after fix: Core 530/530, simulator build green, app 204/204.
+
+### Round 2
+
+Fresh reviewer, range df91622..bf85177. M10.1-1 verified fixed: every
+heading-up activation edge (tab return/foreground via `frame()` and
+`resumeIfDue`, mode toggle, auto-resume, Follow tap, pin clear → resume, first
+bearing after reset) reseeds before its camera write; steady-state writes
+(per-fix `recenter`, 10 Hz loop) are not reseeded, so smoothing is intact.
+North-up unchanged. New tests fail without the reseed and without the gate reset.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| M10.2-1 | MINOR | `frame()` heading-up branch doesn't `noteWrite`; one redundant identical camera write per activation. | DEFERRED | BACKLOG |
+
+**Loop stopped: no BLOCKER or MAJOR findings.**
+
+### Run 10 summary
+
+- Rounds run: 2.
+- Findings fixed: 1 MAJOR (M10.1-1) plus 1 MINOR docs fix (M10.1-7). Rejected: 0.
+  Deferred: 6 MINOR (M10.1-2…6, M10.2-1 in BACKLOG).
+- Commits: c202225 (fix), bf85177 (round 1 ledger), plus this ledger update.
+- Final tests (at c202225; later commits are docs only): `cd Core && swift test`
+  530 tests in 81 suites pass; simulator build green; app tests 204 in 35
+  suites pass.
