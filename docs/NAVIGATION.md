@@ -181,15 +181,23 @@ every result.
 ## replay_nav
 
 ```bash
-cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-after <s>|none] \
+cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-after <s>|mask-after-motion <s>|none] \
   [--hold-out-acc <m>] [--truth ../logs/truth.json] [--seed N] [--particles N] \
   [--set <configKey>=<number>] [--out ../logs/out]
 ```
 
 - Inputs: motion, OBD, location and manualFix from any v1–v3 recording, fed in
   arrival order (location by `receivedT ?? t`).
-- `--gps use`: every fix. `mask-after s`: no fix with `t` > s. `none`: no fixes
+- `--gps use`: every fix. `mask-after s`: no fix with `t` > s.
+  `mask-after-motion s`: no fix with `t` more than s seconds after motion
+  starts (nothing is masked if the car never moves). `none`: no fixes
   (initialisation from a manual fix, if any).
+- **Motion start** (`NavigationReplay.motionStart`): the first OBD reply of
+  the first run in which every vehicle-speed reply from the primary ECU (`7E8`,
+  or no ECU in v1) is at least 3 km/h, consecutive replies are at most 2 s
+  apart, and the run lasts at least 3 s. 3 km/h ignores the 1–2 km/h creep in
+  a queue or a parking space. This is a replay-side definition: it looks 3 s
+  ahead to decide the mask, and the engine never sees it. The summary prints it.
 - `--hold-out-acc m`: every fix with accuracy < m is withheld, including for
   initialisation. Each one is printed as (t, acc).
 - Scored only against information the engine did not receive: withheld clean
@@ -219,9 +227,16 @@ file name. The values here are illustrative:
 `<clean>`, `<manual>`, `<jammed-A>` and `<jammed-B>` are the paths of the
 recordings known under those aliases (kept outside the repository).
 
+The clean criterion is `mask-after 230`: 30 s of clean GNSS at speed (from
+about 200 s), then 1.8 km of pure dead reckoning. That is what the original
+"30 s" meant, and what the earlier offline 24 m baseline used. An earlier
+reading, `mask-after 30`, masks before the car has moved at all (motion starts
+at 49.5 s), so heading is unobservable and it fails at about 2.6 km whatever
+the engine does.
+
 ```bash
 cd Core
-swift run -c release replay_nav <clean> --gps mask-after 30 --truth ../logs/truth.json --out ../logs/out
+swift run -c release replay_nav <clean> --gps mask-after 230 --truth ../logs/truth.json --out ../logs/out
 swift run -c release replay_nav <manual> --gps use --hold-out-acc 100 --truth ../logs/truth.json --out ../logs/out
 swift run -c release replay_nav <jammed-A> <jammed-B> --gps use --truth ../logs/truth.json --out ../logs/out
 ```
@@ -230,14 +245,21 @@ swift run -c release replay_nav <jammed-A> <jammed-B> --gps use --truth ../logs/
 
 | alias | run | distance | checkpoint errors | end error | max error | heading converged at | ms/step | criterion | result |
 |---|---|---:|---|---:|---:|---:|---:|---|---|
-| clean | mask-after 30 | 3.58 km | 333 withheld clean fixes: median 2172 m | 2601 m (72.6 %)\* | 2601 m (72.6 %) | never | 0.050 | max ≤ 30 m | **FAIL** — the car does not move before about 44 s, so there is no heading information in the first 30 s |
-| manual | use, hold-out 100 | 8.31 km | pin prior 174 m (11.5 %, at 1.52 km); truth point 1: 53 m (0.67 %); truth point 2: 48 m (0.59 %) | 48 m (0.59 %)\* | 174 m (11.5 %) | 6.80 km | 0.055 | converged ≤ 2 km; truth point 1 ≤ 200 m | **FAIL** (convergence) / **PASS** (53 m) |
+| clean | mask-after 230 | 3.58 km | 216 withheld clean fixes: median 20 m, all inside the 95 % ellipse | 24 m (0.67 %)\* | 26 m (0.76 %) | 0.03 km | 0.050 | max ≤ 30 m | **PASS** |
+| manual | use, hold-out 100 | 8.31 km | pin prior 174 m (11.5 %, at 1.52 km); truth point 1: 53 m (0.67 %); truth point 2: 48 m (0.59 %) | 48 m (0.59 %)\* | 174 m (11.5 %) | 6.80 km | 0.055 | truth point 1 ≤ 200 m; converged ≤ 2 km | **PASS** (53 m); **known FAIL** (convergence 6.80 km), see below |
 | jammed-A | use | 11.23 km | end 139 m | 139 m (1.24 %) | 139 m (1.24 %) | 7.13 km | 0.058 | end ≤ 2.5 % | **PASS** |
 | jammed-B | use | 5.89 km | end 104 m | 104 m (1.76 %) | 104 m (1.76 %) | 5.18 km | 0.056 | end ≤ 2.5 % | **PASS** |
 
 \* no truth `end` for this drive: error at the last checkpoint.
 
-Largest single `ingest` call: 0.31 ms. Seed spread (seeds 1–5, same config):
+**Manual drive, convergence: known FAIL, accepted.** Heading converges
+(σ < 10° held for 30 s) after 6.80 km, against a 2 km target. The more
+important number is the position error at truth point 1: 53 m (0.67 % of
+distance), well inside 200 m. Convergence is not tuned towards the target:
+with towers and one pin as the only absolute information, the honest heading
+std falls under 10° late. Options are listed under known limitations.
+
+Largest single `ingest` call: 0.29 ms. Seed spread (seeds 1–5, same config):
 manual truth point 1: 52–81 m; jammed-A: 1.24–1.84 %; jammed-B: 1.76–2.35 %;
 clean mask-after 230: 11–26 m.
 
@@ -245,8 +267,9 @@ clean mask-after 230: 11–26 m.
 
 | alias | run | result | what it shows |
 |---|---|---|---|
-| clean | mask-after 230 | max 26 m, end 24 m over the last 1.8 km of DR; 216/216 withheld fixes inside the 95 % ellipse | reproduces the earlier offline baseline (30 s of GNSS at speed, then about 24 m over 1.8 km) |
-| clean | mask-after 74 (30 s after the car starts moving) | max 170 m | the masked part starts with a slow manoeuvre including reversing, which unsigned OBD speed cannot represent |
+| clean | mask-after 30 (the superseded reading of the criterion) | max 2601 m, heading never converges | masks before the car moves: no heading information |
+| clean | mask-after-motion 30 (motion starts 49.5 s, mask at 79.5 s) | max 324 m (seeds 2–5: 311–316 m); 0/283 withheld fixes inside the 95 % ellipse | **regression case for reverse handling.** The masked part starts with a slow manoeuvre including reversing, which unsigned OBD speed integrates as forward motion, and the filter is overconfident about it |
+| clean | mask-after 74 / 76 / 78 | max 170 / 207 / 300 m | the same manoeuvre. The error depends steeply on how many slow GNSS fixes from its start are used (they pull the scale up to 1.02); mask-after 79.5 equals mask-after-motion 30 exactly |
 | manual | use, hold-out 200 | truth point 1: 189 m, converged 7.68 km | without the 100–200 m Wi-Fi fixes, the last of which arrives 0.5 s before truth point 1, the error is 189 m |
 | manual | use, hold-out 100, towerCorrelationS 30 | truth point 1: 63 m, converged 5.10 km | trusting towers more converges sooner, still not within 2 km |
 | manual | none | never converges; about 4.2 km at truth point 1 | one pin alone does not give heading |
@@ -261,9 +284,12 @@ clean mask-after 230: 11–26 m.
   heading); road matching (N3); a magnetometer heading with a learned mount
   offset; trusting towers more (`towerCorrelationS` 30 → 5.1 km; not the default,
   see "Tried and rejected").
-- **Reversing**: OBD speed has no sign. Reversing moves the DR forwards (clean
-  drive start). A reverse hypothesis per particle at low speed after a stop, or
-  reverse detection from the accelerometer, would address it.
+- **Reversing** (backlog N2-1, N3 candidate): OBD speed has no sign, so
+  reversing is integrated as forward motion. Regression case:
+  `--gps mask-after-motion 30` on the clean drive (324 m today). Ideas: reverse
+  from the sign of longitudinal acceleration against d(speed)/dt, a reverse
+  hypothesis per particle at low speed after a stop, or a gear/reverse PID in
+  mode 01 if the car exposes one.
 - **Wide heading posterior → shrunken mean**: while heading std is large, the
   mean of the arc-shaped cloud lies inside the arc, shortening the
   start-to-estimate distance by about exp(−σ²/2). On jammed-B this was most of

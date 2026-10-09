@@ -6,6 +6,7 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
     public var logName: String
     public var mode: String
     public var config: NavigationConfig
+    public var motionStartT: Double?
     public var startT: Double
     public var endT: Double
     public var distanceM: Double
@@ -29,6 +30,7 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
         logName = result.logName
         mode = result.mode
         config = result.config
+        motionStartT = result.motionStartT
         startT = result.startT
         endT = result.endT
         distanceM = result.distanceM
@@ -75,7 +77,8 @@ public enum ReplayReport {
     public static func summary(_ result: ReplayResult) -> String {
         var lines: [String] = []
         lines.append("Log           \(result.logName)  [\(result.mode)]")
-        lines.append(String(format: "Span          %.1f … %.1f s, distance %.0f m, %d steps", result.startT, result.endT, result.distanceM, result.steps))
+        lines.append(String(format: "Span          %.1f … %.1f s, distance %.0f m, %d steps", result.startT, result.endT, result.distanceM, result.steps)
+            + (result.motionStartT.map { String(format: ", motion starts %.1f s", $0) } ?? ", no motion start"))
         lines.append(String(format: "Engine        %.3f ms/step (max ingest %.2f ms), %d particles, seed %llu",
                             result.msPerStep, result.maxIngestMs, result.config.particleCount, result.config.seed))
         let c = result.counters

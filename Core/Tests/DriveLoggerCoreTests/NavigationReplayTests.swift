@@ -93,6 +93,56 @@ struct NavigationReplayTests {
         #expect(holdOut.label == "use-holdout-100" && mask.label == "mask-after-30")
     }
 
+    @Test("Motion start: first OBD reply of a run ≥ 3 km/h held 3 s without a gap over 2 s; creep, dips, gaps and other ECUs don't count")
+    func motionStartDetection() {
+        func obd(_ t: Double, _ kmh: Double, ecu: String? = "7E8") -> NavigationInput {
+            .obd(OBDSample(pid: .vehicleSpeed, value: kmh, unit: .kilometersPerHour, ecu: ecu), at: S.ms(t))
+        }
+        var inputs: [NavigationInput] = []
+        for k in 0..<20 { inputs.append(obd(Double(k) * 0.5, 2)) }                  // 0–9.5 s: creep at 2 km/h
+        for k in 0..<5 { inputs.append(obd(10 + Double(k) * 0.5, 5)) }              // 10–12 s: moving…
+        inputs.append(obd(12.5, 0))                                                  // …a dip to 0 resets the run
+        for k in 0..<4 { inputs.append(obd(13 + Double(k) * 0.5, 6)) }              // 13–14.5 s
+        inputs.append(obd(17, 6))                                                    // 2.5 s gap resets the run
+        for k in 0..<10 { inputs.append(obd(20 + Double(k) * 0.5, 40, ecu: "7E9")) } // another ECU: ignored
+        inputs.append(.obd(OBDSample(pid: .engineSpeed, value: 900, unit: .revolutionsPerMinute, ecu: "7E8"), at: S.ms(18)))
+        #expect(NavigationReplay.motionStart(inputs) == nil, "no qualifying run yet")
+        for k in 0..<7 { inputs.append(obd(30 + Double(k) * 0.5, 3)) }              // 30–33 s at exactly 3 km/h
+        #expect(NavigationReplay.motionStart(inputs) == S.ms(30))
+        // v1 replies without an ECU count too.
+        let v1 = (0..<8).map { obd(5 + Double($0) * 0.5, 10, ecu: nil) }
+        #expect(NavigationReplay.motionStart(v1) == S.ms(5))
+        // Held for just under 3 s: not yet.
+        #expect(NavigationReplay.motionStart(Array(v1.prefix(6))) == nil)
+
+        let options = ReplayOptions(gps: .maskAfterMotion(seconds: 30))
+        let fix = LocationSample(latitude: 0, longitude: 0, altitude: 0, horizontalAccuracy: 5, verticalAccuracy: -1,
+                                 speed: -1, speedAccuracy: -1, course: -1, courseAccuracy: -1)
+        #expect(NavigationReplay.withholdReason(fix, at: S.ms(60), options: options, motionStart: S.ms(30)) == nil)
+        #expect(NavigationReplay.withholdReason(fix, at: S.ms(60.01), options: options, motionStart: S.ms(30)) == .masked)
+        #expect(NavigationReplay.withholdReason(fix, at: S.ms(500), options: options, motionStart: nil) == nil)
+        #expect(GPSMode("mask-after-motion", seconds: 30) == .maskAfterMotion(seconds: 30))
+        #expect(GPSMode("mask-after-motion") == nil)
+        #expect(options.label == "mask-after-motion-30")
+    }
+
+    @Test("mask-after-motion in a replay: fixes up to motion start + s are used, later ones masked and scored")
+    func maskAfterMotionReplay() throws {
+        // Parked 20 s, then driving: motion starts at about 20 s.
+        let drive = S(initialHeadingDeg: 90, [
+            .stop(seconds: 20), .ramp(seconds: 4, from: 0, to: 12), .straight(seconds: 60, speed: 12),
+        ])
+        let events = drive.events(fix: S.cleanFix(accuracy: 5, positionNoise: 1))
+        let options = ReplayOptions(gps: .maskAfterMotion(seconds: 15), config: S.config(particles: 200))
+        let result = NavigationReplay.run(logName: "synthetic.jsonl.gz", inputs: NavigationReplay.inputs(from: events), options: options)
+        let start = try #require(result.motionStartT)
+        #expect(start > 20 && start < 21.5)
+        #expect(result.fixes.filter { $0.withheld == nil }.allSatisfy { $0.t <= start + 15 })
+        #expect(result.fixes.filter { $0.withheld == .masked }.allSatisfy { $0.t > start + 15 })
+        #expect(result.checkpoints.filter { $0.kind == .cleanFix }.count == result.fixes.filter { $0.withheld == .masked }.count)
+        #expect(ReplayMetrics(result).motionStartT == start)
+    }
+
     // MARK: Geometry
 
     @Test("Local tangent plane: round trip, distances and the anchor")

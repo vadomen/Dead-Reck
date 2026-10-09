@@ -13,10 +13,14 @@ public enum GPSMode: Hashable, Sendable {
     case use
     /// No fix whose time `t` is after this many session seconds.
     case maskAfter(seconds: Double)
+    /// No fix whose time `t` is more than this many seconds after motion
+    /// starts (`NavigationReplay.motionStart`). If the car never moves,
+    /// nothing is masked.
+    case maskAfterMotion(seconds: Double)
     /// No fixes; initialisation then comes from a manual fix, if any.
     case none
 
-    /// `use`, `none`, or `mask-after` with its seconds.
+    /// `use`, `none`, or `mask-after` / `mask-after-motion` with seconds.
     public init?(_ name: String, seconds: Double? = nil) {
         switch name {
         case "use": self = .use
@@ -24,6 +28,9 @@ public enum GPSMode: Hashable, Sendable {
         case "mask-after":
             guard let seconds, seconds.isFinite else { return nil }
             self = .maskAfter(seconds: seconds)
+        case "mask-after-motion":
+            guard let seconds, seconds.isFinite else { return nil }
+            self = .maskAfterMotion(seconds: seconds)
         default: return nil
         }
     }
@@ -34,6 +41,7 @@ public enum GPSMode: Hashable, Sendable {
         case .use: "use"
         case .none: "none"
         case .maskAfter(let s): "mask-after-\(Self.format(s))"
+        case .maskAfterMotion(let s): "mask-after-motion-\(Self.format(s))"
         }
     }
 
@@ -87,11 +95,52 @@ public enum NavigationReplay {
         }.map(\.1)
     }
 
+    /// Motion start rule: OBD vehicle speed from the primary ECU (or no
+    /// ECU, v1) at or above `motionStartKmh`, held for `motionStartHoldS`
+    /// with no reply gap over `motionStartMaxGapS`. 3 km/h ignores the
+    /// 1–2 km/h creep of a car inching in a queue or a parking space.
+    public static let motionStartKmh = 3.0
+    public static let motionStartHoldS = 3.0
+    public static let motionStartMaxGapS = 2.0
+
+    /// When the car starts moving: the first OBD reply of the first run in
+    /// which every reply is at least `motionStartKmh`, consecutive replies
+    /// are at most `motionStartMaxGapS` apart, and the run lasts at least
+    /// `motionStartHoldS`. nil if there is no such run. A replay-side
+    /// definition (it looks `motionStartHoldS` ahead); the engine never
+    /// sees it.
+    public static func motionStart(_ inputs: [NavigationInput]) -> MonotonicTimestamp? {
+        var runStart: MonotonicTimestamp?
+        var previous: MonotonicTimestamp?
+        for input in inputs {
+            guard case .obd(let sample, let t) = input, sample.pid == .vehicleSpeed,
+                  sample.ecu == nil || sample.ecu == NavigationEngine.primaryECU, sample.value.isFinite else { continue }
+            defer { previous = t }
+            guard sample.value >= motionStartKmh else {
+                runStart = nil
+                continue
+            }
+            if runStart == nil || previous.map({ $0.interval(to: t) > motionStartMaxGapS }) == true {
+                runStart = t
+            }
+            if let start = runStart, start.interval(to: t) >= motionStartHoldS {
+                return start
+            }
+        }
+        return nil
+    }
+
     /// Why `options` withholds this fix from the engine, or nil to ingest it.
-    public static func withholdReason(_ sample: LocationSample, at t: MonotonicTimestamp, options: ReplayOptions) -> WithholdReason? {
+    /// `motionStart` is needed only for `.maskAfterMotion`.
+    public static func withholdReason(
+        _ sample: LocationSample, at t: MonotonicTimestamp, options: ReplayOptions,
+        motionStart: MonotonicTimestamp? = nil
+    ) -> WithholdReason? {
         switch options.gps {
         case .none: return .gpsNone
         case .maskAfter(let seconds) where t.seconds > seconds: return .masked
+        case .maskAfterMotion(let seconds):
+            if let start = motionStart, start.interval(to: t) > seconds { return .masked }
         default: break
         }
         if let limit = options.holdOutAccuracyM, sample.horizontalAccuracy >= 0, sample.horizontalAccuracy < limit {
@@ -181,6 +230,8 @@ public struct ReplayResult: Hashable, Sendable, Codable {
     public var logName: String
     public var mode: String
     public var config: NavigationConfig
+    /// When the car started moving (`NavigationReplay.motionStart`).
+    public var motionStartT: Double?
     /// First and last input arrival, session seconds.
     public var startT: Double
     public var endT: Double
@@ -227,6 +278,7 @@ private struct ReplayRun {
     var ellipses: [ReplayResult.EllipseSample] = []
     var engineNs: Int64 = 0
     var maxIngestNs: Int64 = 0
+    let motionStart: MonotonicTimestamp?
 
     struct Scheduled {
         var t: Int64
@@ -242,6 +294,7 @@ private struct ReplayRun {
         self.options = options
         self.truth = truth
         engine = NavigationEngine(config: options.config)
+        motionStart = NavigationReplay.motionStart(inputs)
     }
 
     mutating func execute() -> ReplayResult {
@@ -277,7 +330,7 @@ private struct ReplayRun {
             }
 
             if case .location(let sample, let t) = input {
-                let reason = NavigationReplay.withholdReason(sample, at: t, options: options)
+                let reason = NavigationReplay.withholdReason(sample, at: t, options: options, motionStart: motionStart)
                 fixes.append(ReplayResult.Fix(
                     t: t.seconds, arrivalT: input.arrival.seconds,
                     latitude: sample.latitude, longitude: sample.longitude,
@@ -310,7 +363,7 @@ private struct ReplayRun {
         for input in inputs {
             switch input {
             case .location(let sample, let t):
-                guard NavigationReplay.withholdReason(sample, at: t, options: options) != nil,
+                guard NavigationReplay.withholdReason(sample, at: t, options: options, motionStart: motionStart) != nil,
                       sample.horizontalAccuracy >= 0,
                       sample.horizontalAccuracy <= options.config.cleanFixAccM else { continue }
                 schedule.append(Scheduled(t: t.nanoseconds, kind: .cleanFix, latitude: sample.latitude,
@@ -394,6 +447,7 @@ private struct ReplayRun {
             logName: logName,
             mode: options.label,
             config: options.config,
+            motionStartT: motionStart?.seconds,
             startT: MonotonicTimestamp(nanoseconds: firstNs).seconds,
             endT: MonotonicTimestamp(nanoseconds: lastNs).seconds,
             distanceM: distance.distance(at: lastNs),

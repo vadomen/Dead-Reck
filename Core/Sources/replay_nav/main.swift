@@ -3,7 +3,7 @@ import Foundation
 
 // replay_nav — replay recordings through the navigation engine on the Mac.
 //
-//   swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-after <s>|none]
+//   swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-after <s>|mask-after-motion <s>|none]
 //       [--hold-out-acc <m>] [--truth logs/truth.json] [--seed N] [--particles N]
 //       [--set <configKey>=<number>]... [--out logs/out]
 //
@@ -24,7 +24,7 @@ func fail(_ message: String, status: Int32) -> Never {
 }
 
 let usage = """
-    usage: replay_nav <log.jsonl.gz>... [--gps use|mask-after <s>|none] [--hold-out-acc <m>]
+    usage: replay_nav <log.jsonl.gz>... [--gps use|mask-after <s>|mask-after-motion <s>|none] [--hold-out-acc <m>]
            [--truth <truth.json>] [--seed N] [--particles N] [--set <configKey>=<number>]... [--out <dir>]
     """
 
@@ -51,7 +51,7 @@ while !arguments.isEmpty {
     switch argument {
     case "--gps":
         let name = value()
-        let seconds = name == "mask-after" ? number(value(), "mask-after") : nil
+        let seconds = name.hasPrefix("mask-after") ? number(value(), name) : nil
         guard let mode = GPSMode(name, seconds: seconds) else { fail("unknown --gps \(name)\n\(usage)", status: 2) }
         gps = mode
     case "--hold-out-acc":

@@ -85,7 +85,7 @@ goes to the git-ignored `logs/` because it holds real positions; the truth file
 `logs/truth.json` is read at runtime and never committed:
 
 ```bash
-cd Core && swift run -c release replay_nav <file.jsonl.gz>... [--gps use|mask-after <s>|none] \
+cd Core && swift run -c release replay_nav <file.jsonl.gz>... [--gps use|mask-after <s>|mask-after-motion <s>|none] \
   [--hold-out-acc <m>] [--truth ../logs/truth.json] [--seed N] [--particles N] \
   [--set <configKey>=<number>] [--out ../logs/out]
 ```
