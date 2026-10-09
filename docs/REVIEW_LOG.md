@@ -441,3 +441,32 @@ replay safe; free-text notes only. Core 499/499, affected app suites 23/23
 - Commits: 21aada9 (change under review), plus this ledger update.
 - Final tests: `cd Core && swift test` 499 tests in 78 suites, all pass;
   simulator build green; app tests 139 in 25 suites, all pass.
+
+## Run 8 — M4.2 map camera + manual fix (1d61098..99e2b39)
+
+### Round 1
+
+Fresh reviewer, checks 2, 3, 5, 6, 7, 8, 9 (no adapter path in range). Clean:
+v1/v2 fixtures byte-unchanged, v3 declared/current with its own fixture;
+`manualFix` and `obd`/`gps`/`unknown` pinned; every row time on the
+recording's `SessionClock` (`t` = gate `now`; `obdSpeedT` mapped like the `obd`
+row); no per-sample `Date()`; gate re-checked at confirm, cross-recording press
+refused; Map observation and render gating intact; cached location read-only;
+Core Foundation-only; new logic tested. Tests at HEAD: Core 530/530, app
+174/174, simulator build green.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| M8.1-1 | MINOR | Long-press `pressBegan` not reset when the gesture is cancelled; later long-presses become no-ops for the view's life. | DEFERRED | BACKLOG |
+| M8.1-2 | MINOR | `pressedT` documented as press start but taken at recognition (+0.6 s). | DEFERRED | BACKLOG |
+| M8.1-3 | MINOR | OBD speed/uptime carry over into a new recording; `obdSpeedT` may match no `obd` row in the file. | DEFERRED | BACKLOG |
+
+**Loop stopped: no BLOCKER or MAJOR findings.**
+
+### Run 8 summary
+
+- Rounds run: 1.
+- Findings fixed: 0. Rejected: 0. Deferred: 3 MINOR (M8.1-1…3 in BACKLOG).
+- Commits: 99e2b39 (change under review), plus this ledger update.
+- Final tests: `cd Core && swift test` 530 tests in 81 suites, all pass;
+  simulator build green; app tests 174 in 30 suites, all pass.
