@@ -32,11 +32,18 @@ public struct NavigationConfig: Hashable, Sendable, Codable {
     /// Speed-scale random walk, per √s, while moving.
     public var scaleNoisePerSqrtS = 0.000_1
 
+    // MARK: Vehicle
+
+    /// Per-vehicle prior on the OBD speed scale factor (true speed / OBD
+    /// speed with the truncation offset): mean and standard deviation.
+    /// Measured on this car's clean drives as the GNSS/OBD speed ratio
+    /// above 30 km/h: 1.017 on clean-long, 1.015 on clean's dead-reckoned
+    /// part. Another car needs its own measurement (or std back to ~0.03).
+    public var scalePriorMean = 1.016
+    public var scalePriorStd = 0.01
+
     // MARK: Speed
 
-    /// Prior on the OBD speed scale factor: mean and standard deviation.
-    public var scalePriorMean = 1.016
-    public var scalePriorStd = 0.03
     /// OBD vehicle speed is truncated to whole km/h; `v + offset` when `v > 0`.
     public var obdSpeedOffsetKmh = 0.5
     /// OBD speed older than this is stale: unknown speed, not a stop.
@@ -73,8 +80,12 @@ public struct NavigationConfig: Hashable, Sendable, Codable {
     public var courseMinSpeedMps = 3.0
     /// Lower bound on the course σ, degrees.
     public var courseSigmaFloorDeg = 2.0
-    /// GNSS speed updates the scale only above this OBD speed, m/s.
-    public var speedUpdateMinMps = 3.0
+    /// GNSS speed updates the scale only when OBD speed is above this,
+    /// km/h (and speedAccuracy is valid). 10.8 km/h (3 m/s). A 30 km/h gate
+    /// (how the scale prior was measured) was tried: equal on clean-long,
+    /// worse on clean, whose only fast pre-mask stretch reads GNSS 3 %
+    /// above OBD (docs/NAVIGATION.md).
+    public var speedUpdateMinKmh = 10.8
     /// GNSS course and speed come from one Doppler solution. They are
     /// used only if GNSS speed agrees with fresh OBD speed within
     /// max(this, `gnssSpeedGateFraction` × OBD speed): a glitch fix

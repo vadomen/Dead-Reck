@@ -265,4 +265,25 @@ struct NavigationEngineTests {
         #expect(abs(try initialised(span: nil).ellipse.semiMajorM - k * 30) < 1e-6)
         #expect(abs(try initialised(span: 100).ellipse.semiMajorM - k * 30) < 1e-6)
     }
+
+    @Test("GNSS speed updates the scale only above speedUpdateMinKmh with a valid speedAccuracy")
+    func speedUpdateGate() {
+        func speedUpdates(kmh: Double, gate: Double, speedAccuracy: Double = 0.3) -> Int {
+            let v = kmh / 3.6
+            let drive = S(initialHeadingDeg: 0, initialSpeed: v, [.straight(seconds: 20, speed: v)])
+            let clean = S.cleanFix()
+            let events = drive.events(fix: { t, state, rng in
+                var fix = clean(t, state, &rng)
+                fix?.speedAccuracy = speedAccuracy
+                return fix
+            })
+            var config = S.config(particles: 50)
+            config.speedUpdateMinKmh = gate
+            return S.run(events, config: config).engine.counters.speedUpdates
+        }
+        #expect(speedUpdates(kmh: 25, gate: 30) == 0)
+        #expect(speedUpdates(kmh: 40, gate: 30) >= 15)
+        #expect(speedUpdates(kmh: 25, gate: 10.8) >= 15)
+        #expect(speedUpdates(kmh: 40, gate: 30, speedAccuracy: -1) == 0)
+    }
 }

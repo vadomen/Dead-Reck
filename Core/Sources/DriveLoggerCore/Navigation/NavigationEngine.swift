@@ -400,7 +400,7 @@ public struct NavigationEngine: Sendable {
         // Tempering a Gaussian likelihood by w is the same as dividing its
         // precision by w: R = σ² / w.
         let positionVariance = temper > 0 ? sigma * sigma / temper : .infinity
-        let useSpeed = sample.hasValidSpeed && (since.obdSpeed ?? 0) >= config.speedUpdateMinMps && dopplerConsistent
+        let useSpeed = sample.hasValidSpeed && (since.obdSpeed ?? 0) * 3.6 > config.speedUpdateMinKmh && dopplerConsistent
         let obdSpeed = since.obdSpeed ?? 0
         let speedSigma = max(sample.speedAccuracy, config.speedSigmaFloorMps)
         if courseValid { counters.courseUpdates += 1 }

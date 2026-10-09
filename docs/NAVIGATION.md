@@ -17,8 +17,10 @@ alias.
 A particle filter with N = 2000 particles. Each particle samples
 
 - heading of travel (radians, clockwise from north),
-- OBD speed scale factor (prior 1.016 ± 0.03; GNSS/OBD speed ratio 1.017 on
-  clean-long, 1.015 on the dead-reckoned part of clean),
+- OBD speed scale factor. The prior 1.016 ± 0.01 is a per-vehicle value,
+  measured on this car's clean drives as the GNSS/OBD speed ratio above
+  30 km/h: 1.017 on clean-long, 1.015 on the dead-reckoned part of clean.
+  Another car needs its own measurement, or the std back at about 0.03.
 - a speed error that random-walks only while OBD speed is stale,
 
 and carries its position as a Gaussian, a mean and a 2×2 covariance updated by a
@@ -72,7 +74,8 @@ updates reweight only by what heading and scale actually predict.
     OBD within max(2 m/s, 15 %). That last gate rejects glitch fixes (the clean
     drive has one reporting 25 m/s at 10 m/s with a "good" course) and slow
     manoeuvres. Wrapped Gaussian with σ = max(courseAccuracy, 2°).
-  - **Speed** updates the scale under the same gates, with σ = max(speedAccuracy, 1 m/s).
+  - **Speed** updates the scale under the same gates, when OBD speed is above
+    10.8 km/h and speedAccuracy is valid, with σ = max(speedAccuracy, 1 m/s).
     GNSS and OBD speeds differ by about 1 m/s RMS on the clean drive.
   - **Clean fix** (≤ 15 m with a usable course) **reseeds** half the particles
     around the fix and its course when the heading std is above 30° *or* no
@@ -159,7 +162,7 @@ every result.
 | turnHeadingNoiseDegPerSqrtDeg | 0.1 | heading noise per √(degree turned) |
 | alongTrackNoisePerSqrtM / crossTrackNoisePerSqrtM | 0.6 | position covariance growth, m/√m |
 | scaleNoisePerSqrtS | 0.0001 | scale random walk |
-| scalePriorMean / scalePriorStd | 1.016 / 0.03 | OBD speed scale prior |
+| scalePriorMean / scalePriorStd | 1.016 / 0.01 | per-vehicle OBD speed scale prior (measured on this car) |
 | obdSpeedOffsetKmh | 0.5 | truncation offset when v > 0 |
 | obdMaxAgeS | 2 | fresher = known speed; a fresh 0 is a ZUPT |
 | staleSpeedNoiseMpsPerSqrtS | 2.5 | speed error random walk while stale |
@@ -173,7 +176,7 @@ every result.
 | maxFixAgeS | 10 | older fixes ignored unless stopped |
 | courseMinSpeedMps | 3 | course needs this GNSS and OBD speed |
 | courseSigmaFloorDeg | 2 | course σ floor |
-| speedUpdateMinMps | 3 | scale update needs this OBD speed |
+| speedUpdateMinKmh | 10.8 | GNSS speed updates the scale only above this OBD speed (and with valid speedAccuracy) |
 | gnssSpeedGateMps / gnssSpeedGateFraction | 2 / 0.15 | GNSS vs OBD speed agreement gate |
 | speedSigmaFloorMps | 1.0 | GNSS speed σ floor |
 | cleanFixAccM | 15 | clean fix threshold |
@@ -265,75 +268,74 @@ swift run -c release replay_nav <jammed-A> <jammed-B> --gps use --truth ../logs/
 
 ### Baseline (N2.1: seed 1, default config, release build, Mac)
 
-The "N2" column is the previous baseline (scale prior 1.0, pin σ 30 m), seed 1.
-For the two new drives it comes from replaying with
-`--set scalePriorMean=1 --set manualFixSpanDivisor=1e9`, which restores both.
+The "N2" column is the previous baseline: scale prior 1.0 ± 0.03, pin σ 30 m,
+seed 1. For the two new drives it comes from replaying with
+`--set scalePriorMean=1 --set scalePriorStd=0.03 --set manualFixSpanDivisor=1e9`.
 
 | alias | run | distance | checkpoint errors | end error | max error | heading converged at | ms/step | N2 | criterion | result |
 |---|---|---:|---|---:|---:|---:|---:|---|---|---|
-| clean-long | mask-after 380 | 7.75 km | 277 withheld clean fixes: median 10 m, all inside the 95 % ellipse | 10 m (0.12 %)\* | 21 m (0.27 %) | 0.02 km | 0.060 | max 20 m | max ≤ 30 m | **PASS** |
-| manual-3 | use | 12.05 km | pin priors: 1: 324 m (18.9 %, σ 104 m, ellipse 147 × 73 m); 2: 1089 m (17.1 %, σ 30 m, ellipse 488 × 191 m); 3: 308 m (4.4 %, σ 31 m, ellipse 144 × 89 m); none inside the 95 % ellipse | 308 m\* | 1089 m | 0.37 km | 0.067 | pins 322 / 1434 / 348 m | reported | see below |
-| clean | mask-after 230 | 3.58 km | 216 withheld clean fixes: median 25 m, all inside the 95 % ellipse | 30 m (0.84 %)\* | 32 m (0.93 %) | 0.03 km | 0.058 | max 26 m | max ≤ 30 m | **FAIL** (32 m; seeds 2–4 pass, see below) |
-| manual | use, hold-out 100 | 8.31 km | pin prior 169 m (σ 42 m); truth point 1: 26 m (0.33 %); truth point 2: 40 m (0.49 %) | 40 m (0.49 %)\* | 169 m (11.2 %) | 6.80 km | 0.062 | 53 m; 6.80 km | truth point 1 ≤ 200 m; converged ≤ 2 km | **PASS** (26 m); **known FAIL** (convergence 6.80 km) |
-| jammed-A | use | 11.23 km | end 68 m | 68 m (0.61 %) | 68 m (0.61 %) | 7.13 km | 0.066 | 1.24 % | end ≤ 2.5 % | **PASS** |
-| jammed-B | use | 5.89 km | end 59 m | 59 m (1.01 %) | 59 m (1.01 %) | 5.18 km | 0.065 | 1.76 % | end ≤ 2.5 % | **PASS** |
+| clean-long | mask-after 380 | 7.75 km | 277 withheld clean fixes: median 9 m, all inside the 95 % ellipse | 9 m (0.12 %)\* | 20 m (0.26 %) | 0.02 km | 0.059 | max 20 m | max ≤ 30 m | **PASS** |
+| manual-3 | use | 12.05 km | pin priors: 1: 352 m (20.6 %, σ 104 m, ellipse 166 × 65 m); 2: 1158 m (18.2 %, σ 30 m, ellipse 469 × 164 m); 3: 338 m (4.8 %, σ 31 m, ellipse 138 × 86 m); none inside the 95 % ellipse | 338 m\* | 1158 m | 0.37 km | 0.067 | pins 322 / 1434 / 348 m | reported | see below |
+| clean | mask-after 230 | 3.58 km | 216 withheld clean fixes: median 2 m, all inside the 95 % ellipse | 2 m (0.06 %)\* | 13 m (0.59 %) | 0.03 km | 0.057 | max 26 m | max ≤ 30 m | **PASS** |
+| manual | use, hold-out 100 | 8.31 km | pin prior 169 m (σ 42 m); truth point 1: 36 m (0.46 %); truth point 2: 47 m (0.58 %) | 47 m (0.58 %)\* | 169 m (11.1 %) | 6.80 km | 0.062 | 53 m; 6.80 km | truth point 1 ≤ 200 m; converged ≤ 2 km | **PASS** (36 m); **known FAIL** (convergence 6.80 km) |
+| jammed-A | use | 11.23 km | end 67 m | 67 m (0.60 %) | 67 m (0.60 %) | 7.13 km | 0.066 | 1.24 % | end ≤ 2.5 % | **PASS** |
+| jammed-B | use | 5.89 km | end 58 m | 58 m (0.99 %) | 58 m (0.99 %) | 5.18 km | 0.064 | 1.76 % | end ≤ 2.5 % | **PASS** |
 
 \* no truth `end` for this drive: error at the last checkpoint. The largest
-single `ingest` call in these runs was 0.35 ms.
+single `ingest` call in these runs was 0.24 ms.
 
-**Seed spread (seeds 1–5)**
+**Seed spread (seeds 1–5)** for the chosen config and the variants it was
+picked from:
+- N2: scale prior 1.0 ± 0.03, pin σ 30 m.
+- 1.016 ± 0.03: the first N2.1 candidate.
+- **1.016 ± 0.01: chosen.**
+- 1.016 ± 0.01 with GNSS speed used only above 30 km/h.
 
-| alias | N2.1 | N2 config |
-|---|---|---|
-| clean-long, max | 19–21 m | 20–21 m |
-| clean, max | 32 / 18 / 29 / 17 / 35 m (seeds 1 and 5 over 30 m) | 26 / 11 / 23 / 13 / 23 m |
-| manual, truth point 1 | 26–49 m | 52–81 m |
-| manual, convergence | 6.80 km on every seed | 6.80 km |
-| manual-3, pin priors | 324–366 / 1089–1159 / 308–329 m | 322–361 / 1434–1517 / 348–364 m |
-| jammed-A, end | 0.61–1.19 % | 1.24–1.84 % |
-| jammed-B, end | 1.01–1.48 % | 1.76–2.35 % |
+| alias | N2 | 1.016 ± 0.03 | **1.016 ± 0.01** | ± 0.01 + 30 km/h gate |
+|---|---|---|---|---|
+| clean-long, max | 20–21 m | 19–21 m | **20 / 18 / 19 / 18 / 19 m** | 20 / 19 / 18 / 18 / 19 m |
+| clean, max | 26 / 11 / 23 / 13 / 23 m | 32 / 18 / 29 / 17 / 35 m | **13 / 17 / 12 / 14 / 13 m** | 20 / 17 / 15 / 15 / 16 m |
+| manual, truth point 1 | 52–81 m | 26 / 49 / 35 / 32 / 28 m | **36 / 45 / 34 / 41 / 41 m** | same |
+| manual, convergence | 6.80 km | 6.80 km | **6.80 km** | same |
+| manual-3, pin priors | 322–361 / 1434–1517 / 348–364 m | 324–366 / 1089–1159 / 308–329 m | **352–356 / 1147–1161 / 336–338 m** | same |
+| jammed-A, end | 1.24–1.84 % | 0.61–1.19 % | **0.60 / 0.73 / 0.85 / 0.72 / 0.78 %** | same |
+| jammed-B, end | 1.76–2.35 % | 1.01–1.48 % | **0.99 / 0.88 / 1.24 / 1.01 / 1.26 %** | same |
 
-The two changes separate cleanly (seed 1):
-- **The σ rule** changes only manual-3: pins 2 and 3 go from 1434 / 348 to
-  1125 / 314 m. Pin 1, on a 1.2 km-wide map, no longer pulls as hard as a 30 m
-  pin would.
-- **The scale prior 1.016** gives the gains on manual, jammed-A and jammed-B,
-  and the loss on clean.
-
-**Clean drive under the new prior: FAIL on 2 of 5 seeds, explained, not tuned
-away.** The error after the mask is mostly along-track: the estimate trails the
-truth. The scale fitted before the mask varies strongly between seeds (0.993 to
-1.052 at the end of the run), while the true ratio after the mask is 1.015.
-- GNSS speed before 230 s on this drive is about 2 % below OBD (ratio 0.978:
-  city driving, a GNSS outage, slow sections), so its ~50 speed updates pull
-  the scale the wrong way.
-- Scale has little diversity after resampling, so which particles survive is
-  largely chance. The new prior changes which ones do: seeds 1 and 5 end
-  further from 1.015 than before (0.993 and 1.052).
-- On clean-long, where the GNSS speed agrees with OBD (1.017), the fitted scale
-  is 1.016–1.017 on every seed.
-
-Options, measured on seeds 1–5 and **not adopted**:
-- Prior std 0.01 (`scalePriorStd`): clean 12–17 m on every seed; manual 34–41 m
-  and jammed-A/B 0.60–0.85 % / 0.99–1.26 % (seeds 1, 3, 5).
-- More scale jitter after resampling (`resampleScaleJitter` 0.002): clean
-  15–49 m. Worse.
+How each change contributes:
+- **Pin σ rule** (seed 1): changes only manual-3, where pins 2 and 3 go from
+  1434 / 348 to 1125 / 314 m.
+- **Scale prior mean 1.016**: brings the gains on manual, jammed-A and
+  jammed-B. With std 0.03 it made clean fail on 2 of 5 seeds (32 and 35 m).
+  The fitted scale wandered between 0.993 and 1.052, because clean's GNSS
+  speeds before the mask disagree with OBD (ratio 0.979 above 10 km/h) and
+  scale keeps little diversity after resampling.
+- **Std 0.01** holds the scale near the measured value. Clean is 12–17 m on
+  every seed; jammed-A/B improve further. Two drives get slightly worse:
+  - manual is 7–13 m worse than with std 0.03 on seeds 1, 4 and 5, still
+    within 26–49 m against a 200 m limit;
+  - manual-3's pin priors are 30–70 m worse.
+- **30 km/h gate for GNSS speed: tried, not adopted.** It equals std 0.01 alone
+  on clean-long (288 vs 309 updates, ratio 1.017 either way) and is worse on
+  clean, at 15–20 m. Clean's only stretch above 30 km/h before the mask (about
+  200–230 s, right after a GNSS outage) reads GNSS 3 % above OBD (ratio 1.0325
+  on 43 fixes), so gating on it pulls the scale to 1.034. It makes no difference
+  on manual, manual-3 and jammed-A/B, whose fixes carry no speed. The gate stays
+  configurable (`speedUpdateMinKmh`) at the previous 10.8 km/h.
 
 **manual-3 is overconfident.** All three pins fall outside the 95 % ellipse,
-heading "converges" at 0.37 km, and the scale drifts to 0.91. The cause is
-initialisation from a stale pre-session fix (parked), then ten no-Doppler
-network fixes of 24–190 m between 71 and 117 s. They are below the 200 m tower
-threshold, so they are untempered at face value (σ about 16 m for the 24 m
-ones), and they collapse heading within about 300 m of travel. This predates
-N2.1: the N2 config scores the pins 322 / 1434 / 348 m. Option, measured on
-seed 1 and **not adopted**: temper every no-Doppler fix
-(`towerMinAccuracyM` 0). manual-3 pins become 413 / 642 / 242 m, pin 2 lands
-inside its ellipse, and the scale stays at 1.018. But manual worsens to 43 m
-and jammed-A to 1.01 %, while jammed-B improves to 0.87 %.
+and heading "converges" at 0.37 km. The cause is initialisation from a stale
+pre-session fix (parked), then ten no-Doppler network fixes of 24–190 m between
+71 and 117 s. They are below the 200 m tower threshold, so they are untempered
+at face value (σ about 16 m for the 24 m ones), and they collapse heading
+within about 300 m of travel. This predates N2.1: the N2 config scores the pins
+322 / 1434 / 348 m. Option, measured on seed 1 with the 1.016 ± 0.03 config and
+**not adopted**: temper every no-Doppler fix (`towerMinAccuracyM` 0). manual-3
+pins become 413 / 642 / 242 m and pin 2 lands inside its ellipse, but manual
+worsens to 43 m and jammed-A to 1.01 %, while jammed-B improves to 0.87 %.
 
 **Manual drive, convergence: known FAIL, accepted.** Heading converges
 (σ < 10° held for 30 s) after 6.80 km, against a 2 km target. The more
-important number is the position error at truth point 1: 26 m (0.33 % of
+important number is the position error at truth point 1: 36 m (0.46 % of
 distance), well inside 200 m. Convergence is not tuned towards the target:
 with towers and one pin as the only absolute information, the honest heading
 std falls under 10° late. Options are listed under known limitations.
@@ -341,8 +343,9 @@ std falls under 10° late. Options are listed under known limitations.
 ### Informational runs (not acceptance)
 
 These rows were measured with the N2 config (scale prior 1.0), except
-mask-after-motion 30. That one, re-run on N2.1, gives 309–329 m on seeds 1–5,
-with at most 1 of 283 withheld fixes inside the 95 % ellipse.
+mask-after-motion 30. That one, re-run on N2.1, gives 317 m (seed 1; 309–329 m
+on seeds 1–5 with std 0.03), with at most 1 of 283 withheld fixes inside the
+95 % ellipse.
 
 | alias | run | result | what it shows |
 |---|---|---|---|
@@ -378,7 +381,8 @@ with at most 1 of 283 withheld fixes inside the 95 % ellipse.
   biased: manual-3 converges falsely on them. Option measured above:
   `towerMinAccuracyM` 0.
 - **Scale learning from GNSS speed** is fragile when GNSS speed disagrees with
-  OBD (clean drive before 230 s). Option measured above: prior std 0.01.
+  OBD (clean drive before 230 s). The tight per-vehicle prior (± 0.01) holds
+  it; a new car needs its prior measured, or a wider std.
 
 ## To verify on the device (N4)
 
