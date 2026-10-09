@@ -83,6 +83,15 @@ public struct NavigationConfig: Hashable, Sendable, Codable {
     /// itself treats a held OBD speed as known). Beyond it the position is
     /// held and, unless the last step was stationary, the ellipse grows.
     public var extrapolationHorizonS = 2.0
+    /// An input arriving more than this many seconds after the latest input
+    /// the engine accepted is implausible (a corrupt `t`) and is rejected,
+    /// counted in `NavigationCounters.inputsRejectedTimeJump` (B0-1).
+    /// Without the guard one corrupt huge `t` moves the engine clock there,
+    /// and every later, normal input is in the past: the engine stops
+    /// stepping for the rest of the recording. A real resume after a longer
+    /// silence is accepted on its second input (see
+    /// `NavigationEngine.accepts(_:)`). 1 h.
+    public var maxForwardJumpS = 3_600.0
 
     // MARK: Local plane
 
@@ -189,6 +198,59 @@ public struct NavigationConfig: Hashable, Sendable, Codable {
     public var convergedHeadingStdDeg = 10.0
 
     public init() {}
+
+    /// The default configuration with `seed` (the live app: one seed per
+    /// recording, `NavigationSeed.derive(header:)`).
+    public init(seed: UInt64) {
+        self.init()
+        self.seed = seed
+    }
+}
+
+extension NavigationConfig {
+    /// Largest `extrapolationHorizonS` the engine uses, s. A larger value
+    /// (an absurd `--set`) would overflow the nanosecond arithmetic in
+    /// `estimate(at:)` (B0-1); an hour is far beyond any sensible horizon.
+    public static let maxExtrapolationHorizonS = 3_600.0
+
+    /// This configuration with values the engine cannot use safely clamped
+    /// (B0-1). `NavigationEngine.init` applies it, so `engine.config` is the
+    /// validated value. Every default is already valid: `validated()` of a
+    /// default config is the same config.
+    /// - `extrapolationHorizonS`: into 0…`maxExtrapolationHorizonS`; a
+    ///   non-finite value becomes the default.
+    /// - `maxForwardJumpS`: a non-finite or non-positive value becomes the
+    ///   default (there is no "off": an infinite jump is never plausible).
+    public func validated() -> NavigationConfig {
+        var config = self
+        let defaults = NavigationConfig()
+        if !config.extrapolationHorizonS.isFinite {
+            config.extrapolationHorizonS = defaults.extrapolationHorizonS
+        }
+        config.extrapolationHorizonS = min(max(config.extrapolationHorizonS, 0), Self.maxExtrapolationHorizonS)
+        if !(config.maxForwardJumpS.isFinite && config.maxForwardJumpS > 0) {
+            config.maxForwardJumpS = defaults.maxForwardJumpS
+        }
+        return config
+    }
+
+    /// Compact JSON with sorted keys: byte-stable for the same values, so
+    /// it can be hashed (`hashHex`). Non-finite numbers are written as the
+    /// strings "inf", "-inf" and "nan".
+    public func canonicalJSON() -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        encoder.nonConformingFloatEncodingStrategy = .convertToString(
+            positiveInfinity: "inf", negativeInfinity: "-inf", nan: "nan")
+        // Encoding a struct of numbers cannot fail with that strategy.
+        return (try? encoder.encode(self)) ?? Data()
+    }
+
+    /// 64-bit FNV-1a of `canonicalJSON()`, as 16 lowercase hex digits: the
+    /// navigation sidecar's config hash.
+    public var hashHex: String {
+        NavigationSeed.hex(NavigationSeed.fnv1a64(canonicalJSON()))
+    }
 }
 
 extension NavigationConfig {

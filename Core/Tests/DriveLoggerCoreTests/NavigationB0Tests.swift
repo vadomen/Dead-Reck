@@ -90,7 +90,7 @@ struct NavigationB0Tests {
     /// every input stops between 30 s and 630 s; without, motion samples
     /// continue, so the parked steps run one by one. A network fix arrives
     /// at 631 s (it reads the motion history across the gap).
-    static func parkedGap(_ gap: Bool) -> (engine: NavigationEngine, catchUp: NavigationCounters, beforeCatchUp: NavigationCounters,
+    static func parkedGap(_ gap: Bool, config: NavigationConfig = S.config(particles: 400)) -> (engine: NavigationEngine, catchUp: NavigationCounters, beforeCatchUp: NavigationCounters,
                                           after: NavigationEstimate?) {
         let drive = S(initialHeadingDeg: 30, initialSpeed: 10, [
             .straight(seconds: 20, speed: 10), .ramp(seconds: 4, from: 10, to: 0), .stop(seconds: 610),
@@ -103,7 +103,7 @@ struct NavigationB0Tests {
                                       return nil
                                   })
             .filter { !gap || !($0.timestamp.seconds > 30.001 && $0.timestamp.seconds < 629.999) }
-        var engine = NavigationEngine(config: S.config(particles: 400))
+        var engine = NavigationEngine(config: config)
         var before = NavigationCounters(), during = NavigationCounters()
         for input in S.inputs(events) {
             let isCatchUp = input.arrival == S.ms(630)
@@ -136,14 +136,14 @@ struct NavigationB0Tests {
     /// 20 s. With `gap`, every input stops between 20 s and 620 s;
     /// without, motion samples continue while OBD is silent, so the
     /// unknown-speed steps run one by one.
-    static func movingGap(_ gap: Bool) -> (engine: NavigationEngine, catchUp: NavigationCounters, beforeCatchUp: NavigationCounters,
+    static func movingGap(_ gap: Bool, config: NavigationConfig = S.config(particles: 400)) -> (engine: NavigationEngine, catchUp: NavigationCounters, beforeCatchUp: NavigationCounters,
                                           start: NavigationEstimate?, end: NavigationEstimate?) {
         let drive = S(initialHeadingDeg: 0, initialSpeed: 12, [.straight(seconds: 622, speed: 12)])
         let clean = S.cleanFix()
         let events = drive.events(obdSpeed: { t, state in t >= 20 ? nil : (state.speed * 3.6).rounded(.down) },
                                   fix: { t, state, rng in t < 15 ? clean(t, state, &rng) : nil })
             .filter { !gap || !($0.timestamp.seconds > 20.001 && $0.timestamp.seconds < 619.999) }
-        var engine = NavigationEngine(config: S.config(particles: 400))
+        var engine = NavigationEngine(config: config)
         var before = NavigationCounters(), during = NavigationCounters()
         var start: NavigationEstimate?
         for input in S.inputs(events) {
@@ -181,12 +181,18 @@ struct NavigationB0Tests {
         #expect(!a.stationary && a.speedMps > 0)
     }
 
+    /// Since B0-1 the engine rejects such a jump by default
+    /// (`maxForwardJumpS`, NavigationLiveTests); the limit is widened here so
+    /// the catch-up itself, still reached by a confirmed resume, stays
+    /// bounded for any length.
     @Test("R13.1-6c: a corrupt huge t returns quickly, parked, moving and before initialisation")
     func hugeTimestampReturnsQuickly() throws {
         let huge = 1e9  // about 32 years: 10¹⁰ grid steps
         let clock = ContinuousClock()
+        var config = S.config(particles: 400)
+        config.maxForwardJumpS = 1e12
 
-        var parked = Self.parkedGap(false).engine
+        var parked = Self.parkedGap(false, config: config).engine
         let parkedBefore = try #require(parked.estimate(at: S.ms(634)))
         let parkedTime = clock.measure { parked.ingest(Self.motion(huge)) }
         let parkedAfter = try #require(parked.estimate(at: S.ms(huge)))
@@ -194,14 +200,14 @@ struct NavigationB0Tests {
         #expect(parked.counters.steps > 9_000_000_000)
         #expect(parkedAfter.stationary && parkedAfter.east == parkedBefore.east && parkedAfter.north == parkedBefore.north)
 
-        var moving = Self.movingGap(false).engine
+        var moving = Self.movingGap(false, config: config).engine
         let movingTime = clock.measure { moving.ingest(Self.motion(huge)) }
         let movingAfter = try #require(moving.estimate(at: S.ms(huge)))
         #expect(movingTime < .seconds(1), "moving: \(movingTime)")
         #expect(moving.counters.macroSteps <= moving.config.maxCatchUpSteps)
         #expect(movingAfter.latitude.isFinite && movingAfter.longitude.isFinite && movingAfter.ellipse.semiMajorM.isFinite)
 
-        var fresh = NavigationEngine(config: S.config(particles: 400))
+        var fresh = NavigationEngine(config: config)
         fresh.ingest(Self.motion(0))
         let freshTime = clock.measure { fresh.ingest(Self.motion(huge)) }
         #expect(freshTime < .seconds(1), "uninitialised: \(freshTime)")

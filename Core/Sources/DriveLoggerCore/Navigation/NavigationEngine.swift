@@ -109,10 +109,23 @@ public struct NavigationEngine: Sendable {
 
     private var lastNetworkFixNs: Int64?
 
+    // Implausible forward time jumps (B0-1): the latest accepted arrival,
+    // and the arrival of the last input rejected as a jump.
+    private var lastInputNs: Int64?
+    private var jumpCandidateNs: Int64?
+
+    /// A rejected forward jump is confirmed as a real resume (the app
+    /// suspended for longer than `maxForwardJumpS`) when the next input
+    /// beyond the limit arrives within this many seconds of it.
+    public static let forwardJumpConfirmS = 10.0
+
     /// The primary ECU whose vehicle speed is used.
     public static let primaryECU = "7E8"
 
+    /// `config` is validated first (`NavigationConfig.validated()`); the
+    /// engine's `config` is the validated value.
     public init(config: NavigationConfig = NavigationConfig()) {
+        let config = config.validated()
         precondition(config.particleCount > 0, "particleCount must be positive")
         precondition(config.stepHz > 0, "stepHz must be positive")
         self.config = config
@@ -123,7 +136,17 @@ public struct NavigationEngine: Sendable {
 
     // MARK: Ingest
 
+    /// Ingests one input, in arrival order. An implausible forward time jump
+    /// is rejected and counted instead (`accepts(_:)`).
     public mutating func ingest(_ input: NavigationInput) {
+        let arrival = input.arrival.nanoseconds
+        guard accepts(input) else {
+            counters.inputsRejectedTimeJump += 1
+            jumpCandidateNs = arrival
+            return
+        }
+        jumpCandidateNs = nil
+        lastInputNs = max(lastInputNs ?? arrival, arrival)
         switch input {
         case .motion(let sample, let t):
             ingestMotion(sample, at: t.nanoseconds)
@@ -138,6 +161,28 @@ public struct NavigationEngine: Sendable {
             advance(to: t.nanoseconds)
             ingestManualFix(sample, at: t.nanoseconds)
         }
+    }
+
+    /// Whether `ingest` would take `input` rather than reject it as an
+    /// implausible forward time jump (B0-1). Rejected: an input arriving
+    /// more than `maxForwardJumpS` after the latest accepted arrival — a
+    /// corrupt `t` would otherwise move the engine clock there, and every
+    /// later input would be in the past. Accepted anyway: the second of two
+    /// such inputs within `forwardJumpConfirmS` of each other, which is a
+    /// real resume after a long silence, not one corrupt value. The first
+    /// input of all is always accepted (nothing to compare it with). Does
+    /// not change the engine.
+    public func accepts(_ input: NavigationInput) -> Bool {
+        let arrival = input.arrival.nanoseconds
+        guard let last = lastInputNs else { return true }
+        let limitNs = config.maxForwardJumpS * 1e9
+        // In Double: a corrupt `t` must not overflow the subtraction.
+        guard Double(arrival) - Double(last) > limitNs else { return true }
+        if let candidate = jumpCandidateNs,
+           abs(Double(arrival) - Double(candidate)) <= Self.forwardJumpConfirmS * 1e9 {
+            return true
+        }
+        return false
     }
 
     /// Runs every grid step at or before `ns`. Steps with fresh OBD speed

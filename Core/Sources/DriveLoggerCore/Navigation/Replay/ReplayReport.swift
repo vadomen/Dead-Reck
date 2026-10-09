@@ -27,6 +27,9 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
     public var counters: NavigationCounters
     public var fixesUsed: Int
     public var fixesWithheld: Int
+    /// The estimate just before each manual fix (sidecar `pin` form).
+    /// Optional so metrics.json files written before it still decode.
+    public var pins: [NavSidecar.Pin]?
 
     public init(_ result: ReplayResult) {
         logName = result.logName
@@ -52,6 +55,7 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
         counters = result.counters
         fixesUsed = result.fixes.filter { $0.withheld == nil }.count
         fixesWithheld = result.fixes.count - fixesUsed
+        pins = result.pins.map(\.pin)
     }
 
     /// `metrics.json` key: one row per log and mode.
@@ -85,6 +89,16 @@ public enum ReplayReport {
         }
         return String(format: "%d/%d (%.0f %%) inside 95 %%", consistency.all.inside, consistency.all.scored, percent)
             + (kinds.isEmpty ? "" : " [" + kinds.joined(separator: ", ") + "]")
+    }
+
+    /// "t 412.3 s: DR 55.123456, 37.123456, 95 % ellipse 120 × 40 m @ 35°,
+    /// heading 87.0° ± 4.1°" — the estimate just before a manual fix.
+    public static func pinText(_ pin: NavSidecar.Pin) -> String {
+        let head = String(format: "t %.1f s: ", pin.t.seconds)
+        guard let p = pin.prior else { return head + "initialised the engine" }
+        return head + String(format: "DR %.6f, %.6f, 95 %% ellipse %.0f × %.0f m @ %.0f°, heading %.1f° ± %.1f°",
+                             p.latitude, p.longitude, p.semiMajorM, p.semiMinorM, p.orientationDeg,
+                             p.headingDeg, p.headingStdDeg)
     }
 
     static func km(_ value: Double?) -> String {
@@ -127,6 +141,9 @@ public enum ReplayReport {
             let inside = clean.compactMap(\.inside95).filter { $0 }.count
             lines.append("cleanFix      \(clean.count) withheld clean fixes: median \(m(median)) m, max \(m(errors.last)) m, inside 95 % \(inside)/\(clean.count)")
         }
+        for pin in result.pins {
+            lines.append("Pin estimate  " + pinText(pin.pin))
+        }
         lines.append("Consistency   " + consistencyText(result.consistency))
         lines.append("Max error     \(m(result.maxErrorM)) m (\(pct(result.maxErrorPercent)))")
         lines.append("End error     \(m(result.endErrorM)) m (\(pct(result.endErrorPercent)))\(result.endIsTruth ? "" : " [last checkpoint; no truth end]")")
@@ -160,6 +177,10 @@ public enum ReplayReport {
             if !clean.isEmpty {
                 let errors = clean.compactMap(\.errorM).sorted()
                 out += "| cleanFix ×\(clean.count) | | | median \(m(errors.isEmpty ? nil : errors[errors.count / 2])), max \(m(errors.last)) | | | \(clean.compactMap(\.inside95).filter { $0 }.count)/\(clean.count) | | |\n"
+            }
+            if let pins = r.pins, !pins.isEmpty {
+                out += "\nDR estimate at each manual fix (prior):\n\n"
+                for pin in pins { out += "- " + pinText(pin) + "\n" }
             }
             out += "\nSeed \(r.config.seed), \(r.config.particleCount) particles. Config:\n\n```json\n\(configJSON(r.config))\n```\n"
         }
@@ -237,6 +258,30 @@ public enum ReplayReport {
                     "geometry": ["type": "LineString", "coordinates": [[lon, lat], [cp.longitude, cp.latitude]]],
                     "properties": ["kind": "checkpointError", "truthKind": cp.kind.rawValue, "t": cp.t,
                                    "errorM": cp.errorM ?? 0],
+                ])
+            }
+        }
+        // Added in N4 B, after every earlier feature: the estimate and its
+        // 95 % ellipse just before each manual fix.
+        for pin in result.pins {
+            guard let prior = pin.pin.prior else { continue }
+            let properties: [String: Any] = [
+                "kind": "pinEstimate", "t": pin.pin.t.seconds, "headingDeg": prior.headingDeg,
+                "headingStdDeg": prior.headingStdDeg, "semiMajorM": prior.semiMajorM,
+                "semiMinorM": prior.semiMinorM, "orientationDeg": prior.orientationDeg, "converged": prior.converged,
+            ]
+            features.append([
+                "type": "Feature",
+                "geometry": ["type": "Point", "coordinates": [prior.longitude, prior.latitude]],
+                "properties": properties,
+            ])
+            if let ring = pin.ring {
+                var ellipse = properties
+                ellipse["kind"] = "pinEllipse95"
+                features.append([
+                    "type": "Feature",
+                    "geometry": ["type": "Polygon", "coordinates": [ring.map { [$0[1], $0[0]] }]],
+                    "properties": ellipse,
                 ])
             }
         }

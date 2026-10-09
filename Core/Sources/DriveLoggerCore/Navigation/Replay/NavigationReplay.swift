@@ -62,6 +62,10 @@ public struct ReplayOptions: Hashable, Sendable {
     public var ellipseIntervalS = 10.0
     /// Heading counts as converged once `converged` holds this long.
     public var convergenceHoldS = 30.0
+    /// The run replays the live app (`replay_nav --as-live`): inputs in
+    /// file order, the seed derived from the header, the default config.
+    /// Only the label depends on it; the caller orders the inputs.
+    public var asLive = false
 
     public init(gps: GPSMode, holdOutAccuracyM: Double? = nil, config: NavigationConfig = NavigationConfig()) {
         self.gps = gps
@@ -72,6 +76,7 @@ public struct ReplayOptions: Hashable, Sendable {
     public var label: String {
         var label = gps.label
         if let holdOutAccuracyM { label += "-holdout-\(GPSMode.format(holdOutAccuracyM))" }
+        if asLive { label += "-as-live" }
         return label
     }
 }
@@ -147,6 +152,45 @@ public enum NavigationReplay {
             return .heldOut
         }
         return nil
+    }
+
+    /// The navigation inputs of a recording in file order: the order the
+    /// live app's tap delivered them (`LogSink`, "Tap"), for
+    /// `replay_nav --as-live`. Unlike `inputs(from:)`, a location fix comes
+    /// where it was written (on arrival), and a late CoreMotion batch where
+    /// it was delivered, not at its own `t`.
+    public static func fileOrderInputs<S: Sequence>(from events: S) -> [NavigationInput] where S.Element == LogEvent {
+        events.compactMap(NavigationInput.init)
+    }
+
+    /// Navigation inputs the live app saw but the file does not hold: each
+    /// `lifecycle` `error` row with detail `encodingFailed <kind>: …` for a
+    /// navigation kind (a non-finite `Double` from a sensor). The tap hands
+    /// the event to the engine before the writer encodes it, so the replay
+    /// misses it: a known source of `--compare` differences.
+    public static func encodingFailures<S: Sequence>(in events: S) -> [(t: MonotonicTimestamp, kind: String)]
+        where S.Element == LogEvent {
+        let kinds: Set<String> = ["motion", "location", "obd", "manualFix"]
+        return events.compactMap { event in
+            guard case .lifecycle(let sample) = event.payload, sample.event == LifecycleSample.Event.error.rawValue,
+                  let detail = sample.detail, detail.hasPrefix("encodingFailed ") else { return nil }
+            let kind = String(detail.dropFirst("encodingFailed ".count).prefix { $0 != ":" })
+            return kinds.contains(kind) ? (event.timestamp, kind) : nil
+        }
+    }
+
+    /// The sidecar lines `LiveNavigationRun` produces for `inputs` (in the
+    /// order given), as the app would have written them with no drops: the
+    /// reference for `--compare`.
+    public static func liveLines(
+        inputs: [NavigationInput], sessionID: UUID, config: NavigationConfig, appBuild: String = "replay"
+    ) -> [NavSidecar.Line] {
+        var run = LiveNavigationRun(sessionID: sessionID, config: config, appBuild: appBuild)
+        var lines: [NavSidecar.Line] = [.header(run.header)]
+        for input in inputs {
+            run.ingest(input) { lines.append($0) }
+        }
+        return lines
     }
 
     /// Replays `inputs` (arrival order, see `inputs(from:)`) through a fresh
@@ -267,7 +311,20 @@ public struct ReplayResult: Hashable, Sendable, Codable {
     public var track: [TrackPoint]
     public var ellipses: [EllipseSample]
 
+    /// The engine's estimate at each manual fix, the prior just before it
+    /// was ingested (what the live app writes as a sidecar `pin`), with its
+    /// 95 % ellipse ring.
+    public var pins: [PinEstimate] = []
+
     public var heldOutFixes: [Fix] { fixes.filter { $0.withheld == .heldOut } }
+}
+
+/// A manual fix with the dead-reckoning estimate just before it.
+public struct PinEstimate: Hashable, Sendable, Codable {
+    public var pin: NavSidecar.Pin
+    /// The prior's 95 % ellipse as (latitude, longitude) pairs, closed; nil
+    /// when the pin initialised the engine.
+    public var ring: [[Double]]?
 }
 
 // MARK: - Run
@@ -284,6 +341,7 @@ private struct ReplayRun {
     var checkpoints: [ReplayResult.Checkpoint] = []
     var track: [ReplayResult.TrackPoint] = []
     var ellipses: [ReplayResult.EllipseSample] = []
+    var pins: [PinEstimate] = []
     var engineNs: Int64 = 0
     var maxIngestNs: Int64 = 0
     let motionStart: MonotonicTimestamp?
@@ -345,6 +403,9 @@ private struct ReplayRun {
                     accuracyM: sample.horizontalAccuracy, withheld: reason
                 ))
                 if reason != nil { continue }
+            }
+            if case .manualFix(let sample, let t) = input, engine.accepts(input) {
+                recordPin(sample, at: t)
             }
             if case .obd(let sample, let t) = input {
                 distance.observe(sample, at: t.nanoseconds, maxAgeS: options.config.obdMaxAgeS,
@@ -419,17 +480,17 @@ private struct ReplayRun {
         checkpoints.append(checkpoint)
     }
 
-    mutating func sampleTrack(at ns: Int64, withEllipse: Bool) {
-        let t = MonotonicTimestamp(nanoseconds: ns)
-        guard let estimate = engine.estimate(at: t), let plane = engine.tangentPlane else { return }
-        if let last = track.last, last.t >= t.seconds { return }
-        track.append(ReplayResult.TrackPoint(
-            t: t.seconds, latitude: estimate.latitude, longitude: estimate.longitude,
-            headingDeg: estimate.headingDeg, headingStdDeg: estimate.headingStdDeg,
-            converged: estimate.converged, distanceM: distance.distance(at: ns),
-            speedScale: estimate.speedScaleMean
-        ))
-        guard withEllipse else { return }
+    /// The prior at a manual fix, as the live app's sidecar records it.
+    mutating func recordPin(_ sample: ManualFixSample, at t: MonotonicTimestamp) {
+        let estimate = engine.estimate(at: t)
+        let ring = estimate.flatMap { e in engine.tangentPlane.map { Self.ring(e, plane: $0) } }
+        pins.append(PinEstimate(pin: NavSidecar.Pin(sample, at: t, prior: estimate.map { NavSidecar.Estimate($0) }),
+                                ring: ring))
+    }
+
+    /// The 95 % ellipse of `estimate` as a closed ring of 37
+    /// (latitude, longitude) pairs.
+    static func ring(_ estimate: NavigationEstimate, plane: LocalTangentPlane) -> [[Double]] {
         let e = estimate.ellipse
         let b = e.orientationDeg * .pi / 180
         var ring: [[Double]] = []
@@ -442,6 +503,22 @@ private struct ReplayRun {
             let p = plane.geodetic(east: estimate.east + dEast, north: estimate.north + dNorth)
             ring.append([p.latitude, p.longitude])
         }
+        return ring
+    }
+
+    mutating func sampleTrack(at ns: Int64, withEllipse: Bool) {
+        let t = MonotonicTimestamp(nanoseconds: ns)
+        guard let estimate = engine.estimate(at: t), let plane = engine.tangentPlane else { return }
+        if let last = track.last, last.t >= t.seconds { return }
+        track.append(ReplayResult.TrackPoint(
+            t: t.seconds, latitude: estimate.latitude, longitude: estimate.longitude,
+            headingDeg: estimate.headingDeg, headingStdDeg: estimate.headingStdDeg,
+            converged: estimate.converged, distanceM: distance.distance(at: ns),
+            speedScale: estimate.speedScaleMean
+        ))
+        guard withEllipse else { return }
+        let e = estimate.ellipse
+        let ring = Self.ring(estimate, plane: plane)
         ellipses.append(ReplayResult.EllipseSample(
             t: t.seconds, latitude: estimate.latitude, longitude: estimate.longitude,
             semiMajorM: e.semiMajorM, semiMinorM: e.semiMinorM, orientationDeg: e.orientationDeg, ring: ring
@@ -478,7 +555,8 @@ private struct ReplayRun {
             counters: engine.counters,
             fixes: fixes,
             track: track,
-            ellipses: ellipses
+            ellipses: ellipses,
+            pins: pins
         )
     }
 

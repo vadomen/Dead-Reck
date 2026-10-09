@@ -117,6 +117,10 @@ public struct NavigationCounters: Hashable, Sendable, Codable {
     /// Macro prediction steps (each one pass over the particles) run for
     /// the unknown-speed part of `coalescedSteps`.
     public var macroSteps = 0
+    /// Inputs rejected as implausible forward time jumps (B0-1): more than
+    /// `NavigationConfig.maxForwardJumpS` after the latest accepted input.
+    /// 0 on every acceptance drive.
+    public var inputsRejectedTimeJump = 0
 
     public init() {}
 }
