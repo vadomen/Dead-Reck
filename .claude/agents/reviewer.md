@@ -27,6 +27,7 @@ From `git diff --stat`, list the touched areas and apply only the matching check
 | sensors, RecordingSession, clock | 2, 3, 5, 6 |
 | App UI only | 6, plus: main-thread work, background work, nothing new written to the log |
 | Core/ | 8 always |
+| Core/Navigation, tools/replay_nav, road graph | 6, 9, plus: engine is causal and deterministic (seeded), GPS only via the explicit measurement mode, no logger/format changes, no real coordinates in code/tests/docs |
 | new logic anywhere | 9 |
 
 1. Car safety: only `AT` and mode `01` commands (+ gated `ATSH 7DF/7E0-7E7`) can reach the adapter; nothing writes to the vehicle.
@@ -42,7 +43,7 @@ From `git diff --stat`, list the touched areas and apply only the matching check
 ## Every finding must be verified
 Report a finding only if you can name file:line and a concrete failure scenario (inputs/state -> wrong result). Drop anything speculative. Label each:
 - BLOCKER - car safety, data loss, corrupted/unsynchronised timestamps, crash.
-- MAJOR - wrong behaviour in a realistic drive, or a missing test for new core logic.
+- MAJOR - wrong behaviour in a realistic drive, a missing test for new core logic, or anything that would fail the milestone's acceptance criteria or a device-checklist item (even if the code-level impact looks small).
 - MINOR - real but low impact. Listed, never blocks (the review-loop defers it to docs/BACKLOG.md).
 No style nits, no praise, no restating the diff.
 
