@@ -223,6 +223,19 @@ Here is a bench-test log from the parked car: <path outside the repo>. Use drive
 
 ## M4.1 - GPS map screen (UI only, read-only)
 
+## M4.2 - Map camera + manual fix — **done**
+
+Adds an initial map camera and the driver's "I'm here" position fix, which is ground truth for dead reckoning offline (above all where GNSS is jammed).
+
+- **Camera:** span = max(500 m, 3 × horizontalAccuracy). It is set on the first fix, when the Map tab opens with a fix, and on Following. Before recording, the reference source's cached last-known location (read only, no session) sets the initial camera.
+- **Manual fix:** a long-press stages a draggable pin; Confirm writes a `manualFix` event (format **v3**) with:
+  - the position, `pressedT` and `mapSpanM`;
+  - the last OBD speed and its reply time, and the GPS speed;
+  - the note;
+  - the gate used: `speedSource` obd|gps|unknown and `gateSpeedKmh`.
+- **Gate (`ManualFixGate`):** Confirm only while recording and at ≤ 10 km/h. OBD counts if ≤ 2 s old. Otherwise GPS counts if the fix is accurate (≤ 100 m, valid speed accuracy) and ≤ 5 s old. Otherwise the fix is allowed. Starting a recording clears a staged pin.
+- **Format:** `LogFormatVersion` v3 with a new frozen v3 fixture; the v1/v2 fixtures are untouched. `inspect_log` summary and `manualFix.csv`; `LOG_FORMAT.md`; `drive-log-debrief` uses manual fixes as ground truth.
+
 ## M4.3 - Map follow + heading-up (UI only)
 
 Fixes Following switching off by itself during drives (the `positionedByUser`
@@ -256,7 +269,20 @@ New drive: <path outside the repo>. Use drive-analyst for the debrief. If the ve
 - PLAN.md §6 is updated with what the drives showed (background survival, real rates).
 - The local tag `logger-v1` is set.
 
-**Stop after M5 — v1 is done; don't start new work without a new plan.**
+**Logger v1 is done after M5.** M5 drives continue in parallel with the navigator work below; each new drive also joins the replay set.
+
+---
+
+## Navigator roadmap
+
+Dead reckoning on top of the logger. The model, config, replay commands, acceptance runs and baselines are in `docs/NAVIGATION.md`. Owner: `navigation-engineer`, with `ios-ui-engineer` for the map and `sensors-logging-engineer` for anything touching the logger.
+
+- **N2 - engine + replay — done.** Causal, deterministic particle filter in `Core/Navigation`, plus the `replay_nav` evaluation CLI (docs/NAVIGATION.md).
+- **N2.1 / N2.2 - tuning — done.** Speed-scale prior, manual-fix σ from map span, network-fix tempering, ellipse consistency metric, stale-fix σ growth (docs/NAVIGATION.md: acceptance, adoption rule).
+- **N4 - live navigation in the app — next.** Sample tap, NavigationService, sidecar `.nav.jsonl`, dead-reckoning dot and ellipse on the map, pin from the estimate (docs/NAVIGATION.md; plan approved before starting).
+- **N3 - OSM roads + map matching — after N4** (docs/NAVIGATION.md: known limitations).
+
+Every engine change is judged on the replay set first and goes through `/review-loop` before merge.
 
 ---
 
