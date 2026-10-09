@@ -25,10 +25,20 @@ The logger keeps its behaviour, timing and log format.
   - stale-fix σ growth by age (> 5 s at ingest, k = 1.0 m/s);
   - mean-based adoption rule;
   - run-13 whole-engine review fixes: manual-fix reset, bounded stale speed with a parked latch, plane re-anchoring, discriminating tests.
-- **Gate:** run-13 review round 2 must be clean and merged into main before the N4 branch is cut.
+- **Gate:** run-13 review must be clean and merged into main before the N4 branch is cut. Done: clean at round 3.
 
 ## N4
-Branch `n4-live-nav` from main after the prerequisites are merged. The three owners work in order A → B → C.
+Branch `n4-live-nav` from main after the prerequisites are merged. The owners work in order B0 → A → B → C.
+
+### B0. Engine fixes that change behaviour (navigation-engineer, own commit, first)
+These change engine results, so they land before anything else and set a new baseline.
+- **R13.2-2:** reset the motion EMA on every fresh OBD 0, so residual braking can't clear the parked latch.
+- **R13.2-3:** the motion-EMA timestamp never goes backwards on an out-of-order sample.
+- **R13.1-6:** coalesce long gaps, or cap the catch-up step count, so a resume after suspension doesn't block the actor.
+- **R13.1-5:** cap the `estimate(at:)` extrapolation horizon, then hold or grow the covariance. The first UI frame after a resume must not jump.
+- **R13.2-4:** doc drift (stale speed "random-walks", `stationary`, plane-relative `east`/`north`).
+- Each fix has a regression test that fails before it.
+- Acceptance: seeds 1–5 on the six drives under the mean-based adoption rule, recorded as an "N4-B0" table in NAVIGATION.md. This is the baseline the rest of N4 must reproduce bit for bit.
 
 ### A. Sample tap and sidecar file lifecycle (sensors-logging-engineer)
 - **Tap at the single chokepoint, `LogSink.record`** (`Core/.../Log/LogFile.swift:89`).
@@ -71,9 +81,7 @@ Branch `n4-live-nav` from main after the prerequisites are merged. The three own
   - `--compare <sidecar>` reports the max position, heading and ellipse difference against the replay at the same t, plus the sidecar's `droppedInputs`. A difference is expected only if inputs were dropped, and then the drop count is reported.
   - A config hash mismatch is a warning.
   - The replay output now also records the dead-reckoning estimate and its ellipse at each manualFix confirm time, in metrics and in GeoJSON.
-- **Deferred review items to close here** (docs/BACKLOG.md):
-  - **R13.1-5:** cap the `estimate(at:)` extrapolation horizon, then hold or grow the covariance. The first UI frame after a resume must not jump.
-  - **R13.1-6:** coalesce long gaps into one step, or cap the catch-up step count, so a resume after suspension doesn't block the actor.
+- **Deferred review item to close here** (docs/BACKLOG.md; R13.1-5/6 moved to B0):
   - **R13.1-7:** check that an arm64 Mac and the iPhone give identical bits on one recording before relying on exact `--compare`; otherwise compare with a tolerance.
 - **Tests:**
   - Core: seed stability; sidecar round trip; on a synthetic recording, `--as-live --compare` against a sidecar from the same engine run gives exactly 0.
@@ -115,6 +123,6 @@ Builds on `MapViewModel`, `GPSMapView`, `FollowController`, `HeadingState` and `
 - `xcodegen generate` after adding App files
 - the simulator build
 - app tests on a concrete simulator id
-- the N2 and step-0 acceptance replays, identical before and after N4 (N4 must not change engine results)
+- the acceptance replays: B0 is re-baselined under the adoption rule; after B0, A, B and C must leave them bit-identical (only B0 may change engine results)
 - no log-format diff (`LogFormatVersion`, `LogFormatCompatibilityTests` untouched)
 - `/review-loop` on the N4 range, then merge
