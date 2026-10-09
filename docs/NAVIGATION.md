@@ -270,6 +270,26 @@ file name. The values here are illustrative:
     "note": "unknown keys are ignored" } }
 ```
 
+## Adoption rule for engine changes
+
+A change to the engine or its defaults is adopted only if, on every acceptance
+drive (clean-long, clean, manual, jammed-A, jammed-B), the **mean over seeds
+1–5** passes:
+
+- **Drives scored in metres** (clean-long and clean max error, manual error at
+  truth point 1): the mean may get worse by at most 2 m or 5 % of the
+  previous mean, whichever is larger.
+- **Drives scored in % of distance** (jammed-A, jammed-B end error): the mean
+  may get worse by at most 0.1 percentage points.
+- **Ellipse consistency** (share of checkpoints inside the 95 % ellipse, mean
+  over seeds) must not drop on any drive.
+
+The acceptance criteria themselves must still pass on every seed. manual-3 and
+manual's convergence distance are reported, not gated. This replaces the
+strict per-seed rule used for N2.2. Correctness fixes, such as the review
+run 13 findings, are reported against the previous values, with every change
+explained.
+
 ## Acceptance runs
 
 `<clean>`, `<clean-long>`, `<manual>`, `<manual-3>`, `<jammed-A>` and
@@ -475,7 +495,7 @@ on seeds 1–5 with std 0.03), with at most 1 of 283 withheld fixes inside the
 | clean | mask-after-motion 30 (motion starts 49.5 s, mask at 79.5 s) | max 324 m (seeds 2–5: 311–316 m); 0/283 withheld fixes inside the 95 % ellipse | **regression case for reverse handling.** The masked part starts with a slow manoeuvre including reversing, which unsigned OBD speed integrates as forward motion, and the filter is overconfident about it |
 | clean | mask-after 74 / 76 / 78 | max 170 / 207 / 300 m | the same manoeuvre. The error depends steeply on how many slow GNSS fixes from its start are used (they pull the scale up to 1.02); mask-after 79.5 equals mask-after-motion 30 exactly |
 | manual | use, hold-out 200 | truth point 1: 189 m, converged 7.68 km | without the 100–200 m Wi-Fi fixes, the last of which arrives 0.5 s before truth point 1, the error is 189 m |
-| manual | use, hold-out 100, towerCorrelationS 30 | truth point 1: 63 m, converged 5.10 km | trusting towers more converges sooner, still not within 2 km |
+| manual | use, hold-out 100, networkFixCorrelationS 30 (N2 name towerCorrelationS) | truth point 1: 63 m, converged 5.10 km | trusting towers more converges sooner, still not within 2 km |
 | manual | none | never converges; about 4.2 km at truth point 1 | one pin alone does not give heading |
 
 ## Known limitations and options
