@@ -319,4 +319,58 @@ struct NavigationEngineTests {
         let noAccuracy = try eastAfterSecondFix(speed: 3, speedAccuracy: -1)
         #expect(noAccuracy.network == 2 && noAccuracy.east < 5)
     }
+
+    @Test("Stale-fix σ grows by k × age: pre-session (t < 0) and older than N s are inflated, a fresh fix is not")
+    func staleFixSigmaGrowth() throws {
+        var config = S.config(particles: 50)
+        config.staleFixSigmaGrowthMps = 1.0
+        config.staleFixAgeS = 5
+        let k = ErrorEllipse.chiSquare95.squareRoot()
+        let base = 30 / 1.51  // σ of a 30 m fix at face value
+        // Initialises from one fix while parked; returns the initial σ.
+        func initialSigma(t: Double, age: Double, config: NavigationConfig) throws -> Double {
+            var engine = NavigationEngine(config: config)
+            engine.ingest(.obd(OBDSample(pid: .vehicleSpeed, value: 0, unit: .kilometersPerHour, ecu: "7E8"), at: S.ms(t + age - 0.01)))
+            engine.ingest(.location(LocationSample(latitude: 0, longitude: 0, altitude: 0, horizontalAccuracy: 30,
+                                                   verticalAccuracy: -1, speed: 0, speedAccuracy: 0.5, course: -1,
+                                                   courseAccuracy: -1, receivedT: S.ms(t + age), ageS: age), at: S.ms(t)))
+            return try #require(engine.estimate(at: S.ms(t + age))).ellipse.semiMajorM / k
+        }
+        // Pre-session: t = −60 s, arriving 0.1 s into the session (age 60.1 s).
+        #expect(abs(try initialSigma(t: -60, age: 60.1, config: config) - (base + 60.1)) < 1e-6)
+        // Pre-session by a fraction of a second still counts (t < 0).
+        #expect(abs(try initialSigma(t: -0.5, age: 0.6, config: config) - (base + 0.6)) < 1e-6)
+        // Fresh fix: not inflated.
+        #expect(abs(try initialSigma(t: 100, age: 0.05, config: config) - base) < 1e-6)
+        // In session but older than N = 5 s (a relaunch mid-drive): inflated.
+        #expect(abs(try initialSigma(t: 100, age: 7, config: config) - (base + 7)) < 1e-6)
+        #expect(abs(try initialSigma(t: 100, age: 4.9, config: config) - base) < 1e-6)
+        // Off (k = 0, the default) leaves every fix at face value.
+        #expect(NavigationConfig().staleFixSigmaGrowthMps == 0)
+        #expect(abs(try initialSigma(t: -60, age: 60.1, config: S.config(particles: 50)) - base) < 1e-6)
+
+        // Updates too: parked at the origin, a stale fix 100 m east pulls far
+        // less than a fresh one.
+        func eastAfter(age: Double) throws -> Double {
+            var engine = NavigationEngine(config: config)
+            func fix(_ t: Double, east: Double, age: Double) -> NavigationInput {
+                let p = S.plane.geodetic(east: east, north: 0)
+                return .location(LocationSample(latitude: p.latitude, longitude: p.longitude, altitude: 0,
+                                                horizontalAccuracy: 30, verticalAccuracy: -1, speed: 0, speedAccuracy: 0.5,
+                                                course: -1, courseAccuracy: -1, receivedT: S.ms(t + age), ageS: age), at: S.ms(t))
+            }
+            engine.ingest(.obd(OBDSample(pid: .vehicleSpeed, value: 0, unit: .kilometersPerHour, ecu: "7E8"), at: S.ms(1)))
+            engine.ingest(fix(1.05, east: 0, age: 0))
+            for t in stride(from: 2.0, through: 8.9, by: 1) {  // fresh OBD 0: parked, no drift
+                engine.ingest(.obd(OBDSample(pid: .vehicleSpeed, value: 0, unit: .kilometersPerHour, ecu: "7E8"), at: S.ms(t)))
+            }
+            engine.ingest(fix(9 - age, east: 100, age: age))
+            let estimate = try #require(engine.estimate(at: S.ms(9)))
+            return S.plane.enu(latitude: estimate.latitude, longitude: estimate.longitude).east
+        }
+        #expect(abs(try eastAfter(age: 0.05) - 50) < 1)  // equal σ: halfway
+        let stale = try eastAfter(age: 8)                 // σ = base + 8
+        let expected = 100 * base * base / (base * base + (base + 8) * (base + 8))
+        #expect(abs(stale - expected) < 1, "stale update pulled \(stale) m, expected \(expected) m")
+    }
 }

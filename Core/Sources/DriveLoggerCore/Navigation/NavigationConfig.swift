@@ -76,6 +76,15 @@ public struct NavigationConfig: Hashable, Sendable, Codable {
     /// fix / this)`. Applies to small claimed accuracies too: a 24 m Wi-Fi
     /// fix repeated at 1 Hz is not 1 Hz of independent evidence.
     public var networkFixCorrelationS = 60.0
+    /// A stale fix — from before the session (`t < 0`) or older than
+    /// `staleFixAgeS` at ingest (e.g. after a relaunch mid-drive) — has its
+    /// σ grown by this speed × its age, m/s: the car may have moved while
+    /// nothing observed it. Applies to initialisation and to updates.
+    /// 0 disables — the default: 1.0 and 0.5 m/s were not better or equal
+    /// on every acceptance drive and seed (docs/NAVIGATION.md, N2.2).
+    public var staleFixSigmaGrowthMps = 0.0
+    /// Age at ingest beyond which a fix is stale, s.
+    public var staleFixAgeS = 5.0
     /// A fix older than this at arrival is ignored unless the car is stopped.
     public var maxFixAgeS = 10.0
     /// GNSS course is used only above this OBD/GNSS speed, m/s.

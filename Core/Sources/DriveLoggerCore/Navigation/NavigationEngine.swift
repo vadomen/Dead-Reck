@@ -354,6 +354,7 @@ public struct NavigationEngine: Sendable {
         let network = !sample.hasValidSpeed
         let sigma = max(accuracy * config.fixSigmaPerAccuracy, config.fixSigmaFloorM)
             * (network ? config.networkFixInflation : 1)
+            + Self.staleGrowth(fixNs: fixNs, age: age, config: config)
         // Course needs real motion: GNSS reports a few m/s of speed noise
         // while parked, so a fresh OBD speed under the threshold vetoes it.
         let since = shiftSince(fixNs)
@@ -424,6 +425,14 @@ public struct NavigationEngine: Sendable {
         }
         normalizeWeights()
         resampleIfNeeded()
+    }
+
+    /// Extra σ of a stale fix: `staleFixSigmaGrowthMps × age` when the fix
+    /// is from before the session (`t < 0`) or older than `staleFixAgeS`;
+    /// 0 otherwise.
+    static func staleGrowth(fixNs: Int64, age: Double, config: NavigationConfig) -> Double {
+        guard fixNs < 0 || age > config.staleFixAgeS else { return 0 }
+        return max(0, config.staleFixSigmaGrowthMps) * age
     }
 
     /// Likelihood exponent for a network fix `sinceLastS` seconds after the

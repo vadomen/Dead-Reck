@@ -178,6 +178,7 @@ every result.
 | networkFixInflation | 1.0 | extra σ factor for network fixes (any fix without a valid speed) |
 | networkFixCorrelationS | 60 | network-fix tempering window |
 | maxFixAgeS | 10 | older fixes ignored unless stopped |
+| staleFixSigmaGrowthMps / staleFixAgeS | 0 (off) / 5 | a pre-session fix (t < 0) or one older than staleFixAgeS gets σ += k × age; off by default (N2.2) |
 | courseMinSpeedMps | 3 | course needs this GNSS and OBD speed |
 | courseSigmaFloorDeg | 2 | course σ floor |
 | speedUpdateMinKmh | 10.8 | GNSS speed updates the scale only above this OBD speed (and with valid speedAccuracy) |
@@ -370,6 +371,47 @@ Options, measured on seed 1 and **not adopted**:
 49 m (0.62 % of distance; 47–57 m over seeds 1–5), well inside 200 m. Convergence is not tuned towards the target:
 with towers and one pin as the only absolute information, the honest heading
 std falls under 10° late. Options are listed under known limitations.
+
+### N2.2 experiment: stale-fix σ grown by age (default off)
+
+**Rule:** a fix from before the session (`t < 0`), or older than 5 s at ingest
+(a relaunch mid-drive), gets σ += k × age. It applies to initialisation and to
+updates; the stale-while-moving rejection (`maxFixAgeS`) is unchanged.
+
+**Adoption test (strict):** for every acceptance drive and seed 1–5, the
+criterion value must be ≤ N2.1 and the ellipse consistency ≥ N2.1. Two values
+were tried, k = 1.0 m/s (about walking speed, or a car repositioning while
+nothing observed it) and 0.5 m/s, then the search stopped. **Neither passes, so
+the default is k = 0.** The code and tests stay.
+
+| alias | N2.1 (k = 0) | k = 1.0 m/s | k = 0.5 m/s |
+|---|---|---|---|
+| clean-long, max | 18.2–20.2 m [100 %] | 18.7–19.9 m [100 %]; worse on seeds 2, 4, 5 | 19.0–20.2 m [100 %]; worse on all 5 |
+| clean, max | 12.2–16.9 m [100 %] | 15.3–22.9 m [100 %]; worse on 4 seeds | 12.2–19.7 m [100 %]; worse on 3 seeds |
+| manual, truth point 1 | 47.4–57.4 m [100 %] | identical (the stale fix is held out) | identical |
+| manual, convergence | 7.27–7.68 km | identical | identical |
+| jammed-A, end | 1.02–1.26 % [100 %] | 1.02–1.26 % [100 %]; worse on 3 seeds by ≤ 0.04 pp | 0.97–1.29 % [100 %]; worse on 2 seeds |
+| jammed-B, end | 0.81–1.11 % [100 %] | 0.86–1.22 % [100 %]; worse on all 5 | 0.84–1.17 % [100 %]; worse on 3 seeds |
+| manual-3 pins (sanity check only) | 415–417 / 635–651 / 247–250 m [0/3] | 103–104 / 458–473 / 128–131 m [2/3] | 230–232 / 493–510 / 130–135 m [2/3] |
+
+**Reading.**
+- **clean and clean-long:** their first fix is pre-session by only 0.7–0.9 s,
+  so σ grows by under 1 m. That small change at initialisation alters later
+  resampling, and the result moves within the seed noise (clean's own spread is
+  12–17 m), not through a real effect. A strict per-seed test cannot tell the
+  two apart.
+- **jammed-A/B:** they initialise from fixes 99 s and 19 s old. Inflating those
+  costs up to 0.1 pp.
+- **manual-3:** its stale initialising fix (165 s old) is the main source of
+  its overconfidence, and the rule fixes most of it. Its pins 2–3 were placed
+  while moving and may be about 100 m off themselves, so it is not used for
+  adoption.
+- **Options:**
+  - apply the rule only above an age threshold that excludes sub-second
+    pre-session fixes;
+  - judge adoption on seed-averaged values instead of per seed.
+
+  Both are the user's call.
 
 ### Informational runs (not acceptance)
 
