@@ -470,3 +470,35 @@ Core Foundation-only; new logic tested. Tests at HEAD: Core 530/530, app
 - Commits: 99e2b39 (change under review), plus this ledger update.
 - Final tests: `cd Core && swift test` 530 tests in 81 suites, all pass;
   simulator build green; app tests 174 in 30 suites, all pass.
+
+## Run 9 — M4.3 map follow + heading-up (df91622..4afa2eb)
+
+### Round 1
+
+Fresh reviewer, UI-only range (Core, logging, sensors, format untouched; check 8
+trivially clean). Verified: only touch gestures call `userGesture`,
+`positionedByUser` gone, camera callbacks ignored while following; manual off
+stays off; staged pin suspends resume, countdown starts on clear (incl. Start);
+0.25 s coalescing correct; smoother short-way wrap, rate clamp and freeze
+correct and tested; gate boundaries match spec; `MapFeed` still the only
+`session.live` observer. Tests at HEAD: Core 530/530, app 191/191, simulator
+build green.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| M9.1-1 | MINOR | Follow deadline on `systemUptime`, sleep on `ContinuousClock`, single tick: device sleep in the window can leave Following paused for good. | DEFERRED | BACKLOG |
+| M9.1-2 | MINOR | Heading smoother not reset on a new recording. | DEFERRED | BACKLOG |
+| M9.1-3 | MINOR | `frame()` resets to north-up on reselect/foreground; arrow then wrong until next fix. | DEFERRED | BACKLOG |
+| M9.1-4 | MINOR | Freeze trusts a stale OBD 0. | DEFERRED | BACKLOG |
+| M9.1-5 | MINOR | Heading-up re-renders Map content at up to 10 Hz. | DEFERRED | BACKLOG |
+| M9.1-6 | MINOR | Missing tests: coalescing, `setOBDSpeed`, bearing reset. | DEFERRED | BACKLOG |
+
+**Loop stopped: no BLOCKER or MAJOR findings.**
+
+### Run 9 summary
+
+- Rounds run: 1.
+- Findings fixed: 0. Rejected: 0. Deferred: 6 MINOR (M9.1-1…6 in BACKLOG).
+- Commits: 4afa2eb (change under review), plus this ledger update.
+- Final tests: `cd Core && swift test` 530 tests in 81 suites, all pass;
+  simulator build green; app tests 191 in 33 suites, all pass.
