@@ -616,3 +616,28 @@ after. Acceptance checkpoint errors are unchanged: the drives' only stale
 periods are the final OBD loss at ignition-off, with no fresh zero after them.
 
 Tests after fix: `cd Core && swift test` 560 tests in 86 suites pass.
+
+### Round 3
+
+Fresh reviewer, range 80fb354..531dc1a. R11.2-1 verified fixed: reverting only
+the reset line in a scratch copy makes `staleOffsetsResetOnZUPT` fail both of its
+checks. The steady-state ZUPT path stays loop-free, and the ZUPT branch still
+draws no random numbers, so the results are unchanged. A fresh review of
+causality, determinism, filter maths, metrics, invariants and performance found
+nothing new. `swift test --filter Navigation` 30/30 green.
+
+No findings.
+
+**Loop stopped: no BLOCKER or MAJOR findings.**
+
+### Run 11 summary
+
+- Rounds run: 3.
+- Findings fixed: 4 MAJOR. Three were coverage gaps closed with discriminating
+  tests (R11.1-1..3, 47ac36b); one was an engine bug (R11.2-1, a30b1e4). Rejected: 0.
+  Deferred: 8 MINOR (R11.1-4..8, R11.2-2..4 in BACKLOG).
+- Final tests (at 531dc1a): `cd Core && swift test` 560 tests in 86 suites pass.
+  No App/ change in the range; the simulator build was green at 43ed727.
+- Acceptance (unchanged through the loop): clean 26 m max, PASS; manual 53 m at
+  truth point 1, PASS, and convergence 6.80 km against 2 km, known FAIL; jammed-A
+  1.24 %, PASS; jammed-B 1.76 %, PASS; 0.05–0.07 ms/step on the Mac.
