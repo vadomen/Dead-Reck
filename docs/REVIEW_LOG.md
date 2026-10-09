@@ -743,4 +743,34 @@ Same branch, user-requested follow-ups:
 
 Tests after fix: `cd Core && swift test` 575 tests in 87 suites pass. No App/ change.
 
-**Round 2 (fresh reviewer on 9753d19..HEAD) pending.**
+### Round 2
+
+Range `9753d19..12d4147`. Reviewer: fresh `reviewer` agent. Result: 0 BLOCKER / 1 MAJOR / 3 MINOR.
+
+Verified clean:
+- R13.1-1: χ²-only reset;
+- R13.1-2: latch arming after `advance`, parked steps draw no RNG, exact OU discretisation;
+- R13.1-3 maths: WGS-84 positions, heading transform and J P Jᵀ algebra, linear part for cumulative values and history, antimeridian;
+- stale-fix σ: age = arrival − t;
+- causality, determinism, Sendable, Foundation-only imports, no log-format change;
+- config table matches `NavigationConfig`.
+
+`swift test` 575 tests in 87 suites green.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R13.2-1 | MAJOR | Re-anchor heading, covariance and history conversion are untested: a flipped heading-shear sign, a skipped J P Jᵀ and a skipped history transform together leave all Navigation tests green. `farFromAnchorNoConvergenceBias` re-anchors at ~10 s and is then corrected by 60 s of clean GNSS courses. | CONFIRMED | Reproduced: the sign-flip mutation at `NavigationEngine.swift:368` alone leaves 45/45 Navigation tests green. |
+| R13.2-2 | MINOR | The motion EMA is not reset when an OBD 0 arms the parked latch; OBD silent within ~1 s of a firm stop leaves braking deceleration in the EMA, which clears the latch (ellipse 10.7 m → 2.0 km after 5 min). | DEFERRED | BACKLOG (N4 B) |
+| R13.2-3 | MINOR | `lastMotionEMANs` is set by `defer` even for an out-of-order motion sample, so the next sample gets a large EMA gain and one jolt can clear the latch. | DEFERRED | BACKLOG (N4 B) |
+| R13.2-4 | MINOR | Doc drift from this range: "random-walks" in `NavigationEngine.swift:29,57` and NAVIGATION.md:24; `stationary` doc omits parked steps; `east`/`north` doesn't say the plane can move. | DEFERRED | BACKLOG |
+
+Fix: R13.2-1 by `navigation-engineer`.
+
+Fixed (tests only; no engine change, so replay results are unchanged). Three tests in `NavigationRun13Tests`, each compared with a control run that never re-anchors (`reanchorDistanceM = ∞`):
+- `reanchorPreservesTrueBearing`: no GNSS after t = 30 s, re-anchor at 230 s 100 km east at lat 55°. The plane heading jumps +0.98°, while the true bearing changes +0.0006° (control −0.00014°). Shear-sign mutation: −1.98°, fails.
+- `reanchorPreservesEllipse`: an oblique, anisotropic covariance (~204 × 109 m at 29.8°) stays continuous in true east/north. J P Jᵀ skipped: orientation −1.19°, fails.
+- `reanchorPreservesLateFixShift`: a fix with t before the re-anchor, arriving after it, moves the estimate by the same true vector as in the control (gap 0.0005 m). History and cumulative transform skipped: gap 14 m, fails (each half alone: 77 m and 91 m).
+
+Sign-flip mutation re-checked independently. `cd Core && swift test` 578 tests in 87 suites pass. No App/ change.
+
+**Round 3 (fresh reviewer) pending.**

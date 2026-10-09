@@ -235,4 +235,234 @@ struct NavigationRun13Tests {
         #expect(turning > 0.8 && turning < 1.15, "σ growth over the 90° turn \(turning)°")
         #expect(straight < 0.25, "σ growth on the straight \(straight)°")
     }
+
+    // MARK: R13.2-1
+
+    /// One run of the re-anchor scenario, as engine snapshots.
+    struct ReanchorRun {
+        /// Just before and just after the input whose step re-anchored
+        /// (nil when the plane never moved).
+        var pre: NavigationEngine?
+        var post: NavigationEngine?
+        /// Right after the input that brought `counters.steps` to the
+        /// requested capture step.
+        var atStep: NavigationEngine?
+        /// The late fix's prior: the engine stepped to the fix's arrival
+        /// (by a copy fed an OBD reply then) but not updated by it.
+        var beforeLateFix: NavigationEngine?
+        /// Right after the late fix.
+        var afterLateFix: NavigationEngine?
+        var end: NavigationEngine
+    }
+
+    static let reanchorLateFixT = 195.0
+    static let reanchorLateFixArrival = 250.5
+
+    /// Anchored at (55°, 10°) by a parked fix; a pin 100 km east resets the
+    /// cloud there, where the plane's north is tilted ~1.3° against true
+    /// north. The car then drives a constant true bearing of 30° at 20 m/s:
+    /// clean GNSS fixes and courses for t ≤ 30 s, then dead reckoning with
+    /// no GNSS. Along-track 1.2 and cross-track 0.2 m/√m make each
+    /// particle's covariance anisotropic and oblique. With `reanchor` the
+    /// plane moves at the first 10 s check after the cloud passes the true
+    /// track's distance from the anchor at t = 230 s; without, never. A
+    /// network fix with t = 195 s, at the truth then, arrives at 250.5 s:
+    /// its t is before the re-anchor, its arrival after.
+    static func reanchorScenario(reanchor: Bool, captureStep: Int? = nil) -> ReanchorRun {
+        let lat0 = 55.0, lon0 = 10.0
+        let radians = Double.pi / 180
+        let lon1 = lon0 + 100_000 / (LocalTangentPlane.primeVerticalRadius(latitudeRadians: lat0 * radians)
+                                     * cos(lat0 * radians)) / radians
+        let v = 20.0, bearing = 30.0 * radians
+        var inputs: [NavigationInput] = []
+        func obd(_ t: Double, _ kmh: Double) {
+            inputs.append(.obd(OBDSample(pid: .vehicleSpeed, value: kmh, unit: .kilometersPerHour, ecu: "7E8"), at: S.ms(t)))
+        }
+        func motion(_ t: Double) {
+            inputs.append(.motion(MotionSample(userAcceleration: .zero, gravity: Vector3(x: 0, y: 0, z: -1),
+                                               rotationRate: .zero, attitude: .identity), at: S.ms(t)))
+        }
+        func fix(_ t: Double, lat: Double, lon: Double, accuracy: Double, speed: Double, course: Double,
+                 arrival: Double? = nil) {
+            let received = arrival ?? t
+            inputs.append(.location(LocationSample(latitude: lat, longitude: lon, altitude: 0, horizontalAccuracy: accuracy,
+                                                   verticalAccuracy: -1, speed: speed, speedAccuracy: speed >= 0 ? 0.3 : -1,
+                                                   course: course, courseAccuracy: course >= 0 ? 2 : -1,
+                                                   receivedT: S.ms(received), ageS: received - t), at: S.ms(t)))
+        }
+        // Parked: anchor fix, then the pin 100 km east.
+        for k in 0..<20 { obd(Double(k) * 0.1, 0); motion(Double(k) * 0.1 + 0.05) }
+        fix(0.06, lat: lat0, lon: lon0, accuracy: 5, speed: 0, course: -1)
+        inputs.append(.manualFix(ManualFixSample(latitude: lat0, longitude: lon1, pressedT: S.ms(0.5),
+                                                 speedSource: "obd"), at: S.ms(1.005)))
+        // Then a constant true bearing, integrated on the ellipsoid at 100 Hz.
+        let anchor = LocalTangentPlane(latitude: lat0, longitude: lon0)
+        var lat = lat0, lon = lon1
+        var thresholdM = 0.0
+        let dt = 0.01
+        for k in 1...25_300 {
+            let phi = lat * radians
+            lat += v * cos(bearing) * dt / LocalTangentPlane.meridianRadius(latitudeRadians: phi) / radians
+            lon += v * sin(bearing) * dt / (LocalTangentPlane.primeVerticalRadius(latitudeRadians: phi) * cos(phi)) / radians
+            let t = 2 + Double(k) * dt
+            motion(t)
+            if k % 10 == 0 { obd(t, 72) }
+            if k % 100 == 0 && t <= 30 { fix(t, lat: lat, lon: lon, accuracy: 5, speed: v, course: 30) }
+            if k == 19_300 {  // t = 195 s
+                fix(t, lat: lat, lon: lon, accuracy: 0.5, speed: -1, course: -1, arrival: reanchorLateFixArrival)
+            }
+            if k == 22_800 {  // t = 230 s
+                let p = anchor.enu(latitude: lat, longitude: lon)
+                thresholdM = (p.east * p.east + p.north * p.north).squareRoot()
+            }
+        }
+        var config = S.config(particles: 400)
+        config.alongTrackNoisePerSqrtM = 1.2
+        config.crossTrackNoisePerSqrtM = 0.2
+        config.reanchorDistanceM = reanchor ? thresholdM : .infinity
+        // The late fix: inside the history, not grown for its age, tight.
+        config.maxFixAgeS = 60
+        config.staleFixSigmaGrowthMps = 0
+        config.fixSigmaFloorM = 0.5
+
+        var engine = NavigationEngine(config: config)
+        var run = ReanchorRun(end: engine)
+        var candidate: NavigationEngine?
+        let ordered = inputs.enumerated()
+            .sorted { ($0.element.arrival, $0.offset) < ($1.element.arrival, $1.offset) }.map(\.element)
+        for input in ordered {
+            // The plane can move only on a step whose count is a multiple
+            // of 100: keep a copy while the next step may be one.
+            if engine.counters.steps % 100 == 99 { candidate = engine }
+            let isLateFix: Bool
+            if case .location(_, let t) = input, t == S.ms(reanchorLateFixT) { isLateFix = true } else { isLateFix = false }
+            if isLateFix {
+                var probe = engine
+                probe.ingest(.obd(OBDSample(pid: .vehicleSpeed, value: 72, unit: .kilometersPerHour, ecu: "7E8"),
+                                  at: S.ms(reanchorLateFixArrival)))
+                run.beforeLateFix = probe
+            }
+            let reanchors = engine.counters.reanchors
+            engine.ingest(input)
+            if engine.counters.reanchors > reanchors && run.post == nil {
+                run.pre = candidate
+                run.post = engine
+            }
+            if let captureStep, run.atStep == nil, engine.counters.steps >= captureStep { run.atStep = engine }
+            if isLateFix { run.afterLateFix = engine }
+        }
+        run.end = engine
+        return run
+    }
+
+    typealias Belief = (estimate: NavigationEstimate, plane: LocalTangentPlane)
+
+    /// The current belief (no extrapolation) of an engine snapshot, with the
+    /// plane it is expressed in.
+    static func belief(_ engine: NavigationEngine?) throws -> Belief {
+        let engine = try #require(engine)
+        return (try #require(engine.estimate(at: .zero)), try #require(engine.tangentPlane))
+    }
+
+    /// Jacobian of plane metres → true local east/north metres at a point,
+    /// by central differences of the plane's own WGS-84 inverse.
+    static func trueFrame(_ b: Belief) -> (ee: Double, en: Double, ne: Double, nn: Double) {
+        let e = b.estimate.east, n = b.estimate.north
+        let phi = b.plane.geodetic(east: e, north: n).latitude * .pi / 180
+        let m = LocalTangentPlane.meridianRadius(latitudeRadians: phi)
+        let r = LocalTangentPlane.primeVerticalRadius(latitudeRadians: phi) * cos(phi)
+        func d(_ de: Double, _ dn: Double) -> (east: Double, north: Double) {
+            let p = b.plane.geodetic(east: e + de, north: n + dn), q = b.plane.geodetic(east: e - de, north: n - dn)
+            return ((p.longitude - q.longitude) * .pi / 180 * r / 2, (p.latitude - q.latitude) * .pi / 180 * m / 2)
+        }
+        let byEast = d(1, 0), byNorth = d(0, 1)
+        return (byEast.east, byNorth.east, byEast.north, byNorth.north)
+    }
+
+    /// True bearing of the mean heading, degrees.
+    static func trueBearing(_ b: Belief) -> Double {
+        let g = trueFrame(b)
+        let h = b.estimate.headingDeg * .pi / 180
+        let deg = atan2(g.ee * sin(h) + g.en * cos(h), g.ne * sin(h) + g.nn * cos(h)) * 180 / .pi
+        return deg < 0 ? deg + 360 : deg
+    }
+
+    /// The 95 % ellipse in true local east/north metres (G C Gᵀ).
+    static func trueEllipse(_ b: Belief) -> ErrorEllipse {
+        let el = b.estimate.ellipse
+        let o = el.orientationDeg * .pi / 180
+        let l1 = el.semiMajorM * el.semiMajorM / ErrorEllipse.chiSquare95
+        let l2 = el.semiMinorM * el.semiMinorM / ErrorEllipse.chiSquare95
+        // C = λ₁ u uᵀ + λ₂ w wᵀ, u = (sin o, cos o) the major axis, w ⟂ u.
+        let ue = sin(o), un = cos(o)
+        let cee = l1 * ue * ue + l2 * un * un, cnn = l1 * un * un + l2 * ue * ue, cen = (l1 - l2) * ue * un
+        let g = trueFrame(b)
+        let aee = g.ee * cee + g.en * cen, aen = g.ee * cen + g.en * cnn
+        let ane = g.ne * cee + g.nn * cen, ann = g.ne * cen + g.nn * cnn
+        return ErrorEllipse(covarianceEE: aee * g.ee + aen * g.en, en: aee * g.ne + aen * g.nn, nn: ane * g.ne + ann * g.nn)
+    }
+
+    /// True east/north metres from `b`'s mean to `a`'s.
+    static func trueOffset(_ a: Belief, from b: Belief) -> (east: Double, north: Double) {
+        let phi = b.estimate.latitude * .pi / 180
+        return ((a.estimate.longitude - b.estimate.longitude) * .pi / 180
+                    * LocalTangentPlane.primeVerticalRadius(latitudeRadians: phi) * cos(phi),
+                (a.estimate.latitude - b.estimate.latitude) * .pi / 180 * LocalTangentPlane.meridianRadius(latitudeRadians: phi))
+    }
+
+    @Test("R13.2-1a: re-anchor 100 km east at 55°, no GNSS since: the true bearing is continuous and matches a run that never re-anchors")
+    func reanchorPreservesTrueBearing() throws {
+        let run = Self.reanchorScenario(reanchor: true)
+        let pre = try Self.belief(run.pre), post = try Self.belief(run.post)
+        let control = try Self.belief(Self.reanchorScenario(reanchor: false, captureStep: try #require(run.post).counters.steps).atStep)
+        // The plane really moved and its north turned against the old one
+        // (shear Δλ·sin φ): plane headings jump by about cos²30° × 1.3°.
+        let planeJump = angleDifference(post.estimate.headingDeg, pre.estimate.headingDeg)
+        #expect(abs(planeJump) > 0.5, "plane heading jump \(planeJump)°")
+        let before = Self.trueBearing(pre), after = Self.trueBearing(post), reference = Self.trueBearing(control)
+        #expect(abs(angleDifference(after, before)) < 0.01, "true bearing \(before)° → \(after)° across the re-anchor")
+        #expect(abs(angleDifference(after, reference)) < 0.01, "true bearing \(after)°, without re-anchor \(reference)°")
+        #expect(run.end.counters.reanchors == 1)
+    }
+
+    @Test("R13.2-1b: re-anchor with an oblique, anisotropic covariance: the ellipse in true east/north is continuous and matches a run that never re-anchors")
+    func reanchorPreservesEllipse() throws {
+        let run = Self.reanchorScenario(reanchor: true)
+        let pre = try Self.belief(run.pre), post = try Self.belief(run.post)
+        let control = try Self.belief(Self.reanchorScenario(reanchor: false, captureStep: try #require(run.post).counters.steps).atStep)
+        let before = Self.trueEllipse(pre), after = Self.trueEllipse(post), reference = Self.trueEllipse(control)
+        // Oblique (major axis along the 30° track) and anisotropic, so a
+        // shear of the plane changes it.
+        #expect(after.semiMajorM > 1.5 * after.semiMinorM && after.orientationDeg > 20 && after.orientationDeg < 40, "\(after)")
+        func check(_ x: ErrorEllipse, _ y: ErrorEllipse, _ what: String, axes: Double, degrees: Double) {
+            let major = abs(x.semiMajorM / y.semiMajorM - 1), minor = abs(x.semiMinorM / y.semiMinorM - 1)
+            let turn = abs(angleDifference(2 * x.orientationDeg, 2 * y.orientationDeg)) / 2
+            #expect(major < axes && minor < axes && turn < degrees,
+                    "\(what): \(y.semiMajorM) × \(y.semiMinorM) m at \(y.orientationDeg)° → \(x.semiMajorM) × \(x.semiMinorM) m at \(x.orientationDeg)°")
+        }
+        // Across the step: one 2 m step of growth, ~3e-4 of the axes.
+        check(after, before, "across the re-anchor", axes: 2e-3, degrees: 0.01)
+        // Same step, same draws, other plane: equal but for rounding.
+        check(after, reference, "against no re-anchor", axes: 1e-5, degrees: 0.001)
+    }
+
+    @Test("R13.2-1c: a fix 55 s late whose t is before the re-anchor moves the estimate by the same true vector as without re-anchor")
+    func reanchorPreservesLateFixShift() throws {
+        let run = Self.reanchorScenario(reanchor: true), control = Self.reanchorScenario(reanchor: false)
+        let reanchorS = Double(try #require(run.post).counters.steps) / NavigationConfig().stepHz
+        #expect(reanchorS > Self.reanchorLateFixT + 20 && reanchorS < Self.reanchorLateFixArrival, "re-anchored at \(reanchorS) s")
+        // The two runs' priors differ by a few metres here (the far, old
+        // plane stretches distances by ~1 %: what the re-anchor fixes), so
+        // compare what the fix does: target = fix + own displacement since
+        // its t, prior P ≫ R, so the correction is target − prior mean.
+        let shift = Self.trueOffset(try Self.belief(run.afterLateFix), from: try Self.belief(run.beforeLateFix))
+        let reference = Self.trueOffset(try Self.belief(control.afterLateFix), from: try Self.belief(control.beforeLateFix))
+        let gap = ((shift.east - reference.east) * (shift.east - reference.east)
+                   + (shift.north - reference.north) * (shift.north - reference.north)).squareRoot()
+        #expect((reference.east * reference.east + reference.north * reference.north).squareRoot() > 10,
+                "the fix should correct the tilt-biased track: \(reference)")
+        #expect(gap < 0.2, "fix moved the estimate \(shift), without re-anchor \(reference): \(gap) m apart")
+        #expect(run.end.counters.reanchors == 1 && control.end.counters.reanchors == 0)
+        #expect(run.end.counters.networkFixesUsed == 1 && run.end.counters.fixesIgnoredStale == 0)
+    }
 }
