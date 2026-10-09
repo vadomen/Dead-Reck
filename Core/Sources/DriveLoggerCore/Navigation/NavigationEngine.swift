@@ -381,9 +381,9 @@ public struct NavigationEngine: Sendable {
 
         var temper = 1.0
         if tower {
-            if let last = lastTowerFixNs {
-                temper = min(1, max(0, Double(fixNs - last) / 1e9 / config.towerCorrelationS))
-            }
+            temper = Self.towerTemper(
+                sinceLastS: lastTowerFixNs.map { Double(fixNs - $0) / 1e9 }, correlationS: config.towerCorrelationS
+            )
             lastTowerFixNs = max(lastTowerFixNs ?? fixNs, fixNs)
             counters.towerFixesUsed += 1
         }
@@ -413,6 +413,14 @@ public struct NavigationEngine: Sendable {
         }
         normalizeWeights()
         resampleIfNeeded()
+    }
+
+    /// Likelihood exponent for a tower-like fix `sinceLastS` seconds after
+    /// the previous one (nil: the first): `min(1, Δt / correlationS)`,
+    /// clamped at 0 for a fix not after the previous one.
+    static func towerTemper(sinceLastS: Double?, correlationS: Double) -> Double {
+        guard let dt = sinceLastS else { return 1 }
+        return min(1, max(0, dt / correlationS))
     }
 
     /// Whether any particle's heading is within `reseedNoSupportSigma`
