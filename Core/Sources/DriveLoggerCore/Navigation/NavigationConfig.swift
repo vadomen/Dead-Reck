@@ -126,13 +126,11 @@ public struct NavigationConfig: Hashable, Sendable, Codable {
     /// A pin placed on a map showing `mapSpanM` metres is good to about
     /// span / this (a fingertip is roughly 1/12 of the screen).
     public var manualFixSpanDivisor = 12.0
-    /// If a manual fix leaves fewer than this fraction of effective
-    /// particles, the prior had no support there: positions are reset
-    /// around the pin, headings and scales kept.
-    public var manualFixResetESSFraction = 0.01
-    /// The pin also counts as unsupported when every particle puts it
+    /// The prior has no support at a pin when every particle puts it
     /// further than this squared Mahalanobis distance (χ², 2 dof; 25 is a
-    /// tail probability of about 4e-6) — a confident cloud far from the pin.
+    /// tail probability of about 4e-6): positions then restart at the pin,
+    /// heading and scale hypotheses kept. A low ESS alone is not a reason
+    /// to reset — that is the pin carrying information (R13.1-1).
     public var manualFixResetChi2 = 25.0
 
     // MARK: Resampling

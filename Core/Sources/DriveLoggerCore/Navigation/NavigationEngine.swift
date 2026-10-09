@@ -496,8 +496,11 @@ public struct NavigationEngine: Sendable {
             nearest = min(nearest, update.mahalanobis2)
         }
         normalizeWeights()
-        if nearest > config.manualFixResetChi2
-            || effectiveSampleSize < config.manualFixResetESSFraction * Double(east.count) {
+        // Reset only when no particle is statistically compatible with the
+        // pin. A low ESS with a compatible particle is the pin being most
+        // informative (a ring-shaped cloud after km of unknown heading): keep
+        // that posterior and resample (R13.1-1).
+        if nearest > config.manualFixResetChi2 {
             // The prior has practically no support at the pin: the driver's
             // "I'm here" wins. Positions restart at it; heading and scale
             // hypotheses and their weights are kept.
