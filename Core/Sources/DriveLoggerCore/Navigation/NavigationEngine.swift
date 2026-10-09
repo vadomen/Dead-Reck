@@ -216,7 +216,10 @@ public struct NavigationEngine: Sendable {
             vObd = v > 0 ? (v + config.obdSpeedOffsetKmh) / 3.6 : 0
         }
         if fresh && vObd == 0 {
-            // Zero-velocity update: nothing moves, no noise.
+            // Zero-velocity update: nothing moves, no noise. Speed is known
+            // again, so a past dropout's speed errors end here too (only
+            // touched when set: the steady stop stays loop-free).
+            if speedOffsetsActive { resetSpeedOffsets() }
             counters.zuptSteps += 1
             lastStepStationary = true
             lastMeanSpeed = 0
@@ -228,8 +231,7 @@ public struct NavigationEngine: Sendable {
             counters.staleSpeedSteps += 1
             speedOffsetsActive = true
         } else if speedOffsetsActive {
-            for i in speedOffset.indices { speedOffset[i] = 0 }
-            speedOffsetsActive = false
+            resetSpeedOffsets()
         }
 
         let sqrtDt = dt.squareRoot()
@@ -284,6 +286,12 @@ public struct NavigationEngine: Sendable {
         lastStepStationary = false
         lastMeanSpeed = meanSpeed
         history.append(ns, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: fresh ? vObd : nil)
+    }
+
+    /// Speed is known again: every particle's stale-speed error is 0.
+    private mutating func resetSpeedOffsets() {
+        for i in speedOffset.indices { speedOffset[i] = 0 }
+        speedOffsetsActive = false
     }
 
     // MARK: Initialisation

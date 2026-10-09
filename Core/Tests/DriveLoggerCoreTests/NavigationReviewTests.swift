@@ -164,4 +164,39 @@ struct NavigationReviewTests {
         // After ingesting it, the engine is at the pin (no-support reset).
         #expect(result.counters.manualResets == 1)
     }
+
+    // MARK: R11.2-1 stale speed offsets reset on ZUPT
+
+    @Test("R11.2-1: dropout, fresh OBD 0, dropout again: the second dropout's speed errors start from 0")
+    func staleOffsetsResetOnZUPT() throws {
+        // Parked for 40 s. Flaky link: OBD 0, dropout 5–20 s, fresh 0 again
+        // 20–30 s, dropout from 30 s. Reference: OBD 0 until 30 s, then the
+        // same dropout, without the first one.
+        let drive = S(initialHeadingDeg: 0, [.stop(seconds: 40)])
+        let firstFix: (Double, S.State, inout NavigationRandom) -> S.Fix? = { t, state, _ in
+            S.at(t, 0) ? S.Fix(east: state.east, north: state.north, accuracy: 5, speed: 0, speedAccuracy: 0.3) : nil
+        }
+        let flaky = drive.events(obdSpeed: { t, _ in (5..<20).contains(t) || t >= 30 ? nil : 0 }, fix: firstFix)
+        let steady = drive.events(obdSpeed: { t, _ in t >= 30 ? nil : 0 }, fix: firstFix)
+        let config = S.config(particles: 2000, seed: 21)
+
+        // During the second fresh zero the offsets of the first dropout are gone.
+        var engine = NavigationEngine(config: config)
+        for input in S.inputs(flaky) where input.arrival <= S.ms(29) { engine.ingest(input) }
+        #expect(engine.counters.staleSpeedSteps > 100)
+        #expect(try #require(engine.estimate(at: S.ms(29))).stationary)
+        let rms = (engine.speedOffset.reduce(0) { $0 + $1 * $1 } / Double(engine.speedOffset.count)).squareRoot()
+        #expect(rms == 0, "speed offsets carried through the ZUPT: RMS \(rms) m/s")
+
+        // The second dropout grows the cloud as much as a first dropout would.
+        func growth(_ events: [LogEvent]) throws -> Double {
+            let samples = S.run(events, config: config, sampleTimes: [30, 40]).samples
+            let before = try #require(samples[0]), after = try #require(samples[1])
+            return after.ellipse.semiMajorM * after.ellipse.semiMajorM - before.ellipse.semiMajorM * before.ellipse.semiMajorM
+        }
+        let flakyGrowth = try growth(flaky), steadyGrowth = try growth(steady)
+        #expect(steadyGrowth > 0)
+        let ratio = flakyGrowth / steadyGrowth
+        #expect(ratio > 0.7 && ratio < 1.4, "variance growth \(flakyGrowth) vs \(steadyGrowth) m² (ratio \(ratio))")
+    }
 }
