@@ -330,6 +330,56 @@ public struct NavigationEngine: Sendable {
         lastStepStationary = false
         lastMeanSpeed = meanSpeed
         history.append(ns, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: fresh ? vObd : nil)
+        if counters.steps % Int(max(1, (config.stepHz * 10).rounded())) == 0 {
+            reanchorIfNeeded()
+        }
+    }
+
+    // MARK: Re-anchoring
+
+    /// Moves the local plane's anchor to the cloud's mean once that is more
+    /// than `reanchorDistanceM` away (checked every 10 s of moving steps).
+    /// Positions convert exactly through WGS-84; headings, covariances and the
+    /// motion history through the Jacobian of the old→new plane map at the
+    /// mean. Deterministic: no random numbers are drawn.
+    private mutating func reanchorIfNeeded() {
+        guard let old = tangentPlane else { return }
+        var me = 0.0, mn = 0.0
+        for i in 0..<east.count {
+            me += weight[i] * east[i]
+            mn += weight[i] * north[i]
+        }
+        guard (me * me + mn * mn).squareRoot() > config.reanchorDistanceM else { return }
+        let centre = old.geodetic(east: me, north: mn)
+        let new = LocalTangentPlane(latitude: centre.latitude, longitude: centre.longitude)
+        func map(_ e: Double, _ n: Double) -> (Double, Double) {
+            let p = old.geodetic(east: e, north: n)
+            let q = new.enu(latitude: p.latitude, longitude: p.longitude)
+            return (q.east, q.north)
+        }
+        // Jacobian at the mean, central differences over ±1 m.
+        let ep = map(me + 1, mn), em = map(me - 1, mn), np = map(me, mn + 1), nm = map(me, mn - 1)
+        let jee = (ep.0 - em.0) / 2, jne = (ep.1 - em.1) / 2  // ∂(e', n')/∂e
+        let jen = (np.0 - nm.0) / 2, jnn = (np.1 - nm.1) / 2  // ∂(e', n')/∂n
+        for i in 0..<east.count {
+            (east[i], north[i]) = map(east[i], north[i])
+            let s = sin(heading[i]), c = cos(heading[i])
+            heading[i] = Self.wrap2Pi(atan2(jee * s + jen * c, jne * s + jnn * c))
+            let pee = covEE[i], pen = covEN[i], pnn = covNN[i]
+            // P' = J P Jᵀ, J = [[jee, jen], [jne, jnn]].
+            let aee = jee * pee + jen * pen, aen = jee * pen + jen * pnn
+            let ane = jne * pee + jnn * pen, ann = jne * pen + jnn * pnn
+            covEE[i] = aee * jee + aen * jen
+            covEN[i] = aee * jne + aen * jnn
+            covNN[i] = ane * jne + ann * jnn
+        }
+        // Cumulative mean motion: only differences are used, so the linear
+        // part of the map is enough.
+        let linear = { (e: Double, n: Double) in (jee * e + jen * n, jne * e + jnn * n) }
+        (cumulativeEast, cumulativeNorth) = linear(cumulativeEast, cumulativeNorth)
+        history.transformDisplacements(linear)
+        tangentPlane = new
+        counters.reanchors += 1
     }
 
     /// Speed is known again: every particle's stale-speed error is 0.
@@ -784,6 +834,13 @@ struct MotionHistory: Sendable {
     mutating func removeAll() {
         entries.removeAll(keepingCapacity: true)
         head = 0
+    }
+
+    /// Applies a linear map to every entry's cumulative east/north.
+    mutating func transformDisplacements(_ map: (Double, Double) -> (Double, Double)) {
+        for k in entries.indices {
+            (entries[k].east, entries[k].north) = map(entries[k].east, entries[k].north)
+        }
     }
 
     mutating func append(_ t: Int64, _ east: Double, _ north: Double, _ yaw: Double, speed: Double?) {

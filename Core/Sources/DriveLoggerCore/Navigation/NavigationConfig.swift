@@ -68,6 +68,15 @@ public struct NavigationConfig: Hashable, Sendable, Codable {
     /// While OBD is stale, heading noise is multiplied by this.
     public var staleHeadingNoiseFactor = 3.0
 
+    // MARK: Local plane
+
+    /// The local plane is re-anchored at the cloud's mean once that is
+    /// further than this from the anchor, m. Far from its anchor the plane's
+    /// north tilts against true north by about Δλ·sin φ (1.3° at 100 km east,
+    /// latitude 55°), which would bias heading against GNSS course and
+    /// distort turns; within 10 km the tilt stays under ~0.13°.
+    public var reanchorDistanceM = 10_000.0
+
     // MARK: Gyro
 
     /// A gap between motion samples longer than this contributes no yaw.

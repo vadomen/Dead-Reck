@@ -100,6 +100,8 @@ public struct NavigationCounters: Hashable, Sendable, Codable {
     public var manualFixes = 0
     public var manualResets = 0
     public var resamples = 0
+    /// Times the local plane moved to the cloud's mean (R13.1-3).
+    public var reanchors = 0
 
     public init() {}
 }
