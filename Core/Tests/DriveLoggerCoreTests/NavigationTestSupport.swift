@@ -28,6 +28,8 @@ struct SyntheticDrive {
         var heading: Double
         var speed: Double
         var yawRate: Double
+        /// Longitudinal acceleration, m/s².
+        var accel: Double = 0
     }
 
     /// What the fix generator returns for one 1 Hz tick.
@@ -75,6 +77,7 @@ struct SyntheticDrive {
                 state.east += v * dt * sin(midHeading)
                 state.north += v * dt * cos(midHeading)
                 state.heading += yawRate * dt
+                state.accel = (v - state.speed) / dt
                 state.speed = v
                 state.yawRate = yawRate
                 state.t = start + local
@@ -99,12 +102,16 @@ struct SyntheticDrive {
     /// The drive as log events (file order: by arrival, as a recorder writes).
     ///
     /// - gyroNoise: white noise on the yaw rate, rad/s (seeded).
+    /// - accelNoise: white noise on each horizontal userAcceleration axis, g.
+    ///   userAcceleration otherwise carries the scripted longitudinal
+    ///   acceleration on the device y axis (device flat, y forward).
     /// - obdSpeed: OBD value (km/h) at a time, or nil for "no reply"; default
     ///   is the true speed truncated to whole km/h.
     /// - fix: the 1 Hz location generator; nil for no fix.
     func events(
         seed: UInt64 = 7,
         gyroNoise: Double = 0,
+        accelNoise: Double = 0,
         obdSpeed: ((Double, State) -> Double?)? = nil,
         fixEvery: Double = 1,
         fix: (Double, State, inout NavigationRandom) -> Fix? = { _, _, _ in nil },
@@ -117,8 +124,10 @@ struct SyntheticDrive {
         for (index, state) in states.enumerated() {
             let t = state.t
             let rate = state.yawRate + gyroNoise * rng.nextGaussian()
+            let ax = accelNoise > 0 ? accelNoise * rng.nextGaussian() : 0
+            let ay = state.accel / 9.806_65 + (accelNoise > 0 ? accelNoise * rng.nextGaussian() : 0)
             events.append(.motion(MotionSample(
-                userAcceleration: .zero,
+                userAcceleration: Vector3(x: ax, y: ay, z: 0),
                 gravity: Vector3(x: 0, y: 0, z: -1),
                 // rotationRate · ĝ with ĝ = (0, 0, −1) is −z: clockwise yaw.
                 rotationRate: Vector3(x: 0, y: 0, z: -rate),

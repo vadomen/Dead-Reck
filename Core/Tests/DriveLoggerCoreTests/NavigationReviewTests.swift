@@ -178,7 +178,11 @@ struct NavigationReviewTests {
         }
         let flaky = drive.events(obdSpeed: { t, _ in (5..<20).contains(t) || t >= 30 ? nil : 0 }, fix: firstFix)
         let steady = drive.events(obdSpeed: { t, _ in t >= 30 ? nil : 0 }, fix: firstFix)
-        let config = S.config(particles: 2000, seed: 21)
+        var config = S.config(particles: 2000, seed: 21)
+        // Since R13.1-2 a stale period after an OBD 0 is parked until the IMU
+        // shows motion; disable that latch so the dropouts random-walk, which
+        // is what this regression is about.
+        config.staleParkedMotionG = -1
 
         // During the second fresh zero the offsets of the first dropout are gone.
         var engine = NavigationEngine(config: config)

@@ -87,6 +87,8 @@ public struct NavigationCounters: Hashable, Sendable, Codable {
     public var zuptSteps = 0
     /// Steps with stale OBD speed (unknown speed).
     public var staleSpeedSteps = 0
+    /// Stale steps frozen as parked: after an OBD 0, no motion since.
+    public var staleParkedSteps = 0
     public var fixesUsed = 0
     /// Fixes without a valid speed (cell tower, Wi-Fi).
     public var networkFixesUsed = 0

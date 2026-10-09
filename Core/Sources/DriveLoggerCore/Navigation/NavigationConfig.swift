@@ -51,6 +51,20 @@ public struct NavigationConfig: Hashable, Sendable, Codable {
     /// While OBD is stale, each particle's speed error random-walks with
     /// this intensity, m/s per √s.
     public var staleSpeedNoiseMpsPerSqrtS = 2.5
+    /// The stale speed error is mean-reverting (Ornstein–Uhlenbeck) with
+    /// this time constant, s: its spread levels off at
+    /// noise × √(τ/2) (≈ 7.9 m/s) instead of growing without bound, so the
+    /// position ellipse grows like √t, not t^1.5. 0 = plain random walk.
+    public var staleSpeedDecayS = 20.0
+    /// After a fresh OBD 0, a stale period is "parked" — frozen like a
+    /// zero-velocity update — until the IMU shows the car moving: the
+    /// EMA of horizontal userAcceleration (gravity removed, device frame)
+    /// above this, g. On the replay set parked/idling peaks reach 0.082 g
+    /// (phone handled after ignition-off) and most drive-offs exceed it
+    /// within seconds; a gentle drive-off can take longer.
+    public var staleParkedMotionG = 0.09
+    /// Time constant of that EMA, s.
+    public var staleParkedMotionTauS = 1.0
     /// While OBD is stale, heading noise is multiplied by this.
     public var staleHeadingNoiseFactor = 3.0
 

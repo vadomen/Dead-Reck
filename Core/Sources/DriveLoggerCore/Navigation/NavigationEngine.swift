@@ -81,6 +81,11 @@ public struct NavigationEngine: Sendable {
     private var obdSpeedKmh: Double?
     private var obdNs: Int64?
     private var speedOffsetsActive = false
+    /// Armed by every OBD 0 reply; cleared by IMU motion evidence. A stale
+    /// step while armed is parked (R13.1-2).
+    private var parkedSinceZero = false
+    private var motionEMA = Vector3.zero
+    private var lastMotionEMANs: Int64?
 
     // Last step, for extrapolation in `estimate(at:)`.
     private var lastStepStationary = true
@@ -145,6 +150,7 @@ public struct NavigationEngine: Sendable {
     }
 
     private mutating func ingestMotion(_ sample: MotionSample, at ns: Int64) {
+        observeAcceleration(sample, at: ns)
         let rate = Self.yawRate(sample)
         defer {
             lastMotionNs = max(lastMotionNs ?? ns, ns)
@@ -192,6 +198,30 @@ public struct NavigationEngine: Sendable {
               sample.value.isFinite, sample.value >= 0 else { return }
         obdSpeedKmh = sample.value
         obdNs = ns
+        parkedSinceZero = sample.value == 0
+    }
+
+    /// Updates the horizontal-acceleration EMA and clears the parked latch
+    /// when it shows the car moving.
+    private mutating func observeAcceleration(_ sample: MotionSample, at ns: Int64) {
+        let g = sample.gravity
+        let magnitude = g.magnitude
+        guard magnitude > 0.5, magnitude.isFinite else { return }
+        let gx = g.x / magnitude, gy = g.y / magnitude, gz = g.z / magnitude
+        let u = sample.userAcceleration
+        let along = u.x * gx + u.y * gy + u.z * gz
+        let h = Vector3(x: u.x - along * gx, y: u.y - along * gy, z: u.z - along * gz)
+        guard h.x.isFinite, h.y.isFinite, h.z.isFinite else { return }
+        defer { lastMotionEMANs = ns }
+        guard let last = lastMotionEMANs, ns > last else { return }
+        let dt = min(Double(ns - last) / 1e9, config.maxMotionGapS)
+        let a = 1 - exp(-dt / config.staleParkedMotionTauS)
+        motionEMA = Vector3(x: motionEMA.x + a * (h.x - motionEMA.x),
+                            y: motionEMA.y + a * (h.y - motionEMA.y),
+                            z: motionEMA.z + a * (h.z - motionEMA.z))
+        if parkedSinceZero && motionEMA.magnitude > config.staleParkedMotionG {
+            parkedSinceZero = false
+        }
     }
 
     /// Fresh OBD zero at `ns`: the car is known to be stopped.
@@ -228,6 +258,14 @@ public struct NavigationEngine: Sendable {
             return
         }
         let stale = !fresh
+        if stale && parkedSinceZero {
+            // Stale after a stop with no sign of motion since: parked.
+            counters.staleParkedSteps += 1
+            lastStepStationary = true
+            lastMeanSpeed = 0
+            history.append(ns, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: nil)
+            return
+        }
         if stale {
             counters.staleSpeedSteps += 1
             speedOffsetsActive = true
@@ -243,7 +281,12 @@ public struct NavigationEngine: Sendable {
             * abs(yaw) * 180 / .pi
         let sigmaHeading = (timeNoise * timeNoise + turnVariance).squareRoot() * .pi / 180
         let sigmaScale = config.scaleNoisePerSqrtS * sqrtDt
-        let sigmaOffset = config.staleSpeedNoiseMpsPerSqrtS * sqrtDt
+        // Ornstein–Uhlenbeck: offset ← a·offset + σ_ss·√(1 − a²)·n, which is
+        // the random walk σ·√dt for dt ≪ τ.
+        let decay = config.staleSpeedDecayS > 0 ? exp(-dt / config.staleSpeedDecayS) : 1
+        let sigmaOffset = config.staleSpeedDecayS > 0
+            ? config.staleSpeedNoiseMpsPerSqrtS * (config.staleSpeedDecayS / 2 * (1 - decay * decay)).squareRoot()
+            : config.staleSpeedNoiseMpsPerSqrtS * sqrtDt
         let twoPi = 2 * Double.pi
         let alongPerM = config.alongTrackNoisePerSqrtM * config.alongTrackNoisePerSqrtM
         let crossPerM = config.crossTrackNoisePerSqrtM * config.crossTrackNoisePerSqrtM
@@ -255,7 +298,7 @@ public struct NavigationEngine: Sendable {
             let midHeading = heading[i] + 0.5 * dHeading
             var speed = vObd * scale[i]
             if stale {
-                speedOffset[i] += sigmaOffset * rng.nextGaussian()
+                speedOffset[i] = decay * speedOffset[i] + sigmaOffset * rng.nextGaussian()
                 speed += speedOffset[i]
             }
             let distance = speed * dt

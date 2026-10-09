@@ -31,4 +31,46 @@ struct NavigationRun13Tests {
         #expect(drive.error(after, at: 206) < 30)
         #expect(engine.counters.manualResets == 0)
     }
+
+    // MARK: R13.1-2
+
+    /// Drives 20 s, stops with a fresh OBD 0 at about 24 s, then OBD falls
+    /// silent at 30 s while the car stays parked for `silentS` seconds. IMU
+    /// noise stands in for an idling engine or a hand near the phone.
+    static func parkedSilence(silentS: Double, accelNoise: Double) throws -> (atStop: NavigationEstimate, end: NavigationEstimate) {
+        let drive = S(initialHeadingDeg: 30, initialSpeed: 10, [
+            .straight(seconds: 20, speed: 10), .ramp(seconds: 4, from: 10, to: 0), .stop(seconds: 6 + silentS),
+        ])
+        let clean = S.cleanFix()
+        let events = drive.events(gyroNoise: 0.02, accelNoise: accelNoise,
+                                  obdSpeed: { t, state in t >= 30 ? nil : (state.speed * 3.6).rounded(.down) },
+                                  fix: { t, state, rng in t < 20 ? clean(t, state, &rng) : nil })
+        let samples = S.run(events, config: S.config(particles: 400), sampleTimes: [29.9, 30 + silentS]).samples
+        return (try #require(samples[0]), try #require(samples[1]))
+    }
+
+    @Test("R13.1-2: 5 min of OBD silence after a fresh stop, no motion: the ellipse stays put (parked until motion shows)")
+    func parkedSilenceStaysBounded() throws {
+        let (atStop, end) = try Self.parkedSilence(silentS: 300, accelNoise: 0.03)
+        let growth = end.ellipse.semiMajorM - atStop.ellipse.semiMajorM
+        #expect(growth < 100, "semi-major grew \(growth) m in 5 min parked (\(atStop.ellipse.semiMajorM) → \(end.ellipse.semiMajorM) m)")
+        #expect(end.stationary)
+        #expect(abs(end.east - atStop.east) < 1 && abs(end.north - atStop.north) < 1)
+    }
+
+    @Test("R13.1-2: OBD lost while driving: the speed error is mean-reverting, so the ellipse grows diffusively, not as t^1.5")
+    func staleWhileMovingGrowsDiffusively() throws {
+        let drive = S(initialHeadingDeg: 0, initialSpeed: 12, [.straight(seconds: 640, speed: 12)])
+        let clean = S.cleanFix()
+        let events = drive.events(obdSpeed: { t, state in t >= 20 ? nil : (state.speed * 3.6).rounded(.down) },
+                                  fix: { t, state, rng in t < 15 ? clean(t, state, &rng) : nil })
+        let samples = S.run(events, config: S.config(particles: 400), sampleTimes: [20, 320, 620]).samples
+        let start = try #require(samples[0]).ellipse.semiMajorM
+        let five = try #require(samples[1]).ellipse.semiMajorM - start
+        let ten = try #require(samples[2]).ellipse.semiMajorM - start
+        // Unbounded random walk: σ ∝ t^1.5, so doubling the time grows it
+        // 2.8×; bounded speed error: about √2 = 1.4×.
+        #expect(ten / five < 2, "5 min: \(five) m, 10 min: \(ten) m (ratio \(ten / five))")
+        #expect(five < 3_000, "5 min of silence while driving: \(five) m")
+    }
 }
