@@ -521,10 +521,11 @@ public struct NavigationEngine: Sendable {
     }
 
     /// Extra σ of a stale fix: `staleFixSigmaGrowthMps × age` when the fix
-    /// is from before the session (`t < 0`) or older than `staleFixAgeS`;
-    /// 0 otherwise.
+    /// is older than `staleFixAgeS` at ingest (a pre-session fix from minutes
+    /// ago, or a relaunch mid-drive); 0 otherwise. A pre-session fix only a
+    /// fraction of a second old is not stale.
     static func staleGrowth(fixNs: Int64, age: Double, config: NavigationConfig) -> Double {
-        guard fixNs < 0 || age > config.staleFixAgeS else { return 0 }
+        guard age > config.staleFixAgeS else { return 0 }
         return max(0, config.staleFixSigmaGrowthMps) * age
     }
 

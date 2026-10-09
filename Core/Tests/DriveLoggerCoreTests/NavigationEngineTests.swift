@@ -320,7 +320,7 @@ struct NavigationEngineTests {
         #expect(noAccuracy.network == 2 && noAccuracy.east < 5)
     }
 
-    @Test("Stale-fix σ grows by k × age: pre-session (t < 0) and older than N s are inflated, a fresh fix is not")
+    @Test("Stale-fix σ grows by k × age for fixes older than N s at ingest; a fresh or 0.6 s pre-session fix is not inflated")
     func staleFixSigmaGrowth() throws {
         var config = S.config(particles: 50)
         config.staleFixSigmaGrowthMps = 1.0
@@ -336,18 +336,20 @@ struct NavigationEngineTests {
                                                    courseAccuracy: -1, receivedT: S.ms(t + age), ageS: age), at: S.ms(t)))
             return try #require(engine.estimate(at: S.ms(t + age))).ellipse.semiMajorM / k
         }
-        // Pre-session: t = −60 s, arriving 0.1 s into the session (age 60.1 s).
+        // Pre-session and old: t = −60 s, arriving 0.1 s into the session (age 60.1 s).
         #expect(abs(try initialSigma(t: -60, age: 60.1, config: config) - (base + 60.1)) < 1e-6)
-        // Pre-session by a fraction of a second still counts (t < 0).
-        #expect(abs(try initialSigma(t: -0.5, age: 0.6, config: config) - (base + 0.6)) < 1e-6)
+        // Pre-session but only 0.6 s old: not stale.
+        #expect(abs(try initialSigma(t: -0.5, age: 0.6, config: config) - base) < 1e-6)
         // Fresh fix: not inflated.
         #expect(abs(try initialSigma(t: 100, age: 0.05, config: config) - base) < 1e-6)
         // In session but older than N = 5 s (a relaunch mid-drive): inflated.
         #expect(abs(try initialSigma(t: 100, age: 7, config: config) - (base + 7)) < 1e-6)
         #expect(abs(try initialSigma(t: 100, age: 4.9, config: config) - base) < 1e-6)
-        // Off (k = 0, the default) leaves every fix at face value.
-        #expect(NavigationConfig().staleFixSigmaGrowthMps == 0)
-        #expect(abs(try initialSigma(t: -60, age: 60.1, config: S.config(particles: 50)) - base) < 1e-6)
+        // The default is 1.0 m/s; k = 0 leaves every fix at face value.
+        #expect(NavigationConfig().staleFixSigmaGrowthMps == 1)
+        var off = config
+        off.staleFixSigmaGrowthMps = 0
+        #expect(abs(try initialSigma(t: -60, age: 60.1, config: off) - base) < 1e-6)
 
         // Updates too: parked at the origin, a stale fix 100 m east pulls far
         // less than a fresh one.

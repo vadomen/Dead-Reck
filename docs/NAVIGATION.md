@@ -206,7 +206,7 @@ every result.
 | networkFixInflation | 1.0 | extra σ factor for network fixes (any fix without a valid speed) |
 | networkFixCorrelationS | 60 | network-fix tempering window |
 | maxFixAgeS | 10 | older fixes ignored unless stopped |
-| staleFixSigmaGrowthMps / staleFixAgeS | 0 (off) / 5 | a pre-session fix (t < 0) or one older than staleFixAgeS gets σ += k × age; off by default (N2.2) |
+| staleFixSigmaGrowthMps / staleFixAgeS | 1.0 / 5 | a fix older than staleFixAgeS at ingest gets σ += k × age (adopted in N2.3) |
 | courseMinSpeedMps | 3 | course needs this GNSS and OBD speed |
 | courseSigmaFloorDeg | 2 | course σ floor |
 | speedUpdateMinKmh | 10.8 | GNSS speed updates the scale only above this OBD speed (and with valid speedAccuracy) |
@@ -441,7 +441,30 @@ adoption rule:
 All criteria pass on every seed. No drive re-anchors: none goes more than
 10 km from its first position.
 
-### N2.2 experiment: stale-fix σ grown by age (default off)
+### N2.3: stale-fix σ by age, threshold only (adopted)
+
+**Rule:** a fix older than 5 s at ingest gets σ += 1.0 m/s × age. This covers a
+pre-session fix from minutes ago and a relaunch mid-drive. The N2.2 clause
+"any fix with t < 0" is dropped, so pre-session fixes under a second old are
+not touched.
+
+It is judged with the mean-based adoption rule against this branch after the
+run 13 fixes with k = 0 (seeds 1–5):
+
+| alias | k = 0 mean (range) [inside 95 %] | k = 1.0 mean (range) [inside 95 %] | Δ mean | allowed |
+|---|---|---|---|---|
+| clean-long | 18.90 m (18.19–20.20) [100 %] | 18.90 m, bit-identical | 0 | ≤ +2 m |
+| clean | 13.94 m (12.25–16.89) [100 %] | 13.94 m, bit-identical | 0 | ≤ +2 m |
+| manual, truth point 1 | 50.57 m (47.43–57.42) [100 %] | 50.57 m (its stale fix is held out) | 0 | ≤ +2.5 m |
+| jammed-A | 1.156 % (1.02–1.25) [100 %] | 1.147 % (1.02–1.26) [100 %] | −0.008 pp | ≤ +0.1 pp |
+| jammed-B | 1.010 % (0.88–1.31) [100 %] | 1.068 % (0.93–1.39) [100 %] | +0.058 pp | ≤ +0.1 pp |
+| manual-3 (sanity) | 415–417 / 635–651 / 147–158 m [0/3] | 103–104 / 458–473 / 128–131 m [2/3] | | reported |
+
+Every drive passes and consistency does not drop, so **k = 1.0 is the
+default**. manual-3's stale initialising fix (165 s old) was the main cause of
+its overconfidence.
+
+### N2.2 experiment: stale-fix σ grown by age (default off; superseded by N2.3)
 
 **Rule:** a fix from before the session (`t < 0`), or older than 5 s at ingest
 (a relaunch mid-drive), gets σ += k × age. It applies to initialisation and to
