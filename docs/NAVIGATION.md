@@ -44,9 +44,23 @@ updates reweight only by what heading and scale actually predict.
   `v + 0.5` km/h when `v > 0`, times the particle's scale.
 - **ZUPT only on a fresh zero**: OBD 0 at most 2 s old freezes heading and
   position; no noise, bit-identical estimates.
-- **Stale OBD** (> 2 s, including a stale zero) means unknown speed. Each
-  particle's speed error random-walks (2.5 m/s per √s, either sign, so the mean
-  does not drift while parked with the adapter off), and heading noise is ×3.
+- **Stale OBD** (> 2 s) means unknown speed, with two cases (R13.1-2):
+  - **After an OBD 0 with no sign of motion since, the car is parked.** The
+    step is frozen like a zero-velocity update. The latch is armed by every OBD
+    0 reply and cleared when the 1 s EMA of horizontal `userAcceleration`
+    (gravity removed, device frame) exceeds 0.09 g.
+    - On the replay set, parked and idling peaks reach 0.082 g (the phone being
+      handled after ignition-off), and most drive-offs exceed 0.09 g within
+      0–12 s; a gentle one can take 20–30 s.
+    - Yaw is not used as evidence: handling the parked phone gives
+      0.4–3.4 rad/s.
+    - Every stale period in the replay set is ignition-off after a stop.
+  - **Otherwise, unknown speed.** Each particle's speed error follows an
+    Ornstein–Uhlenbeck process (2.5 m/s per √s, decaying with τ = 20 s, so its
+    spread levels off at about 7.9 m/s; either sign, so the mean does not
+    drift), and heading noise is ×3. The ellipse then grows like √t: about
+    0.6 / 2.2 / 3.0 km after 1 / 5 / 10 min of OBD silence while driving. An
+    unbounded random walk reached 1.5 / 19 / 55 km.
 - **Process noise**: heading random walk 0.05°/√s plus 0.1°/√(degree turned)
   (about 1° per 90° turn; measured gyro turns match GNSS course within
   1–1.5 %). Position covariance grows by 0.6 m/√m along and across track. Scale
@@ -92,10 +106,21 @@ updates reweight only by what heading and scale actually predict.
   a pin on a 1.2 km-wide map is good to about 100 m. Caveat (M10.1-3): in
   heading-up the logged span can be up to about 2.2× too large, which errs
   toward a larger σ, so it is safe. The replay scores the pin checkpoint with the
-  same σ. Kalman position update. If the prior
-  has no support at the pin (every particle further than χ² = 25, or ESS < 1 %),
-  positions restart at the pin while heading and scale hypotheses and their
-  weights are kept.
+  same σ. Kalman position update. If the prior has no support at the pin (every
+  particle further than χ² = 25), positions restart at the pin while heading
+  and scale hypotheses and their weights are kept. A low ESS alone does not
+  reset (R13.1-1): that is the pin carrying the most information. For example,
+  a ring-shaped cloud after km of unknown heading is cut down to the headings
+  that lead to the pin, and resampling keeps that posterior.
+- **Local plane re-anchoring** (R13.1-3): the plane's east axis uses each
+  point's own cos φ, so far from the anchor it is sheared, and true north tilts
+  by about Δλ·sin φ (1.28° at 100 km east, latitude 55°). That would bias
+  heading against GNSS course and distort turns.
+  - Once the cloud's mean is more than 10 km from the anchor (checked every
+    10 s of moving steps), the plane moves to the mean.
+  - Positions convert exactly via WGS-84. Headings, covariances and the motion
+    history convert via the Jacobian of the old→new map at the mean.
+  - Within 10 km the tilt stays under about 0.13°.
 - **Resampling**: systematic, when ESS < N/2; afterwards 0.2° heading and
   0.0005 scale jitter.
 
@@ -170,7 +195,10 @@ every result.
 | scalePriorMean / scalePriorStd | 1.016 / 0.01 | per-vehicle OBD speed scale prior (measured on this car) |
 | obdSpeedOffsetKmh | 0.5 | truncation offset when v > 0 |
 | obdMaxAgeS | 2 | fresher = known speed; a fresh 0 is a ZUPT |
-| staleSpeedNoiseMpsPerSqrtS | 2.5 | speed error random walk while stale |
+| staleSpeedNoiseMpsPerSqrtS | 2.5 | speed error noise while stale |
+| staleSpeedDecayS | 20 | stale speed error decays (Ornstein–Uhlenbeck) with this time constant |
+| staleParkedMotionG / staleParkedMotionTauS | 0.09 / 1 | after an OBD 0, stale = parked until the 1 s EMA of horizontal userAcceleration exceeds this |
+| reanchorDistanceM | 10 000 | re-anchor the local plane at the cloud's mean beyond this |
 | staleHeadingNoiseFactor | 3 | heading noise multiplier while stale |
 | maxMotionGapS | 0.5 | longer motion gaps contribute no yaw |
 | fixSigmaPerAccuracy | 1/1.51 | per-axis σ per metre of accuracy |
@@ -187,7 +215,7 @@ every result.
 | cleanFixAccM | 15 | clean fix threshold |
 | reseedHeadingStdDeg / reseedNoSupportSigma / reseedFraction | 30 / 4 / 0.5 | clean-fix reseed |
 | manualFixSigmaMinM / manualFixSpanDivisor | 30 / 12 | manual pin σ = max(min, mapSpanM / divisor); min without a span |
-| manualFixResetChi2 / manualFixResetESSFraction | 25 / 0.01 | manual reset when no support |
+| manualFixResetChi2 | 25 | manual reset when every particle is further than this from the pin (χ², 2 dof) |
 | resampleESSFraction | 0.5 | resampling threshold |
 | resampleHeadingJitterDeg / resampleScaleJitter | 0.2 / 0.0005 | jitter after resampling |
 | convergedHeadingStdDeg | 10 | `converged` threshold |
@@ -371,6 +399,27 @@ Options, measured on seed 1 and **not adopted**:
 49 m (0.62 % of distance; 47–57 m over seeds 1–5), well inside 200 m. Convergence is not tuned towards the target:
 with towers and one pin as the only absolute information, the honest heading
 std falls under 10° late. Options are listed under known limitations.
+
+### N2.3: review run 13 fixes (seeds 1–5, mean and range, against N2.2)
+
+These are correctness fixes, judged for regressions rather than by the
+adoption rule:
+- the manual-fix reset now fires only without χ² support (R13.1-1);
+- stale speed is parked after a stop and mean-reverting otherwise (R13.1-2);
+- the local plane re-anchors beyond 10 km (R13.1-3).
+
+| alias | criterion | N2.2 mean (range) [inside 95 %] | N2.3 mean (range) [inside 95 %] | change and why |
+|---|---|---|---|---|
+| clean-long | max ≤ 30 m | 18.90 m (18.19–20.20) [100 %] | 18.90 m (18.19–20.20) [100 %] | identical: no stale period, pin or re-anchor |
+| clean | max ≤ 30 m | 13.94 m (12.25–16.89) [100 %] | 13.94 m (12.25–16.89) [100 %] | identical |
+| manual | truth point 1 ≤ 200 m | 50.57 m (47.43–57.42) [100 %] | 50.57 m (47.43–57.42) [100 %] | identical: its pin is χ²-compatible and never reset |
+| manual, convergence | (reported) | 7.27–7.68 km | 7.27–7.68 km | identical |
+| jammed-A | end ≤ 2.5 % | 1.158 % (1.02–1.26) [100 %] | 1.156 % (1.02–1.25) [100 %] | ignition-off ending (211 stale steps) now parked instead of a symmetric random walk; Monte Carlo-sized change |
+| jammed-B | end ≤ 2.5 % | 0.984 % (0.81–1.11) [100 %] | 1.010 % (0.88–1.31) [100 %] | same, 291 stale steps; up to 12 m per seed, the size of the old walk's Monte Carlo noise in the mean |
+| manual-3 (sanity) | reported | 415–417 / 635–651 / 247–250 m [0/3] | 415–417 / 635–651 / 147–158 m [0/3] | pin 3 improves: the ESS-only reset that discarded pin information no longer fires |
+
+All criteria pass on every seed. No drive re-anchors: none goes more than
+10 km from its first position.
 
 ### N2.2 experiment: stale-fix σ grown by age (default off)
 
