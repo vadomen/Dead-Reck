@@ -549,3 +549,43 @@ North-up unchanged. New tests fail without the reseed and without the gate reset
 - Final tests (at c202225; later commits are docs only): `cd Core && swift test`
   530 tests in 81 suites pass; simulator build green; app tests 204 in 35
   suites pass.
+
+## Run 11 — N2 navigation engine + replay_nav (80fb354..43ed727), started 2026-10-09
+
+Branch `n2-nav`. Commits under review: 182a4ba, db021fb, 3ea98c1, 43ed727.
+
+### Round 1
+
+Reviewer: fresh `reviewer` agent. Result: 0 BLOCKER / 3 MAJOR / 5 MINOR.
+Tests at review time: `swift test --filter Navigation` 23/23 green. The reviewer
+checked causality, determinism, filter maths, metrics honesty, invariants and the
+performance budget without finding a code defect. All three MAJORs are coverage
+gaps: the reviewer applied each mutation to a scratch copy of Core, and all
+Navigation tests still passed.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R11.1-1 | MAJOR | Fix-latency shift (`shiftSince`) untested: returning a zero shift keeps all tests green (synthetic latency 0.05 s, causality fixtures 0.4 s). | CONFIRMED | Verified `NavigationTestSupport.swift:43` default latency 0.05 s; no test drives a late fix at speed or through a turn. |
+| R11.1-2 | MAJOR | Tower tempering untested: `temper = 1` keeps `towerBiasNotChased` green, because each 1414 m fix barely moves the estimate. | CONFIRMED | Verified `NavigationEngineTests.swift:116-140`: 200 m bound holds with or without tempering. |
+| R11.1-3 | MAJOR | Replay "score before ingest" untested; the causality tests cover only the engine (a value type), not `ReplayRun`. Scoring after ingest keeps all tests green. | CONFIRMED | Verified `NavigationReplay.swift:316-330`; the engine-only causality tests can't see the replay loop. |
+| R11.1-4 | MINOR | Course gate passes when OBD is stale or absent, contrary to the docs. | DEFERRED | BACKLOG |
+| R11.1-5 | MINOR | Stale fix accepted while stopped is shifted only ~10 s back. | DEFERRED | BACKLOG |
+| R11.1-6 | MINOR | Clean-fix reseed double-counts that fix. | DEFERRED | BACKLOG |
+| R11.1-7 | MINOR | Stale-speed random walk makes the mean drift; docs claim it doesn't. | DEFERRED | BACKLOG |
+| R11.1-8 | MINOR | `replay_nav` ignores the reader's damage report. | DEFERRED | BACKLOG |
+
+Fix: R11.1-1..3 by `navigation-engineer` (owns Navigation), as discriminating
+tests shown to fail under each mutation.
+
+Fixed in 47ac36b: six tests in `NavigationReviewTests` ("Navigation review run 11").
+Each one fails under its mutation and passes on the real code; the failing output
+under each mutation was captured before the mutation was reverted:
+zero shift → straight line and turn cases fail; zero yaw shift only → turn case
+fails; `temper = 1` → long correlated bias case fails (pulled 556 m); scoring
+after ingest → rebuild-per-checkpoint and offset-pin cases fail. The only engine
+change is `towerTemper(sinceLastS:correlationS:)`, extracted with no change in
+behaviour; all 221 acceptance checkpoint errors are bit-identical. No engine
+bug found.
+
+Tests after fix: `cd Core && swift test` 559 tests in 86 suites pass. No App/
+change, so no simulator build was needed for this round.
