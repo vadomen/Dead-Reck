@@ -29,6 +29,7 @@
 		50CE5600479330B230E3E883 /* RecordingSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFF4735ED2E6C7340B224408 /* RecordingSession.swift */; };
 		5AD961AA5E9A34D760419C63 /* PreDriveChecklist.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D8E9CE2BABC8A226F6FC03A /* PreDriveChecklist.swift */; };
 		5E52034F56D6FA728B5E7E90 /* MapCameraLogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E34817EF83A3A8882C060FA /* MapCameraLogicTests.swift */; };
+		5EC1979BE339D4AFC4791413 /* NavigationFeedTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 405DDC15D444E14982ABE749 /* NavigationFeedTests.swift */; };
 		6240D543D41EDAFEAD56D66B /* MapFraming.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6066E5826F4262CB1D02A92 /* MapFraming.swift */; };
 		6333D46FA0A28C814543135B /* SimulatedSensors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 854C803C3B72C76C94BDE3BF /* SimulatedSensors.swift */; };
 		6869A4090D28752582396966 /* SampleGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 167B09C43FC2B04D92DCB6B2 /* SampleGate.swift */; };
@@ -94,6 +95,7 @@
 		3B4CFB2197F8A96D56C50C74 /* DriveLoggerAppTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = DriveLoggerAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3DCCAAFA3667C0100BDF5237 /* SensorSourceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SensorSourceTests.swift; sourceTree = "<group>"; };
 		404284ED2ADA7C27E439CC77 /* DriveLogger.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = DriveLogger.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		405DDC15D444E14982ABE749 /* NavigationFeedTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NavigationFeedTests.swift; sourceTree = "<group>"; };
 		428FB84AE7F6B6AC6DAF1351 /* GATTDetectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GATTDetectionTests.swift; sourceTree = "<group>"; };
 		4757331FF2FA81D7AC0192A2 /* OBDLinkServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OBDLinkServiceTests.swift; sourceTree = "<group>"; };
 		48CA0FF0B046021F1A35D010 /* GATTDetection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GATTDetection.swift; sourceTree = "<group>"; };
@@ -165,6 +167,7 @@
 				2E34817EF83A3A8882C060FA /* MapCameraLogicTests.swift */,
 				BA06D45DE18CCC614D3D7A5A /* MapFollowTests.swift */,
 				E10D65817793B02936D47090 /* MapTrackTests.swift */,
+				405DDC15D444E14982ABE749 /* NavigationFeedTests.swift */,
 				4757331FF2FA81D7AC0192A2 /* OBDLinkServiceTests.swift */,
 				054B04838405BB2A03DF2023 /* RecordingSessionTests.swift */,
 				B03770A2F4197C0EC3E1CACE /* RecordingTestSupport.swift */,
@@ -455,6 +458,7 @@
 				5E52034F56D6FA728B5E7E90 /* MapCameraLogicTests.swift in Sources */,
 				B8189DC89B9E6AD73AF65254 /* MapFollowTests.swift in Sources */,
 				FC673B69DBDB4E4311B6B23C /* MapTrackTests.swift in Sources */,
+				5EC1979BE339D4AFC4791413 /* NavigationFeedTests.swift in Sources */,
 				9D68BF8B1CC07439C59B8590 /* OBDLinkServiceTests.swift in Sources */,
 				7AC8D2001A8B6452A3F6D8FE /* RecordingSessionTests.swift in Sources */,
 				EB69D658A35BEC3DCD84D1EB /* RecordingTestSupport.swift in Sources */,

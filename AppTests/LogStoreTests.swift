@@ -116,4 +116,109 @@ struct LogStoreTests {
         try scratch.store.delete(file)
         #expect(!FileManager.default.fileExists(atPath: url.path))
     }
+
+    /// Writes a stand-in sidecar next to `recording` (A only fixes the path;
+    /// the contents are N4 B's).
+    @discardableResult
+    static func writeSidecar(for recording: URL) throws -> URL {
+        let sidecar = LogStore.navSidecarURL(for: recording)
+        try Data("{\"kind\":\"header\"}\n".utf8).write(to: sidecar)
+        return sidecar
+    }
+
+    @Test("The sidecar path is the recording's, with .jsonl.gz replaced by .nav.jsonl, in the same folder")
+    func sidecarPath() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let url = try await Self.write(scratch.store, startedAt: Date(timeIntervalSince1970: 1_790_000_000), lastSeconds: 1)
+        let sidecar = LogStore.navSidecarURL(for: url)
+        #expect(sidecar == NavSidecarFile.url(forRecording: url))
+        #expect(sidecar.deletingLastPathComponent().standardizedFileURL == scratch.store.directory.standardizedFileURL)
+        #expect(sidecar.lastPathComponent == url.lastPathComponent.replacingOccurrences(of: ".jsonl.gz", with: ".nav.jsonl"))
+    }
+
+    @Test("The list ignores sidecars, orphans included, and attaches each recording's sidecar when it exists")
+    func listIgnoresSidecars() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let withSidecar = try await Self.write(scratch.store, startedAt: Date(timeIntervalSince1970: 1_790_003_600), lastSeconds: 5)
+        let without = try await Self.write(scratch.store, startedAt: Date(timeIntervalSince1970: 1_790_000_000), lastSeconds: 5)
+        let sidecar = try Self.writeSidecar(for: withSidecar)
+        // A sidecar whose recording is gone is not a recording either.
+        try Data("x\n".utf8).write(to: scratch.store.directory.appendingPathComponent("Drive_20200101-000000.nav.jsonl"))
+
+        let files = try scratch.store.list()
+        #expect(files.map(\.name) == [withSidecar.lastPathComponent, without.lastPathComponent])
+        #expect(files[0].navSidecar?.standardizedFileURL == sidecar.standardizedFileURL)
+        #expect(files[1].navSidecar == nil)
+    }
+
+    @Test("Export shares the recording and its sidecar; only the recording when there is none")
+    func shareIncludesSidecar() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let withSidecar = try await Self.write(scratch.store, startedAt: Date(timeIntervalSince1970: 1_790_003_600), lastSeconds: 5)
+        let without = try await Self.write(scratch.store, startedAt: Date(timeIntervalSince1970: 1_790_000_000), lastSeconds: 5)
+        let sidecar = try Self.writeSidecar(for: withSidecar)
+
+        let files = try scratch.store.list()
+        #expect(files[0].shareItems.map(\.standardizedFileURL) == [withSidecar.standardizedFileURL, sidecar.standardizedFileURL])
+        #expect(files[1].shareItems.map(\.standardizedFileURL) == [without.standardizedFileURL])
+        #expect(files[0].shareItems.allSatisfy { FileManager.default.fileExists(atPath: $0.path) })
+    }
+
+    @Test("Delete removes the recording and its sidecar, works without one, and never touches another recording's")
+    func deleteIncludesSidecar() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let doomed = try await Self.write(scratch.store, startedAt: Date(timeIntervalSince1970: 1_790_003_600), lastSeconds: 5)
+        let kept = try await Self.write(scratch.store, startedAt: Date(timeIntervalSince1970: 1_790_000_000), lastSeconds: 5)
+        let plain = try await Self.write(scratch.store, startedAt: Date(timeIntervalSince1970: 1_789_990_000), lastSeconds: 5)
+        let doomedSidecar = try Self.writeSidecar(for: doomed)
+        let keptSidecar = try Self.writeSidecar(for: kept)
+
+        let files = try scratch.store.list()
+        #expect(files.map(\.name) == [doomed, kept, plain].map(\.lastPathComponent))
+        try scratch.store.delete(files[0])
+        #expect(!FileManager.default.fileExists(atPath: doomed.path))
+        #expect(!FileManager.default.fileExists(atPath: doomedSidecar.path))
+        #expect(FileManager.default.fileExists(atPath: kept.path))
+        #expect(FileManager.default.fileExists(atPath: keptSidecar.path))
+
+        // No sidecar: the recording alone goes.
+        try scratch.store.delete(files[2])
+        #expect(!FileManager.default.fileExists(atPath: plain.path))
+
+        // A sidecar written after the list was read still goes with its recording.
+        let stale = RecordingFile(url: files[1].url, name: files[1].name, sizeBytes: files[1].sizeBytes, startedAt: files[1].startedAt, duration: files[1].duration)
+        try scratch.store.delete(stale)
+        #expect(Set(scratch.files.map(\.lastPathComponent)).isEmpty)
+
+        // A sidecar is never deleted as if it were a recording.
+        let orphan = scratch.store.directory.appendingPathComponent("Drive_20200101-000000.nav.jsonl")
+        try Data("x\n".utf8).write(to: orphan)
+        let asRecording = RecordingFile(url: orphan, name: orphan.lastPathComponent, sizeBytes: 2, startedAt: nil, duration: nil)
+        #expect(throws: LogStoreError.notInStore(path: orphan.path)) { try scratch.store.delete(asRecording) }
+        #expect(FileManager.default.fileExists(atPath: orphan.path))
+    }
+
+    @Test("Deleting through the session takes the sidecar too, and refuses the recording being written")
+    @MainActor
+    func sessionDeleteIncludesSidecar() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let session = RecordingFixtures.session(store: scratch.store)
+        try await session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
+        let active = try #require(session.currentFile)
+        let activeSidecar = try Self.writeSidecar(for: active)
+        let activeFile = RecordingFile(url: active, name: active.lastPathComponent, sizeBytes: 0, startedAt: nil, duration: nil)
+        await #expect(throws: LogStoreError.recordingInProgress(path: activeFile.url.path)) { try await session.deleteRecording(activeFile) }
+        #expect(FileManager.default.fileExists(atPath: activeSidecar.path))
+        await session.stop()
+
+        let file = try #require(try scratch.store.list().first)
+        #expect(file.navSidecar != nil)
+        try await session.deleteRecording(file)
+        #expect(scratch.files.isEmpty)
+    }
 }

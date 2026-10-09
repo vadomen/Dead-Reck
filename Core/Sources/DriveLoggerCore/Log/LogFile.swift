@@ -62,10 +62,25 @@ public enum LogFileName {
 /// counters and the stream can never disagree (an event is counted in
 /// `queueDepth` before the writer can take it). The critical section is a
 /// counter update and an enqueue — no I/O, no waiting on the writer.
+///
+/// **Tap (N4 A).** An optional `tap`, fixed when the writer is created, sees
+/// every `motion`, `location`, `obd` and `manualFix` event that was accepted
+/// into the writer's queue (`isTapped`), right after the enqueue and still
+/// under `lock`. So the tap sees exactly the events the writer will take, in
+/// exactly the order it takes them: live order is file order. An event the
+/// sink refuses (after `finish()`) is never tapped. The tap runs inside the
+/// critical section, and sensor callbacks call `record` while holding
+/// `SampleGate`'s lock, so it must never block, never wait on anything and
+/// never call back into this sink (`NavigationTap.record` is a bounded,
+/// non-blocking enqueue). A nil tap changes nothing: same rows, same order,
+/// same counters.
 public final class LogSink: Sendable {
     /// The single consumer is the owning `LogFileWriter`.
     let events: AsyncStream<LogEvent>
     private let continuation: AsyncStream<LogEvent>.Continuation
+    /// Called after each successful enqueue of a tapped kind; see the type's
+    /// doc. Immutable after `init`.
+    private let tap: (@Sendable (LogEvent) -> Void)?
     private let lock = NSLock()
     /// Guarded by `lock`. Events accepted into the stream.
     private nonisolated(unsafe) var enqueued = 0
@@ -79,13 +94,24 @@ public final class LogSink: Sendable {
     /// `takePeakQueueDepth()`.
     private nonisolated(unsafe) var peakDepth = 0
 
-    init() {
+    init(tap: (@Sendable (LogEvent) -> Void)? = nil) {
         (events, continuation) = AsyncStream.makeStream(of: LogEvent.self, bufferingPolicy: .unbounded)
+        self.tap = tap
+    }
+
+    /// Whether `tap` sees events of this kind: the navigation inputs
+    /// `motion`, `location`, `obd` and `manualFix`, and nothing else.
+    public static func isTapped(_ payload: LogEvent.Payload) -> Bool {
+        switch payload {
+        case .motion, .location, .obd, .manualFix: true
+        default: false
+        }
     }
 
     /// Enqueues an event. Never blocks on I/O or the writer; safe from any
     /// thread. After the writer's `finish()` the event is dropped and
-    /// counted in `dropped`.
+    /// counted in `dropped`. A tapped kind that was enqueued is then handed
+    /// to `tap` (see the type's doc).
     public func record(_ event: LogEvent) {
         lock.lock()
         defer { lock.unlock() }
@@ -97,6 +123,9 @@ public final class LogSink: Sendable {
         case .enqueued:
             enqueued += 1
             peakDepth = max(peakDepth, enqueued - consumed)
+            if let tap, Self.isTapped(event.payload) {
+                tap(event)
+            }
         case .dropped, .terminated:
             droppedCount += 1
         @unknown default:
@@ -399,6 +428,9 @@ public actor LogFileWriter {
     /// - Parameter stopFreeBytes: free space strictly below this delivers
     ///   `.critical`, leaving room for a clean stop.
     /// - Parameter diskSpace: free-space source; injectable for tests.
+    /// - Parameter tap: handed to `sink` (`LogSink`'s doc, "Tap"): sees every
+    ///   `motion`, `location`, `obd` and `manualFix` event the sink accepts,
+    ///   in write order. Must never block. nil (the default) changes nothing.
     /// - Precondition: `stopFreeBytes < warningFreeBytes` (checked by
     ///   `DiskSpacePolicy.init`).
     public init(
@@ -407,7 +439,8 @@ public actor LogFileWriter {
         flushInterval: Duration = .seconds(2),
         warningFreeBytes: Int64 = DiskSpacePolicy.defaultWarningFreeBytes,
         stopFreeBytes: Int64 = DiskSpacePolicy.defaultStopFreeBytes,
-        diskSpace: any DiskSpaceProvider = VolumeDiskSpaceProvider()
+        diskSpace: any DiskSpaceProvider = VolumeDiskSpaceProvider(),
+        tap: (@Sendable (LogEvent) -> Void)? = nil
     ) throws(LogWriteError) {
         let handle = try POSIXLogFileHandle(creatingExclusively: url)
         try self.init(
@@ -417,7 +450,8 @@ public actor LogFileWriter {
             flushInterval: flushInterval,
             warningFreeBytes: warningFreeBytes,
             stopFreeBytes: stopFreeBytes,
-            diskSpace: diskSpace
+            diskSpace: diskSpace,
+            tap: tap
         )
     }
 
@@ -436,7 +470,8 @@ public actor LogFileWriter {
         warningFreeBytes: Int64 = DiskSpacePolicy.defaultWarningFreeBytes,
         stopFreeBytes: Int64 = DiskSpacePolicy.defaultStopFreeBytes,
         diskSpace: any DiskSpaceProvider = VolumeDiskSpaceProvider(),
-        maxMemberInputBytes: Int = LogFileWriter.defaultMaxMemberInputBytes
+        maxMemberInputBytes: Int = LogFileWriter.defaultMaxMemberInputBytes,
+        tap: (@Sendable (LogEvent) -> Void)? = nil
     ) throws(LogWriteError) {
         var policy = DiskSpacePolicy(warningFreeBytes: warningFreeBytes, stopFreeBytes: stopFreeBytes)
         let codec = LogCodec()
@@ -458,7 +493,7 @@ public actor LogFileWriter {
             }
         }
 
-        self.sink = LogSink()
+        self.sink = LogSink(tap: tap)
         self.failures = failures
         self.failuresContinuation = failuresContinuation
         self.diskSpaceNotices = notices

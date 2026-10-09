@@ -812,3 +812,8 @@ Replay only the current connection's init (M6.1-1) and remembered poll plan and 
 7. **ELM stall at a stop:** after a stall, heading-up unfreezes on drive-off (a stale OBD 0 does not count as stopped).
 8. **Turns:** the camera settles at the true heading after a turn.
 9. **Zoom parity:** at equal zoom, the visible area in heading-up roughly matches north-up (checks the `distancePerSpan` 1.87 guess).
+
+### Added by N4 A, sample tap and sidecar files (not verified on a device)
+1. **The tap costs the logger nothing:** in a 30 min recording on the phone, the `stats` rows show motion ~100 Hz and OBD at its pre-N4 rate, `dropped` 0, gaps and `queueDepthMax` no worse than a pre-N4 drive. The tap runs under `SampleGate`'s lock at real CoreMotion rates; the simulator only runs simulated tickers.
+2. **Export with a sidecar:** once N4 B writes `<recording>.nav.jsonl`, the share sheet offers both files and AirDrop / Save to Files delivers both. Without a sidecar it shares the recording alone, as before.
+3. **Delete with a sidecar:** deleting a recording in the Sessions tab removes its `.nav.jsonl` too; Files app → DriveLogger → logs shows neither afterwards.

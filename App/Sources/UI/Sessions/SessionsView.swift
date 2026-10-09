@@ -77,7 +77,8 @@ struct SessionRow: View {
                 }
             }
             Spacer()
-            ShareLink(item: file.url) {
+            // The recording and, when there is one, its navigation sidecar.
+            ShareLink(items: file.shareItems) {
                 Image(systemName: "square.and.arrow.up").font(.title3).frame(width: 44, height: 44)
             }
             .buttonStyle(.borderless)

@@ -90,6 +90,37 @@ struct ManualFixPress: Hashable, Sendable {
     }
 }
 
+/// What a live consumer of navigation input needs about one recording (N4 A).
+/// Handed to `RecordingSession.onNavigationFeed` once per recording, at Start.
+///
+/// `inputs` carries every `motion`, `location`, `obd` and `manualFix` event of
+/// this recording in file order (`LogSink`, "Tap"); it ends after the
+/// recording's writer has finished, once the buffered inputs are taken.
+/// Single consumer. If the consumer falls `NavigationTap.defaultBufferLimit`
+/// inputs behind, the oldest are dropped and counted in `droppedInputs`; the
+/// log itself never loses a row to the tap.
+struct RecordingNavigationFeed: Sendable {
+    /// The recording this feed belongs to (`ActiveRecording.generation`).
+    let generation: Int
+    /// The header handed to the writer (seed: `sessionID`). Encodes to the
+    /// file's first line; `startedAt` here still has the sub-second part the
+    /// file's ISO 8601 date drops.
+    let header: LogHeader
+    /// The recording's one clock: every input's `t` is on it.
+    let clock: SessionClock
+    /// The `.jsonl.gz` being written.
+    let recordingURL: URL
+    /// Where this recording's navigation sidecar goes
+    /// (`LogStore.navSidecarURL(for:)`); nothing is written there by A.
+    let sidecarURL: URL
+    /// The tap behind `inputs`.
+    let tap: NavigationTap
+
+    var inputs: AsyncStream<NavigationInput> { tap.inputs }
+    /// Inputs dropped so far because the consumer fell behind.
+    var droppedInputs: Int { tap.droppedInputs }
+}
+
 /// Wires sensors, the OBD link and the writer into one recording.
 ///
 /// **One clock.** Each recording creates exactly one `SessionClock` (on
@@ -222,6 +253,16 @@ struct ManualFixPress: Hashable, Sendable {
 /// source's availability is lost mid-recording. The recording itself goes
 /// on. A suite with no such source (the simulator's, tests') makes no claim
 /// and produces neither.
+///
+/// **Navigation feed (N4 A).** Each recording creates one `NavigationTap` and
+/// hands its closure to the writer's sink, so every navigation input the
+/// sink accepts is also yielded, in file order, to a bounded stream. The seam
+/// for a live consumer is `onNavigationFeed`: set it once (`AppServices`),
+/// and it is called with a `RecordingNavigationFeed` synchronously in
+/// `start`, after the file exists and before the `start` row or any source
+/// sample — so no input of the recording precedes the hand-off. The feed's
+/// stream ends when the recording's writer has finished (either end path).
+/// The writer, the rows and the `stats` rows are unchanged by the tap.
 @MainActor
 @Observable
 final class RecordingSession {
@@ -264,6 +305,12 @@ final class RecordingSession {
     /// still reads available), on `handleScenePhase(.active)`
     /// (back from Settings), and when a recording starts and ends.
     private(set) var backgroundRiskWarning: String?
+    /// Called once per recording with its navigation feed (see the type's
+    /// doc, "Navigation feed"). Runs synchronously on the main actor inside
+    /// `start`, before any row is written: keep it cheap (start a task to
+    /// consume `inputs`, don't consume here). nil: nobody listens, and the
+    /// tap's buffer simply drops the oldest inputs; the log is unaffected.
+    @ObservationIgnored var onNavigationFeed: (@MainActor (RecordingNavigationFeed) -> Void)?
 
     @ObservationIgnored private let link: any OBDLinkServicing
     @ObservationIgnored private let sources: [any SensorSource]
@@ -451,10 +498,11 @@ final class RecordingSession {
             vehicle: vehicle.isEmpty ? nil : vehicle,
             timeZone: TimeZone.current.identifier
         )
-        let (writer, url) = try makeWriter(header: header, start: clock.wallClockStart)
+        let navigationTap = NavigationTap()
+        let (writer, url) = try makeWriter(header: header, start: clock.wallClockStart, tap: navigationTap.tap)
 
         generation += 1
-        let rec = ActiveRecording(generation: generation, clock: clock, writer: writer, url: url)
+        let rec = ActiveRecording(generation: generation, clock: clock, writer: writer, url: url, navigationTap: navigationTap)
         recording = rec
         isStarting = false
         ownsStartingFlag = false
@@ -463,6 +511,14 @@ final class RecordingSession {
         live = LiveStatus(obdSpeedKmh: live.obdSpeedKmh, obdHz: live.obdHz, availableDiskBytes: nil)
         state = .calibrating
         setIdleTimerDisabled(true)
+        onNavigationFeed?(RecordingNavigationFeed(
+            generation: rec.generation,
+            header: header,
+            clock: clock,
+            recordingURL: url,
+            sidecarURL: LogStore.navSidecarURL(for: url),
+            tap: navigationTap
+        ))
 
         rec.record(LifecycleSample(.start, detail: polling ? nil : "without OBD: link \(Self.describe(link.state))"))
         // Still the same synchronous step: no suspension since `polling` was
@@ -700,8 +756,13 @@ final class RecordingSession {
     }
 
     /// Creates the file exclusively, moving to the next collision index if a
-    /// file of that name appeared since `newFileURL` looked.
-    private func makeWriter(header: LogHeader, start: Date) throws -> (LogFileWriter, URL) {
+    /// file of that name appeared since `newFileURL` looked. `tap` goes to the
+    /// writer's sink (the recording's `NavigationTap`).
+    private func makeWriter(
+        header: LogHeader,
+        start: Date,
+        tap: @escaping @Sendable (LogEvent) -> Void
+    ) throws -> (LogFileWriter, URL) {
         var attempts = 0
         while true {
             let url = store.newFileURL(startingAt: start, timeZone: .current)
@@ -712,7 +773,8 @@ final class RecordingSession {
                     flushInterval: flushInterval,
                     warningFreeBytes: warningFreeBytes,
                     stopFreeBytes: stopFreeBytes,
-                    diskSpace: diskSpace
+                    diskSpace: diskSpace,
+                    tap: tap
                 )
                 return (writer, url)
             } catch .fileExists where attempts < 20 {
@@ -962,7 +1024,11 @@ final class RecordingSession {
         )
     }
 
+    /// Called by both end paths after the writer's `finish()`: the sink
+    /// accepts nothing more, so the navigation feed ends here, after its
+    /// last input.
     private func finishRecording(_ rec: ActiveRecording) {
+        rec.navigationTap.finish()
         guard recording === rec else { return }
         recording = nil
         currentFile = nil
@@ -1129,6 +1195,8 @@ private final class ActiveRecording {
     let clock: SessionClock
     let writer: LogFileWriter
     let url: URL
+    /// Feeds navigation input from `writer.sink`; finished with the writer.
+    let navigationTap: NavigationTap
     var startedSources: [any SensorSource] = []
     /// Link events are written while true.
     var acceptsLinkEvents = true
@@ -1151,11 +1219,12 @@ private final class ActiveRecording {
     var statsTick: Task<Void, Never>?
     var liveTimer: Task<Void, Never>?
 
-    init(generation: Int, clock: SessionClock, writer: LogFileWriter, url: URL) {
+    init(generation: Int, clock: SessionClock, writer: LogFileWriter, url: URL, navigationTap: NavigationTap) {
         self.generation = generation
         self.clock = clock
         self.writer = writer
         self.url = url
+        self.navigationTap = navigationTap
     }
 
     nonisolated var sink: LogSink { writer.sink }

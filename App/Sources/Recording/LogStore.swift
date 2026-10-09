@@ -11,6 +11,23 @@ struct RecordingFile: Identifiable, Hashable, Sendable {
     let startedAt: Date?
     /// Last event timestamp; nil if the file could not be read.
     let duration: TimeInterval?
+    /// The navigation sidecar (`LogStore.navSidecarURL(for:)`) if it existed
+    /// when the list was read; nil otherwise.
+    let navSidecar: URL?
+
+    init(url: URL, name: String, sizeBytes: Int, startedAt: Date?, duration: TimeInterval?, navSidecar: URL? = nil) {
+        self.url = url
+        self.name = name
+        self.sizeBytes = sizeBytes
+        self.startedAt = startedAt
+        self.duration = duration
+        self.navSidecar = navSidecar
+    }
+
+    /// What Export shares: the recording, then its sidecar when there is one.
+    var shareItems: [URL] {
+        [url] + (navSidecar.map { [$0] } ?? [])
+    }
 }
 
 enum LogStoreError: Error, Hashable, Sendable, CustomStringConvertible {
@@ -33,6 +50,12 @@ enum LogStoreError: Error, Hashable, Sendable, CustomStringConvertible {
 /// Never overwrites: `newFileURL` returns a name that doesn't exist yet, and
 /// `LogFileWriter` creates the file exclusively (`O_EXCL`) in any case, so a
 /// race between the two can only fail a start, never truncate a recording.
+///
+/// **Navigation sidecar (N4 A).** `<name>.nav.jsonl` next to
+/// `<name>.jsonl.gz` (`navSidecarURL(for:)`, the one definition of that path)
+/// is a companion file, not a recording: `list()` never returns it, Export
+/// shares it with its recording (`RecordingFile.shareItems`), and `delete`
+/// removes it with its recording. The store never reads its contents.
 struct LogStore: Sendable {
     let directory: URL
 
@@ -67,8 +90,17 @@ struct LogStore: Sendable {
         }
     }
 
+    /// The navigation sidecar of `recording`: same folder, `.jsonl.gz`
+    /// replaced by `.nav.jsonl` (`NavSidecarFile`). The path the
+    /// NavigationService writes to and the one `delete` and Export use.
+    static func navSidecarURL(for recording: URL) -> URL {
+        NavSidecarFile.url(forRecording: recording)
+    }
+
     /// Recordings (`*.jsonl.gz`) in the directory, newest first by header
     /// start time; files whose header can't be read sort last, by name.
+    /// Sidecars are never listed; each recording carries its own in
+    /// `navSidecar` when the file exists.
     ///
     /// Cheap per file: the header comes from the first gzip member and the
     /// duration from the last complete one (`RecordingTail`), so a two-hour
@@ -82,16 +114,20 @@ struct LogStore: Sendable {
         )
         let files = urls.compactMap { url -> RecordingFile? in
             guard url.lastPathComponent.hasSuffix("." + LogFileName.fileExtension),
+                  !NavSidecarFile.isSidecar(url),
                   let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey]),
                   values.isRegularFile == true
             else { return nil }
             let header = try? LogFileReader(url: url).header
+            let sidecar = Self.navSidecarURL(for: url)
+            let sidecarIsFile = (try? sidecar.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true
             return RecordingFile(
                 url: url,
                 name: url.lastPathComponent,
                 sizeBytes: values.fileSize ?? 0,
                 startedAt: header?.startedAt,
-                duration: header == nil ? nil : RecordingTail.lastEventTimestamp(of: url)?.seconds
+                duration: header == nil ? nil : RecordingTail.lastEventTimestamp(of: url)?.seconds,
+                navSidecar: sidecarIsFile ? sidecar : nil
             )
         }
         return files.sorted { a, b in
@@ -104,14 +140,25 @@ struct LogStore: Sendable {
         }
     }
 
-    /// Deletes a recording in this store. Refuses anything outside the
-    /// directory. (`RecordingSession.deleteRecording` also refuses the file
-    /// being recorded and refreshes free space.)
+    /// Deletes a recording in this store together with its navigation
+    /// sidecar, if one exists now (whatever `file.navSidecar` says). Refuses
+    /// anything outside the directory. (`RecordingSession.deleteRecording`
+    /// also refuses the file being recorded and refreshes free space.)
+    ///
+    /// The sidecar goes first: if removing it fails, the recording is still
+    /// listed and the user can retry. The other order could leave an
+    /// unlisted sidecar — real positions nobody can see to delete.
     func delete(_ file: RecordingFile) throws {
         guard file.url.deletingLastPathComponent().standardizedFileURL.path == directory.standardizedFileURL.path,
-              file.url.lastPathComponent.hasSuffix("." + LogFileName.fileExtension)
+              file.url.lastPathComponent.hasSuffix("." + LogFileName.fileExtension),
+              !NavSidecarFile.isSidecar(file.url)
         else {
             throw LogStoreError.notInStore(path: file.url.path)
+        }
+        do {
+            try FileManager.default.removeItem(at: Self.navSidecarURL(for: file.url))
+        } catch let error as CocoaError where error.code == .fileNoSuchFile {
+            // No sidecar: a recording from before N4, or none was written.
         }
         try FileManager.default.removeItem(at: file.url)
     }

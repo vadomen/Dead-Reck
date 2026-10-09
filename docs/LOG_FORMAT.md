@@ -53,7 +53,14 @@ Current version: **3** (`LogFormatVersion.current`). Readable: **1, 2, 3**.
     member or a truncated tail: the bytes after it were never seen. Before
     the header is complete it makes the reader throw.
 - Line 1 is the header. Every later line is an event.
-- Recordings are never committed to git (see CLAUDE.md).
+- Companion file: a recording `Drive_<stamp>.jsonl.gz` may have a navigation
+  sidecar `Drive_<stamp>.nav.jsonl` in the same folder (N4, the live
+  navigation estimates; `NavSidecarFile.url(forRecording:)` is the one
+  definition of the name). It is **not** part of this format: it has its own
+  version, the logger and `inspect_log` never read it, and the app lists only
+  the `.jsonl.gz`, exporting and deleting the sidecar with it.
+- Recordings are never committed to git (see CLAUDE.md); `*.jsonl` covers
+  the sidecars too.
 
 ## Conventions
 
