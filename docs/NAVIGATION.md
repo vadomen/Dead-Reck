@@ -3,8 +3,8 @@
 Live dead reckoning without roads: a causal, deterministic estimator of
 position, heading and OBD speed scale, in `Core/Sources/DriveLoggerCore/Navigation/`
 (Foundation only), plus the Mac replay tool `replay_nav` that proves it on
-recorded drives. N4 runs the same engine in the app; nothing here touches the
-logger, the log format or `App/`.
+recorded drives. N4 runs the same engine live in the app (`NavigationService`,
+see "Live in the app"); nothing here touches the logger or the log format.
 
 Recordings, truth and replay output are private: they live outside the
 repository or in the git-ignored `logs/`. This document refers to drives only by
@@ -87,6 +87,18 @@ updates reweight only by what heading and scale actually predict.
       distance carries the integrated error, not the end value × dt. Heading
       and scale random walks are exact for any dt.
     - **Before initialisation:** the clock jumps.
+  - **Implausible forward jumps** (B0-1): an input arriving more than
+    `maxForwardJumpS` (1 h) after the latest input the engine accepted is
+    rejected and counted (`inputsRejectedTimeJump`). Without that, one corrupt
+    huge `t` moved the engine clock there and every later input was in the
+    past, so the engine never stepped again. A real resume after a longer
+    silence is taken from its second input: two inputs beyond the limit
+    within 10 s of each other (`forwardJumpConfirmS`). The first input of a
+    recording is always accepted. `accepts(_:)` tells a caller in advance.
+    Config validation (`NavigationConfig.validated()`, applied by the engine)
+    clamps `extrapolationHorizonS` to 0–3600 s, so an absurd `--set` cannot
+    overflow the nanosecond arithmetic in `estimate(at:)`. The counter is 0
+    on every acceptance drive.
   - Ordinary input never takes this path: motion samples step the grid every
     few milliseconds. The counters `coalescedSteps` and `macroSteps` are 0 on
     every acceptance drive.
@@ -251,7 +263,8 @@ every result.
 | staleParkedMotionG / staleParkedMotionTauS | 0.09 / 1 | after an OBD 0, stale = parked until the 1 s EMA of horizontal userAcceleration exceeds this |
 | reanchorDistanceM | 10 000 | re-anchor the local plane at the cloud's mean beyond this |
 | maxCatchUpSteps | 100 | most stale grid steps one `ingest` runs one by one; a longer stale stretch is folded (parked) or split into at most this many exact-OU macro steps (unknown speed) |
-| extrapolationHorizonS | 2 | `estimate(at:)` extrapolates at most this far past the last step; beyond it, it holds the position and grows the ellipse |
+| extrapolationHorizonS | 2 | `estimate(at:)` extrapolates at most this far past the last step; beyond it, it holds the position and grows the ellipse. Clamped to 0–3600 by validation |
+| maxForwardJumpS | 3600 | an input arriving more than this after the latest accepted one is rejected as a corrupt time (B0-1), unless a second one confirms a resume |
 | staleHeadingNoiseFactor | 3 | heading noise multiplier while stale |
 | maxMotionGapS | 0.5 | longer motion gaps contribute no yaw |
 | fixSigmaPerAccuracy | 1/1.51 | per-axis σ per metre of accuracy |
@@ -277,12 +290,42 @@ every result.
 
 ```bash
 cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-after <s>|mask-after-motion <s>|none] \
-  [--hold-out-acc <m>] [--truth ../logs/truth.json] [--seed N] [--particles N] \
-  [--set <configKey>=<number>] [--out ../logs/out]
+  [--hold-out-acc <m>] [--truth ../logs/truth.json] [--seed N|header] [--particles N] \
+  [--set <configKey>=<number>] [--out ../logs/out] \
+  [--as-live] [--compare <log.nav.jsonl> [--tolerance <m>] [--heading-tolerance <deg>]] \
+  [--write-sidecar <out.nav.jsonl>]
 ```
 
 - Inputs: motion, OBD, location and manualFix from any v1–v3 recording, fed in
-  arrival order (location by `receivedT ?? t`).
+  arrival order: by `t`, a location fix by `max(receivedT, t)`, ties in file
+  order.
+- `--seed header`: each log's seed is derived from its header's `sessionID`
+  (`NavigationSeed`), the seed the live app used.
+- `--as-live`: replay as the app ran live: file order, `--seed header` and the
+  default config (`--seed N`, `--particles` and `--set` are refused). File
+  order is the order the sink's tap delivered inputs to the live engine: a
+  location fix where it was written (on arrival, so close to arrival order),
+  but a CoreMotion batch where it was delivered, after OBD replies and fixes
+  that arrived in the meantime, not at its samples' own `t`. The normal replay
+  sorts by arrival, `max(receivedT, t)`, so the two differ in a few late
+  samples per batch, which changes the bits (not the accuracy). The mode label
+  gets `-as-live`.
+- `--compare <sidecar>` (one log): runs the app's per-recording loop
+  (`LiveNavigationRun`) over the inputs this replay gives its engine, then
+  compares its 1 Hz estimates and pins with the sidecar by `t`. It prints the
+  largest position, heading and ellipse differences, the sidecar's
+  `droppedInputs` and any navigation rows that failed to encode. It passes
+  when the result is exact, or within `--tolerance` (default 1 m) and
+  `--heading-tolerance` (default 0.1°). Exit status 4 on a failure. A seed or
+  config-hash mismatch is a warning. Format and verdicts:
+  [NAV_SIDECAR.md](NAV_SIDECAR.md).
+- `--write-sidecar <path>` (one log): writes the sidecar the app would have
+  written for the recording with no drops (same loop, file order, header seed,
+  default config).
+- **Pins**: the estimate just before each manual fix (its prior, the sidecar's
+  `pin`) is in `metrics.json` (`pins`), `metrics.md`, the summary ("Pin
+  estimate") and the GeoJSON (`pinEstimate` point and `pinEllipse95` polygon,
+  after every other feature).
 - `--gps use`: every fix. `mask-after s`: no fix with `t` > s.
   `mask-after-motion s`: no fix with `t` more than s seconds after motion
   starts (nothing is masked if the car never moves). `none`: no fixes
@@ -322,6 +365,57 @@ file name. The values here are illustrative:
     "points": [ { "t": 100.0, "latitude": 0.0, "longitude": 0.0, "sigmaM": 30, "source": "…" } ],
     "note": "unknown keys are ignored" } }
 ```
+
+## Live in the app (N4 B)
+
+`App/Sources/Navigation/NavigationService.swift` is an actor, off the main
+thread, wired in `AppServices` through `RecordingSession.onNavigationFeed`.
+For every recording it:
+- builds a fresh engine with `NavigationConfig(seed: NavigationSeed.derive(header:))`
+  and the default config, so a relaunch mid-drive is a new recording with a
+  new engine;
+- consumes the recording's tap stream (file order) through Core's
+  `LiveNavigationRun`, the loop `replay_nav --compare` also runs;
+- writes the sidecar `<recording>.nav.jsonl` ([NAV_SIDECAR.md](NAV_SIDECAR.md)):
+  the header, an estimate every session second, and a pin at each manual fix;
+- measures engine time per 10 Hz step with `ContinuousClock` (EMA and
+  maximum);
+- answers `snapshot(at:)` with a `NavigationSnapshot` (estimate, ellipse,
+  heading, `converged`, `initialized`, ms/step, ESS, heading std, speed scale,
+  `droppedInputs`) on the recording's session clock.
+
+**N4 B acceptance** (release build, Mac, seeds 1–5): every acceptance replay
+is bit-identical to N4-B0 in every `metrics.json` field and every existing
+GeoJSON feature, except ms/step. The GeoJSON of the two drives with manual
+fixes gains `pinEstimate`/`pinEllipse95` features at the end, whose values
+equal the manualFix checkpoints' estimates and ellipses. On manual-3,
+`--write-sidecar` followed by `--as-live --compare` matched 1317 estimates and
+3 pins exactly.
+
+**What the live app would have shown (`--as-live`, one run per drive, header
+seed).** The middle column uses the same seed in the normal (arrival) order,
+so the two differ only in input order.
+
+| alias | criterion | as-live | arrival order, same seed | N4-B0 seeds 1–5 | stale fixes ignored, as-live / arrival |
+|---|---|---|---|---|---|
+| clean-long | max ≤ 30 m | 18.78 m | 19.06 m | 18.19–20.20 m | 0 / 0 |
+| clean | max ≤ 30 m | 10.76 m | 13.88 m | 12.25–16.89 m | 0 / 0 |
+| manual | truth point 1 ≤ 200 m | 53.5 m | 51.2 m | 47.43–57.42 m | 0 / 0 |
+| jammed-A | end ≤ 2.5 % | 1.20 % | 1.28 % | 1.02–1.26 % | 1 / 0 |
+| jammed-B | end ≤ 2.5 % | 1.54 % | 1.37 % | 0.93–1.39 % | 1 / 0 |
+| manual-3 (sanity) | pin priors | 320 / 435 / 128 m [2/3] | 103 / 458 / 131 m [2/3] | 103–104 / 458–473 / 128–131 m | 1 / 0 |
+
+Every criterion passes as live, and every run keeps its ellipse consistency.
+The order matters in one systematic way. OBD rows are written up to 0.27 s
+after their own `t` (the reply time), because the link's event reaches the
+recorder later. At Start, the pre-session fix is therefore written before the
+first OBD 0. In arrival order the engine sees the car is stopped and accepts
+the stale fix with grown σ. Live it does not know that yet, ignores the fix as
+stale, and initialises from a later one. On manual-3 this moves pin 1 from
+103 m to 320 m. It is a candidate for N3 (backlog N4B-1): for example, the
+service could feed inputs through a short (~0.3 s) arrival-order buffer, or
+the engine could hold a stale fix until OBD is known. It is not changed here,
+because N4 B must leave the engine bit-identical.
 
 ## Adoption rule for engine changes
 
@@ -659,3 +753,8 @@ on seeds 1–5 with std 0.03), with at most 1 of 283 withheld fixes inside the
   silence costs at most about 20 single steps plus 100 macro steps.
 - Behaviour across an OBD dropout while driving (stale-speed growth) and after
   ignition off at the end of a drive.
+- N4 B, live: ms/step with 2000 particles on the iPhone (overlay and the
+  sidecar's `msPerStep`/`maxStepMs`); the time of the first ingest after a
+  long suspension; and whether `replay_nav --as-live --compare` on a phone's
+  sidecar is exact on an arm64 Mac (R13.1-7). If not, it must pass within the
+  default tolerance with no unexplained cause.
