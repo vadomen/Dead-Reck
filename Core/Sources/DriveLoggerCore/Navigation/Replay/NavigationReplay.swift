@@ -66,6 +66,10 @@ public struct ReplayOptions: Hashable, Sendable {
     /// file order, the seed derived from the header, the default config.
     /// Only the label depends on it; the caller orders the inputs.
     public var asLive = false
+    /// Inputs in file order with any seed and config (`replay_nav
+    /// --file-order`): the live order, for seed sweeps. Only the label
+    /// depends on it; `asLive` implies it.
+    public var fileOrder = false
 
     public init(gps: GPSMode, holdOutAccuracyM: Double? = nil, config: NavigationConfig = NavigationConfig()) {
         self.gps = gps
@@ -76,7 +80,7 @@ public struct ReplayOptions: Hashable, Sendable {
     public var label: String {
         var label = gps.label
         if let holdOutAccuracyM { label += "-holdout-\(GPSMode.format(holdOutAccuracyM))" }
-        if asLive { label += "-as-live" }
+        if asLive { label += "-as-live" } else if fileOrder { label += "-file-order" }
         return label
     }
 }

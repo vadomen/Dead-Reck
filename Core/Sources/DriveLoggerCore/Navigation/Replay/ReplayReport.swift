@@ -115,7 +115,7 @@ public enum ReplayReport {
         lines.append(String(format: "Engine        %.3f ms/step (max ingest %.2f ms), %d particles, seed %llu",
                             result.msPerStep, result.maxIngestMs, result.config.particleCount, result.config.seed))
         let c = result.counters
-        lines.append("Fixes         used \(c.fixesUsed) (network \(c.networkFixesUsed)), ignored stale \(c.fixesIgnoredStale), invalid \(c.fixesIgnoredInvalid), withheld \(result.fixes.filter { $0.withheld != nil }.count)")
+        lines.append("Fixes         used \(c.fixesUsed) (network \(c.networkFixesUsed)), ignored stale \(c.fixesIgnoredStale), held \(c.fixesHeld) (used \(c.heldFixesUsed), dropped moving \(c.heldFixesDroppedMoving) / timeout \(c.heldFixesDroppedTimeout) / replaced \(c.heldFixesReplaced)), invalid \(c.fixesIgnoredInvalid), withheld \(result.fixes.filter { $0.withheld != nil }.count)")
         lines.append("Updates       course \(c.courseUpdates), speed \(c.speedUpdates), reseeds \(c.reseeds), manual \(c.manualFixes) (resets \(c.manualResets)), resamples \(c.resamples), ZUPT steps \(c.zuptSteps), stale-speed steps \(c.staleSpeedSteps), parked-stale steps \(c.staleParkedSteps), caught up in bulk \(c.coalescedSteps) (macro steps \(c.macroSteps))")
         let held = result.heldOutFixes
         if !held.isEmpty {

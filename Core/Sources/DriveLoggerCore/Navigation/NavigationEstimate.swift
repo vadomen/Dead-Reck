@@ -99,7 +99,24 @@ public struct NavigationCounters: Hashable, Sendable, Codable {
     public var fixesUsed = 0
     /// Fixes without a valid speed (cell tower, Wi-Fi).
     public var networkFixesUsed = 0
+    /// Stale fixes (older than `maxFixAgeS`) not used: rejected on arrival
+    /// while fresh OBD said the car was moving, or held and then dropped
+    /// (`heldFixesDroppedMoving`, `heldFixesDroppedTimeout`,
+    /// `heldFixesReplaced`).
     public var fixesIgnoredStale = 0
+    /// Stale fixes held because OBD could not yet say whether the car was
+    /// stopped (N4B-1). Each one ends used, dropped, or still held when the
+    /// input ends (`NavigationEngine.hasHeldFix`).
+    public var fixesHeld = 0
+    /// Held fixes applied once a fresh OBD 0 arrived (also in `fixesUsed`).
+    public var heldFixesUsed = 0
+    /// Held fixes dropped because the deciding OBD reply said moving.
+    public var heldFixesDroppedMoving = 0
+    /// Held fixes dropped because no deciding OBD reply came within
+    /// `NavigationConfig.heldFixTimeoutS`.
+    public var heldFixesDroppedTimeout = 0
+    /// Stale fixes dropped because only one is held: the older of two.
+    public var heldFixesReplaced = 0
     public var fixesIgnoredInvalid = 0
     public var courseUpdates = 0
     public var speedUpdates = 0
@@ -123,4 +140,44 @@ public struct NavigationCounters: Hashable, Sendable, Codable {
     public var inputsRejectedTimeJump = 0
 
     public init() {}
+}
+
+extension NavigationCounters {
+    private enum CodingKeys: String, CodingKey {
+        case steps, zuptSteps, staleSpeedSteps, staleParkedSteps, fixesUsed, networkFixesUsed, fixesIgnoredStale
+        case fixesHeld, heldFixesUsed, heldFixesDroppedMoving, heldFixesDroppedTimeout, heldFixesReplaced
+        case fixesIgnoredInvalid, courseUpdates, speedUpdates, reseeds, manualFixes, manualResets, resamples
+        case reanchors, coalescedSteps, macroSteps, inputsRejectedTimeJump
+    }
+
+    /// Decodes counters written by any earlier build: a counter it did not
+    /// have is 0, so `replay_nav` can merge older `metrics.json` runs.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func value(_ key: CodingKeys) throws -> Int { try c.decodeIfPresent(Int.self, forKey: key) ?? 0 }
+        self.init()
+        steps = try value(.steps)
+        zuptSteps = try value(.zuptSteps)
+        staleSpeedSteps = try value(.staleSpeedSteps)
+        staleParkedSteps = try value(.staleParkedSteps)
+        fixesUsed = try value(.fixesUsed)
+        networkFixesUsed = try value(.networkFixesUsed)
+        fixesIgnoredStale = try value(.fixesIgnoredStale)
+        fixesHeld = try value(.fixesHeld)
+        heldFixesUsed = try value(.heldFixesUsed)
+        heldFixesDroppedMoving = try value(.heldFixesDroppedMoving)
+        heldFixesDroppedTimeout = try value(.heldFixesDroppedTimeout)
+        heldFixesReplaced = try value(.heldFixesReplaced)
+        fixesIgnoredInvalid = try value(.fixesIgnoredInvalid)
+        courseUpdates = try value(.courseUpdates)
+        speedUpdates = try value(.speedUpdates)
+        reseeds = try value(.reseeds)
+        manualFixes = try value(.manualFixes)
+        manualResets = try value(.manualResets)
+        resamples = try value(.resamples)
+        reanchors = try value(.reanchors)
+        coalescedSteps = try value(.coalescedSteps)
+        macroSteps = try value(.macroSteps)
+        inputsRejectedTimeJump = try value(.inputsRejectedTimeJump)
+    }
 }

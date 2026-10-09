@@ -132,6 +132,25 @@ updates reweight only by what heading and scale actually predict.
     per-particle history.
   - **Stale fixes** (age > 10 s at arrival) are ignored unless OBD says the car
     is stopped.
+  - **Held stale fix** (N4-B1, backlog N4B-1): a stale fix that arrives
+    before OBD can say whether the car is stopped (no reply yet, or only a
+    stale one) is held, not dropped. The first OBD reply that is fresh at the
+    fix's arrival (its `t` at most `obdMaxAgeS` before it) decides:
+    - 0: the fix is applied as if it had arrived at max(its arrival, the
+      reply's `t`). Live, the reply's `t` is before the arrival (the row is
+      written late), so the fix keeps its own arrival, and its age, stale σ
+      and latency shift are bit-identical to an arrival-order replay. A
+      later reply makes the wait part of the fix's age.
+    - moving: the fix is dropped, as it would have been on arrival.
+    - no such reply within `heldFixTimeoutS` (5 s) of the arrival: dropped.
+
+    One fix is held, the newest by fix time. A newer stale fix carries the
+    same kind of information with less age, so a smaller σ; the
+    pre-session case delivers exactly one; one slot keeps the decision O(1).
+    Counters: `fixesHeld`, `heldFixesUsed`, `heldFixesDroppedMoving`,
+    `heldFixesDroppedTimeout`, `heldFixesReplaced`; every drop also counts
+    in `fixesIgnoredStale`. `heldFixTimeoutS` 0 restores the drop on
+    arrival.
   - **Course** is used when valid, GNSS speed ≥ 3 m/s, fresh OBD speed ≥ 3 m/s
     (GNSS reports a few m/s of noise while parked), and GNSS speed agrees with
     OBD within max(2 m/s, 15 %). That last gate rejects glitch fixes (the clean
@@ -272,6 +291,7 @@ every result.
 | networkFixInflation | 1.0 | extra σ factor for network fixes (any fix without a valid speed) |
 | networkFixCorrelationS | 60 | network-fix tempering window |
 | maxFixAgeS | 10 | older fixes ignored unless stopped |
+| heldFixTimeoutS | 5 | a stale fix arriving before OBD can say "stopped" is held this long for the first fresh OBD reply (0: used, moving: dropped); 0 disables holding (N4-B1) |
 | staleFixSigmaGrowthMps / staleFixAgeS | 1.0 / 5 | a fix older than staleFixAgeS at ingest gets σ += k × age (adopted in N2.3) |
 | courseMinSpeedMps | 3 | course needs this GNSS and OBD speed |
 | courseSigmaFloorDeg | 2 | course σ floor |
@@ -292,7 +312,7 @@ every result.
 cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-after <s>|mask-after-motion <s>|none] \
   [--hold-out-acc <m>] [--truth ../logs/truth.json] [--seed N|header] [--particles N] \
   [--set <configKey>=<number>] [--out ../logs/out] \
-  [--as-live] [--compare <log.nav.jsonl> [--tolerance <m>] [--heading-tolerance <deg>]] \
+  [--as-live | --file-order] [--compare <log.nav.jsonl> [--tolerance <m>] [--heading-tolerance <deg>]] \
   [--write-sidecar <out.nav.jsonl>]
 ```
 
@@ -310,6 +330,9 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   sorts by arrival, `max(receivedT, t)`, so the two differ in a few late
   samples per batch, which changes the bits (not the accuracy). The mode label
   gets `-as-live`.
+- `--file-order`: inputs in file order, as `--as-live`, but with any
+  `--seed`, `--particles` and `--set`: a seed sweep of the live order. The
+  mode label gets `-file-order`.
 - `--compare <sidecar>` (one log): runs the app's per-recording loop
   (`LiveNavigationRun`) over the inputs this replay gives its engine, then
   compares its 1 Hz estimates and pins with the sidecar by `t`. It prints the
@@ -412,10 +435,9 @@ recorder later. At Start, the pre-session fix is therefore written before the
 first OBD 0. In arrival order the engine sees the car is stopped and accepts
 the stale fix with grown σ. Live it does not know that yet, ignores the fix as
 stale, and initialises from a later one. On manual-3 this moves pin 1 from
-103 m to 320 m. It is a candidate for N3 (backlog N4B-1): for example, the
-service could feed inputs through a short (~0.3 s) arrival-order buffer, or
-the engine could hold a stale fix until OBD is known. It is not changed here,
-because N4 B must leave the engine bit-identical.
+103 m to 320 m. N4 B left the engine bit-identical; **N4-B1 fixes it** (backlog
+N4B-1): the engine now holds such a fix until the first fresh OBD reply, and
+the as-live runs use it like the arrival-order ones. Results: "N4-B1" below.
 
 ## Adoption rule for engine changes
 
@@ -653,6 +675,73 @@ only ms/step differs. Why each fix changes nothing here:
 The largest single `ingest` was 0.18 ms (0.94 ms in one reference run;
 timing only).
 
+### N4-B1: hold a stale fix until OBD is known (seeds 1–5, against N4 B)
+
+The engine change described under "Held stale fix" (backlog N4B-1). Judged
+with the mean-based adoption rule against N4 B (`logs/n4b/after`, identical
+to N4-B0). Release build, Mac, default config, `heldFixTimeoutS` 5.
+
+**Arrival order (the adoption runs).** Every acceptance replay is
+bit-identical to N4 B: all 30 runs, every `metrics.json` field except
+ms/step and the config (one new key), and every GeoJSON byte. In arrival
+order the first OBD 0 (its `t` 31–48 ms before the stale fix's arrival)
+always comes first, so no fix is ever held (`fixesHeld` 0 on all 30 runs).
+
+| alias | run | distance | criterion | N4 B mean (range) [inside 95 %] | N4-B1 mean (range) [inside 95 %] | Δ mean | allowed | end error | max error | converged at | ms/step |
+|---|---|---:|---|---|---|---:|---|---|---|---|---|
+| clean-long | mask-after 380 | 7.75 km | max ≤ 30 m | 18.90 m (18.19–20.20) [100 %] | 18.90 m (18.19–20.20) [100 %] | 0 | ≤ +2 m | 10.01 m (9.47–10.82)\* | 18.90 m | 0.02 km | 0.060 |
+| clean | mask-after 230 | 3.58 km | max ≤ 30 m | 13.94 m (12.25–16.89) [100 %] | 13.94 m (12.25–16.89) [100 %] | 0 | ≤ +2 m | 6.45 m (2.18–11.56)\* | 13.94 m | 0.03–0.04 km | 0.058 |
+| manual | use, hold-out 100 | 8.31 km | truth point 1 ≤ 200 m | 50.57 m (47.43–57.42) [100 %] | 50.57 m (47.43–57.42) [100 %] | 0 | ≤ +2.5 m | 67.29 m (63.79–76.10)\* | 259.78 m (pin prior) | 7.27–7.68 km (reported) | 0.063 |
+| jammed-A | use | 11.23 km | end ≤ 2.5 % | 1.147 % (1.02–1.26) [100 %] | 1.147 % (1.02–1.26) [100 %] | 0 | ≤ +0.1 pp | 128.82 m (114.97–141.80) | = end | 8.15 km | 0.065 |
+| jammed-B | use | 5.89 km | end ≤ 2.5 % | 1.068 % (0.93–1.39) [100 %] | 1.068 % (0.93–1.39) [100 %] | 0 | ≤ +0.1 pp | 62.91 m (55.06–82.11) | = end | 5.18–5.31 km | 0.061 |
+| manual-3 (sanity) | use | 12.05 km | reported | pins 103–104 / 458–473 / 128–131 m [2/3] | pins 103–104 / 458–473 / 128–131 m [2/3] | 0 | not gated | 129.87 m (128.32–131.28)\* | 463.46 m (458.14–472.96) | 1.72 km | 0.065 |
+
+\* no truth `end` for this drive: error at the last checkpoint. ms/step from
+a sequential seed-1 run; the largest single `ingest` was 0.18 ms.
+
+**File order, as live (`--file-order --seed 1…5`).** "Before" is the same
+build with `--set heldFixTimeoutS=0`, the old code path: with the header seed
+it reproduces the N4 B `--as-live` runs bit for bit (five drives checked,
+metrics and GeoJSON). Ignored / held-and-used stale fixes per seed in the
+last column.
+
+| alias | criterion | arrival order, seeds 1–5 | file order before | file order after (N4-B1) | stale fixes, before → after |
+|---|---|---|---|---|---|
+| clean-long | max ≤ 30 m | 18.90 m (18.19–20.20) [100 %] | 19.43 m (19.13–19.75) [100 %] | 19.43 m, identical | none |
+| clean | max ≤ 30 m | 13.94 m (12.25–16.89) [100 %] | 18.60 m (12.12–27.10) [100 %] | 18.60 m, identical | none |
+| manual | truth point 1 ≤ 200 m | 50.57 m (47.43–57.42) [100 %] | 49.81 m (45.84–55.54) [100 %] | 49.81 m, identical | none (held out) |
+| jammed-A | end ≤ 2.5 % | 1.147 % (1.02–1.26) [100 %] | 1.110 % (0.90–1.35) [100 %] | 1.140 % (1.01–1.25) [100 %] | 1 ignored → 1 used |
+| jammed-B | end ≤ 2.5 % | 1.068 % (0.93–1.39) [100 %] | 1.505 % (1.23–1.72) [100 %] | 1.075 % (0.93–1.38) [100 %] | 1 ignored → 1 used |
+| manual-3 (sanity) | pin priors | 103–104 / 458–473 / 128–131 m [2/3] | 318–320 / 442–450 / 127–133 m [2/3] | 103–104 / 458–472 / 129–131 m [2/3] | 1 ignored → 1 used |
+
+With the hold, file order and arrival order agree on every drive with a
+stale pre-session fix: jammed-A, jammed-B and manual-3 now initialise from
+the same fix with the same σ in both orders. What still differs is the order
+of late CoreMotion batches and OBD rows, which moves results within seed
+noise. That is visible on clean (file order 12–27 m against 12–17 m), with or
+without the hold: clean has no stale fix. Every criterion passes on every
+seed in both orders, and consistency is 100 % throughout.
+
+**Header seed (`--as-live`, what the app would have shown).** The middle
+column uses the same seed in arrival order.
+
+| alias | criterion | as-live, N4 B | as-live, N4-B1 | arrival order, same seed | stale fixes ignored / held and used, as-live N4-B1 |
+|---|---|---|---|---|---|
+| clean-long | max ≤ 30 m | 18.78 m | 18.78 m | 19.06 m | 0 / 0 |
+| clean | max ≤ 30 m | 10.76 m | 10.76 m | 13.88 m | 0 / 0 |
+| manual | truth point 1 ≤ 200 m | 53.5 m | 53.5 m | 51.2 m | 0 / 0 |
+| jammed-A | end ≤ 2.5 % | 1.20 % | 1.30 % | 1.28 % | 0 / 1 |
+| jammed-B | end ≤ 2.5 % | 1.54 % | 1.37 % | 1.37 % | 0 / 1 |
+| manual-3 (sanity) | pin priors | 320 / 435 / 128 m [2/3] | 103 / 458 / 131 m [2/3] | 103 / 458 / 131 m [2/3] | 0 / 1 |
+
+jammed-A gets 0.10 pp worse as live with this one seed (1.20 → 1.30 %),
+now 0.02 pp from its arrival-order value; over seeds 1–5 in file order its
+mean moves +0.03 pp (1.110 → 1.140 %), within seed noise. On manual-3 the
+held fix makes heading converge at 1.72 km instead of 4.52 km as live.
+`--write-sidecar` followed by `--as-live --compare` is exact on jammed-A
+(1005 estimates) and manual-3 (1376 estimates, 3 pins; 1317 before, because
+the engine now initialises at Start).
+
 ### N2.2 experiment: stale-fix σ grown by age (default off; superseded by N2.3)
 
 **Rule:** a fix from before the session (`t < 0`), or older than 5 s at ingest
@@ -755,6 +844,9 @@ on seeds 1–5 with std 0.03), with at most 1 of 283 withheld fixes inside the
   ignition off at the end of a drive.
 - N4 B, live: ms/step with 2000 particles on the iPhone (overlay and the
   sidecar's `msPerStep`/`maxStepMs`); the time of the first ingest after a
-  long suspension; and whether `replay_nav --as-live --compare` on a phone's
+  long suspension; at Start, how long after the pre-session fix the first
+  OBD speed reply comes (it must stay well inside `heldFixTimeoutS` 5 s;
+  the sidecar's first estimate should be within a second or two of Start
+  when the adapter is already connected); and whether `replay_nav --as-live --compare` on a phone's
   sidecar is exact on an arm64 Mac (R13.1-7). If not, it must pass within the
   default tolerance with no unexplained cause.

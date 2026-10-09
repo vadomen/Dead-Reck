@@ -6,13 +6,15 @@ import Foundation
 //   swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-after <s>|mask-after-motion <s>|none]
 //       [--hold-out-acc <m>] [--truth logs/truth.json] [--seed N|header] [--particles N]
 //       [--set <configKey>=<number>]... [--out logs/out]
-//       [--as-live] [--compare <log.nav.jsonl> [--tolerance <m>] [--heading-tolerance <deg>]]
+//       [--as-live | --file-order] [--compare <log.nav.jsonl> [--tolerance <m>] [--heading-tolerance <deg>]]
 //       [--write-sidecar <out.nav.jsonl>]
 //
 // --seed header: each log's seed is derived from its header's sessionID
 // (`NavigationSeed`), as the live app does. --as-live: replay as the app ran
 // live — inputs in file order (the tap's order), the header's seed and the
-// default config (no --seed, --particles or --set). --compare: run the
+// default config (no --seed, --particles or --set). --file-order: inputs
+// in file order, as live, with any seed and config (a seed sweep of the live
+// order); the label gets -file-order. --compare: run the
 // app's per-recording loop (`LiveNavigationRun`) over the same inputs and
 // compare its 1 Hz estimates and pins with the sidecar the app wrote (one
 // log only); see docs/NAV_SIDECAR.md. --write-sidecar: write the sidecar
@@ -40,7 +42,7 @@ func fail(_ message: String, status: Int32) -> Never {
 let usage = """
     usage: replay_nav <log.jsonl.gz>... [--gps use|mask-after <s>|mask-after-motion <s>|none] [--hold-out-acc <m>]
            [--truth <truth.json>] [--seed N|header] [--particles N] [--set <configKey>=<number>]... [--out <dir>]
-           [--as-live] [--compare <sidecar.nav.jsonl> [--tolerance <m>] [--heading-tolerance <deg>]]
+           [--as-live | --file-order] [--compare <sidecar.nav.jsonl> [--tolerance <m>] [--heading-tolerance <deg>]]
            [--write-sidecar <out.nav.jsonl>]
     """
 
@@ -56,6 +58,7 @@ var seedFromHeader = false
 var explicitSeed = false
 var explicitParticles = false
 var asLive = false
+var fileOrder = false
 var comparePath: String?
 var writeSidecarPath: String?
 var tolerance = SidecarComparison.Tolerance.default
@@ -96,6 +99,8 @@ while !arguments.isEmpty {
         explicitParticles = true
     case "--as-live":
         asLive = true
+    case "--file-order":
+        fileOrder = true
     case "--compare":
         comparePath = value()
     case "--write-sidecar":
@@ -165,6 +170,7 @@ if config.validated() != config {
 }
 var baseOptions = ReplayOptions(gps: gps, holdOutAccuracyM: holdOut, config: config)
 baseOptions.asLive = asLive
+baseOptions.fileOrder = asLive || fileOrder
 if asLive && (gps != .use || holdOut != nil) {
     print("note: --as-live with \(baseOptions.label): the live app received every fix; this run withholds some")
 }
@@ -175,7 +181,7 @@ do {
     fail("cannot create \(outPath): \(error)", status: 1)
 }
 
-print("Config (\(seedFromHeader ? "seed from each log's header" : "seed \(config.seed)"), \(config.particleCount) particles\(asLive ? ", as live: file order" : "")):")
+print("Config (\(seedFromHeader ? "seed from each log's header" : "seed \(config.seed)"), \(config.particleCount) particles\(asLive ? ", as live: file order" : fileOrder ? ", file order" : "")):")
 print(ReplayReport.configJSON(config))
 print("")
 var compareFailed = false
@@ -194,7 +200,7 @@ for path in paths {
     } catch {
         fail("cannot read \(path): \(error)", status: 1)
     }
-    inputs = asLive ? NavigationReplay.fileOrderInputs(from: events) : NavigationReplay.inputs(from: events)
+    inputs = baseOptions.fileOrder ? NavigationReplay.fileOrderInputs(from: events) : NavigationReplay.inputs(from: events)
     if let writeSidecarPath {
         // Exactly the app's loop: file order, header seed, default config.
         var run = LiveNavigationRun(header: header, appBuild: "replay_nav")
@@ -258,7 +264,7 @@ for path in paths {
             sidecar: contents, replay: lines, replayConfig: NavigationEngine(config: options.config).config,
             encodingFailures: NavigationReplay.encodingFailures(in: events).count
         )
-        print("Sidecar       \(URL(fileURLWithPath: comparePath).lastPathComponent): \(contents.estimates.count) estimates, \(contents.pins.count) pins, app build \(contents.header.appBuild)\(asLive ? "" : " (not --as-live: arrival order)")")
+        print("Sidecar       \(URL(fileURLWithPath: comparePath).lastPathComponent): \(contents.estimates.count) estimates, \(contents.pins.count) pins, app build \(contents.header.appBuild)\(asLive ? "" : fileOrder ? " (--file-order, not --as-live)" : " (not --as-live: arrival order)")")
         print(comparison.report(tolerance: tolerance))
         if !comparison.passes(tolerance) { compareFailed = true }
     }

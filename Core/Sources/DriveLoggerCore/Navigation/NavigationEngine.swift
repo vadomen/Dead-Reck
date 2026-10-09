@@ -49,6 +49,16 @@ import Foundation
 /// compared after shifting it by the engine's own mean displacement since
 /// `t`, from a short history of cumulative mean motion — causal and without
 /// per-particle history.
+///
+/// **Held stale fix** (N4B-1): a stale fix (older than `maxFixAgeS`) is
+/// used only while the car is stopped. When it arrives before OBD can say
+/// so — no OBD reply yet, or only a stale one — it is held, not dropped,
+/// and the first OBD reply that is fresh at its arrival decides: 0 applies
+/// it as if it had arrived then, moving drops it, and no such reply within
+/// `heldFixTimeoutS` drops it. At most one fix is held; a newer one
+/// replaces it. Live, the pre-session fix is written before the first OBD
+/// 0, whose row lands up to 0.27 s after its own `t`; holding makes file
+/// order and arrival order agree.
 public struct NavigationEngine: Sendable {
     public let config: NavigationConfig
 
@@ -109,6 +119,17 @@ public struct NavigationEngine: Sendable {
 
     private var lastNetworkFixNs: Int64?
 
+    /// A stale fix waiting for OBD to say whether the car is stopped
+    /// (N4B-1). At most one: see `holdStaleFix`.
+    private struct HeldFix: Sendable {
+        var sample: LocationSample
+        var fixNs: Int64
+        var arrivalNs: Int64
+    }
+    private var heldFix: HeldFix?
+    /// Whether a stale fix is held, waiting for a fresh OBD reply.
+    public var hasHeldFix: Bool { heldFix != nil }
+
     // Implausible forward time jumps (B0-1): the latest accepted arrival,
     // and the arrival of the last input rejected as a jump.
     private var lastInputNs: Int64?
@@ -147,12 +168,15 @@ public struct NavigationEngine: Sendable {
         }
         jumpCandidateNs = nil
         lastInputNs = max(lastInputNs ?? arrival, arrival)
+        expireHeldFix(at: arrival)
         switch input {
         case .motion(let sample, let t):
             ingestMotion(sample, at: t.nanoseconds)
         case .obd(let sample, let t):
             advance(to: t.nanoseconds)
-            ingestOBD(sample, at: t.nanoseconds)
+            if ingestOBD(sample, at: t.nanoseconds) {
+                resolveHeldFix(obdNs: t.nanoseconds)
+            }
         case .location(let sample, let t):
             let arrival = input.arrival.nanoseconds
             advance(to: arrival)
@@ -306,16 +330,20 @@ public struct NavigationEngine: Sendable {
         return value.isFinite ? value : nil
     }
 
-    private mutating func ingestOBD(_ sample: OBDSample, at ns: Int64) {
+    /// Takes a vehicle-speed reply from the primary ECU; returns whether it
+    /// was one (anything else is ignored).
+    @discardableResult
+    private mutating func ingestOBD(_ sample: OBDSample, at ns: Int64) -> Bool {
         guard sample.pid == .vehicleSpeed,
               sample.ecu == nil || sample.ecu == Self.primaryECU,
-              sample.value.isFinite, sample.value >= 0 else { return }
+              sample.value.isFinite, sample.value >= 0 else { return false }
         obdSpeedKmh = sample.value
         obdNs = ns
         parkedSinceZero = sample.value == 0
         // A fresh 0 says the car is stopped now: braking deceleration still
         // in the EMA is not evidence of motion since (R13.2-2).
         if sample.value == 0 { motionEMA = .zero }
+        return true
     }
 
     /// Updates the horizontal-acceleration EMA and clears the parked latch
@@ -666,7 +694,13 @@ public struct NavigationEngine: Sendable {
         }
         let age = max(0, Double(arrivalNs - fixNs) / 1e9)
         if age > config.maxFixAgeS && !isStopped(at: arrivalNs) {
-            counters.fixesIgnoredStale += 1
+            if isFresh(at: arrivalNs) || !(config.heldFixTimeoutS > 0) {
+                // OBD says the car is moving (or holding is off).
+                counters.fixesIgnoredStale += 1
+            } else {
+                // OBD cannot say yet whether the car is stopped (N4B-1).
+                holdStaleFix(HeldFix(sample: sample, fixNs: fixNs, arrivalNs: arrivalNs))
+            }
             return
         }
         // No Doppler speed: a cell-tower or Wi-Fi position, whatever its
@@ -745,6 +779,61 @@ public struct NavigationEngine: Sendable {
         }
         normalizeWeights()
         resampleIfNeeded()
+    }
+
+    // MARK: Held stale fix (N4B-1)
+
+    /// Holds `fix`, a stale fix that arrived while OBD could not say whether
+    /// the car is stopped. One fix at most, the newest by fix time: a newer
+    /// stale fix carries the same kind of information with less age, so its
+    /// σ is smaller and keeping both would only add a second, older copy of
+    /// a cached position (the pre-session case delivers exactly one). One
+    /// slot also keeps the decision O(1) and the memory fixed. The fix not
+    /// kept is dropped and counted.
+    private mutating func holdStaleFix(_ fix: HeldFix) {
+        if let held = heldFix {
+            counters.heldFixesReplaced += 1
+            counters.fixesIgnoredStale += 1
+            guard fix.fixNs >= held.fixNs else { return }
+        }
+        counters.fixesHeld += 1
+        heldFix = fix
+    }
+
+    /// Drops the held fix once `ns` is more than `heldFixTimeoutS` after its
+    /// arrival with no OBD reply having decided it. Checked at every input,
+    /// before the input itself, so an OBD reply exactly at the limit still
+    /// decides.
+    private mutating func expireHeldFix(at ns: Int64) {
+        guard let held = heldFix,
+              Double(ns) - Double(held.arrivalNs) > config.heldFixTimeoutS * 1e9 else { return }
+        heldFix = nil
+        counters.heldFixesDroppedTimeout += 1
+        counters.fixesIgnoredStale += 1
+    }
+
+    /// A vehicle-speed reply at `obdNs` has just been ingested: if it is
+    /// fresh at the held fix's arrival (no more than `obdMaxAgeS` before
+    /// it; any later reply is too), it decides. 0: the fix is applied as if
+    /// it had arrived at max(its arrival, the reply) — the same instant
+    /// arrival order gives it: when the reply's `t` is before the fix's
+    /// arrival (the live pre-session case: the row is written late), the
+    /// fix keeps its own arrival, so its age, stale σ and latency shift are
+    /// bit-identical to an arrival-order replay; when the reply comes later,
+    /// the fix counts as arriving with it, and its age includes the wait.
+    /// Moving: the fix is dropped, as it would have been on arrival. An
+    /// older reply leaves it held.
+    private mutating func resolveHeldFix(obdNs: Int64) {
+        guard let held = heldFix,
+              Double(obdNs) >= Double(held.arrivalNs) - config.obdMaxAgeS * 1e9 else { return }
+        heldFix = nil
+        if obdSpeedKmh == 0 {
+            counters.heldFixesUsed += 1
+            ingestLocation(held.sample, fixNs: held.fixNs, arrivalNs: max(held.arrivalNs, obdNs))
+        } else {
+            counters.heldFixesDroppedMoving += 1
+            counters.fixesIgnoredStale += 1
+        }
     }
 
     /// Extra σ of a stale fix: `staleFixSigmaGrowthMps × age` when the fix

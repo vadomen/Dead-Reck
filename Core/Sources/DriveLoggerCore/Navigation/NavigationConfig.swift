@@ -136,6 +136,17 @@ public struct NavigationConfig: Hashable, Sendable, Codable {
     public var staleFixAgeS = 5.0
     /// A fix older than this at arrival is ignored unless the car is stopped.
     public var maxFixAgeS = 10.0
+    /// Such a stale fix arriving before OBD can say whether the car is
+    /// stopped (no reply yet, or only a stale one) is held, not dropped,
+    /// for at most this long, s; the first OBD reply fresh at its arrival
+    /// decides (0: used, moving: dropped). One fix is held, the newest
+    /// (N4B-1). Live, the pre-session fix is written before the first OBD
+    /// 0, whose row lands up to 0.27 s after its own `t`; on the replay set
+    /// that reply's `t` is 31–48 ms before the fix's arrival. 5 s covers a
+    /// few OBD poll cycles and a slow first reply while leaving the stale
+    /// σ growth (1 m/s × the wait) small. 0 (or less) disables holding:
+    /// the fix is dropped on arrival, as before N4-B1.
+    public var heldFixTimeoutS = 5.0
     /// GNSS course is used only above this OBD/GNSS speed, m/s.
     public var courseMinSpeedMps = 3.0
     /// Lower bound on the course σ, degrees.
