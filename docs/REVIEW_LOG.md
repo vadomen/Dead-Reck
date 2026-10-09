@@ -589,3 +589,30 @@ bug found.
 
 Tests after fix: `cd Core && swift test` 559 tests in 86 suites pass. No App/
 change, so no simulator build was needed for this round.
+
+### Round 2
+
+Fresh reviewer, range 80fb354..7bbbd90. R11.1-1..3 verified fixed: the reviewer
+re-applied each mutation to a scratch copy of Core and the new tests failed under
+every one. The `towerTemper` extraction is the same expression as before. Fresh
+review of causality, determinism, filter maths, invariants and performance found
+no further defect apart from the findings below. `swift test --filter Navigation`
+29/29 green.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R11.2-1 | MAJOR | A fresh OBD zero (ZUPT) returns before the stale-offset reset, so `speedOffset` keeps the random walk from an earlier dropout; the next dropout starts at ~21 m/s RMS and the ellipse grows ~390 m in 10 s while parked. | CONFIRMED | Verified `NavigationEngine.swift:218-225` returns before the reset at `:230-233`; this contradicts the comment at `:56`. |
+| R11.2-2 | MINOR | The latency shift is biased forward by up to one 10 Hz step of motion. | DEFERRED | BACKLOG |
+| R11.2-3 | MINOR | Initialisation ignores the fix's age. | DEFERRED | BACKLOG |
+| R11.2-4 | MINOR | `metrics.json` that no longer decodes is replaced silently. | DEFERRED | BACKLOG |
+
+Fix: R11.2-1 by `navigation-engineer`, with a regression test written first.
+
+Fixed in a30b1e4: the ZUPT branch resets speed offsets through
+`resetSpeedOffsets()`, and only when they are set, so a normal stop stays
+loop-free. Regression test `staleOffsetsResetOnZUPT` failed before the fix
+(offset RMS 9.1 m/s through the ZUPT; variance growth ratio 13.2) and passes
+after. Acceptance checkpoint errors are unchanged: the drives' only stale
+periods are the final OBD loss at ignition-off, with no fresh zero after them.
+
+Tests after fix: `cd Core && swift test` 560 tests in 86 suites pass.
