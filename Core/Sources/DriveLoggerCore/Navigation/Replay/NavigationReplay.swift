@@ -193,6 +193,11 @@ public struct ReplayResult: Hashable, Sendable, Codable {
         /// Whether the truth lies inside the engine's 95 % ellipse.
         public var inside95: Bool?
         public var headingStdDeg: Double?
+        /// The engine's 95 % ellipse at `t`: semi-axes (m) and bearing of
+        /// the major axis (degrees).
+        public var ellipseSemiMajorM: Double?
+        public var ellipseSemiMinorM: Double?
+        public var ellipseOrientationDeg: Double?
     }
 
     public struct TrackPoint: Hashable, Sendable, Codable {
@@ -370,7 +375,7 @@ private struct ReplayRun {
                                           longitude: sample.longitude, sigma: sample.horizontalAccuracy))
             case .manualFix(let sample, let t):
                 schedule.append(Scheduled(t: t.nanoseconds, kind: .manualFix, latitude: sample.latitude,
-                                          longitude: sample.longitude, sigma: options.config.manualFixSigmaM))
+                                          longitude: sample.longitude, sigma: options.config.manualFixSigma(mapSpanM: sample.mapSpanM)))
             default:
                 continue
             }
@@ -404,6 +409,9 @@ private struct ReplayRun {
             checkpoint.estimateLongitude = estimate.longitude
             checkpoint.inside95 = estimate.ellipse.contains(dEast: dEast, dNorth: dNorth)
             checkpoint.headingStdDeg = estimate.headingStdDeg
+            checkpoint.ellipseSemiMajorM = estimate.ellipse.semiMajorM
+            checkpoint.ellipseSemiMinorM = estimate.ellipse.semiMinorM
+            checkpoint.ellipseOrientationDeg = estimate.ellipse.orientationDeg
         }
         checkpoints.append(checkpoint)
     }

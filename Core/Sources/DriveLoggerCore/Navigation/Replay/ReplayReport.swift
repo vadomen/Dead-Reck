@@ -68,6 +68,11 @@ public enum ReplayReport {
         return String(format: "%.2f %%", value)
     }
 
+    static func ellipse(_ cp: ReplayResult.Checkpoint) -> String {
+        guard let a = cp.ellipseSemiMajorM, let b = cp.ellipseSemiMinorM, let o = cp.ellipseOrientationDeg else { return "n/a" }
+        return String(format: "%.0f × %.0f m @ %.0f°", a, b, o)
+    }
+
     static func km(_ value: Double?) -> String {
         guard let value else { return "never" }
         return String(format: "%.2f km", value / 1000)
@@ -98,7 +103,8 @@ public enum ReplayReport {
                 let sigma = cp.headingStdDeg.map { String(format: "%.1f", $0) } ?? "n/a"
                 let inside = cp.inside95.map { $0 ? "yes" : "no" } ?? "n/a"
                 lines.append(name + String(format: " t %.1f s, at %.0f m: ", cp.t, cp.distanceM)
-                    + "error \(m(cp.errorM)) m (\(pct(cp.errorPercent))), σhead \(sigma)°, inside 95 %: \(inside)")
+                    + "error \(m(cp.errorM)) m (\(pct(cp.errorPercent))), σhead \(sigma)°, inside 95 %: \(inside)"
+                    + ", truth σ \(m(cp.truthSigmaM)) m, 95 % ellipse \(ellipse(cp))")
             }
         }
         if let clean = byKind[.cleanFix], !clean.isEmpty {
@@ -131,14 +137,14 @@ public enum ReplayReport {
         out += "\n\\* no truth `end`: error at the last checkpoint.\n"
         for r in runs {
             out += "\n## \(r.logName) — \(r.mode)\n\n"
-            out += "| kind | t s | distance m | error m | % of distance | σ heading ° | inside 95 % |\n|---|---:|---:|---:|---:|---:|---|\n"
+            out += "| kind | t s | distance m | error m | % of distance | σ heading ° | inside 95 % | truth σ m | 95 % ellipse |\n|---|---:|---:|---:|---:|---:|---|---:|---|\n"
             for cp in r.checkpoints where cp.kind != .cleanFix {
-                out += "| \(cp.kind.rawValue) | \(String(format: "%.1f", cp.t)) | \(m(cp.distanceM)) | \(m(cp.errorM)) | \(pct(cp.errorPercent)) | \(cp.headingStdDeg.map { String(format: "%.1f", $0) } ?? "n/a") | \(cp.inside95.map { $0 ? "yes" : "no" } ?? "n/a") |\n"
+                out += "| \(cp.kind.rawValue) | \(String(format: "%.1f", cp.t)) | \(m(cp.distanceM)) | \(m(cp.errorM)) | \(pct(cp.errorPercent)) | \(cp.headingStdDeg.map { String(format: "%.1f", $0) } ?? "n/a") | \(cp.inside95.map { $0 ? "yes" : "no" } ?? "n/a") | \(m(cp.truthSigmaM)) | \(ellipse(cp)) |\n"
             }
             let clean = r.checkpoints.filter { $0.kind == .cleanFix }
             if !clean.isEmpty {
                 let errors = clean.compactMap(\.errorM).sorted()
-                out += "| cleanFix ×\(clean.count) | | | median \(m(errors.isEmpty ? nil : errors[errors.count / 2])), max \(m(errors.last)) | | | \(clean.compactMap(\.inside95).filter { $0 }.count)/\(clean.count) |\n"
+                out += "| cleanFix ×\(clean.count) | | | median \(m(errors.isEmpty ? nil : errors[errors.count / 2])), max \(m(errors.last)) | | | \(clean.compactMap(\.inside95).filter { $0 }.count)/\(clean.count) | | |\n"
             }
             out += "\nSeed \(r.config.seed), \(r.config.particleCount) particles. Config:\n\n```json\n\(configJSON(r.config))\n```\n"
         }

@@ -234,4 +234,35 @@ struct NavigationEngineTests {
                                            rotationRate: .zero, attitude: .identity), at: S.ms(1.0)))
         #expect(try #require(engine.estimate(at: S.ms(1.0))).stationary)
     }
+
+    @Test("Manual-fix σ: max(30 m, mapSpanM / 12); 30 m without a usable span")
+    func manualFixSigmaRule() {
+        let config = NavigationConfig()
+        #expect(config.manualFixSigma(mapSpanM: nil) == 30)
+        #expect(config.manualFixSigma(mapSpanM: 1_248) == 104)
+        #expect(config.manualFixSigma(mapSpanM: 360) == 30)
+        #expect(config.manualFixSigma(mapSpanM: 372) == 31)
+        #expect(config.manualFixSigma(mapSpanM: 120) == 30)
+        for bad in [Double.nan, .infinity, -.infinity, 0, -500] {
+            #expect(config.manualFixSigma(mapSpanM: bad) == 30, "span \(bad)")
+        }
+        var custom = NavigationConfig()
+        custom.manualFixSigmaMinM = 10
+        custom.manualFixSpanDivisor = 20
+        #expect(custom.manualFixSigma(mapSpanM: 100) == 10 && custom.manualFixSigma(mapSpanM: 400) == 20)
+    }
+
+    @Test("The engine uses the pin's span: a manual fix on a 2400 m map initialises with σ = 200 m")
+    func manualFixSigmaInEngine() throws {
+        func initialised(span: Double?) throws -> NavigationEstimate {
+            var engine = NavigationEngine(config: S.config(particles: 50))
+            engine.ingest(.manualFix(ManualFixSample(latitude: 0, longitude: 0, pressedT: S.ms(0), mapSpanM: span,
+                                                     speedSource: "unknown"), at: S.ms(1)))
+            return try #require(engine.estimate(at: S.ms(1)))
+        }
+        let k = ErrorEllipse.chiSquare95.squareRoot()
+        #expect(abs(try initialised(span: 2_400).ellipse.semiMajorM - k * 200) < 1e-6)
+        #expect(abs(try initialised(span: nil).ellipse.semiMajorM - k * 30) < 1e-6)
+        #expect(abs(try initialised(span: 100).ellipse.semiMajorM - k * 30) < 1e-6)
+    }
 }

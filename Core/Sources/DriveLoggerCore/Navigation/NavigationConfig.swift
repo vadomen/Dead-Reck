@@ -35,7 +35,7 @@ public struct NavigationConfig: Hashable, Sendable, Codable {
     // MARK: Speed
 
     /// Prior on the OBD speed scale factor: mean and standard deviation.
-    public var scalePriorMean = 1.0
+    public var scalePriorMean = 1.016
     public var scalePriorStd = 0.03
     /// OBD vehicle speed is truncated to whole km/h; `v + offset` when `v > 0`.
     public var obdSpeedOffsetKmh = 0.5
@@ -98,8 +98,12 @@ public struct NavigationConfig: Hashable, Sendable, Codable {
 
     // MARK: Manual fixes
 
-    /// σ of a manual "I'm here" pin, metres.
-    public var manualFixSigmaM = 30.0
+    /// Smallest σ of a manual "I'm here" pin, metres; also the σ when the
+    /// fix has no usable `mapSpanM`.
+    public var manualFixSigmaMinM = 30.0
+    /// A pin placed on a map showing `mapSpanM` metres is good to about
+    /// span / this (a fingertip is roughly 1/12 of the screen).
+    public var manualFixSpanDivisor = 12.0
     /// If a manual fix leaves fewer than this fraction of effective
     /// particles, the prior had no support there: positions are reset
     /// around the pin, headings and scales kept.
@@ -125,4 +129,18 @@ public struct NavigationConfig: Hashable, Sendable, Codable {
     public var convergedHeadingStdDeg = 10.0
 
     public init() {}
+}
+
+extension NavigationConfig {
+    /// σ of a manual fix, metres: max(`manualFixSigmaMinM`,
+    /// mapSpanM / `manualFixSpanDivisor`), or `manualFixSigmaMinM` when the
+    /// span is missing, not finite or not positive. In heading-up the
+    /// logged span can be up to ~2.2× too large (M10.1-3), which errs
+    /// toward a larger σ: safe.
+    public func manualFixSigma(mapSpanM: Double?) -> Double {
+        guard let span = mapSpanM, span.isFinite, span > 0, manualFixSpanDivisor > 0 else {
+            return manualFixSigmaMinM
+        }
+        return max(manualFixSigmaMinM, span / manualFixSpanDivisor)
+    }
 }

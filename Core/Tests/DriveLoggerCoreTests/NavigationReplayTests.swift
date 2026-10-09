@@ -269,4 +269,21 @@ struct NavigationReplayTests {
         #expect(kinds.isSuperset(of: ["track", "ellipse95", "fixUsed", "fixWithheld", "truth"]))
         #expect(ReplayReport.summary(a).contains("End error"))
     }
+
+    @Test("Manual-fix checkpoints carry the span-derived σ and the engine's 95 % ellipse at the pin")
+    func manualFixCheckpointSigma() throws {
+        let drive = S(initialHeadingDeg: 30, initialSpeed: 10, [.straight(seconds: 30, speed: 10), .stop(seconds: 10)])
+        let pins = [(34.005, 1_248.0), (37.005, nil as Double?)].map { t, span in
+            LogEvent(timestamp: S.ms(t), payload: .manualFix(ManualFixSample(
+                latitude: 0, longitude: 0, pressedT: S.ms(t - 2), mapSpanM: span, speedSource: "obd")))
+        }
+        let events = drive.events(fix: { t, state, rng in S.at(t, 0) ? S.cleanFix()(t, state, &rng) : nil }, extra: pins)
+        let result = NavigationReplay.run(logName: "synthetic.jsonl.gz", inputs: NavigationReplay.inputs(from: events),
+                                          options: ReplayOptions(gps: .use, config: S.config(particles: 100)))
+        let manual = result.checkpoints.filter { $0.kind == .manualFix }
+        #expect(manual.map(\.truthSigmaM) == [104, 30])
+        let first = try #require(manual.first)
+        #expect(first.ellipseSemiMajorM != nil && first.ellipseSemiMinorM != nil && first.ellipseOrientationDeg != nil)
+        #expect(ReplayReport.summary(result).contains("truth σ 104 m, 95 % ellipse"))
+    }
 }

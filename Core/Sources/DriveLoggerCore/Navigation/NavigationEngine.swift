@@ -467,7 +467,7 @@ public struct NavigationEngine: Sendable {
         guard sample.latitude.isFinite, sample.longitude.isFinite,
               abs(sample.latitude) <= 90, abs(sample.longitude) <= 180 else { return }
         counters.manualFixes += 1
-        let sigma = config.manualFixSigmaM
+        let sigma = config.manualFixSigma(mapSpanM: sample.mapSpanM)
         guard let plane = tangentPlane else {
             initialize(latitude: sample.latitude, longitude: sample.longitude, sigma: sigma, heading: nil, at: ns)
             return
