@@ -683,3 +683,36 @@ The new tests discriminate under mutation. `swift test --filter Navigation` 36/3
   | jammed-A | ≤ 2.5 % | 1.02–1.26 % |
   | jammed-B | ≤ 2.5 % | 0.81–1.11 % |
   | manual-3 | reported only | pins 416 / 640 / 248 m, 0/3 inside |
+
+## Run 13 — whole navigation engine before N4 (80fb354..9753d19), started 2026-10-10
+
+Range: N2, N2.1 and N2.2 on main. Requested as a whole-engine review in place of an
+ultra review; its focus was interactions and N4 live-use readiness.
+
+### Round 1
+
+Reviewer: fresh `reviewer` agent. Result: 0 BLOCKER / 4 MAJOR / 5 MINOR.
+
+Verified clean:
+- causality and single-platform determinism;
+- log-normalised weights, isotropic PSD covariance, heading wrap, Double precision over 2 h;
+- bounded history ring;
+- late or out-of-order motion handling;
+- Sendable surface;
+- invariants and privacy.
+
+`swift test --filter Navigation` 37/37 green.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R13.1-1 | MAJOR | The manual-fix reset's ESS trigger fires when a pin is most informative (a ring-shaped cloud after km of unknown heading), then restores the prior weights, discarding the pin's heading information. Untested. | CONFIRMED | Verified `NavigationEngine.swift:499-505`: an ESS-only trigger restores `prior` weights. |
+| R13.1-2 | MAJOR | While OBD is silent after a stop, each particle's speed error random-walks unbounded: the ellipse reaches ~18 km after 5 min of ignition-off. New evidence beyond R11.1-7 (ellipse size, not mean drift). | CONFIRMED | Verified `:256-260`: `speedOffset += σ·n` with no decay or cap. |
+| R13.1-3 | MAJOR | The local plane is anchored once; GNSS true course is compared with plane heading without meridian convergence, so heading is biased ~Δλ·sin φ far from the anchor (−1.28° at 100 km east, lat 55°). Tests at lat 0 can't see it. | CONFIRMED | Verified `LocalTangentPlane.swift:41-47` (point-latitude cos φ, no rotation) and that the course is used as-is at `:374, :387`. |
+| R13.1-4 | MAJOR | No discriminating tests for the GNSS-vs-OBD speed gate, `estimate(at:)` extrapolation, the motion-gap guard, or turn-proportional heading noise. | CONFIRMED | Consistent with the reviewer's mutations and with runs 11 and 12; to be closed by tests shown to fail under each mutation. |
+| R13.1-5 | MINOR | Unbounded extrapolation horizon with a fixed ellipse. | DEFERRED | BACKLOG (N4 B) |
+| R13.1-6 | MINOR | Long gaps are caught up step by step in one `ingest`. | DEFERRED | BACKLOG (N4 B) |
+| R13.1-7 | MINOR | Exact cross-device compare depends on libm bits. | DEFERRED | BACKLOG (N4 B) |
+| R13.1-8 | MINOR | Untested replay metric checks; two denominators. | DEFERRED | BACKLOG |
+| R13.1-9 | MINOR | NAVIGATION.md drift. | DEFERRED | BACKLOG |
+
+Fix: R13.1-1..4 by `navigation-engineer` on branch `n2.3-review-fixes`.
