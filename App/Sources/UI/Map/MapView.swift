@@ -40,7 +40,10 @@ enum ThermalText {
 struct MapScreen: View {
     @Bindable var model: MapViewModel
     @AppStorage("map.headingUp") private var headingUp = false
+    /// Debug overlay with the navigation engine's numbers; nothing is logged.
+    @AppStorage("debug.navStats") private var showNavStats = false
     let session: RecordingSession
+    let navigation: NavigationFeed
     var isSelected: Bool
     /// Read once when the tab opens with no fix; the system's last position.
     var cachedLocation: @MainActor () -> CachedLocation?
@@ -62,7 +65,9 @@ struct MapScreen: View {
             manualFixes: model.manualFixes,
             manual: manualActions,
             recordingFile: model.currentFile,
-            cachedLocation: cachedLocation
+            cachedLocation: cachedLocation,
+            navigation: navigation,
+            showNavStats: $showNavStats
         )
         .onReceive(NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)) { _ in
             thermal = ProcessInfo.processInfo.thermalState
@@ -205,6 +210,9 @@ struct GPSMapView: View {
     var recordingFile: URL?
     /// Last known system position, read when the tab opens with no fix.
     var cachedLocation: @MainActor () -> CachedLocation? = { nil }
+    /// Live dead reckoning; nil in previews of the plain reference map.
+    var navigation: NavigationFeed?
+    @Binding var showNavStats: Bool
 
     @State private var position: MapCameraPosition = .automatic
     @State private var distance = 1500.0
@@ -229,12 +237,20 @@ struct GPSMapView: View {
     final class HeadingState {
         var smoother = HeadingSmoother()
         var gate = HeadingWriteGate()
+        /// The camera distance the driver chose (last camera report that was
+        /// not our own write); nil until they zoom. The ellipse fit widens
+        /// the view from this, never narrows it.
+        var userDistance: Double?
+        /// The distance of our latest camera write.
+        var writtenDistance = 0.0
     }
 
     struct HeadingInputs: Equatable {
         var fix: LocationSample?
         var bearing: Double?
         var frozen = false
+        var headingUp = false
+        var following = false
     }
 
     init(
@@ -245,7 +261,9 @@ struct GPSMapView: View {
         manual: ManualFixActions = .unavailable,
         recordingFile: URL? = nil,
         cachedLocation: @escaping @MainActor () -> CachedLocation? = { nil },
-        initialStaged: StagedFix? = nil
+        initialStaged: StagedFix? = nil,
+        navigation: NavigationFeed? = nil,
+        showNavStats: Binding<Bool> = .constant(false)
     ) {
         self.track = track
         self.latest = latest
@@ -261,6 +279,8 @@ struct GPSMapView: View {
         self.manual = manual
         self.recordingFile = recordingFile
         self.cachedLocation = cachedLocation
+        self.navigation = navigation
+        self._showNavStats = showNavStats
         self._staged = State(initialValue: initialStaged)
     }
 
@@ -271,11 +291,15 @@ struct GPSMapView: View {
                 if old == nil {
                     // First fix of a recording.
                     frame(center: fix.coordinate, accuracy: fix.horizontalAccuracy)
-                } else if follow.isFollowing {
-                    recenter(fix)
+                } else if follow.isFollowing, navigation?.latest == nil {
+                    // With a dead-reckoning estimate the 100 ms loop follows it.
+                    recenter(center: fix.coordinate)
                 }
             }
-            .onChange(of: HeadingInputs(fix: latest, bearing: bearing, frozen: isStationary), initial: true) { _, new in
+            .onChange(of: HeadingInputs(
+                fix: latest, bearing: bearing, frozen: isStationary,
+                headingUp: headingUp, following: follow.isFollowing
+            ), initial: true) { _, new in
                 inputs = new
             }
             .onChange(of: staged != nil) { _, isStaged in
@@ -296,7 +320,9 @@ struct GPSMapView: View {
                     if resumeIfDue() { return }
                 }
             }
-            .task(id: headingActive) { await runHeadingLoop() }
+            // One 100 ms loop while the map is visible and the scene active:
+            // polls the navigation feed, then turns/centres the camera.
+            .task(id: isLive) { await runLoop() }
             // Fires on reselect/foreground too.
             .onChange(of: isLive, initial: true) { _, live in
                 guard live else { return }
@@ -304,6 +330,8 @@ struct GPSMapView: View {
                 resumeIfDue()
                 if let fix = latest {
                     frame(center: fix.coordinate, accuracy: fix.horizontalAccuracy)
+                } else if let nav = navigation?.latest {
+                    frame(center: nav.position.coordinate, accuracy: nav.semiMajorM / 3)
                 } else if let cached = cachedLocation() {
                     // Camera only: no dot is drawn for it.
                     frame(
@@ -320,7 +348,7 @@ struct GPSMapView: View {
             }
             // No bearing: nothing to turn to; drop a stale smoothed heading.
             .onChange(of: bearing) { _, new in
-                if new == nil { headingState.smoother = HeadingSmoother() }
+                if new == nil, effectiveBearing == nil { headingState.smoother = HeadingSmoother() }
             }
             .task(id: lastFixInstant) {
                 isStale = false
@@ -339,9 +367,18 @@ struct GPSMapView: View {
             }
     }
 
-    /// The camera turns with the car: heading-up, following, a bearing exists.
-    private var headingActive: Bool {
-        headingUp && follow.isFollowing && isLive && bearing != nil
+    /// What heading-up turns to: the dead-reckoning heading once converged,
+    /// otherwise the GPS-course bearing (M4.3).
+    private var effectiveBearing: Double? {
+        let nav = navigation?.latest
+        return CameraHeading.targetBearing(
+            drHeading: nav?.headingDeg, converged: nav?.converged ?? false, gpsBearing: bearing
+        )
+    }
+
+    /// Where Following centres: the estimate once initialised, else the GPS fix.
+    private var followCenter: CLLocationCoordinate2D? {
+        FollowTarget.center(dr: navigation?.latest?.position, gps: latest?.geo)?.coordinate
     }
 
     /// Resumes Following if the deadline has passed. True when it did.
@@ -384,6 +421,7 @@ struct GPSMapView: View {
                 if isLive, staged != nil {
                     ManualFixPanel(
                         availability: manual.availability,
+                        visibleSpanM: visibleSpanM,
                         note: $note,
                         notRecorded: notRecorded,
                         onConfirm: confirm,
@@ -403,6 +441,9 @@ struct GPSMapView: View {
         MapReader { proxy in
             Map(position: $position) {
                 TrackOverlay(track: track)
+                if let navigation {
+                    NavOverlay(feed: navigation, headingUp: headingUp, cameraHeading: cameraHeading)
+                }
                 if let latest, let band = AccuracyBand(accuracy: latest.horizontalAccuracy) {
                     let c = color(band, stale: stale)
                     MapCircle(center: latest.coordinate, radius: latest.horizontalAccuracy)
@@ -432,6 +473,11 @@ struct GPSMapView: View {
             .onMapCameraChange(frequency: .onEnd) { context in
                 if MapChange.isSignificant(old: distance, new: context.camera.distance) {
                     distance = context.camera.distance
+                }
+                // Not our own write: the driver zoomed.
+                let written = headingState.writtenDistance
+                if written <= 0 || abs(context.camera.distance - written) / written > 0.03 {
+                    headingState.userDistance = context.camera.distance
                 }
                 if let span = MapFraming.visibleSpanMeters(latitudeDelta: context.region.span.latitudeDelta),
                    MapChange.isSignificant(old: visibleSpanM, new: span) {
@@ -491,9 +537,12 @@ struct GPSMapView: View {
             .onChanged { value in
                 guard !pressBegan, case .second(true, let drag?) = value else { return }
                 pressBegan = true
-                guard let press = manual.beginPress(),
-                      let c = proxy.convert(drag.startLocation, from: .named(Self.space)) else { return }
-                staged = StagedFix(latitude: c.latitude, longitude: c.longitude, press: press)
+                guard let press = manual.beginPress() else { return }
+                // The estimate, else the GPS fix, else the finger; the driver nudges it.
+                let finger = proxy.convert(drag.startLocation, from: .named(Self.space))?.geo
+                guard let start = PinStart.position(dr: navigation?.latest?.position, gps: latest?.geo, finger: finger)
+                else { return }
+                staged = StagedFix(latitude: start.latitude, longitude: start.longitude, press: press)
                 notRecorded = false
             }
             .onEnded { _ in pressBegan = false }
@@ -517,19 +566,24 @@ struct GPSMapView: View {
         notRecorded = false
     }
 
-    /// Applies the span rule as a region centred on `center`.
+    /// Applies the span rule as a region centred on `center` (the estimate's
+    /// position instead, once there is one).
     private func frame(center: CLLocationCoordinate2D, accuracy: Double) {
         reseedHeading()
+        headingState.userDistance = nil
+        let center = navigation?.latest?.position.coordinate ?? center
         let span = MapFraming.spanMeters(horizontalAccuracy: accuracy)
-        if headingUp, follow.isFollowing, bearing != nil {
+        if headingUp, follow.isFollowing, effectiveBearing != nil {
             // A region would be north-up; keep the mode.
             let framed = MapFraming.cameraDistance(spanMeters: span)
             distance = framed
+            headingState.writtenDistance = framed
             position = .camera(MapCamera(
                 centerCoordinate: center, distance: framed, heading: targetHeading, pitch: 0
             ))
             return
         }
+        headingState.writtenDistance = 0
         position = .region(MKCoordinateRegion(
             center: center, latitudinalMeters: span, longitudinalMeters: span
         ))
@@ -537,16 +591,27 @@ struct GPSMapView: View {
 
     /// Camera heading for the current mode: 0 north-up, the smoothed bearing heading-up.
     private var targetHeading: Double {
-        CameraHeading.choose(headingUp: headingUp, bearing: bearing, smoothed: headingState.smoother.heading)
+        CameraHeading.choose(headingUp: headingUp, bearing: effectiveBearing, smoothed: headingState.smoother.heading)
+    }
+
+    /// Camera distance for a write: the driver's zoom; in heading-up with an
+    /// estimate, widened to fit its ellipse (`FollowSpan`).
+    private func followDistance(_ nav: NavDisplay?) -> Double {
+        let base = headingState.userDistance ?? distance
+        guard headingUp, let nav else { return base }
+        let span = FollowSpan.span(
+            minimum: base / MapFraming.distancePerSpan, semiMajorM: nav.semiMajorM
+        )
+        return MapFraming.cameraDistance(spanMeters: span)
     }
 
     /// Recentres, keeping the user's current zoom and mode.
-    fileprivate func recenter(_ fix: LocationSample) {
+    fileprivate func recenter(center: CLLocationCoordinate2D) {
         let heading = targetHeading
         headingState.gate.noteWrite(heading, at: ContinuousClock.now)
-        position = .camera(MapCamera(
-            centerCoordinate: fix.coordinate, distance: distance, heading: heading, pitch: 0
-        ))
+        let d = followDistance(navigation?.latest)
+        headingState.writtenDistance = d
+        position = .camera(MapCamera(centerCoordinate: center, distance: d, heading: heading, pitch: 0))
     }
 
     /// Heading-up is (re)activating: start from the last good bearing, before
@@ -555,37 +620,58 @@ struct GPSMapView: View {
     private func reseedHeading() {
         guard headingUp else { return }
         _ = CameraHeading.activate(
-            smoother: &headingState.smoother, gate: &headingState.gate, bearing: bearing
+            smoother: &headingState.smoother, gate: &headingState.gate, bearing: effectiveBearing
         )
     }
 
     /// Animates back to the car at the current zoom and mode.
     private func moveCameraToCar(duration: Double) {
         reseedHeading()
-        guard isLive, let fix = latest else { return }
-        withAnimation(.easeInOut(duration: duration)) { recenter(fix) }
+        guard isLive, let center = followCenter else { return }
+        withAnimation(.easeInOut(duration: duration)) { recenter(center: center) }
     }
 
-    /// ~10 Hz while heading-up: steps the smoother and turns the camera. When
-    /// the heading holds (stopped, no new bearing) it writes nothing.
-    private func runHeadingLoop() async {
-        guard headingActive else { return }
+    /// ~10 Hz while the map is visible. Polls the navigation feed, steps the
+    /// heading smoother and, while following, writes the camera: when the
+    /// feed published a new estimate, or (heading-up) the heading moved
+    /// enough. When nothing changed it writes nothing.
+    private func runLoop() async {
+        guard isLive else { return }
         var last = ContinuousClock.now
         while !Task.isCancelled {
             try? await Task.sleep(for: .milliseconds(100))
+            if Task.isCancelled { return }
+            let published = await navigation?.poll() ?? false
             if Task.isCancelled { return }
             let now = ContinuousClock.now
             let dt = Double((now - last).components.seconds)
                 + Double((now - last).components.attoseconds) / 1e18
             last = now
-            let heading = headingState.smoother.step(
-                target: inputs.bearing, frozen: inputs.frozen, dt: dt
+            let nav = navigation?.latest
+            let target = CameraHeading.targetBearing(
+                drHeading: nav?.headingDeg, converged: nav?.converged ?? false, gpsBearing: inputs.bearing
             )
-            guard let heading, let fix = inputs.fix,
-                  headingState.gate.admit(heading, at: now) else { continue }
+            guard inputs.following else { continue }
+            var heading = 0.0
+            var write = published
+            if inputs.headingUp {
+                if target == nil {
+                    headingState.smoother = HeadingSmoother()
+                } else if let h = headingState.smoother.step(target: target, frozen: inputs.frozen, dt: dt) {
+                    heading = h
+                    if headingState.gate.admit(h, at: now) { write = true }
+                }
+            }
+            // Without an estimate the GPS onChange recentres north-up;
+            // heading-up still turns around the fix.
+            guard write, let center = FollowTarget.center(dr: nav?.position, gps: inputs.fix?.geo),
+                  nav != nil || (inputs.headingUp && target != nil) else { continue }
+            let d = followDistance(nav)
+            headingState.writtenDistance = d
+            headingState.gate.noteWrite(heading, at: now)
             withAnimation(.linear(duration: 0.25)) {
                 position = .camera(MapCamera(
-                    centerCoordinate: fix.coordinate, distance: distance, heading: heading, pitch: 0
+                    centerCoordinate: center.coordinate, distance: d, heading: heading, pitch: 0
                 ))
             }
         }
@@ -596,8 +682,8 @@ struct GPSMapView: View {
     /// the user rotates the map.
     @ViewBuilder
     private func carMarker(color: Color) -> some View {
-        if headingUp, let bearing {
-                        Image(systemName: "location.north.fill")
+        if headingUp, let bearing, navigation?.latest == nil {
+            Image(systemName: "location.north.fill")
                 .font(.system(size: 30))
                 .foregroundStyle(color)
                 .shadow(color: .white, radius: 1)
@@ -616,6 +702,8 @@ struct GPSMapView: View {
             Text("REFERENCE GPS — not used by the recorder")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
+                // Hidden debug switch: long-press toggles the navigation stats line.
+                .onLongPressGesture(minimumDuration: 1) { showNavStats.toggle() }
             if let latest, let band = AccuracyBand(accuracy: latest.horizontalAccuracy) {
                 HStack(spacing: 10) {
                     Circle().fill(color(band, stale: stale)).frame(width: 16, height: 16)
@@ -631,6 +719,9 @@ struct GPSMapView: View {
                 Text("No fix yet — reference GPS appears here while recording.")
                     .font(.headline)
                     .multilineTextAlignment(.center)
+            }
+            if let navigation {
+                NavInfoView(feed: navigation, showStats: showNavStats)
             }
             Text("Thermal: \(ThermalText.label(thermal))")
                 .font(.caption.weight(.medium))
@@ -710,6 +801,8 @@ struct GPSMapView: View {
 /// invalidates just this body.
 private struct ManualFixPanel: View {
     var availability: @MainActor () -> ManualFixAvailability
+    /// Visible north-south extent of the map; Confirm needs it at most 300 m.
+    var visibleSpanM: Double?
     @Binding var note: String
     var notRecorded: Bool
     var onConfirm: () -> Void
@@ -717,7 +810,8 @@ private struct ManualFixPanel: View {
 
     var body: some View {
         let state = availability()
-        let reason = ManualFixText.disabledReason(state)
+        let gateReason = ManualFixText.disabledReason(state)
+        let reason = ManualFixText.confirmBlockedReason(state, visibleSpanM: visibleSpanM)
         VStack(spacing: 10) {
             TextField("Note (optional)", text: $note)
                 .textFieldStyle(.roundedBorder)
@@ -727,7 +821,8 @@ private struct ManualFixPanel: View {
                     }
                 }
             if let reason {
-                Text(reason).font(.subheadline.weight(.semibold)).foregroundStyle(.red)
+                Text(reason).font(.subheadline.weight(.semibold))
+                    .foregroundStyle(gateReason == nil ? Color.orange : Color.red)
             } else if notRecorded {
                 Text("Not recorded").font(.subheadline.weight(.semibold)).foregroundStyle(.red)
             }
@@ -753,6 +848,14 @@ private struct TrackOverlay: MapContent {
     var track: GPSTrack
 
     var body: some MapContent {
+        // Fixes worse than 1000 m: faded dots, not part of the line.
+        ForEach(track.faded, id: \.t) { point in
+            Annotation("", coordinate: point.coordinate) {
+                Circle()
+                    .fill(AccuracyBand.bad.color.opacity(0.3))
+                    .frame(width: 10, height: 10)
+            }
+        }
         ForEach(Array(track.runs.enumerated()), id: \.offset) { _, run in
             if run.points.count >= 2 {
                 MapPolyline(coordinates: run.points.map(\.coordinate))
@@ -762,12 +865,89 @@ private struct TrackOverlay: MapContent {
     }
 }
 
+/// The dead-reckoning dot and 95 % ellipse. Its own content type, so it is
+/// the only map content that reads the feed's observed `display`; the
+/// polylines in `TrackOverlay` depend on `track` alone.
+private struct NavOverlay: MapContent {
+    var feed: NavigationFeed
+    var headingUp: Bool
+    var cameraHeading: Double
+
+    var body: some MapContent {
+        if let nav = feed.display {
+            if NavLayers.showEllipse(nav) {
+                MapPolygon(coordinates: EllipsePolygon.ring(nav).map(\.coordinate))
+                    .foregroundStyle(Color.blue.opacity(0.15))
+                    .stroke(Color.blue.opacity(0.8), lineWidth: 2)
+            }
+            if NavLayers.showDot(nav) {
+                Annotation("", coordinate: nav.position.coordinate) {
+                    NavMarker(nav: nav, headingUp: headingUp, cameraHeading: cameraHeading)
+                }
+            }
+        }
+    }
+}
+
+/// Blue dot; an arrow in heading-up once the heading has converged.
+private struct NavMarker: View {
+    var nav: NavDisplay
+    var headingUp: Bool
+    var cameraHeading: Double
+
+    var body: some View {
+        if headingUp, nav.converged, let heading = nav.headingDeg {
+            Image(systemName: "location.north.fill")
+                .font(.system(size: 32))
+                .foregroundStyle(.blue)
+                .shadow(color: .white, radius: 1)
+                .shadow(color: .white, radius: 1)
+                .rotationEffect(.degrees(heading - cameraHeading))
+        } else {
+            Circle()
+                .fill(.blue)
+                .frame(width: 24, height: 24)
+                .overlay(Circle().stroke(.white, lineWidth: 3))
+        }
+    }
+}
+
+/// "Calibrating heading" label and the optional debug stats line. Its own
+/// view: only it re-renders when the estimate or the stats change.
+private struct NavInfoView: View {
+    var feed: NavigationFeed
+    var showStats: Bool
+
+    var body: some View {
+        if NavLayers.calibrating(feed.display) {
+            Label("Calibrating heading", systemImage: "scope")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.blue)
+        }
+        if showStats {
+            Text(feed.stats?.line ?? "nav: idle")
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+    }
+}
+
+private extension GeoPoint {
+    var coordinate: CLLocationCoordinate2D { .init(latitude: latitude, longitude: longitude) }
+}
+
 private extension TrackPoint {
     var coordinate: CLLocationCoordinate2D { .init(latitude: latitude, longitude: longitude) }
 }
 
 private extension LocationSample {
     var coordinate: CLLocationCoordinate2D { .init(latitude: latitude, longitude: longitude) }
+    var geo: GeoPoint { GeoPoint(latitude: latitude, longitude: longitude) }
+}
+
+private extension CLLocationCoordinate2D {
+    var geo: GeoPoint { GeoPoint(latitude: latitude, longitude: longitude) }
 }
 
 // MARK: - Previews (synthetic offsets around (0, 0); no real places)
@@ -900,5 +1080,70 @@ extension MapPreviewData {
         latest: MapPreviewData.fix(59, accuracy: 12, gapAfter: 60),
         lastFixInstant: .now, isReceiving: true, thermal: .nominal, isLive: true,
         follow: .constant(paused)
+    )
+}
+
+// MARK: - Dead-reckoning previews (fake estimates; no service behind them)
+
+extension MapPreviewData {
+    /// Slightly off the last fix, as a live estimate would be.
+    static func nav(
+        converged: Bool, semiMajorM: Double = 25, semiMinorM: Double = 10, heading: Double? = 12
+    ) -> NavDisplay {
+        NavDisplay(
+            position: GeoPoint(latitude: 59 * 0.0002 + 0.0001, longitude: sin(59.0 / 6) * 0.002 + 0.0001),
+            semiMajorM: semiMajorM, semiMinorM: semiMinorM, orientationDeg: 30,
+            headingDeg: heading, headingStdDeg: converged ? 3 : 25, converged: converged
+        )
+    }
+
+    static let navStats = NavStatsDisplay(
+        msPerStep: 0.06, maxMsPerStep: 1.4, effectiveSampleSize: 1480,
+        headingStdDeg: 3.2, speedScale: 1.016, droppedInputs: 0
+    )
+}
+
+#Preview("DR, calibrating heading, ellipse") {
+    GPSMapView(
+        track: MapPreviewData.track,
+        latest: MapPreviewData.fix(59, accuracy: 12, gapAfter: 60),
+        lastFixInstant: .now, isReceiving: true, thermal: .nominal, isLive: true,
+        follow: .constant(FollowController(following: true)),
+        navigation: NavigationFeed(display: MapPreviewData.nav(converged: false, semiMajorM: 80, semiMinorM: 30, heading: nil))
+    )
+}
+
+#Preview("DR, converged, heading up, stats") {
+    GPSMapView(
+        track: MapPreviewData.track,
+        latest: MapPreviewData.fix(59, accuracy: 12, gapAfter: 60),
+        lastFixInstant: .now, isReceiving: true, thermal: .nominal, isLive: true,
+        follow: .constant(FollowController(following: true)),
+        headingUp: .constant(true), bearing: 40,
+        navigation: NavigationFeed(display: MapPreviewData.nav(converged: true), stats: MapPreviewData.navStats),
+        showNavStats: .constant(true)
+    )
+}
+
+#Preview("DR, pin needs zoom") {
+    GPSMapView(
+        track: MapPreviewData.track,
+        latest: MapPreviewData.fix(59, accuracy: 12, gapAfter: 60),
+        lastFixInstant: .now, isReceiving: true, thermal: .nominal, isLive: true,
+        follow: .constant(FollowController(following: false)),
+        manual: MapPreviewData.actions(
+            canRecord: true, gate: .init(speedSource: .obd, speedKmh: 4, isAllowed: true)),
+        initialStaged: StagedFix(latitude: 0.0119, longitude: 0.0011, press: nil),
+        navigation: NavigationFeed(display: MapPreviewData.nav(converged: false))
+    )
+}
+
+#Preview("No navigation (idle recording)") {
+    GPSMapView(
+        track: MapPreviewData.track,
+        latest: MapPreviewData.fix(59, accuracy: 12, gapAfter: 60),
+        lastFixInstant: .now, isReceiving: true, thermal: .nominal, isLive: true,
+        follow: .constant(FollowController(following: true)),
+        navigation: NavigationFeed(display: nil), showNavStats: .constant(true)
     )
 }

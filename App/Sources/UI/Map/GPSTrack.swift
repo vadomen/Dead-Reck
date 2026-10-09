@@ -59,10 +59,16 @@ struct GPSTrack: Sendable, Equatable {
     static let initialMinInterval = 2.0
     /// A jump in fix time larger than this starts a new segment.
     static let gapSeconds = 30.0
+    /// Fixes worse than 1000 m (`AccuracyBand.bad`) are not part of the
+    /// line: they are kept apart as faded dots, newest `maxFaded` only.
+    static let maxFaded = 100
 
     private(set) var points: [TrackPoint] = []
     /// Cached; recomputed only when `points` changes.
     private(set) var runs: [TrackRun] = []
+    /// Fixes with accuracy over 1000 m, oldest first, capped at `maxFaded`.
+    /// Never in `points` or `runs`, so they cannot draw a line or bridge a gap.
+    private(set) var faded: [TrackPoint] = []
     private(set) var minInterval = GPSTrack.initialMinInterval
     /// Fix-time jump that starts a new segment. Grows with the spacing so a
     /// thinned long drive is not cut at every point.
@@ -87,6 +93,15 @@ struct GPSTrack: Sendable, Equatable {
         // Same fix re-delivered by the 1 Hz tick, or an older one: skip.
         if let lastSeenT, t <= lastSeenT { return }
         lastSeenT = t
+        if band == .bad {
+            if let last = faded.last, t - last.t < Self.initialMinInterval { return }
+            faded.append(TrackPoint(
+                latitude: fix.latitude, longitude: fix.longitude,
+                accuracy: fix.horizontalAccuracy, band: band, t: t, segmentStart: false
+            ))
+            if faded.count > Self.maxFaded { faded.removeFirst(faded.count - Self.maxFaded) }
+            return
+        }
         var segmentStart = false
         if let last = points.last {
             let dt = t - last.t

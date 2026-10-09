@@ -5,6 +5,7 @@ import SwiftUI
 struct RootView: View {
     @State private var recording: RecordingViewModel
     @State private var map: MapViewModel
+    @State private var navigation: NavigationFeed
     @State private var sessions: SessionsViewModel
     @State private var console: ConsoleViewModel
     private let session: RecordingSession
@@ -16,6 +17,8 @@ struct RootView: View {
         session = services.session
         self.services = services
         _map = State(initialValue: MapViewModel())
+        let service = services.navigation
+        _navigation = State(initialValue: NavigationFeed(source: { await service.snapshot() }))
         _sessions = State(initialValue: SessionsViewModel(services: services))
         _console = State(initialValue: ConsoleViewModel(services: services))
         var initial = MainTabView<RecordingScreen, MapScreen, SessionsScreen, ConsoleScreen>.Tab.record
@@ -31,7 +34,7 @@ struct RootView: View {
             RecordingScreen(model: recording)
         } map: {
             MapScreen(
-                model: map, session: session, isSelected: tab == .map,
+                model: map, session: session, navigation: navigation, isSelected: tab == .map,
                 cachedLocation: { [services] in
                     services.sensors.sources.lazy
                         .compactMap { $0 as? any CachedLocationProviding }.first?.cachedLocation
