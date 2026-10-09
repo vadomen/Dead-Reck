@@ -19,6 +19,31 @@ struct MapCameraLogicTests {
         #expect(CameraHeading.choose(headingUp: true, bearing: nil, smoothed: 200) == 0)
     }
 
+    @Test("Activation reseeds a stale smoother to the bearing, frozen or not")
+    func activation() {
+        var smoother = HeadingSmoother()
+        smoother.step(target: 0, frozen: false, dt: 0.1)   // stale: car was heading north
+        var gate = HeadingWriteGate()
+        _ = gate.admit(0, at: t(0))
+        let h = CameraHeading.activate(smoother: &smoother, gate: &gate, bearing: 90)
+        #expect(h == 90)
+        // Frozen at a stop: holds 90, not the stale 0.
+        let held = smoother.step(target: 90, frozen: true, dt: 0.1)
+        #expect(held == 90)
+        // The gate was reset: the first write is admitted.
+        let first = gate.admit(90, at: t(0.01))
+        #expect(first)
+    }
+
+    @Test("Activation with no bearing gives 0")
+    func activationNoBearing() {
+        var smoother = HeadingSmoother()
+        smoother.step(target: 200, frozen: false, dt: 0.1)
+        var gate = HeadingWriteGate()
+        #expect(CameraHeading.activate(smoother: &smoother, gate: &gate, bearing: nil) == 0)
+        #expect(smoother.heading == nil)
+    }
+
     @Test("Write gate: more than 2 degrees and at least 0.25 s")
     func gate() {
         var g = HeadingWriteGate()

@@ -808,3 +808,7 @@ Replay only the current connection's init (M6.1-1) and remembered poll plan and 
 3. **Pin:** long-press (recording) freezes the camera; the countdown starts only after Confirm/Cancel.
 4. **Heading-up:** the map turns smoothly with the car above 10 km/h and holds still at stops (OBD speed 0); the arrow points up while following and shows true direction after a manual rotate; the mode persists across launches.
 5. **SwiftUI gestures on `Map`:** the drag/pinch/rotate/double-tap gestures fire (Following goes off) and do not block panning, zooming or the long-press. If they fail, the fallback is an `MKMapView` wrapper; ask the user before building it.
+6. **Heading-up while stopped:** returning to the Map tab or toggling North up to Heading up while stopped shows the correct heading at once (restored from the last good bearing).
+7. **ELM stall at a stop:** after a stall, heading-up unfreezes on drive-off (a stale OBD 0 does not count as stopped).
+8. **Turns:** the camera settles at the true heading after a turn.
+9. **Zoom parity:** at equal zoom, the visible area in heading-up roughly matches north-up (checks the `distancePerSpan` 1.87 guess).

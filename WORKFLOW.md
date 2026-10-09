@@ -231,6 +231,7 @@ format or `RecordingSession` change.
 
 - **Follow:** only a real touch gesture (drag, pinch, rotate, double-tap) turns it off. It resumes 8 s after the last gesture or camera change, with a "Re-centre in N s" hint. A staged pin freezes the camera and suspends the countdown until Confirm/Cancel. Tapping Follow while following turns it off for good (until tapped again). Logic: `MapFollow.swift` (`FollowController`).
 - **Heading-up:** a separate "North up / Heading up" button (`@AppStorage("map.headingUp")`). Bearing is GPS course only (> 10 km/h, course accuracy 0...20 deg), never the compass; the camera holds still when OBD speed is exactly 0. `MapBearing.swift` (`MapBearingSource` is the seam for a later DR heading source).
+- **RecordingSession:** two read-only accessors, no behaviour change: `obdSpeedReplyUptime` and `currentUptimeSeconds`, so the map can tell a fresh OBD speed 0 (age <= `ManualFixGate.maxOBDAgeS`) from a stale one.
 - **Device checklist (not verified; PLAN.md section 6):** 10 min drive with no unexpected loss of Following; pan, then auto re-centre after 8 s; heading-up rotates smoothly and holds still at stops; the SwiftUI gestures on `Map` fire and do not block panning. If they do not, the fallback is an `MKMapView` wrapper, which needs the user's approval first.
 
 ---

@@ -63,6 +63,14 @@ struct HeadingSmoother: Equatable, Sendable {
         return heading
     }
 
+    /// Restarts from `bearing` (the last good one), or from nothing when nil.
+    /// Used when heading-up becomes active again: the smoother only steps
+    /// while active, so its value may be stale, and a frozen smoother would
+    /// hold that stale value.
+    mutating func reseed(to bearing: Double?) {
+        heading = bearing.flatMap { $0.isFinite ? Self.normalized($0) : nil }
+    }
+
     static func normalized(_ degrees: Double) -> Double {
         let r = degrees.truncatingRemainder(dividingBy: 360)
         let n = r < 0 ? r + 360 : r

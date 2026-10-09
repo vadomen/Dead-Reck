@@ -45,6 +45,20 @@ struct HeadingWriteGate: Equatable, Sendable {
     mutating func reset() { self = HeadingWriteGate() }
 }
 
+extension CameraHeading {
+    /// Heading for the first camera write after heading-up becomes active
+    /// (tab return, mode toggle, Following resumes): reseeds the smoother to
+    /// the last good bearing and resets the write gate, so the write snaps to
+    /// that bearing even while frozen at a stop. 0 with no bearing.
+    static func activate(
+        smoother: inout HeadingSmoother, gate: inout HeadingWriteGate, bearing: Double?
+    ) -> Double {
+        smoother.reseed(to: bearing)
+        gate.reset()
+        return choose(headingUp: true, bearing: bearing, smoothed: smoother.heading)
+    }
+}
+
 enum MapChange {
     /// True when `new` differs from `old` by more than `relative` (1% default).
     static func isSignificant(old: Double?, new: Double, relative: Double = 0.01) -> Bool {

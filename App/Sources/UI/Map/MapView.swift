@@ -519,6 +519,7 @@ struct GPSMapView: View {
 
     /// Applies the span rule as a region centred on `center`.
     private func frame(center: CLLocationCoordinate2D, accuracy: Double) {
+        reseedHeading()
         let span = MapFraming.spanMeters(horizontalAccuracy: accuracy)
         if headingUp, follow.isFollowing, bearing != nil {
             // A region would be north-up; keep the mode.
@@ -548,8 +549,19 @@ struct GPSMapView: View {
         ))
     }
 
+    /// Heading-up is (re)activating: start from the last good bearing, before
+    /// any camera write. Called from every path that moves the camera on
+    /// activation (frame on tab return, mode toggle, resume, Follow tap).
+    private func reseedHeading() {
+        guard headingUp else { return }
+        _ = CameraHeading.activate(
+            smoother: &headingState.smoother, gate: &headingState.gate, bearing: bearing
+        )
+    }
+
     /// Animates back to the car at the current zoom and mode.
     private func moveCameraToCar(duration: Double) {
+        reseedHeading()
         guard isLive, let fix = latest else { return }
         withAnimation(.easeInOut(duration: duration)) { recenter(fix) }
     }
