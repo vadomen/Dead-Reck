@@ -15,6 +15,9 @@ final class AppServices {
     let sensors: SensorSuite
     let store: LogStore
     let session: RecordingSession
+    /// Live dead reckoning for each recording (N4 B): it consumes every
+    /// recording's navigation feed and writes its sidecar.
+    let navigation: NavigationService
 
     init(
         link: any OBDLinkServicing = OBDLinkFactory.makeDefault(),
@@ -36,6 +39,10 @@ final class AppServices {
             sensorConfiguration: sensors.configuration,
             notes: notes.compactMap { $0 }.joined(separator: " ").nilIfEmpty
         )
+        let navigation = NavigationService()
+        self.navigation = navigation
+        // Synchronous inside `start`, before any row: only start the task.
+        session.onNavigationFeed = { feed in navigation.start(feed) }
     }
 }
 

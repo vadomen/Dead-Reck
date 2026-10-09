@@ -111,7 +111,7 @@ struct RecordingNavigationFeed: Sendable {
     /// The `.jsonl.gz` being written.
     let recordingURL: URL
     /// Where this recording's navigation sidecar goes
-    /// (`LogStore.navSidecarURL(for:)`); nothing is written there by A.
+    /// (`LogStore.navSidecarURL(for:)`); `NavigationService` (N4 B) writes it.
     let sidecarURL: URL
     /// The tap behind `inputs`.
     let tap: NavigationTap

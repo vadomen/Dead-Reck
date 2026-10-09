@@ -77,7 +77,7 @@ struct NavigationFeedTests {
         // The tap took nothing from the file: accel rows and every other kind are still there.
         #expect(RecordingFixtures.kinds(events, .accelerometer).count > 30)
         #expect(RecordingFixtures.index(of: .stop, in: events) != nil)
-        // A is the seam only: nothing writes the sidecar yet.
+        // No NavigationService is wired in this test: nothing writes the sidecar.
         #expect(!FileManager.default.fileExists(atPath: feed.sidecarURL.path))
     }
 
