@@ -641,3 +641,45 @@ No findings.
 - Acceptance (unchanged through the loop): clean 26 m max, PASS; manual 53 m at
   truth point 1, PASS, and convergence 6.80 km against 2 km, known FAIL; jammed-A
   1.24 %, PASS; jammed-B 1.76 %, PASS; 0.05–0.07 ms/step on the Mac.
+
+## Run 12 — N2.1 engine update, step 0 of N4 (e15b30e..4d6b48b), started 2026-10-09
+
+Branch `n2.1-engine`. Commits under review: 2251a3b, 4c5ae08, f011567, 4d6b48b.
+
+### Round 1
+
+Reviewer: fresh `reviewer` agent. Result: 0 BLOCKER / 0 MAJOR / 2 MINOR.
+
+Verified correct:
+- manual-fix σ rule: edge cases handled, and the engine and replay agree;
+- network-fix rule: `!hasValidSpeed`; fixes with speed are never tempered; old keys removed and `--set` fails loudly on them;
+- speed gate units;
+- consistency denominators: only checkpoints the engine didn't receive;
+- causality and determinism unchanged.
+
+The new tests discriminate under mutation. `swift test --filter Navigation` 36/36 green.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R12.1-1 | MINOR | The `metrics.json` backward compatibility claimed in comment and test doesn't hold; renamed config/counter keys make pre-N2.1 files fail to decode and be replaced silently (new evidence for R11.2-4). | DEFERRED | BACKLOG |
+| R12.1-2 | MINOR | Stale `towerCorrelationS` key in the NAVIGATION.md informational table. | DEFERRED | BACKLOG |
+
+**Loop stopped: no BLOCKER or MAJOR findings.**
+
+### Run 12 summary
+
+- Rounds run: 1. Fixed 0, rejected 0, deferred 2 MINOR (R12.1-1, R12.1-2).
+  Also recorded: N2.1-1, manual-3 ellipse overconfidence (acceptance note, BACKLOG).
+- Final tests (at 4d6b48b): `cd Core && swift test` 566 tests in 86 suites pass.
+  No App/ change.
+- Acceptance, seeds 1–5:
+
+  | drive | criterion | result |
+  |---|---|---|
+  | clean-long | ≤ 30 m | 18–20 m, 100 % inside the ellipse |
+  | clean | ≤ 30 m | 12–17 m, 100 % inside |
+  | manual @744.3 | ≤ 200 m | 47–57 m, 100 % inside |
+  | manual convergence | ≤ 2 km | 7.27–7.68 km, known FAIL |
+  | jammed-A | ≤ 2.5 % | 1.02–1.26 % |
+  | jammed-B | ≤ 2.5 % | 0.81–1.11 % |
+  | manual-3 | reported only | pins 416 / 640 / 248 m, 0/3 inside |
