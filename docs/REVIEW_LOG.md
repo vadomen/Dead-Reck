@@ -502,3 +502,25 @@ build green.
 - Commits: 4afa2eb (change under review), plus this ledger update.
 - Final tests: `cd Core && swift test` 530 tests in 81 suites, all pass;
   simulator build green; app tests 191 in 33 suites, all pass.
+
+## Run 10 — M4.3 incl. M9.1 fixes (df91622..a7dbd83)
+
+### Round 1
+
+Fresh reviewer. M9.1-1 (resume loop on ContinuousClock, re-check on `isLive`),
+M9.1-4 (fresh-zero rule, 2.0 s boundary), M9.1-5 (write gate wrap/rate, camera
+settles via `recenter`), M9.1-2 verified fixed. RecordingSession accessors read
+`@ObservationIgnored` storage only; `MapFeed` still the only `session.live`
+observer. `TrackOverlay` isolation unprovable off-device (not a finding).
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| M10.1-1 | MAJOR | Heading-up activation (tab return, foreground, mode toggle, resume) writes the stale smoothed heading; frozen at a stop it holds the wrong heading until drive-off. | CONFIRMED → FIXED c202225 | Verified: smoother steps only while `headingActive`, `CameraHeading.choose` prefers `smoothed`. Fix: `CameraHeading.activate` reseeds smoother + resets gate at the top of `frame()`/`moveCameraToCar()`; 2 regression tests, shown failing with the reseed disabled. |
+| M10.1-2 | MINOR | Bearing not fed while scene inactive. | DEFERRED | BACKLOG |
+| M10.1-3 | MINOR | `mapSpanM` meaning changes in heading-up. | DEFERRED | BACKLOG |
+| M10.1-4 | MINOR | `distancePerSpan` 1.87 guess, one axis only. | DEFERRED | BACKLOG; device checklist item |
+| M10.1-5 | MINOR | `flipOnly` test doesn't exercise its guard. | DEFERRED | BACKLOG |
+| M10.1-6 | MINOR | M9.1-1/-2 tests don't cover the actual fixes. | DEFERRED | BACKLOG |
+| M10.1-7 | MINOR | WORKFLOW/PLAN docs stale (accessors, checklist). | FIXED c202225 | Cheap, in the fix's files |
+
+Tests after fix: Core 530/530, simulator build green, app 204/204.
