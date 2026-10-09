@@ -1,0 +1,237 @@
+import Foundation
+import Testing
+
+@testable import DriveLoggerCore
+
+/// Behaviour of the navigation engine on synthetic drives (local metres
+/// around (0, 0); no recording involved).
+@Suite("Navigation engine")
+struct NavigationEngineTests {
+    typealias S = SyntheticDrive
+
+    @Test("A heading initialised 40° wrong converges to the clean-fix course; position stays bounded")
+    func wrongInitialHeadingConverges() throws {
+        // First fix's course is 40° off (and claims 2°); every later fix is right.
+        let drive = S(initialHeadingDeg: 30, initialSpeed: 15, [.straight(seconds: 60, speed: 15)])
+        let wrong = S.cleanFix(courseOffsetDeg: 40)
+        let good = S.cleanFix()
+        let events = drive.events(fix: { t, state, rng in
+            S.at(t, 0) ? wrong(t, state, &rng) : good(t, state, &rng)
+        })
+        let times = stride(from: 5.0, through: 60, by: 5).map { $0 }
+        let (engine, samples) = S.run(events, config: S.config(), sampleTimes: times)
+        #expect(engine.counters.reseeds >= 1)
+        for (t, sample) in zip(times, samples) where t >= 15 {
+            let estimate = try #require(sample)
+            #expect(abs(angleDifference(estimate.headingDeg, 30)) < 3, "t \(t): heading \(estimate.headingDeg)")
+            #expect(drive.error(estimate, at: t) < 15, "t \(t): error \(drive.error(estimate, at: t))")
+            #expect(estimate.converged)
+        }
+    }
+
+    @Test("Square loop, dead reckoning only after initialisation: closes within 1 % of the perimeter, heading within 3°")
+    func squareLoopCloses() throws {
+        // 4 × 500 m with right turns; the clean start fix gives position and course.
+        var segments: [S.Segment] = [.ramp(seconds: 5, from: 0, to: 12.6)]
+        for side in 0..<4 {
+            segments.append(.straight(seconds: side == 0 ? 500.0 / 12.6 - 2.5 : 500.0 / 12.6, speed: 12.6))
+            segments.append(.turn(degrees: 90, seconds: 6, speed: 12.6))
+        }
+        segments.append(.ramp(seconds: 5, from: 12.6, to: 0))
+        segments.append(.stop(seconds: 3))
+        let drive = S(initialHeadingDeg: 0, segments)
+        let end = drive.truth(at: drive.duration)
+        let perimeter = 2000.0
+        let start = S.cleanFix(positionNoise: 0)
+        let events = drive.events(gyroNoise: 0.002, fix: { t, state, rng in
+            S.at(t, 3) ? start(t, state, &rng) : nil
+        })
+        let (engine, samples) = S.run(events, config: S.config(), sampleTimes: [drive.duration])
+        let estimate = try #require(samples.first ?? nil)
+        // The loop does not quite return to its start (turns take distance);
+        // compare with where the truth ends.
+        let closure = drive.error(estimate, at: drive.duration)
+        #expect(closure < 0.01 * perimeter, "closure \(closure) m")
+        #expect(abs(angleDifference(estimate.headingDeg, end.heading * 180 / .pi)) < 3, "heading \(estimate.headingDeg)")
+        #expect(engine.counters.fixesUsed == 1)
+    }
+
+    @Test("A stale OBD zero is unknown speed, not a stop: no freeze, the ellipse grows and covers the truth")
+    func staleZeroDoesNotFreeze() throws {
+        // Stopped with OBD 0; at t = 10 the adapter stops replying and the
+        // car drives off.
+        let drive = S(initialHeadingDeg: 90, [
+            .stop(seconds: 10), .ramp(seconds: 5, from: 0, to: 5), .straight(seconds: 3, speed: 5),
+        ])
+        let events = drive.events(
+            obdSpeed: { t, _ in t < 10 ? 0 : nil },
+            fix: { t, state, _ in S.at(t, 0) ? S.Fix(east: state.east, north: state.north, accuracy: 3,
+                                                     speed: 0, speedAccuracy: 0.3) : nil }
+        )
+        let times = [9.0, 13.0, 15.0, 18.0]
+        var config = S.config()
+        config.particleCount = 1000
+        let (engine, samples) = S.run(events, config: config, sampleTimes: times)
+        let atStop = try #require(samples[0])
+        let later = try #require(samples[1])
+        let mid = try #require(samples[2])
+        let last = try #require(samples[3])
+        #expect(atStop.stationary)
+        #expect(!later.stationary, "a stale zero must not freeze the cloud")
+        #expect(engine.counters.staleSpeedSteps > 0)
+        #expect(later.ellipse.semiMajorM > atStop.ellipse.semiMajorM)
+        #expect(mid.ellipse.semiMajorM < last.ellipse.semiMajorM)
+        let offset = drive.offset(last, at: 18)
+        #expect(last.ellipse.contains(dEast: offset.dEast, dNorth: offset.dNorth),
+                "truth \(offset) outside \(last.ellipse)")
+    }
+
+    @Test("Stop-and-go: during a fresh OBD 0 position and heading are bit-identical despite gyro noise")
+    func zuptFreezes() throws {
+        let drive = S(initialHeadingDeg: 45, initialSpeed: 10, [
+            .straight(seconds: 20, speed: 10), .ramp(seconds: 4, from: 10, to: 0), .stop(seconds: 15),
+            .ramp(seconds: 4, from: 0, to: 10), .straight(seconds: 10, speed: 10),
+        ])
+        let clean = S.cleanFix()
+        let events = drive.events(gyroNoise: 0.05, fix: { t, state, rng in
+            S.at(t, 0) ? clean(t, state, &rng) : nil
+        })
+        // OBD reads 0 from about 24 s to 39 s; sample inside that window.
+        let times = stride(from: 26.0, through: 38, by: 0.5).map { $0 }
+        let (engine, samples) = S.run(events, config: S.config(), sampleTimes: times + [50])
+        let frozen = try samples.prefix(times.count).map { try #require($0) }
+        let first = try #require(frozen.first)
+        #expect(first.stationary)
+        for estimate in frozen {
+            #expect(estimate.east == first.east && estimate.north == first.north)
+            #expect(estimate.headingDeg == first.headingDeg && estimate.headingStdDeg == first.headingStdDeg)
+            #expect(estimate.ellipse == first.ellipse)
+        }
+        #expect(engine.counters.zuptSteps >= 140)
+        let after = try #require(samples.last ?? nil)
+        #expect(!after.stationary)
+        #expect(after.east != first.east)
+    }
+
+    @Test("Tower-like fixes with a correlated 600 m offset: the estimate does not chase it; the ellipse covers the truth")
+    func towerBiasNotChased() throws {
+        let drive = S(initialHeadingDeg: 10, initialSpeed: 14, [
+            .straight(seconds: 60, speed: 14), .turn(degrees: 90, seconds: 8, speed: 10),
+            .straight(seconds: 60, speed: 14), .turn(degrees: -90, seconds: 8, speed: 10),
+            .straight(seconds: 60, speed: 14),
+        ])
+        let clean = S.cleanFix()
+        let events = drive.events(fixEvery: 4, fix: { t, state, rng in
+            if S.at(t, 0) { return clean(t, state, &rng) }
+            // Tower fixes: one correlated offset, small jitter, iOS-style fields.
+            return S.Fix(east: state.east + 600 + 50 * rng.nextGaussian(),
+                         north: state.north + 50 * rng.nextGaussian(), accuracy: 1414)
+        })
+        let times = [100.0, 150.0, drive.duration]
+        let (engine, samples) = S.run(events, config: S.config(), sampleTimes: times)
+        #expect(engine.counters.towerFixesUsed > 40)
+        for (t, sample) in zip(times, samples) {
+            let estimate = try #require(sample)
+            let error = drive.error(estimate, at: t)
+            #expect(error < 200, "t \(t): error \(error) m — chased the 600 m tower bias")
+            let offset = drive.offset(estimate, at: t)
+            #expect(estimate.ellipse.contains(dEast: offset.dEast, dNorth: offset.dNorth), "t \(t)")
+        }
+    }
+
+    @Test("A manual fix after a deliberate 1 km drift resets position to the pin and keeps the heading")
+    func manualFixResets() throws {
+        let drive = S(initialHeadingDeg: 0, initialSpeed: 11, [.straight(seconds: 90, speed: 11), .stop(seconds: 10)])
+        let pinT = 95.0
+        let pinTruth = drive.truth(at: pinT)
+        let pinPosition = S.plane.geodetic(east: pinTruth.east, north: pinTruth.north)
+        let pin = LogEvent(timestamp: S.ms(pinT), payload: .manualFix(ManualFixSample(
+            latitude: pinPosition.latitude, longitude: pinPosition.longitude, pressedT: S.ms(pinT - 3),
+            obdSpeedKmh: 0, obdSpeedT: S.ms(pinT - 0.1), speedSource: "obd", gateSpeedKmh: 0
+        )))
+        // OBD reports twice the true speed: about 1 km of drift by the stop.
+        let events = drive.events(
+            obdSpeed: { _, state in (state.speed * 2 * 3.6).rounded(.down) },
+            fix: { t, state, rng in S.at(t, 0) ? S.cleanFix()(t, state, &rng) : nil },
+            extra: [pin]
+        )
+        let (engine, samples) = S.run(events, config: S.config(), sampleTimes: [pinT - 0.5, pinT + 0.5])
+        let before = try #require(samples[0])
+        let after = try #require(samples[1])
+        #expect(drive.error(before, at: pinT) > 900)
+        #expect(drive.error(after, at: pinT) < 30, "error after pin \(drive.error(after, at: pinT))")
+        #expect(engine.counters.manualResets == 1)
+        #expect(abs(angleDifference(after.headingDeg, before.headingDeg)) < 0.5)
+        #expect(abs(after.headingStdDeg - before.headingStdDeg) < 0.5)
+    }
+
+    @Test("Determinism: same seed gives identical output; a different seed gives different particles")
+    func determinism() throws {
+        let drive = S(initialHeadingDeg: 200, initialSpeed: 12, [.straight(seconds: 20, speed: 12), .turn(degrees: 60, seconds: 5, speed: 10),
+                                                .straight(seconds: 20, speed: 12)])
+        let events = drive.events(gyroNoise: 0.01, fix: S.cleanFix(accuracy: 30, positionNoise: 10))
+        let times = stride(from: 1.0, through: 45, by: 1).map { $0 }
+        let a = S.run(events, config: S.config(seed: 3), sampleTimes: times)
+        let b = S.run(events, config: S.config(seed: 3), sampleTimes: times)
+        let c = S.run(events, config: S.config(seed: 4), sampleTimes: times)
+        #expect(a.samples == b.samples)
+        #expect(a.engine.heading == b.engine.heading && a.engine.east == b.engine.east)
+        #expect(a.engine.heading != c.engine.heading)
+        #expect(a.samples != c.samples)
+    }
+
+    @Test("Circular mean and std of heading around 0/360")
+    func circularStatistics() throws {
+        var engine = NavigationEngine(config: S.config(particles: 4))
+        engine.ingest(.location(LocationSample(latitude: 0, longitude: 0, altitude: 0, horizontalAccuracy: 5,
+                                               verticalAccuracy: -1, speed: -1, speedAccuracy: -1,
+                                               course: -1, courseAccuracy: -1), at: S.ms(0)))
+        engine.heading = [359, 1, 358, 2].map { $0 * .pi / 180 }
+        let estimate = try #require(engine.estimate(at: S.ms(0)))
+        #expect(abs(angleDifference(estimate.headingDeg, 0)) < 1e-9)
+        // Circular std of ±1°, ±2° with equal weights ≈ 1.58°.
+        #expect(abs(estimate.headingStdDeg - (2.5).squareRoot()) < 0.01)
+        engine.heading = [359, 179, 89, 269].map { $0 * .pi / 180 }
+        let spread = try #require(engine.estimate(at: S.ms(0)))
+        #expect(!spread.converged)
+        #expect(spread.headingStdDeg > 100)
+    }
+
+    @Test("No estimate before the first position; a manual fix alone initialises")
+    func initialisation() throws {
+        var engine = NavigationEngine(config: S.config(particles: 50))
+        engine.ingest(.obd(OBDSample(pid: .vehicleSpeed, value: 0, unit: .kilometersPerHour, ecu: "7E8"), at: S.ms(0.1)))
+        #expect(engine.estimate(at: S.ms(0.2)) == nil)
+        engine.ingest(.manualFix(ManualFixSample(latitude: 0.001, longitude: 0.002, pressedT: S.ms(0), speedSource: "unknown"),
+                                 at: S.ms(0.3)))
+        let estimate = try #require(engine.estimate(at: S.ms(0.3)))
+        #expect(abs(estimate.latitude - 0.001) < 1e-9 && abs(estimate.longitude - 0.002) < 1e-9)
+        #expect(!estimate.converged)
+        #expect(estimate.ellipse.semiMajorM > 60 && estimate.ellipse.semiMajorM < 90)  // √5.991 × 30 m
+    }
+
+    @Test("A stale fix is ignored while moving and accepted while stopped; GNSS course is vetoed while OBD says stopped")
+    func staleFixAndCourseGate() throws {
+        var engine = NavigationEngine(config: S.config(particles: 50))
+        func fix(_ t: Double, age: Double, speed: Double = -1, course: Double = -1) -> NavigationInput {
+            .location(LocationSample(latitude: 0, longitude: 0, altitude: 0, horizontalAccuracy: 5,
+                                     verticalAccuracy: -1, speed: speed, speedAccuracy: speed >= 0 ? 0.3 : -1,
+                                     course: course, courseAccuracy: course >= 0 ? 2 : -1,
+                                     receivedT: S.ms(t + age), ageS: age), at: S.ms(t))
+        }
+        engine.ingest(.obd(OBDSample(pid: .vehicleSpeed, value: 40, unit: .kilometersPerHour, ecu: "7E8"), at: S.ms(0)))
+        engine.ingest(fix(-60, age: 60.1))
+        #expect(!engine.isInitialized)
+        #expect(engine.counters.fixesIgnoredStale == 1)
+        engine.ingest(.obd(OBDSample(pid: .vehicleSpeed, value: 0, unit: .kilometersPerHour, ecu: "7E8"), at: S.ms(0.2)))
+        engine.ingest(fix(-60, age: 60.3, speed: 4, course: 90))  // stopped: accepted, course vetoed
+        #expect(engine.isInitialized)
+        let estimate = try #require(engine.estimate(at: S.ms(0.3)))
+        #expect(estimate.headingStdDeg > 90, "course must not be used while OBD says stopped")
+        // OBD from another ECU is not vehicle speed for the engine.
+        engine.ingest(.obd(OBDSample(pid: .vehicleSpeed, value: 50, unit: .kilometersPerHour, ecu: "7E9"), at: S.ms(0.4)))
+        engine.ingest(.motion(MotionSample(userAcceleration: .zero, gravity: Vector3(x: 0, y: 0, z: -1),
+                                           rotationRate: .zero, attitude: .identity), at: S.ms(1.0)))
+        #expect(try #require(engine.estimate(at: S.ms(1.0))).stationary)
+    }
+}
