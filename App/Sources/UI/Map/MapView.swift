@@ -120,8 +120,14 @@ struct MapFeed: View {
     var body: some View {
         Color.clear
             .frame(width: 0, height: 0)
-            .onChange(of: session.live.obdSpeedKmh, initial: true) { _, kmh in
-                model.setOBDSpeed(kmh)
+            .onChange(of: session.live.obdSpeedKmh, initial: true) { refreshStationary() }
+            // A 0 that goes stale with no new reading must stop counting
+            // as stopped: re-check twice a second (reads, never observes).
+            .task {
+                while !Task.isCancelled {
+                    refreshStationary()
+                    try? await Task.sleep(for: .milliseconds(500))
+                }
             }
             .onChange(of: session.live.referenceFix) { _, fix in
                 model.ingest(
@@ -145,6 +151,15 @@ struct MapFeed: View {
                     )
                 }
             }
+    }
+}
+
+extension MapFeed {
+    fileprivate func refreshStationary() {
+        model.setOBDSpeed(
+            session.live.obdSpeedKmh, replyUptime: session.obdSpeedReplyUptime,
+            now: session.currentUptimeSeconds
+        )
     }
 }
 
@@ -202,11 +217,19 @@ struct GPSMapView: View {
     @State private var toast: Int?
     @State private var pressBegan = false
     @State private var dragOrigin: CGPoint?
-    @State private var smoother = HeadingSmoother()
+    /// Reference box: the 10 Hz smoother and write gate change without
+    /// re-rendering the view (and its polylines).
+    @State private var headingState = HeadingState()
     /// Copy of the inputs the 10 Hz heading task reads; a task closure would
     /// otherwise see the props from when it started.
     @State private var inputs = HeadingInputs()
     @State private var cameraHeading = 0.0
+
+    @MainActor
+    final class HeadingState {
+        var smoother = HeadingSmoother()
+        var gate = HeadingWriteGate()
+    }
 
     struct HeadingInputs: Equatable {
         var fix: LocationSample?
@@ -256,30 +279,29 @@ struct GPSMapView: View {
                 inputs = new
             }
             .onChange(of: staged != nil) { _, isStaged in
-                updateFollow { $0.pinStaged(isStaged, at: FollowClock.now) }
+                updateFollow { $0.pinStaged(isStaged, at: ContinuousClock.now) }
             }
             .onChange(of: headingUp) {
                 // Mode switch while following: swing the camera to the new heading.
                 if follow.isFollowing { moveCameraToCar(duration: 0.6) }
             }
-            // Auto-resume: sleeps until the deadline; a new deadline restarts it.
+            // Auto-resume: sleeps on the clock the deadline is on, ticks, and
+            // sleeps again while a deadline remains. A new deadline restarts it.
             .task(id: follow.resumeDeadline) {
-                guard let deadline = follow.resumeDeadline else { return }
-                let wait = deadline - FollowClock.now
-                if wait > 0 {
-                    try? await Task.sleep(for: .seconds(wait))
-                    if Task.isCancelled { return }
-                }
-                var next = follow
-                if next.tick(now: FollowClock.now) {
-                    follow = next
-                    moveCameraToCar(duration: 0.8)
+                while let deadline = follow.resumeDeadline {
+                    if ContinuousClock.now < deadline {
+                        try? await Task.sleep(until: deadline, clock: .continuous)
+                        if Task.isCancelled { return }
+                    }
+                    if resumeIfDue() { return }
                 }
             }
             .task(id: headingActive) { await runHeadingLoop() }
             // Fires on reselect/foreground too.
             .onChange(of: isLive, initial: true) { _, live in
                 guard live else { return }
+                // A deadline that passed while away (screen off, other tab).
+                resumeIfDue()
                 if let fix = latest {
                     frame(center: fix.coordinate, accuracy: fix.horizontalAccuracy)
                 } else if let cached = cachedLocation() {
@@ -291,7 +313,15 @@ struct GPSMapView: View {
                 }
             }
             // Start: a pin staged in the previous recording would be refused.
-            .onChange(of: recordingFile) { cancelStaged() }
+            .onChange(of: recordingFile) {
+                cancelStaged()
+                headingState.smoother = HeadingSmoother()
+                headingState.gate.reset()
+            }
+            // No bearing: nothing to turn to; drop a stale smoothed heading.
+            .onChange(of: bearing) { _, new in
+                if new == nil { headingState.smoother = HeadingSmoother() }
+            }
             .task(id: lastFixInstant) {
                 isStale = false
                 guard let instant = lastFixInstant else { return }
@@ -312,6 +342,16 @@ struct GPSMapView: View {
     /// The camera turns with the car: heading-up, following, a bearing exists.
     private var headingActive: Bool {
         headingUp && follow.isFollowing && isLive && bearing != nil
+    }
+
+    /// Resumes Following if the deadline has passed. True when it did.
+    @discardableResult
+    private func resumeIfDue() -> Bool {
+        var next = follow
+        guard next.tick(now: ContinuousClock.now) else { return false }
+        follow = next
+        moveCameraToCar(duration: 0.8)
+        return true
     }
 
     private func updateFollow(_ body: (inout FollowController) -> Void) {
@@ -362,12 +402,7 @@ struct GPSMapView: View {
     private func mapBody(stale: Bool) -> some View {
         MapReader { proxy in
             Map(position: $position) {
-                ForEach(Array(track.runs.enumerated()), id: \.offset) { _, run in
-                    if run.points.count >= 2 {
-                        MapPolyline(coordinates: run.points.map(\.coordinate))
-                            .stroke(run.band.color, lineWidth: 5)
-                    }
-                }
+                TrackOverlay(track: track)
                 if let latest, let band = AccuracyBand(accuracy: latest.horizontalAccuracy) {
                     let c = color(band, stale: stale)
                     MapCircle(center: latest.coordinate, radius: latest.horizontalAccuracy)
@@ -395,17 +430,22 @@ struct GPSMapView: View {
             }
             .coordinateSpace(.named(Self.space))
             .onMapCameraChange(frequency: .onEnd) { context in
-                distance = context.camera.distance
-                visibleSpanM = MapFraming.visibleSpanMeters(latitudeDelta: context.region.span.latitudeDelta)
+                if MapChange.isSignificant(old: distance, new: context.camera.distance) {
+                    distance = context.camera.distance
+                }
+                if let span = MapFraming.visibleSpanMeters(latitudeDelta: context.region.span.latitudeDelta),
+                   MapChange.isSignificant(old: visibleSpanM, new: span) {
+                    visibleSpanM = span
+                }
                 if abs(context.camera.heading - cameraHeading) > 0.5 { cameraHeading = context.camera.heading }
                 // While following this is our own move and is ignored; while
                 // paused, only the user (or pan inertia) moves the camera.
-                updateFollow { $0.cameraSettled(at: FollowClock.now) }
+                updateFollow { $0.cameraSettled(at: ContinuousClock.now) }
             }
             // Touch-only gestures turn Following off. No `positionedByUser`:
             // MapKit sets it for changes the user did not make.
             .onMapUserGesture {
-                updateFollow { $0.userGesture(at: FollowClock.now) }
+                updateFollow { $0.userGesture(at: ContinuousClock.now) }
             }
             .simultaneousGesture(longPress(proxy: proxy))
         }
@@ -480,18 +520,31 @@ struct GPSMapView: View {
     /// Applies the span rule as a region centred on `center`.
     private func frame(center: CLLocationCoordinate2D, accuracy: Double) {
         let span = MapFraming.spanMeters(horizontalAccuracy: accuracy)
+        if headingUp, follow.isFollowing, bearing != nil {
+            // A region would be north-up; keep the mode.
+            let framed = MapFraming.cameraDistance(spanMeters: span)
+            distance = framed
+            position = .camera(MapCamera(
+                centerCoordinate: center, distance: framed, heading: targetHeading, pitch: 0
+            ))
+            return
+        }
         position = .region(MKCoordinateRegion(
             center: center, latitudinalMeters: span, longitudinalMeters: span
         ))
     }
 
     /// Camera heading for the current mode: 0 north-up, the smoothed bearing heading-up.
-    private var targetHeading: Double { headingUp ? (smoother.heading ?? bearing ?? 0) : 0 }
+    private var targetHeading: Double {
+        CameraHeading.choose(headingUp: headingUp, bearing: bearing, smoothed: headingState.smoother.heading)
+    }
 
     /// Recentres, keeping the user's current zoom and mode.
     fileprivate func recenter(_ fix: LocationSample) {
+        let heading = targetHeading
+        headingState.gate.noteWrite(heading, at: ContinuousClock.now)
         position = .camera(MapCamera(
-            centerCoordinate: fix.coordinate, distance: distance, heading: targetHeading, pitch: 0
+            centerCoordinate: fix.coordinate, distance: distance, heading: heading, pitch: 0
         ))
     }
 
@@ -505,19 +558,20 @@ struct GPSMapView: View {
     /// the heading holds (stopped, no new bearing) it writes nothing.
     private func runHeadingLoop() async {
         guard headingActive else { return }
-        var last = FollowClock.now
+        var last = ContinuousClock.now
         while !Task.isCancelled {
             try? await Task.sleep(for: .milliseconds(100))
             if Task.isCancelled { return }
-            let now = FollowClock.now
-            let before = smoother.heading
-            var next = smoother
-            let heading = next.step(target: inputs.bearing, frozen: inputs.frozen, dt: now - last)
+            let now = ContinuousClock.now
+            let dt = Double((now - last).components.seconds)
+                + Double((now - last).components.attoseconds) / 1e18
             last = now
-            guard let heading, let fix = inputs.fix else { continue }
-            if let before, abs(HeadingSmoother.shortestDelta(from: before, to: heading)) < 0.05 { continue }
-            smoother = next
-            withAnimation(.linear(duration: 0.1)) {
+            let heading = headingState.smoother.step(
+                target: inputs.bearing, frozen: inputs.frozen, dt: dt
+            )
+            guard let heading, let fix = inputs.fix,
+                  headingState.gate.admit(heading, at: now) else { continue }
+            withAnimation(.linear(duration: 0.25)) {
                 position = .camera(MapCamera(
                     centerCoordinate: fix.coordinate, distance: distance, heading: heading, pitch: 0
                 ))
@@ -531,13 +585,12 @@ struct GPSMapView: View {
     @ViewBuilder
     private func carMarker(color: Color) -> some View {
         if headingUp, let bearing {
-            let shown = follow.isFollowing ? (smoother.heading ?? cameraHeading) : cameraHeading
-            Image(systemName: "location.north.fill")
+                        Image(systemName: "location.north.fill")
                 .font(.system(size: 30))
                 .foregroundStyle(color)
                 .shadow(color: .white, radius: 1)
                 .shadow(color: .white, radius: 1)
-                .rotationEffect(.degrees(bearing - shown))
+                .rotationEffect(.degrees(bearing - cameraHeading))
         } else {
             Circle()
                 .fill(color)
@@ -599,7 +652,7 @@ struct GPSMapView: View {
     /// Ticks at 1 Hz inside its own TimelineView; the Map is not re-rendered.
     private var resumeHint: some View {
         TimelineView(.periodic(from: .now, by: 1)) { _ in
-            Text("Re-centre in \(follow.countdownSeconds(now: FollowClock.now) ?? 1) s")
+            Text("Re-centre in \(follow.countdownSeconds(now: ContinuousClock.now) ?? 1) s")
                 .font(.subheadline.weight(.semibold).monospacedDigit())
                 .padding(.horizontal, 14)
                 .frame(minHeight: 36)
@@ -625,7 +678,7 @@ struct GPSMapView: View {
     private var followButton: some View {
         Button {
             let was = follow.isFollowing
-            updateFollow { $0.followTapped(at: FollowClock.now) }
+            updateFollow { $0.followTapped(at: ContinuousClock.now) }
             if follow.isFollowing, !was { moveCameraToCar(duration: 0.8) }
         } label: {
             Label(
@@ -680,6 +733,20 @@ private struct ManualFixPanel: View {
         .padding(12)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
         .padding(.horizontal, 12)
+    }
+}
+
+/// The track polylines, keyed on `track` only: heading changes do not touch it.
+private struct TrackOverlay: MapContent {
+    var track: GPSTrack
+
+    var body: some MapContent {
+        ForEach(Array(track.runs.enumerated()), id: \.offset) { _, run in
+            if run.points.count >= 2 {
+                MapPolyline(coordinates: run.points.map(\.coordinate))
+                    .stroke(run.band.color, lineWidth: 5)
+            }
+        }
     }
 }
 
@@ -815,7 +882,7 @@ extension MapPreviewData {
 
 #Preview("Paused, re-centre hint") {
     var paused = FollowController(following: true)
-    paused.userGesture(at: FollowClock.now)
+    paused.userGesture(at: ContinuousClock.now)
     return GPSMapView(
         track: MapPreviewData.track,
         latest: MapPreviewData.fix(59, accuracy: 12, gapAfter: 60),

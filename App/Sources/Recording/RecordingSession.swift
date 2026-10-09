@@ -532,6 +532,13 @@ final class RecordingSession {
         )
     }
 
+    /// Read-only, for the map's stopped check: `replyUptime` of the reading
+    /// behind `live.obdSpeedKmh`, nil when there is none.
+    var obdSpeedReplyUptime: Double? { obdSpeedUptime }
+
+    /// Read-only: the uptime clock the OBD reply uptimes are on.
+    var currentUptimeSeconds: Double { uptime.uptimeSeconds }
+
     /// A recording is calibrating or recording (not stopping) and the gate
     /// allows a fix: `recordManualFix` would write a row now.
     var canRecordManualFix: Bool {

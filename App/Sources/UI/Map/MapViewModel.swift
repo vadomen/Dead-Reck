@@ -84,10 +84,12 @@ final class MapViewModel {
         track.append(fix)
     }
 
-    /// OBD speed from the feed (km/h, J1979 integer; nil = no reading, which
-    /// is not stationary). Publishes only when the stationary state flips.
-    func setOBDSpeed(_ kmh: Double?) {
-        let stationary = kmh == 0
+    /// OBD speed from the feed (km/h, J1979 integer) with the uptime of its
+    /// reply and the uptime now. Stationary only for a fresh 0 (see
+    /// `StationaryRule`); nil or stale is unknown, not stationary. Publishes
+    /// only when the stationary state flips.
+    func setOBDSpeed(_ kmh: Double?, replyUptime: Double?, now: Double) {
+        let stationary = StationaryRule.isStopped(kmh: kmh, replyUptime: replyUptime, now: now)
         if stationary != isStationary { isStationary = stationary }
     }
 
