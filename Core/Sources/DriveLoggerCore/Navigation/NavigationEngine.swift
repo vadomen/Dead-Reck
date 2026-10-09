@@ -25,8 +25,17 @@ import Foundation
 /// estimated here. Speed is OBD 0x0D from ECU `7E8` (or none, v1) held
 /// between replies, `v + 0.5` km/h when `v > 0`, times each particle's scale.
 /// A *fresh* OBD zero (≤ `obdMaxAgeS` old) freezes heading and position
-/// (zero-velocity update). A stale reading is unknown speed: each particle's
-/// speed error random-walks and heading noise grows.
+/// (zero-velocity update). A stale reading after an OBD 0, with no IMU sign
+/// of motion since, is parked: frozen the same way. Any other stale reading
+/// is unknown speed: each particle's speed error follows a mean-reverting
+/// Ornstein–Uhlenbeck process and heading noise grows.
+///
+/// **Catch-up**: an `ingest` after a long silence of every input (the app
+/// suspended, a gap in a file) runs fresh-OBD steps one by one, as always;
+/// beyond `maxCatchUpSteps` stale grid steps it folds a parked stretch in
+/// O(1) (bit-identical to stepping it) and splits an unknown-speed stretch
+/// into at most `maxCatchUpSteps` macro steps with the exact OU
+/// discretisation (R13.1-6).
 ///
 /// **Updates**: location fixes (per-axis σ = accuracy / 1.51, floored;
 /// network fixes — any fix without a valid speed — tempered for their
@@ -54,7 +63,8 @@ public struct NavigationEngine: Sendable {
     var covNN: [Double] = []
     var heading: [Double] = []
     var scale: [Double] = []
-    /// Speed error random walk while OBD is stale, m/s; 0 otherwise.
+    /// Speed error while OBD is stale and the car is not parked, m/s
+    /// (Ornstein–Uhlenbeck, `staleSpeedDecayS`); 0 otherwise.
     var speedOffset: [Double] = []
     /// Normalised: logsumexp(logWeight) == 0.
     var logWeight: [Double] = []
@@ -130,16 +140,75 @@ public struct NavigationEngine: Sendable {
         }
     }
 
-    /// Runs every grid step at or before `ns`.
+    /// Runs every grid step at or before `ns`. Steps with fresh OBD speed
+    /// always run one by one. Once OBD is stale and more than
+    /// `maxCatchUpSteps` grid steps remain, the rest is caught up in bounded
+    /// work (`catchUp`), so a long silence of every input — the app
+    /// suspended, a gap in a file, a corrupt huge `t` — cannot block the
+    /// caller (R13.1-6). Ordinary 10 Hz input never takes that path: motion
+    /// samples alone step the grid every few milliseconds.
     private mutating func advance(to ns: Int64) {
         guard let last = lastStepNs else {
             lastStepNs = Self.floorToGrid(ns, stepNs)
             return
         }
+        let target = Self.floorToGrid(ns, stepNs)
+        guard target > last else { return }
+        guard isInitialized else {
+            // Before initialisation a step only moves the clock and drops
+            // the pending yaw: jump straight to the target.
+            lastStepNs = target
+            pendingYaw = 0
+            return
+        }
         var next = last + stepNs
-        while next <= ns {
+        while next <= target {
+            // Both on the grid: divide first, so a huge `t` cannot overflow.
+            let remaining = Int(target / stepNs - next / stepNs) + 1
+            if remaining > max(1, config.maxCatchUpSteps) && !isFresh(at: next) {
+                catchUp(from: next, steps: remaining)
+                return
+            }
             step(at: next)
             next += stepNs
+        }
+    }
+
+    /// OBD speed at most `obdMaxAgeS` old at `ns` (the same test as `step`).
+    private func isFresh(at ns: Int64) -> Bool {
+        guard obdSpeedKmh != nil, let t = obdNs else { return false }
+        return Double(ns - t) / 1e9 <= config.obdMaxAgeS
+    }
+
+    /// Catches up `count` stale grid steps, the first at `first`, without
+    /// running them one by one. Nothing that `step` reads changes between
+    /// inputs, and OBD stays stale, so every step would take the same branch:
+    /// - parked: each step only counts and records history, so the stretch
+    ///   is folded in O(1) plus the last `history.capacity` entries —
+    ///   bit-identical to stepping it;
+    /// - unknown speed: split into at most `maxCatchUpSteps` macro steps of
+    ///   equal whole grid steps (`macroStep`).
+    private mutating func catchUp(from first: Int64, steps count: Int) {
+        if parkedSinceZero {
+            counters.steps += count
+            counters.staleParkedSteps += count
+            counters.coalescedSteps += count
+            lastStepStationary = true
+            lastMeanSpeed = 0
+            for k in max(0, count - history.capacity)..<count {
+                history.append(first + Int64(k) * stepNs, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: nil)
+            }
+            lastStepNs = first + Int64(count - 1) * stepNs
+            pendingYaw = 0
+            return
+        }
+        let macroCount = max(1, config.maxCatchUpSteps)
+        let perMacro = (count + macroCount - 1) / macroCount
+        var done = 0
+        while done < count {
+            let length = min(perMacro, count - done)
+            macroStep(at: first + Int64(done + length - 1) * stepNs, gridSteps: length)
+            done += length
         }
     }
 
@@ -199,6 +268,9 @@ public struct NavigationEngine: Sendable {
         obdSpeedKmh = sample.value
         obdNs = ns
         parkedSinceZero = sample.value == 0
+        // A fresh 0 says the car is stopped now: braking deceleration still
+        // in the EMA is not evidence of motion since (R13.2-2).
+        if sample.value == 0 { motionEMA = .zero }
     }
 
     /// Updates the horizontal-acceleration EMA and clears the parked latch
@@ -212,7 +284,9 @@ public struct NavigationEngine: Sendable {
         let along = u.x * gx + u.y * gy + u.z * gz
         let h = Vector3(x: u.x - along * gx, y: u.y - along * gy, z: u.z - along * gz)
         guard h.x.isFinite, h.y.isFinite, h.z.isFinite else { return }
-        defer { lastMotionEMANs = ns }
+        // Never backwards: an out-of-order sample must not give the next
+        // one a long dt and a large gain (R13.2-3).
+        defer { lastMotionEMANs = max(lastMotionEMANs ?? ns, ns) }
         guard let last = lastMotionEMANs, ns > last else { return }
         let dt = min(Double(ns - last) / 1e9, config.maxMotionGapS)
         let a = 1 - exp(-dt / config.staleParkedMotionTauS)
@@ -287,7 +361,6 @@ public struct NavigationEngine: Sendable {
         let sigmaOffset = config.staleSpeedDecayS > 0
             ? config.staleSpeedNoiseMpsPerSqrtS * (config.staleSpeedDecayS / 2 * (1 - decay * decay)).squareRoot()
             : config.staleSpeedNoiseMpsPerSqrtS * sqrtDt
-        let twoPi = 2 * Double.pi
         let alongPerM = config.alongTrackNoisePerSqrtM * config.alongTrackNoisePerSqrtM
         let crossPerM = config.crossTrackNoisePerSqrtM * config.crossTrackNoisePerSqrtM
 
@@ -295,30 +368,13 @@ public struct NavigationEngine: Sendable {
         for i in 0..<east.count {
             let (n1, n2) = rng.nextGaussianPair()
             let dHeading = yaw + sigmaHeading * n1
-            let midHeading = heading[i] + 0.5 * dHeading
             var speed = vObd * scale[i]
             if stale {
                 speedOffset[i] = decay * speedOffset[i] + sigmaOffset * rng.nextGaussian()
                 speed += speedOffset[i]
             }
-            let distance = speed * dt
-            let s = sin(midHeading), c = cos(midHeading)
-            let dEast = distance * s
-            let dNorth = distance * c
-            east[i] += dEast
-            north[i] += dNorth
-            // Along- and cross-track noise grow the position covariance in
-            // proportion to the distance travelled.
-            let qAlong = alongPerM * abs(distance)
-            let qCross = crossPerM * abs(distance)
-            covEE[i] += qAlong * s * s + qCross * c * c
-            covNN[i] += qAlong * c * c + qCross * s * s
-            covEN[i] += (qAlong - qCross) * s * c
-            var h = heading[i] + dHeading
-            if h >= twoPi { h -= twoPi } else if h < 0 { h += twoPi }
-            if !(h >= 0 && h < twoPi) { h = Self.wrap2Pi(h) }  // only after a huge step
-            heading[i] = h
-            scale[i] += sigmaScale * n2
+            let (dEast, dNorth) = move(i, dHeading: dHeading, distance: speed * dt, scaleStep: sigmaScale * n2,
+                                       alongPerM: alongPerM, crossPerM: crossPerM)
             let w = weight[i]
             meanDEast += w * dEast
             meanDNorth += w * dNorth
@@ -330,9 +386,135 @@ public struct NavigationEngine: Sendable {
         lastStepStationary = false
         lastMeanSpeed = meanSpeed
         history.append(ns, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: fresh ? vObd : nil)
-        if counters.steps % Int(max(1, (config.stepHz * 10).rounded())) == 0 {
+        if counters.steps % reanchorCheckSteps == 0 {
             reanchorIfNeeded()
         }
+    }
+
+    /// Moving steps between re-anchor checks (10 s).
+    private var reanchorCheckSteps: Int { Int(max(1, (config.stepHz * 10).rounded())) }
+
+    /// Moves particle `i` by `distance` metres along its heading at the
+    /// step's midpoint, turns it by `dHeading`, grows its position
+    /// covariance with the distance and steps its scale. Returns the
+    /// displacement (east, north).
+    @inline(__always)
+    private mutating func move(
+        _ i: Int, dHeading: Double, distance: Double, scaleStep: Double, alongPerM: Double, crossPerM: Double
+    ) -> (Double, Double) {
+        let twoPi = 2 * Double.pi
+        let midHeading = heading[i] + 0.5 * dHeading
+        let s = sin(midHeading), c = cos(midHeading)
+        let dEast = distance * s
+        let dNorth = distance * c
+        east[i] += dEast
+        north[i] += dNorth
+        // Along- and cross-track noise grow the position covariance in
+        // proportion to the distance travelled.
+        let qAlong = alongPerM * abs(distance)
+        let qCross = crossPerM * abs(distance)
+        covEE[i] += qAlong * s * s + qCross * c * c
+        covNN[i] += qAlong * c * c + qCross * s * s
+        covEN[i] += (qAlong - qCross) * s * c
+        var h = heading[i] + dHeading
+        if h >= twoPi { h -= twoPi } else if h < 0 { h += twoPi }
+        if !(h >= 0 && h < twoPi) { h = Self.wrap2Pi(h) }  // only after a huge step
+        heading[i] = h
+        scale[i] += scaleStep
+        return (dEast, dNorth)
+    }
+
+    /// One unknown-speed step over `gridSteps` grid steps ending at `ns`
+    /// (catch-up after a long silence of every input). Same model as a
+    /// stale `step`, discretised exactly for a long dt: the speed error
+    /// and its integral over the step are drawn jointly from the
+    /// Ornstein–Uhlenbeck transition, so the distance carries the
+    /// integrated error, not the end value × dt (which would overstate the
+    /// spread by ≈ √(dt/τ) for dt ≫ τ). Heading and scale random walks are
+    /// exact for any dt.
+    private mutating func macroStep(at ns: Int64, gridSteps: Int) {
+        let dt = Double(ns - (lastStepNs ?? ns)) / 1e9
+        lastStepNs = ns
+        let yaw = pendingYaw
+        pendingYaw = 0
+        let checkBefore = counters.steps / reanchorCheckSteps
+        counters.steps += gridSteps
+        counters.staleSpeedSteps += gridSteps
+        counters.coalescedSteps += gridSteps
+        counters.macroSteps += 1
+        speedOffsetsActive = true
+        var vObd = 0.0
+        if let v = obdSpeedKmh { vObd = v > 0 ? (v + config.obdSpeedOffsetKmh) / 3.6 : 0 }
+
+        let timeNoise = config.headingNoiseDegPerSqrtS * dt.squareRoot() * config.staleHeadingNoiseFactor
+        let turnVariance = config.turnHeadingNoiseDegPerSqrtDeg * config.turnHeadingNoiseDegPerSqrtDeg
+            * abs(yaw) * 180 / .pi
+        let sigmaHeading = (timeNoise * timeNoise + turnVariance).squareRoot() * .pi / 180
+        let sigmaScale = config.scaleNoisePerSqrtS * dt.squareRoot()
+        let ou = Self.ouTransition(dt: dt, sigma: config.staleSpeedNoiseMpsPerSqrtS, tau: config.staleSpeedDecayS)
+        let alongPerM = config.alongTrackNoisePerSqrtM * config.alongTrackNoisePerSqrtM
+        let crossPerM = config.crossTrackNoisePerSqrtM * config.crossTrackNoisePerSqrtM
+
+        var meanDEast = 0.0, meanDNorth = 0.0, meanSpeed = 0.0
+        for i in 0..<east.count {
+            let (n1, n2) = rng.nextGaussianPair()
+            let (n3, n4) = rng.nextGaussianPair()
+            let x0 = speedOffset[i]
+            speedOffset[i] = ou.decay * x0 + ou.sigmaEnd * n3
+            let integral = ou.integralGain * x0 + ou.integralOnEnd * n3 + ou.integralOwn * n4
+            let distance = vObd * scale[i] * dt + integral
+            let (dEast, dNorth) = move(i, dHeading: yaw + sigmaHeading * n1, distance: distance,
+                                       scaleStep: sigmaScale * n2, alongPerM: alongPerM, crossPerM: crossPerM)
+            let w = weight[i]
+            meanDEast += w * dEast
+            meanDNorth += w * dNorth
+            meanSpeed += w * (dt > 0 ? distance / dt : 0)
+        }
+        cumulativeEast += meanDEast
+        cumulativeNorth += meanDNorth
+        cumulativeYaw += yaw
+        lastStepStationary = false
+        lastMeanSpeed = meanSpeed
+        history.append(ns, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: nil)
+        if counters.steps / reanchorCheckSteps != checkBefore {
+            reanchorIfNeeded()
+        }
+    }
+
+    /// Exact transition over `dt` of the OU speed error dX = −X/τ dt + σ dW
+    /// and its integral I = ∫X: X' = decay·X + sigmaEnd·n₁,
+    /// I = integralGain·X + integralOnEnd·n₁ + integralOwn·n₂ (n₁, n₂
+    /// independent standard normals). τ ≤ 0 is the plain random walk.
+    static func ouTransition(dt: Double, sigma: Double, tau: Double)
+        -> (decay: Double, sigmaEnd: Double, integralGain: Double, integralOnEnd: Double, integralOwn: Double) {
+        let s2 = sigma * sigma
+        let decay: Double, varEnd: Double, covariance: Double, varIntegral: Double, gain: Double
+        if tau > 0 {
+            let oneMinusA = -expm1(-dt / tau)
+            decay = 1 - oneMinusA
+            let oneMinusA2 = oneMinusA * (1 + decay)
+            varEnd = s2 * tau / 2 * oneMinusA2
+            covariance = s2 * tau * tau / 2 * oneMinusA * oneMinusA
+            varIntegral = s2 * tau * tau * (dt - 2 * tau * oneMinusA + tau / 2 * oneMinusA2)
+            gain = tau * oneMinusA
+        } else {
+            decay = 1
+            varEnd = s2 * dt
+            covariance = s2 * dt * dt / 2
+            varIntegral = s2 * dt * dt * dt / 3
+            gain = dt
+        }
+        let sigmaEnd = max(0, varEnd).squareRoot()
+        let onEnd = sigmaEnd > 0 ? covariance / sigmaEnd : 0
+        let own = max(0, varIntegral - onEnd * onEnd).squareRoot()
+        return (decay, sigmaEnd, gain, onEnd, own)
+    }
+
+    /// Variance of the OU speed error's integral over `dt` from a zero start:
+    /// the along-track spread of a car whose speed is unknown for `dt`.
+    static func ouIntegralVariance(dt: Double, sigma: Double, tau: Double) -> Double {
+        let ou = ouTransition(dt: dt, sigma: sigma, tau: tau)
+        return ou.integralOnEnd * ou.integralOnEnd + ou.integralOwn * ou.integralOwn
     }
 
     // MARK: Re-anchoring
@@ -736,9 +918,19 @@ public struct NavigationEngine: Sendable {
     }
 
     /// The belief at `t`, or nil before initialisation. Does not change the
-    /// engine. For a `t` after the last 10 Hz step the mean is extrapolated
-    /// with the last speed and yaw rate (not while stopped); for an earlier
-    /// `t` the current belief is returned as is.
+    /// engine. For an earlier `t` the current belief is returned as is.
+    ///
+    /// For a `t` after the last 10 Hz step, unless that step was stationary,
+    /// the mean is extrapolated with the last speed and yaw rate for at most
+    /// `extrapolationHorizonS` (R13.1-5); the ellipse is the last step's.
+    /// Beyond the horizon the position and heading are held at the horizon,
+    /// and the covariance grows by the motion not extrapolated, over the
+    /// excess time s: (v·s)² along the heading (the car may have stopped at
+    /// once or kept its last speed v) plus, in every direction, the variance
+    /// of the engine's own unknown-speed (OU) error integrated over s. It
+    /// grows with `t` and never shrinks. A stationary last step (fresh 0 or
+    /// parked) is held unchanged, as the engine itself would hold it until
+    /// new evidence.
     public func estimate(at t: MonotonicTimestamp) -> NavigationEstimate? {
         guard let plane = tangentPlane else { return nil }
         let n = east.count
@@ -768,13 +960,28 @@ public struct NavigationEngine: Sendable {
 
         let last = lastStepNs ?? t.nanoseconds
         if t.nanoseconds > last && !lastStepStationary {
-            let dt = Double(t.nanoseconds - last) / 1e9
-            let sinceMotion = max(0, Double(t.nanoseconds - (lastMotionNs ?? last)) / 1e9)
+            let horizon = max(0, config.extrapolationHorizonS)
+            // In Double, so a huge `t` cannot overflow.
+            let elapsed = (Double(t.nanoseconds) - Double(last)) / 1e9
+            let end = elapsed <= horizon ? t.nanoseconds : last + Int64((horizon * 1e9).rounded())
+            let dt = Double(end - last) / 1e9
+            let sinceMotion = max(0, Double(end - (lastMotionNs ?? last)) / 1e9)
             let dYaw = pendingYaw + lastYawRate * sinceMotion
             let mid = meanHeading + 0.5 * dYaw
             me += lastMeanSpeed * dt * sin(mid)
             mn += lastMeanSpeed * dt * cos(mid)
             meanHeading += dYaw
+            if elapsed > horizon {
+                let excess = elapsed - horizon
+                let travelled = abs(lastMeanSpeed) * excess
+                let along = travelled * travelled
+                let any = Self.ouIntegralVariance(dt: excess, sigma: config.staleSpeedNoiseMpsPerSqrtS,
+                                                  tau: config.staleSpeedDecayS)
+                let ue = sin(meanHeading), un = cos(meanHeading)
+                ee += along * ue * ue + any
+                en += along * ue * un
+                nn += along * un * un + any
+            }
         }
         let geodetic = plane.geodetic(east: me, north: mn)
         let headingStdDeg = headingStd * 180 / .pi

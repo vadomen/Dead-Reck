@@ -21,7 +21,9 @@ A particle filter with N = 2000 particles. Each particle samples
   measured on this car's clean drives as the GNSS/OBD speed ratio above
   30 km/h: 1.017 on clean-long, 1.015 on the dead-reckoned part of clean.
   Another car needs its own measurement, or the std back at about 0.03.
-- a speed error that random-walks only while OBD speed is stale,
+- a speed error, zero while OBD speed is fresh and while the car is parked
+  after a stop; otherwise, while OBD speed is stale, a mean-reverting
+  Ornstein–Uhlenbeck process (see Predict),
 
 and carries its position as a Gaussian, a mean and a 2×2 covariance updated by a
 Kalman step (Rao-Blackwellised). Weights are kept as normalised log-weights.
@@ -49,6 +51,14 @@ updates reweight only by what heading and scale actually predict.
     step is frozen like a zero-velocity update. The latch is armed by every OBD
     0 reply and cleared when the 1 s EMA of horizontal `userAcceleration`
     (gravity removed, device frame) exceeds 0.09 g.
+    - Every OBD 0 reply also zeroes the EMA (R13.2-2). A 0 says the car is
+      stopped now, so braking deceleration still in the EMA is not motion
+      since. Without the reset, OBD falling silent within about 1 s of a
+      0.25 g stop cleared the latch on the next sample, and the ellipse grew
+      to about 2 km in 5 min.
+    - The EMA's timestamp never goes backwards (R13.2-3). An out-of-order
+      motion sample would otherwise give the next one a dt of up to 0.5 s and
+      a gain of about 0.39 instead of 0.01, and one jolt could clear the latch.
     - On the replay set, parked and idling peaks reach 0.082 g (the phone being
       handled after ignition-off), and most drive-offs exceed 0.09 g within
       0–12 s; a gentle one can take 20–30 s.
@@ -61,6 +71,28 @@ updates reweight only by what heading and scale actually predict.
     drift), and heading noise is ×3. The ellipse then grows like √t: about
     0.6 / 2.2 / 3.0 km after 1 / 5 / 10 min of OBD silence while driving. An
     unbounded random walk reached 1.5 / 19 / 55 km.
+- **Catch-up after a long silence** (R13.1-6): when every input stops (the app
+  suspended, a gap in a file, a corrupt huge `t`), the next `ingest` must
+  catch up the grid. Work per `ingest` is bounded:
+  - Steps with fresh OBD always run one by one. There are at most
+    `obdMaxAgeS` × 10 Hz of them, since OBD goes stale within the gap.
+  - Once OBD is stale and more than `maxCatchUpSteps` (100) grid steps
+    remain:
+    - **Parked:** the stretch is folded in O(1), plus the last
+      `history.capacity` history entries. This is bit-identical to stepping
+      it.
+    - **Unknown speed:** the stretch runs as at most `maxCatchUpSteps` macro
+      steps of equal whole grid steps. Each draws the OU speed error and its
+      integral over the step jointly from the exact transition, so the
+      distance carries the integrated error, not the end value × dt. Heading
+      and scale random walks are exact for any dt.
+    - **Before initialisation:** the clock jumps.
+  - Ordinary input never takes this path: motion samples step the grid every
+    few milliseconds. The counters `coalescedSteps` and `macroSteps` are 0 on
+    every acceptance drive.
+  - Measured on a synthetic 600 s silence at unknown speed (2000 particles,
+    seeds 1–4): 95 % semi-major 2868–2952 m caught up against 2883–2959 m
+    stepped one by one.
 - **Process noise**: heading random walk 0.05°/√s plus 0.1°/√(degree turned)
   (about 1° per 90° turn; measured gyro turns match GNSS course within
   1–1.5 %). Position covariance grows by 0.6 m/√m along and across track. Scale
@@ -137,9 +169,28 @@ drives noticeably compared with independent draws.
 `estimate(at:)` returns nil before initialisation. Otherwise it returns the
 weighted mean position, circular mean and std of heading, a 95 % ellipse
 (√(5.991 λ) of the mixture covariance), speed, scale mean and std, ESS and
-`converged` (heading std < 10°; while false N4 shows "calibrating heading"). For
-a time after the last step it extrapolates with the last speed and yaw rate. It
-does not mutate the engine.
+`converged` (heading std < 10°; while false N4 shows "calibrating heading"). It
+does not mutate the engine. For a time after the last step (R13.1-5):
+- **Stationary last step** (fresh 0 or parked): the estimate is held
+  unchanged, as the engine itself would hold it until new evidence.
+- **Otherwise, up to `extrapolationHorizonS` (2 s, the age to which a held
+  OBD speed counts as known):** the mean is extrapolated with the last speed
+  and yaw rate, and the ellipse is the last step's.
+- **Beyond the horizon:** position and heading are held where the horizon
+  left them, and the covariance grows by the motion not extrapolated over the
+  excess s:
+  - (v·s)² along the heading, because the car may have stopped at once or
+    kept its last speed v;
+  - plus, in every direction, the variance of the engine's own unknown-speed
+    OU error integrated over s.
+
+  The ellipse grows with t and never shrinks. Before this rule, 60 s past
+  the last step at 20 m/s the estimate moved 1.2 km, and mid-turn its heading
+  spun 180°, with the ellipse unchanged.
+
+`east`/`north` are relative to the local plane, which re-anchors beyond
+`reanchorDistanceM`, so they jump by about 10 km at a re-anchor. Consumers
+(the N4 map and sidecar) use latitude/longitude.
 
 ### Causality and determinism
 
@@ -199,6 +250,8 @@ every result.
 | staleSpeedDecayS | 20 | stale speed error decays (Ornstein–Uhlenbeck) with this time constant |
 | staleParkedMotionG / staleParkedMotionTauS | 0.09 / 1 | after an OBD 0, stale = parked until the 1 s EMA of horizontal userAcceleration exceeds this |
 | reanchorDistanceM | 10 000 | re-anchor the local plane at the cloud's mean beyond this |
+| maxCatchUpSteps | 100 | most stale grid steps one `ingest` runs one by one; a longer stale stretch is folded (parked) or split into at most this many exact-OU macro steps (unknown speed) |
+| extrapolationHorizonS | 2 | `estimate(at:)` extrapolates at most this far past the last step; beyond it, it holds the position and grows the ellipse |
 | staleHeadingNoiseFactor | 3 | heading noise multiplier while stale |
 | maxMotionGapS | 0.5 | longer motion gaps contribute no yaw |
 | fixSigmaPerAccuracy | 1/1.51 | per-axis σ per metre of accuracy |
@@ -464,6 +517,48 @@ Every drive passes and consistency does not drop, so **k = 1.0 is the
 default**. manual-3's stale initialising fix (165 s old) was the main cause of
 its overconfidence.
 
+### N4-B0: engine fixes before N4 (seeds 1–5, mean and range, against N2.3)
+
+These are correctness fixes, judged with the mean-based adoption rule:
+- R13.2-2: an OBD 0 zeroes the motion EMA.
+- R13.2-3: the EMA timestamp never goes backwards.
+- R13.1-6: long gaps are caught up in bounded work.
+- R13.1-5: `estimate(at:)` extrapolates for at most 2 s, then holds the
+  position and grows the ellipse.
+
+Reference: the branch before B0, which is identical to N2.3. Release build,
+Mac, default config. **This is the baseline the rest of N4 must reproduce bit
+for bit.**
+
+| alias | run | distance | criterion | N2.3 mean (range) [inside 95 %] | N4-B0 mean (range) [inside 95 %] | Δ mean | allowed | end error | max error | converged at | ms/step |
+|---|---|---:|---|---|---|---:|---|---|---|---|---|
+| clean-long | mask-after 380 | 7.75 km | max ≤ 30 m | 18.90 m (18.19–20.20) [100 %] | 18.90 m (18.19–20.20) [100 %] | 0 | ≤ +2 m | 10.01 m (9.47–10.82)\* | 18.90 m | 0.02 km | 0.061–0.063 |
+| clean | mask-after 230 | 3.58 km | max ≤ 30 m | 13.94 m (12.25–16.89) [100 %] | 13.94 m (12.25–16.89) [100 %] | 0 | ≤ +2 m | 6.45 m (2.18–11.56)\* | 13.94 m | 0.03–0.04 km | 0.058–0.060 |
+| manual | use, hold-out 100 | 8.31 km | truth point 1 ≤ 200 m | 50.57 m (47.43–57.42) [100 %] | 50.57 m (47.43–57.42) [100 %] | 0 | ≤ +2.5 m | 67.29 m (63.79–76.10)\* | 259.78 m (pin prior) | 7.27–7.68 km (reported) | 0.065–0.066 |
+| jammed-A | use | 11.23 km | end ≤ 2.5 % | 1.147 % (1.02–1.26) [100 %] | 1.147 % (1.02–1.26) [100 %] | 0 | ≤ +0.1 pp | 128.82 m (114.97–141.80) | = end | 8.15 km | 0.065–0.067 |
+| jammed-B | use | 5.89 km | end ≤ 2.5 % | 1.068 % (0.93–1.39) [100 %] | 1.068 % (0.93–1.39) [100 %] | 0 | ≤ +0.1 pp | 62.91 m (55.06–82.11) | = end | 5.18–5.31 km | 0.062–0.063 |
+| manual-3 (sanity) | use | 12.05 km | reported | pins 103–104 / 458–473 / 128–131 m [2/3] | pins 103–104 / 458–473 / 128–131 m [2/3] | 0 | not gated | 129.87 m (128.32–131.28)\* | 463.46 m (458.14–472.96) | 1.72 km | 0.067–0.068 |
+
+\* no truth `end` for this drive: error at the last checkpoint.
+
+**Every acceptance replay is bit-identical to N2.3.** That covers every seed,
+every criterion, checkpoint and counter, and every GeoJSON file byte for byte;
+only ms/step differs. Why each fix changes nothing here:
+- **R13.2-2, R13.2-3:** the only stale periods in the replay set are the
+  ignition-off endings (jammed-A 211, jammed-B 291 and manual-3 15 parked
+  steps). There the last OBD 0 comes well after the stop, when the EMA has
+  already decayed, and no motion sample arrives out of order. The parked step
+  counts are unchanged.
+- **R13.1-6:** motion samples arrive every 10 ms on every drive, so no
+  `ingest` ever has more than a few grid steps to catch up.
+  `coalescedSteps` = `macroSteps` = 0 on all 30 runs.
+- **R13.1-5:** every scored checkpoint and every 1 Hz GeoJSON sample lies
+  within 2 s of the engine's last step, so it is extrapolated exactly as
+  before.
+
+The largest single `ingest` was 0.18 ms (0.94 ms in one reference run;
+timing only).
+
 ### N2.2 experiment: stale-fix σ grown by age (default off; superseded by N2.3)
 
 **Rule:** a fix from before the session (`t < 0`), or older than 5 s at ingest
@@ -556,6 +651,11 @@ on seeds 1–5 with std 0.03), with at most 1 of 283 withheld fixes inside the
   replay gives 0.05–0.06 ms/step (largest single ingest 0.31 ms).
 - Arrival order in the live app: CoreMotion batches can arrive late; the engine
   accumulates late yaw into the next step, but this is untested on hardware.
-- `estimate(at:)` extrapolation between steps at UI rates.
+- `estimate(at:)` extrapolation between steps at UI rates: the first frame
+  after a resume holds at the 2 s horizon with a grown ellipse (R13.1-5),
+  with no jump.
+- Catch-up after the app was suspended (R13.1-6): the time of the first
+  `ingest` after a long silence, with 2000 particles. On the Mac a 600 s
+  silence costs at most about 20 single steps plus 100 macro steps.
 - Behaviour across an OBD dropout while driving (stale-speed growth) and after
   ignition off at the end of a drive.

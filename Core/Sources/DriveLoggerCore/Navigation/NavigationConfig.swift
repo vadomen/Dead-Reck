@@ -68,6 +68,22 @@ public struct NavigationConfig: Hashable, Sendable, Codable {
     /// While OBD is stale, heading noise is multiplied by this.
     public var staleHeadingNoiseFactor = 3.0
 
+    // MARK: Catch-up and extrapolation
+
+    /// One `ingest` runs at most this many stale grid steps one by one. A
+    /// longer stale stretch (every input silent: the app suspended, a gap in
+    /// a file, a corrupt huge `t`) is caught up in bounded work: parked, it
+    /// is folded in O(1), bit-identical; at unknown speed, it is split into
+    /// at most this many macro steps with the exact Ornstein–Uhlenbeck
+    /// transition. Steps with fresh OBD always run one by one. 100 = 10 s
+    /// at 10 Hz.
+    public var maxCatchUpSteps = 100
+    /// `estimate(at:)` extrapolates past the last step with the last speed
+    /// and yaw rate for at most this long, s (the age up to which the engine
+    /// itself treats a held OBD speed as known). Beyond it the position is
+    /// held and, unless the last step was stationary, the ellipse grows.
+    public var extrapolationHorizonS = 2.0
+
     // MARK: Local plane
 
     /// The local plane is re-anchored at the cloud's mean once that is

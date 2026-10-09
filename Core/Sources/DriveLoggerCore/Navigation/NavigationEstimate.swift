@@ -5,6 +5,10 @@ public struct NavigationEstimate: Hashable, Sendable {
     /// The time the estimate is for (session clock).
     public var t: MonotonicTimestamp
     /// Weighted mean position in the engine's local plane, metres.
+    /// Plane-relative: the plane re-anchors at the cloud's mean once that is
+    /// more than `NavigationConfig.reanchorDistanceM` from the anchor, and
+    /// these values then jump by about that much while the position does
+    /// not move. Consumers (map, sidecar) should use `latitude`/`longitude`.
     public var east: Double
     public var north: Double
     /// The same position in WGS-84 degrees.
@@ -14,7 +18,8 @@ public struct NavigationEstimate: Hashable, Sendable {
     public var headingDeg: Double
     /// Circular standard deviation of the heading, degrees.
     public var headingStdDeg: Double
-    /// 95 % position ellipse.
+    /// 95 % position ellipse. Past the extrapolation horizon it grows
+    /// (see `NavigationEngine.estimate(at:)`); it never shrinks with `t`.
     public var ellipse: ErrorEllipse
     /// Mean speed over the last prediction step, m/s (0 when stopped).
     public var speedMps: Double
@@ -26,7 +31,9 @@ public struct NavigationEstimate: Hashable, Sendable {
     /// Heading std under `NavigationConfig.convergedHeadingStdDeg`. While
     /// false the app shows "calibrating heading".
     public var converged: Bool
-    /// The last prediction step was a zero-velocity update (fresh OBD 0).
+    /// The last prediction step was frozen: a zero-velocity update (fresh
+    /// OBD 0) or a parked stale step (OBD stale after an OBD 0, with no IMU
+    /// sign of motion since).
     public var stationary: Bool
 }
 
@@ -102,6 +109,14 @@ public struct NavigationCounters: Hashable, Sendable, Codable {
     public var resamples = 0
     /// Times the local plane moved to the cloud's mean (R13.1-3).
     public var reanchors = 0
+    /// Grid steps caught up in bulk after a long silence of every input,
+    /// not one by one (R13.1-6): parked stretches folded, and unknown-speed
+    /// stretches run as macro steps. Included in `steps`. 0 on ordinary
+    /// input.
+    public var coalescedSteps = 0
+    /// Macro prediction steps (each one pass over the particles) run for
+    /// the unknown-speed part of `coalescedSteps`.
+    public var macroSteps = 0
 
     public init() {}
 }
