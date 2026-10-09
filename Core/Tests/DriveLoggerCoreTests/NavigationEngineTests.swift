@@ -129,7 +129,7 @@ struct NavigationEngineTests {
         })
         let times = [100.0, 150.0, drive.duration]
         let (engine, samples) = S.run(events, config: S.config(), sampleTimes: times)
-        #expect(engine.counters.towerFixesUsed > 40)
+        #expect(engine.counters.networkFixesUsed > 40)
         for (t, sample) in zip(times, samples) {
             let estimate = try #require(sample)
             let error = drive.error(estimate, at: t)
@@ -285,5 +285,38 @@ struct NavigationEngineTests {
         #expect(speedUpdates(kmh: 40, gate: 30) >= 15)
         #expect(speedUpdates(kmh: 25, gate: 10.8) >= 15)
         #expect(speedUpdates(kmh: 40, gate: 30, speedAccuracy: -1) == 0)
+    }
+
+    @Test("A 50 m fix without a valid speed is a network fix and is tempered; a 50 m fix with speed is not")
+    func noSpeedFixIsTempered() throws {
+        // Parked (fresh OBD 0). A 50 m fix at the origin initialises; a second
+        // 50 m fix 1 s later, 100 m east, either with or without speed.
+        func eastAfterSecondFix(speed: Double, speedAccuracy: Double) throws -> (east: Double, network: Int) {
+            var engine = NavigationEngine(config: S.config(particles: 50))
+            func fix(_ t: Double, east: Double) -> NavigationInput {
+                let p = S.plane.geodetic(east: east, north: 0)
+                return .location(LocationSample(latitude: p.latitude, longitude: p.longitude, altitude: 0,
+                                                horizontalAccuracy: 50, verticalAccuracy: -1,
+                                                speed: speed, speedAccuracy: speedAccuracy,
+                                                course: -1, courseAccuracy: -1, receivedT: S.ms(t), ageS: 0), at: S.ms(t))
+            }
+            engine.ingest(.obd(OBDSample(pid: .vehicleSpeed, value: 0, unit: .kilometersPerHour, ecu: "7E8"), at: S.ms(0)))
+            engine.ingest(fix(0.05, east: 0))
+            engine.ingest(.obd(OBDSample(pid: .vehicleSpeed, value: 0, unit: .kilometersPerHour, ecu: "7E8"), at: S.ms(1)))
+            engine.ingest(fix(1.05, east: 100))
+            let estimate = try #require(engine.estimate(at: S.ms(1.05)))
+            return (S.plane.enu(latitude: estimate.latitude, longitude: estimate.longitude).east, engine.counters.networkFixesUsed)
+        }
+        // With speed: two equal fixes, the second at full weight → halfway.
+        let withSpeed = try eastAfterSecondFix(speed: 0, speedAccuracy: 0.5)
+        #expect(abs(withSpeed.east - 50) < 1, "with speed: \(withSpeed.east) m")
+        #expect(withSpeed.network == 0)
+        // Without speed: tempered by 1 s / 60 s → about 100/61 m.
+        let noSpeed = try eastAfterSecondFix(speed: -1, speedAccuracy: -1)
+        #expect(abs(noSpeed.east - 100.0 / 61) < 0.5, "without speed: \(noSpeed.east) m")
+        #expect(noSpeed.network == 2)
+        // A speed without a valid accuracy is not a valid speed either.
+        let noAccuracy = try eastAfterSecondFix(speed: 3, speedAccuracy: -1)
+        #expect(noAccuracy.network == 2 && noAccuracy.east < 5)
     }
 }

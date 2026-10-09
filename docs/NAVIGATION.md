@@ -58,11 +58,16 @@ updates reweight only by what heading and scale actually predict.
   CoreLocation reports a 68 % radius, which for a circular Gaussian is 1.51 σ,
   so this takes the fix at face value. Kalman update of each particle's
   position; log-weight += log N(z; μ, P + R).
-  - **Tower-like** (accuracy > 200 m and no speed): likelihood tempered by
-    `min(1, Δt since the last tower fix / 60 s)`, because the errors are
-    correlated over minutes (equivalent to R / w). On the manual drive the
-    residuals had a per-axis RMS of about 160 m against a reported 1414 m, in
-    same-sign runs lasting 1–2 minutes.
+  - **Network fix** = any fix without a valid speed (speed or speedAccuracy
+    negative), whatever accuracy iOS claims: a cell-tower or Wi-Fi position, not
+    GNSS. Its likelihood is tempered by `min(1, Δt since the last network
+    fix / 60 s)`, because the errors are correlated over minutes (equivalent to
+    R / w). On the manual drive tower residuals had a per-axis RMS of about
+    160 m against a reported 1414 m, in same-sign runs lasting 1–2 minutes.
+    Until N2.1 only fixes above 200 m counted. Since then 24–190 m Wi-Fi fixes
+    count too: untempered, they collapsed manual-3's heading in its first
+    300 m. An overconfident ellipse is worse for N4 than 10–30 m of accuracy,
+    because the camera frames the ellipse and the driver trusts it.
   - **Latency**: a v2/v3 fix's `t` is the fix time, before its arrival. The fix
     is shifted by the engine's own mean displacement and yaw since `t`, taken
     from a ring of cumulative mean motion (10 s). This is causal and needs no
@@ -126,7 +131,7 @@ the same platform.
 | Plan | Implemented | Reason |
 |---|---|---|
 | Sampled positions | Gaussian position per particle | Sampled positions made the heading collapse falsely (see above) |
-| σ = max(acc, floor), tower σ × inflation | σ = acc / 1.51 (68 % radius), tower inflation 1.0 | Inflation 1.5 on top of σ = acc put jammed-B at 4.5 %. Face value is still 2–4× the observed tower scatter; correlation is handled by tempering |
+| σ = max(acc, floor), tower σ × inflation | σ = acc / 1.51 (68 % radius), network-fix inflation 1.0 | Inflation 1.5 on top of σ = acc put jammed-B at 4.5 %. Face value is still 2–4× the observed tower scatter; correlation is handled by tempering |
 | Clean-fix reseed when heading std > 30° | also when the course has no support | Recovers a heading that converged wrongly (reversing out of parking) |
 | — | GNSS speed must agree with OBD for course and speed to be used | Glitch fixes and slow manoeuvres poisoned the heading |
 | — | heading noise grows with the angle turned; scale jitter after resampling | Without them the filter was overconfident (95 % ellipse missed the truth on every withheld fix) and the scale stuck at 0.97 against a measured 1.003 |
@@ -136,12 +141,12 @@ Tried and rejected (worse on the replay set):
 - Tempering GNSS position fixes for correlation (5–15 s): heading after the
   slow start went wrong (clean mask-after 74 s: 1 km).
 - Tempering GNSS courses (5–15 s): clean mask-after 230 s worse (55–78 m).
-- Treating 50–200 m Wi-Fi fixes as tower-like (`towerMinAccuracyM` 50, seeds
-  1–3): manual truth point 1 at 86–108 m instead of 52–81 m; jammed-A
-  1.45–2.09 % instead of 1.24–1.84 %.
-- `towerCorrelationS` 120 (seeds 1–3): jammed-B 2.13–2.64 %, one seed over the
+- (N2) Treating 50–200 m Wi-Fi fixes as tower-like: manual truth point 1 at
+  86–108 m instead of 52–81 m. Superseded in N2.1, where every fix without
+  speed is a network fix, for the ellipse's sake (see the baseline).
+- `networkFixCorrelationS` 120 (seeds 1–3): jammed-B 2.13–2.64 %, one seed over the
   limit.
-- `towerCorrelationS` 30 (seeds 1–3) is as good or slightly better on every
+- `networkFixCorrelationS` 30 (seeds 1–3) is as good or slightly better on every
   run (manual 57–86 m, jammed-A 1.27–1.77 %, jammed-B 1.98–2.22 %) and
   converges on the manual drive at 5.1–5.3 km. It is not the default: the
   measured tower residuals stay correlated for 1–2 minutes, so 30 s counts
@@ -170,9 +175,8 @@ every result.
 | maxMotionGapS | 0.5 | longer motion gaps contribute no yaw |
 | fixSigmaPerAccuracy | 1/1.51 | per-axis σ per metre of accuracy |
 | fixSigmaFloorM | 5 | σ floor |
-| towerMinAccuracyM | 200 | tower-like: accuracy above this and no speed |
-| towerInflation | 1.0 | extra σ factor for tower-like fixes |
-| towerCorrelationS | 60 | tower tempering window |
+| networkFixInflation | 1.0 | extra σ factor for network fixes (any fix without a valid speed) |
+| networkFixCorrelationS | 60 | network-fix tempering window |
 | maxFixAgeS | 10 | older fixes ignored unless stopped |
 | courseMinSpeedMps | 3 | course needs this GNSS and OBD speed |
 | courseSigmaFloorDeg | 2 | course σ floor |
@@ -213,6 +217,12 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   fixes (≤ 15 m), each manual fix (on the prior, just before it is ingested),
   and truth-file points and `end` (the last input). Errors are in metres and as
   a percentage of the distance travelled so far (∫ OBD speed).
+- **Ellipse consistency**: the share of scored checkpoints (withheld clean
+  fixes, manual-fix priors, truth points and end) whose truth lies inside the
+  engine's 95 % ellipse at their time, overall and per kind. Shown in the
+  summary, `metrics.md` and `metrics.json`. A calibrated filter scores about
+  95 %; much lower means the ellipse is overconfident. The truth's own σ (a
+  pin's σ, for example) is not added to the ellipse.
 - Per log: distance, checkpoints, max and end error (end = truth `end`, else the
   last checkpoint), heading-convergence distance (first time `converged` then
   holds for 30 s), steps, ms/step (engine `ingest` wall time only), seed and
@@ -269,37 +279,39 @@ swift run -c release replay_nav <jammed-A> <jammed-B> --gps use --truth ../logs/
 ### Baseline (N2.1: seed 1, default config, release build, Mac)
 
 The "N2" column is the previous baseline: scale prior 1.0 ± 0.03, pin σ 30 m,
-seed 1. For the two new drives it comes from replaying with
-`--set scalePriorMean=1 --set scalePriorStd=0.03 --set manualFixSpanDivisor=1e9`.
+tower = > 200 m without speed, seed 1.
 
-| alias | run | distance | checkpoint errors | end error | max error | heading converged at | ms/step | N2 | criterion | result |
-|---|---|---:|---|---:|---:|---:|---:|---|---|---|
-| clean-long | mask-after 380 | 7.75 km | 277 withheld clean fixes: median 9 m, all inside the 95 % ellipse | 9 m (0.12 %)\* | 20 m (0.26 %) | 0.02 km | 0.059 | max 20 m | max ≤ 30 m | **PASS** |
-| manual-3 | use | 12.05 km | pin priors: 1: 352 m (20.6 %, σ 104 m, ellipse 166 × 65 m); 2: 1158 m (18.2 %, σ 30 m, ellipse 469 × 164 m); 3: 338 m (4.8 %, σ 31 m, ellipse 138 × 86 m); none inside the 95 % ellipse | 338 m\* | 1158 m | 0.37 km | 0.067 | pins 322 / 1434 / 348 m | reported | see below |
-| clean | mask-after 230 | 3.58 km | 216 withheld clean fixes: median 2 m, all inside the 95 % ellipse | 2 m (0.06 %)\* | 13 m (0.59 %) | 0.03 km | 0.057 | max 26 m | max ≤ 30 m | **PASS** |
-| manual | use, hold-out 100 | 8.31 km | pin prior 169 m (σ 42 m); truth point 1: 36 m (0.46 %); truth point 2: 47 m (0.58 %) | 47 m (0.58 %)\* | 169 m (11.1 %) | 6.80 km | 0.062 | 53 m; 6.80 km | truth point 1 ≤ 200 m; converged ≤ 2 km | **PASS** (36 m); **known FAIL** (convergence 6.80 km) |
-| jammed-A | use | 11.23 km | end 67 m | 67 m (0.60 %) | 67 m (0.60 %) | 7.13 km | 0.066 | 1.24 % | end ≤ 2.5 % | **PASS** |
-| jammed-B | use | 5.89 km | end 58 m | 58 m (0.99 %) | 58 m (0.99 %) | 5.18 km | 0.064 | 1.76 % | end ≤ 2.5 % | **PASS** |
+| alias | run | distance | checkpoint errors | end error | max error | inside 95 % | heading converged at | ms/step | N2 | criterion | result |
+|---|---|---:|---|---:|---:|---|---:|---:|---|---|---|
+| clean-long | mask-after 380 | 7.75 km | 277 withheld clean fixes: median 9 m | 9 m (0.12 %)\* | 20 m (0.26 %) | 277/277 | 0.02 km | 0.061 | max 20 m | max ≤ 30 m | **PASS** |
+| manual-3 | use | 12.05 km | pin priors: 1: 416 m (24.3 %, σ 104 m, ellipse 331 × 89 m); 2: 635 m (10.0 %, σ 30 m, ellipse 661 × 176 m); 3: 247 m (3.5 %, σ 31 m, ellipse 170 × 86 m) | 247 m\* | 635 m | 0/3 | 1.72 km | 0.066 | pins 322 / 1434 / 348 m | reported | see below |
+| clean | mask-after 230 | 3.58 km | 216 withheld clean fixes: median 2 m | 2 m (0.06 %)\* | 13 m (0.59 %) | 216/216 | 0.03 km | 0.059 | max 26 m | max ≤ 30 m | **PASS** |
+| manual | use, hold-out 100 | 8.31 km | pin prior 260 m (σ 42 m); truth point 1: 49 m (0.62 %); truth point 2: 64 m (0.77 %) | 64 m (0.77 %)\* | 260 m (17.1 %) | 3/3 | 7.27 km | 0.064 | 53 m; 6.80 km | truth point 1 ≤ 200 m; converged ≤ 2 km | **PASS** (49 m); **known FAIL** (convergence 7.27 km) |
+| jammed-A | use | 11.23 km | end 114 m | 114 m (1.02 %) | 114 m (1.02 %) | 1/1 | 8.15 km | 0.067 | 1.24 % | end ≤ 2.5 % | **PASS** |
+| jammed-B | use | 5.89 km | end 48 m | 48 m (0.81 %) | 48 m (0.81 %) | 1/1 | 5.31 km | 0.065 | 1.76 % | end ≤ 2.5 % | **PASS** |
 
 \* no truth `end` for this drive: error at the last checkpoint. The largest
-single `ingest` call in these runs was 0.24 ms.
+single `ingest` call in these runs was 0.38 ms.
 
-**Seed spread (seeds 1–5)** for the chosen config and the variants it was
-picked from:
+**Seed spread (seeds 1–5)**. Columns, in the order N2.1 adopted them:
 - N2: scale prior 1.0 ± 0.03, pin σ 30 m.
 - 1.016 ± 0.03: the first N2.1 candidate.
-- **1.016 ± 0.01: chosen.**
-- 1.016 ± 0.01 with GNSS speed used only above 30 km/h.
+- 1.016 ± 0.01: tight per-vehicle prior.
+- **+ no-speed = network fix: chosen.**
 
-| alias | N2 | 1.016 ± 0.03 | **1.016 ± 0.01** | ± 0.01 + 30 km/h gate |
+Ellipse consistency (inside 95 %) is in brackets where measured.
+
+| alias | N2 | 1.016 ± 0.03 | 1.016 ± 0.01 | **+ no-speed = network (chosen)** |
 |---|---|---|---|---|
-| clean-long, max | 20–21 m | 19–21 m | **20 / 18 / 19 / 18 / 19 m** | 20 / 19 / 18 / 18 / 19 m |
-| clean, max | 26 / 11 / 23 / 13 / 23 m | 32 / 18 / 29 / 17 / 35 m | **13 / 17 / 12 / 14 / 13 m** | 20 / 17 / 15 / 15 / 16 m |
-| manual, truth point 1 | 52–81 m | 26 / 49 / 35 / 32 / 28 m | **36 / 45 / 34 / 41 / 41 m** | same |
-| manual, convergence | 6.80 km | 6.80 km | **6.80 km** | same |
-| manual-3, pin priors | 322–361 / 1434–1517 / 348–364 m | 324–366 / 1089–1159 / 308–329 m | **352–356 / 1147–1161 / 336–338 m** | same |
-| jammed-A, end | 1.24–1.84 % | 0.61–1.19 % | **0.60 / 0.73 / 0.85 / 0.72 / 0.78 %** | same |
-| jammed-B, end | 1.76–2.35 % | 1.01–1.48 % | **0.99 / 0.88 / 1.24 / 1.01 / 1.26 %** | same |
+| clean-long, max | 20–21 m | 19–21 m | 18–20 m [100 %] | **18–20 m [100 %]** |
+| clean, max | 11–26 m | 17–35 m | 12–17 m [100 %] | **12–17 m [100 %]** |
+| manual, truth point 1 | 52–81 m | 26–49 m | 34–45 m [3/3] | **47–57 m [3/3]** |
+| manual, convergence | 6.80 km | 6.80 km | 6.80 km | **7.27–7.68 km** |
+| manual-3, pin priors | 322–361 / 1434–1517 / 348–364 m | 324–366 / 1089–1159 / 308–329 m | 352–356 / 1147–1161 / 336–338 m [0/3] | **415–417 / 635–651 / 247–250 m [0/3]** |
+| jammed-A, end | 1.24–1.84 % | 0.61–1.19 % | 0.60–0.85 % [1/1] | **1.02–1.26 % [1/1]** |
+| jammed-B, end | 1.76–2.35 % | 1.01–1.48 % | 0.88–1.26 % [1/1] | **0.81–1.11 % [1/1]** |
+
+The clean drives have no fixes without speed, so they are unchanged.
 
 How each change contributes:
 - **Pin σ rule** (seed 1): changes only manual-3, where pins 2 and 3 go from
@@ -321,22 +333,41 @@ How each change contributes:
   on 43 fixes), so gating on it pulls the scale to 1.034. It makes no difference
   on manual, manual-3 and jammed-A/B, whose fixes carry no speed. The gate stays
   configurable (`speedUpdateMinKmh`) at the previous 10.8 km/h.
+- **No-speed = network fix** (adopted by decision, for an honest ellipse):
+  - manual-3: pins 2 and 3 improve (1147–1161 → 635–651 m and 336–338 →
+    247–250 m), pin 1 gets worse (352–356 → 415–417 m).
+  - jammed-B improves.
+  - manual is 6–15 m worse (still far inside 200 m) and converges 0.5–0.9 km
+    later; jammed-A is 0.4 percentage points worse.
+  - Every criterion still passes on every seed.
 
-**manual-3 is overconfident.** All three pins fall outside the 95 % ellipse,
-and heading "converges" at 0.37 km. The cause is initialisation from a stale
-pre-session fix (parked), then ten no-Doppler network fixes of 24–190 m between
-71 and 117 s. They are below the 200 m tower threshold, so they are untempered
-at face value (σ about 16 m for the 24 m ones), and they collapse heading
-within about 300 m of travel. This predates N2.1: the N2 config scores the pins
-322 / 1434 / 348 m. Option, measured on seed 1 with the 1.016 ± 0.03 config and
-**not adopted**: temper every no-Doppler fix (`towerMinAccuracyM` 0). manual-3
-pins become 413 / 642 / 242 m and pin 2 lands inside its ellipse, but manual
-worsens to 43 m and jammed-A to 1.01 %, while jammed-B improves to 0.87 %.
+**manual-3 is still overconfident: 0/3 pins inside the 95 % ellipse on every
+seed.** Heading std falls from 125° at 60 s to 11° by 120 s:
+- The engine initialises from a stale pre-session fix (25 m claimed accuracy,
+  accepted because the car was parked).
+- Wi-Fi fixes of 24–59 m follow at 95–117 s. Tempered, they add up to about one
+  fix's worth of evidence, which still fixes heading to about 10° over ~300 m
+  of travel.
+- If those network positions are biased, as they appear to be, heading is
+  wrong with a narrow ellipse. At the pins the error is 1.3–3× the ellipse's
+  semi-axis in its direction.
+
+Part of the gap is the metric: it does not add the pin's own σ, and pin 1 has
+σ 104 m. With it, pin 1 (416 m against a 331 m semi-major axis) sits on the
+boundary.
+
+Options, measured on seed 1 and **not adopted**:
+- `networkFixInflation` 1.5: manual-3 pins 416 / 504 / 153 m with 1/3 inside;
+  manual 61 m; jammed-A 1.18 %; jammed-B 1.56 %.
+- `networkFixInflation` 2: manual-3 1/3 inside, but **jammed-B fails at
+  2.75 %**.
+- Not measured: an age-inflated σ for stale pre-session fixes used for
+  initialisation; adding the truth σ to the consistency metric.
 
 **Manual drive, convergence: known FAIL, accepted.** Heading converges
-(σ < 10° held for 30 s) after 6.80 km, against a 2 km target. The more
-important number is the position error at truth point 1: 36 m (0.46 % of
-distance), well inside 200 m. Convergence is not tuned towards the target:
+(σ < 10° held for 30 s) after 7.27 km (7.27–7.68 km over seeds 1–5), against a
+2 km target. The more important number is the position error at truth point 1:
+49 m (0.62 % of distance; 47–57 m over seeds 1–5), well inside 200 m. Convergence is not tuned towards the target:
 with towers and one pin as the only absolute information, the honest heading
 std falls under 10° late. Options are listed under known limitations.
 
@@ -364,7 +395,7 @@ on seeds 1–5 with std 0.03), with at most 1 of 283 withheld fixes inside the
   The honest heading std drops under 10° only after several km. Options: a
   second manual fix a few hundred metres after the first (two pins fix
   heading); road matching (N3); a magnetometer heading with a learned mount
-  offset; trusting towers more (`towerCorrelationS` 30 → 5.1 km; not the default,
+  offset; trusting towers more (`networkFixCorrelationS` 30 → 5.1 km; not the default,
   see "Tried and rejected").
 - **Reversing** (backlog N2-1, N3 candidate): OBD speed has no sign, so
   reversing is integrated as forward motion. Regression case:
@@ -376,10 +407,11 @@ on seeds 1–5 with std 0.03), with at most 1 of 283 withheld fixes inside the
   mean of the arc-shaped cloud lies inside the arc, shortening the
   start-to-estimate distance by about exp(−σ²/2). On jammed-B this was most of
   the error before face-value fix σ.
-- **No-Doppler network fixes under 200 m** are trusted at face value and
-  untempered. They help a lot when right (manual truth point 1) and hurt when
-  biased: manual-3 converges falsely on them. Option measured above:
-  `towerMinAccuracyM` 0.
+- **Network fixes with small claimed accuracy** (Wi-Fi, 24–60 m) are tempered
+  since N2.1 but still taken at their claimed σ. On manual-3 they, together
+  with a stale initialising fix, still make heading converge too early, and
+  0/3 pins fall inside the ellipse. Options measured above:
+  `networkFixInflation` 1.5 or 2.
 - **Scale learning from GNSS speed** is fragile when GNSS speed disagrees with
   OBD (clean drive before 230 s). The tight per-vehicle prior (± 0.01) holds
   it; a new car needs its prior measured, or a wider std.

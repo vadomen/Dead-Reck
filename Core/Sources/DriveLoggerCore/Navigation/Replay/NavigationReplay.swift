@@ -166,7 +166,7 @@ public enum NavigationReplay {
 
 public struct ReplayResult: Hashable, Sendable, Codable {
     public struct Checkpoint: Hashable, Sendable, Codable {
-        public enum Kind: String, Hashable, Sendable, Codable {
+        public enum Kind: String, Hashable, Sendable, Codable, CaseIterable {
             /// A withheld GNSS fix at or under `cleanFixAccM`.
             case cleanFix
             /// A manual fix, scored on the prior just before it is ingested.
@@ -254,6 +254,9 @@ public struct ReplayResult: Hashable, Sendable, Codable {
     public var convergedT: Double?
     public var convergedDistanceM: Double?
     public var finalHeadingStdDeg: Double?
+    /// Ellipse consistency: scored checkpoints (all kinds) whose truth lies
+    /// inside the engine's 95 % ellipse at their time.
+    public var consistency: EllipseConsistency
     public var steps: Int
     /// Engine wall time (ingest only, no I/O) per 10 Hz step, ms.
     public var msPerStep: Double
@@ -468,6 +471,7 @@ private struct ReplayRun {
             convergedT: convergence?.t,
             convergedDistanceM: convergence?.distanceM,
             finalHeadingStdDeg: track.last?.headingStdDeg,
+            consistency: EllipseConsistency(checkpoints),
             steps: steps,
             msPerStep: steps > 0 ? Double(engineNs) / 1e6 / Double(steps) : 0,
             maxIngestMs: Double(maxIngestNs) / 1e6,
@@ -516,5 +520,45 @@ struct DistanceIntegrator {
     func distance(at ns: Int64) -> Double {
         guard let lastNs, ns > lastNs else { return total }
         return total + speed * Double(min(ns - lastNs, maxAgeNs)) / 1e9
+    }
+}
+
+/// How often the truth lies inside the engine's 95 % ellipse: over every
+/// scored checkpoint (withheld clean fixes, manual-fix priors, truth points
+/// and end), and per checkpoint kind. A calibrated filter scores about 95 %;
+/// much lower means the ellipse is overconfident. The truth's own σ is not
+/// added to the ellipse.
+public struct EllipseConsistency: Hashable, Sendable, Codable {
+    public struct Count: Hashable, Sendable, Codable {
+        public var inside: Int
+        public var scored: Int
+
+        public init(inside: Int, scored: Int) {
+            self.inside = inside
+            self.scored = scored
+        }
+
+        /// inside / scored in %, nil when nothing was scored.
+        public var percent: Double? { scored > 0 ? 100 * Double(inside) / Double(scored) : nil }
+    }
+
+    public var all: Count
+    /// Keyed by `ReplayResult.Checkpoint.Kind` raw value.
+    public var byKind: [String: Count]
+
+    public init(_ checkpoints: [ReplayResult.Checkpoint]) {
+        var all = Count(inside: 0, scored: 0)
+        var byKind: [String: Count] = [:]
+        for checkpoint in checkpoints {
+            guard let inside = checkpoint.inside95 else { continue }
+            all.scored += 1
+            byKind[checkpoint.kind.rawValue, default: Count(inside: 0, scored: 0)].scored += 1
+            if inside {
+                all.inside += 1
+                byKind[checkpoint.kind.rawValue, default: Count(inside: 0, scored: 0)].inside += 1
+            }
+        }
+        self.all = all
+        self.byKind = byKind
     }
 }

@@ -19,6 +19,8 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
     public var convergedT: Double?
     public var convergedDistanceM: Double?
     public var finalHeadingStdDeg: Double?
+    /// Optional so metrics.json files written before it still decode.
+    public var consistency: EllipseConsistency?
     public var steps: Int
     public var msPerStep: Double
     public var maxIngestMs: Double
@@ -43,6 +45,7 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
         convergedT = result.convergedT
         convergedDistanceM = result.convergedDistanceM
         finalHeadingStdDeg = result.finalHeadingStdDeg
+        consistency = result.consistency
         steps = result.steps
         msPerStep = result.msPerStep
         maxIngestMs = result.maxIngestMs
@@ -73,6 +76,17 @@ public enum ReplayReport {
         return String(format: "%.0f × %.0f m @ %.0f°", a, b, o)
     }
 
+    /// "x/y (z %) inside 95 % [cleanFix a/b, manualFix c/d, …]".
+    public static func consistencyText(_ consistency: EllipseConsistency?) -> String {
+        guard let consistency, let percent = consistency.all.percent else { return "n/a" }
+        let kinds = ReplayResult.Checkpoint.Kind.allCases.compactMap { kind -> String? in
+            guard let count = consistency.byKind[kind.rawValue] else { return nil }
+            return "\(kind.rawValue) \(count.inside)/\(count.scored)"
+        }
+        return String(format: "%d/%d (%.0f %%) inside 95 %%", consistency.all.inside, consistency.all.scored, percent)
+            + (kinds.isEmpty ? "" : " [" + kinds.joined(separator: ", ") + "]")
+    }
+
     static func km(_ value: Double?) -> String {
         guard let value else { return "never" }
         return String(format: "%.2f km", value / 1000)
@@ -87,7 +101,7 @@ public enum ReplayReport {
         lines.append(String(format: "Engine        %.3f ms/step (max ingest %.2f ms), %d particles, seed %llu",
                             result.msPerStep, result.maxIngestMs, result.config.particleCount, result.config.seed))
         let c = result.counters
-        lines.append("Fixes         used \(c.fixesUsed) (tower \(c.towerFixesUsed)), ignored stale \(c.fixesIgnoredStale), invalid \(c.fixesIgnoredInvalid), withheld \(result.fixes.filter { $0.withheld != nil }.count)")
+        lines.append("Fixes         used \(c.fixesUsed) (network \(c.networkFixesUsed)), ignored stale \(c.fixesIgnoredStale), invalid \(c.fixesIgnoredInvalid), withheld \(result.fixes.filter { $0.withheld != nil }.count)")
         lines.append("Updates       course \(c.courseUpdates), speed \(c.speedUpdates), reseeds \(c.reseeds), manual \(c.manualFixes) (resets \(c.manualResets)), resamples \(c.resamples), ZUPT steps \(c.zuptSteps), stale-speed steps \(c.staleSpeedSteps)")
         let held = result.heldOutFixes
         if !held.isEmpty {
@@ -113,6 +127,7 @@ public enum ReplayReport {
             let inside = clean.compactMap(\.inside95).filter { $0 }.count
             lines.append("cleanFix      \(clean.count) withheld clean fixes: median \(m(median)) m, max \(m(errors.last)) m, inside 95 % \(inside)/\(clean.count)")
         }
+        lines.append("Consistency   " + consistencyText(result.consistency))
         lines.append("Max error     \(m(result.maxErrorM)) m (\(pct(result.maxErrorPercent)))")
         lines.append("End error     \(m(result.endErrorM)) m (\(pct(result.endErrorPercent)))\(result.endIsTruth ? "" : " [last checkpoint; no truth end]")")
         if let last = result.track.last {
@@ -129,10 +144,10 @@ public enum ReplayReport {
         let runs = runs.sorted { $0.key < $1.key }
         var out = "# replay_nav metrics\n\n"
         out += "Error is the engine's causal estimate against information it did not receive.\n\n"
-        out += "| log | mode | distance m | checkpoints | end err m | end % | max err m | max % | converged at | ms/step | max ingest ms |\n"
-        out += "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n"
+        out += "| log | mode | distance m | checkpoints | end err m | end % | max err m | max % | inside 95 % | converged at | ms/step | max ingest ms |\n"
+        out += "|---|---|---:|---:|---:|---:|---:|---:|---|---:|---:|---:|\n"
         for r in runs {
-            out += "| \(r.logName) | \(r.mode) | \(m(r.distanceM)) | \(r.checkpoints.count) | \(m(r.endErrorM))\(r.endIsTruth ? "" : "*") | \(pct(r.endErrorPercent)) | \(m(r.maxErrorM)) | \(pct(r.maxErrorPercent)) | \(km(r.convergedDistanceM)) | \(String(format: "%.3f", r.msPerStep)) | \(String(format: "%.2f", r.maxIngestMs)) |\n"
+            out += "| \(r.logName) | \(r.mode) | \(m(r.distanceM)) | \(r.checkpoints.count) | \(m(r.endErrorM))\(r.endIsTruth ? "" : "*") | \(pct(r.endErrorPercent)) | \(m(r.maxErrorM)) | \(pct(r.maxErrorPercent)) | \(consistencyText(r.consistency)) | \(km(r.convergedDistanceM)) | \(String(format: "%.3f", r.msPerStep)) | \(String(format: "%.2f", r.maxIngestMs)) |\n"
         }
         out += "\n\\* no truth `end`: error at the last checkpoint.\n"
         for r in runs {

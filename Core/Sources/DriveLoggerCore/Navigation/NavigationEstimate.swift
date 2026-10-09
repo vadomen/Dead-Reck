@@ -88,7 +88,8 @@ public struct NavigationCounters: Hashable, Sendable, Codable {
     /// Steps with stale OBD speed (unknown speed).
     public var staleSpeedSteps = 0
     public var fixesUsed = 0
-    public var towerFixesUsed = 0
+    /// Fixes without a valid speed (cell tower, Wi-Fi).
+    public var networkFixesUsed = 0
     public var fixesIgnoredStale = 0
     public var fixesIgnoredInvalid = 0
     public var courseUpdates = 0

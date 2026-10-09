@@ -67,13 +67,15 @@ public struct NavigationConfig: Hashable, Sendable, Codable {
     public var fixSigmaPerAccuracy = 1 / 1.51
     /// Lower bound on a fix's per-axis position σ, metres.
     public var fixSigmaFloorM = 5.0
-    /// Tower/Wi-Fi-like fix: horizontal accuracy above this and no speed.
-    public var towerMinAccuracyM = 200.0
-    /// σ multiplier for tower-like fixes, on top of `fixSigmaPerAccuracy`.
-    public var towerInflation = 1.0
-    /// Tower-like errors are correlated over minutes: a tower fix's
-    /// log-likelihood is tempered by `min(1, Δt since the last one / this)`.
-    public var towerCorrelationS = 60.0
+    /// A fix without a valid speed (speed or speedAccuracy negative) is a
+    /// network fix (cell tower, Wi-Fi), whatever accuracy it reports: its
+    /// σ is multiplied by this, on top of `fixSigmaPerAccuracy`.
+    public var networkFixInflation = 1.0
+    /// Network-fix errors are correlated over minutes: such a fix's
+    /// log-likelihood is tempered by `min(1, Δt since the last network
+    /// fix / this)`. Applies to small claimed accuracies too: a 24 m Wi-Fi
+    /// fix repeated at 1 Hz is not 1 Hz of independent evidence.
+    public var networkFixCorrelationS = 60.0
     /// A fix older than this at arrival is ignored unless the car is stopped.
     public var maxFixAgeS = 10.0
     /// GNSS course is used only above this OBD/GNSS speed, m/s.

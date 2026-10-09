@@ -61,11 +61,11 @@ struct NavigationReviewTests {
 
     @Test("R11.1-2: temper = min(1, Δt / correlation), 1 for the first tower fix, 0 for one not after the last")
     func towerTemperValues() {
-        #expect(NavigationEngine.towerTemper(sinceLastS: 0, correlationS: 60) == 0)
-        #expect(NavigationEngine.towerTemper(sinceLastS: 30, correlationS: 60) == 0.5)
-        #expect(NavigationEngine.towerTemper(sinceLastS: 120, correlationS: 60) == 1)
-        #expect(NavigationEngine.towerTemper(sinceLastS: -5, correlationS: 60) == 0)
-        #expect(NavigationEngine.towerTemper(sinceLastS: nil, correlationS: 60) == 1)
+        #expect(NavigationEngine.networkTemper(sinceLastS: 0, correlationS: 60) == 0)
+        #expect(NavigationEngine.networkTemper(sinceLastS: 30, correlationS: 60) == 0.5)
+        #expect(NavigationEngine.networkTemper(sinceLastS: 120, correlationS: 60) == 1)
+        #expect(NavigationEngine.networkTemper(sinceLastS: -5, correlationS: 60) == 0)
+        #expect(NavigationEngine.networkTemper(sinceLastS: nil, correlationS: 60) == 1)
     }
 
     @Test("R11.1-2: 1 Hz tower fixes with one correlated 600 m bias for 5 minutes pull a loose position by tempered evidence only")
@@ -83,7 +83,7 @@ struct NavigationReviewTests {
         })
         let (engine, samples) = S.run(events, config: S.config(particles: 200), sampleTimes: [299])
         let estimate = try #require(samples.first ?? nil)
-        #expect(engine.counters.towerFixesUsed >= 290)
+        #expect(engine.counters.networkFixesUsed >= 290)
         let error = drive.error(estimate, at: 299)
         #expect(error > 50, "the bias should pull somewhat (\(error) m)")
         #expect(error < 200, "pulled \(error) m: tower fixes counted as independent")

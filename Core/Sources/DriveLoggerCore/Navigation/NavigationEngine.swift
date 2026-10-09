@@ -29,7 +29,8 @@ import Foundation
 /// speed error random-walks and heading noise grows.
 ///
 /// **Updates**: location fixes (per-axis σ = accuracy / 1.51, floored;
-/// tower-like fixes tempered for their minutes-long correlated errors), GNSS
+/// network fixes — any fix without a valid speed — tempered for their
+/// minutes-long correlated errors), GNSS
 /// course and speed when valid and consistent with OBD speed, and manual
 /// "I'm here" fixes, which also reset positions when the cloud has no
 /// support at the pin. A clean fix reseeds part of the cloud around its
@@ -91,7 +92,7 @@ public struct NavigationEngine: Sendable {
     private var cumulativeYaw = 0.0
     private var history: MotionHistory
 
-    private var lastTowerFixNs: Int64?
+    private var lastNetworkFixNs: Int64?
 
     /// The primary ECU whose vehicle speed is used.
     public static let primaryECU = "7E8"
@@ -348,9 +349,11 @@ public struct NavigationEngine: Sendable {
             counters.fixesIgnoredStale += 1
             return
         }
-        let tower = accuracy > config.towerMinAccuracyM && sample.speed < 0
+        // No Doppler speed: a cell-tower or Wi-Fi position, whatever its
+        // claimed accuracy.
+        let network = !sample.hasValidSpeed
         let sigma = max(accuracy * config.fixSigmaPerAccuracy, config.fixSigmaFloorM)
-            * (tower ? config.towerInflation : 1)
+            * (network ? config.networkFixInflation : 1)
         // Course needs real motion: GNSS reports a few m/s of speed noise
         // while parked, so a fresh OBD speed under the threshold vetoes it.
         let since = shiftSince(fixNs)
@@ -370,9 +373,9 @@ public struct NavigationEngine: Sendable {
                 heading: clean ? (sample.course * .pi / 180, courseSigma) : nil, at: fixNs
             )
             counters.fixesUsed += 1
-            if tower {
-                counters.towerFixesUsed += 1
-                lastTowerFixNs = fixNs
+            if network {
+                counters.networkFixesUsed += 1
+                lastNetworkFixNs = fixNs
             }
             return
         }
@@ -388,12 +391,12 @@ public struct NavigationEngine: Sendable {
         }
 
         var temper = 1.0
-        if tower {
-            temper = Self.towerTemper(
-                sinceLastS: lastTowerFixNs.map { Double(fixNs - $0) / 1e9 }, correlationS: config.towerCorrelationS
+        if network {
+            temper = Self.networkTemper(
+                sinceLastS: lastNetworkFixNs.map { Double(fixNs - $0) / 1e9 }, correlationS: config.networkFixCorrelationS
             )
-            lastTowerFixNs = max(lastTowerFixNs ?? fixNs, fixNs)
-            counters.towerFixesUsed += 1
+            lastNetworkFixNs = max(lastNetworkFixNs ?? fixNs, fixNs)
+            counters.networkFixesUsed += 1
         }
         counters.fixesUsed += 1
 
@@ -423,10 +426,10 @@ public struct NavigationEngine: Sendable {
         resampleIfNeeded()
     }
 
-    /// Likelihood exponent for a tower-like fix `sinceLastS` seconds after
-    /// the previous one (nil: the first): `min(1, Δt / correlationS)`,
-    /// clamped at 0 for a fix not after the previous one.
-    static func towerTemper(sinceLastS: Double?, correlationS: Double) -> Double {
+    /// Likelihood exponent for a network fix `sinceLastS` seconds after the
+    /// previous one (nil: the first): `min(1, Δt / correlationS)`, clamped
+    /// at 0 for a fix not after the previous one.
+    static func networkTemper(sinceLastS: Double?, correlationS: Double) -> Double {
         guard let dt = sinceLastS else { return 1 }
         return min(1, max(0, dt / correlationS))
     }

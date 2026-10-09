@@ -286,4 +286,44 @@ struct NavigationReplayTests {
         #expect(first.ellipseSemiMajorM != nil && first.ellipseSemiMinorM != nil && first.ellipseOrientationDeg != nil)
         #expect(ReplayReport.summary(result).contains("truth σ 104 m, 95 % ellipse"))
     }
+
+    @Test("Ellipse consistency: share of scored checkpoints inside the 95 % ellipse, overall and per kind, in result, metrics and reports")
+    func ellipseConsistency() throws {
+        func checkpoint(_ kind: ReplayResult.Checkpoint.Kind, inside: Bool?) -> ReplayResult.Checkpoint {
+            ReplayResult.Checkpoint(kind: kind, t: 1, latitude: 0, longitude: 0, distanceM: 0, inside95: inside)
+        }
+        let counts = EllipseConsistency([
+            checkpoint(.cleanFix, inside: true), checkpoint(.cleanFix, inside: true), checkpoint(.cleanFix, inside: false),
+            checkpoint(.manualFix, inside: false), checkpoint(.truthPoint, inside: true),
+            checkpoint(.truthEnd, inside: nil),  // before initialisation: not scored
+        ])
+        #expect(counts.all == .init(inside: 3, scored: 5) && counts.all.percent == 60)
+        #expect(counts.byKind["cleanFix"] == .init(inside: 2, scored: 3))
+        #expect(counts.byKind["manualFix"] == .init(inside: 0, scored: 1))
+        #expect(counts.byKind["truthEnd"] == nil)
+        #expect(EllipseConsistency([]).all.percent == nil)
+        #expect(ReplayReport.consistencyText(counts) == "3/5 (60 %) inside 95 % [cleanFix 2/3, manualFix 0/1, truthPoint 1/1]")
+
+        // In a replay it is computed from the result's own checkpoints and
+        // carried into metrics.json, metrics.md and the summary.
+        let (_, events, truth) = Self.scenario()
+        let options = ReplayOptions(gps: .maskAfter(seconds: 20), config: S.config(particles: 150))
+        let result = NavigationReplay.run(logName: "synthetic.jsonl.gz", inputs: NavigationReplay.inputs(from: events),
+                                          options: options, truth: truth)
+        let scored = result.checkpoints.filter { $0.inside95 != nil }
+        #expect(result.consistency.all.scored == scored.count && scored.count > 30)
+        #expect(result.consistency.all.inside == scored.filter { $0.inside95 == true }.count)
+        let metrics = ReplayMetrics(result)
+        #expect(metrics.consistency == result.consistency)
+        let decoded = try JSONDecoder().decode([ReplayMetrics].self, from: ReplayReport.metricsJSON([metrics]))
+        #expect(decoded.first?.consistency == result.consistency)
+        let text = ReplayReport.consistencyText(result.consistency)
+        #expect(ReplayReport.summary(result).contains("Consistency   " + text))
+        #expect(ReplayReport.markdown([metrics]).contains("| " + text + " |"))
+        // metrics.json written before the metric existed still decodes.
+        var old = try #require(try JSONSerialization.jsonObject(with: ReplayReport.metricsJSON([metrics])) as? [[String: Any]])
+        old[0].removeValue(forKey: "consistency")
+        let legacy = try JSONDecoder().decode([ReplayMetrics].self, from: JSONSerialization.data(withJSONObject: old))
+        #expect(legacy.first?.consistency == nil)
+    }
 }
