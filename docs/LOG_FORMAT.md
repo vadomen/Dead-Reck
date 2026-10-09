@@ -4,7 +4,7 @@ Field-by-field reference for DriveLogger recordings. The code in
 `Core/Sources/DriveLoggerCore/Log/` is authoritative; this file must be updated
 in the same commit as any change to it.
 
-Current version: **2** (`LogFormatVersion.current`). Readable: **1, 2**.
+Current version: **3** (`LogFormatVersion.current`). Readable: **1, 2, 3**.
 
 ## File
 
@@ -144,6 +144,7 @@ verbatim (`LogEvent.Payload.unrecognized`) instead of dropping it.
 | `link` | 2 | state transition | rare |
 | `lifecycle` | 2 | occurrence | rare |
 | `stats` | 2 | end of 10 s window | 0.1 Hz |
+| `manualFix` | 3 | driver confirmed the pin | user |
 
 ### `motion`
 
@@ -502,12 +503,63 @@ the window.
 
 `data` is a plain string, e.g. `"tunnel"`.
 
+### `manualFix`
+
+A position the driver confirmed on the map ("I'm here"). It is ground truth
+for evaluating dead reckoning offline, most of all where GNSS is jammed or
+absent. `t` is the confirm time on the session clock. Core type:
+`ManualFixSample`.
+
+| Field | Type, unit | Meaning |
+|---|---|---|
+| `latitude`, `longitude` | double, degrees WGS 84 | The confirmed pin. Always present. |
+| `pressedT` | int, ns | When the long-press that placed the pin began. Always present. `t − pressedT` is the time the driver took to confirm. |
+| `mapSpanM` | double, m | Visible map span at confirm: how precisely the pin could be placed. Optional. |
+| `obdSpeedKmh` | double, km/h | Last vehicle speed (PID 0x0D) from the primary ECU (`7E8`) at confirm. Absent when the link had none. Present even when too old to gate. |
+| `obdSpeedT` | int, ns | When that reply arrived: the `t` of its `obd` row. Present exactly when `obdSpeedKmh` is. `t − obdSpeedT` is the speed's age. |
+| `gpsSpeedKmh` | double, km/h | Speed of the latest reference fix at confirm, whenever it had `speed ≥ 0`, however old or inaccurate. **Reference only**: it is the gate speed only when `speedSource` is `gps`. |
+| `speedSource` | string | Which speed the gate used: `obd`, `gps` or `unknown`. Always present. |
+| `gateSpeedKmh` | double, km/h | The speed compared with the limit. Absent when `speedSource` is `unknown`. |
+| `note` | string | Driver's note: trimmed, at most 80 characters. Absent when empty. |
+
+The recorder writes a row only if the speed gate (`ManualFixGate`) allows it.
+A pin dropped at speed is not ground truth. The gate is evaluated at the
+confirm instant (`now` = the row's `t`):
+
+1. If an OBD speed is known and its reply is at most 2.0 s old
+   (`now − obdSpeedT ≤ 2.0 s`), it is used (`obd`).
+2. Otherwise the reference fix's speed is used (`gps`), but only if
+   `speed ≥ 0`, `speedAccuracy ≥ 0`, `horizontalAccuracy ≥ 0`,
+   `horizontalAccuracy ≤ 100` m, and the fix is at most 5.0 s old
+   (`now − (receivedT − ageS) ≤ 5.0 s`). A fix without `receivedT` does not
+   count. A missing `ageS` counts as 0.
+3. Otherwise the speed is `unknown`.
+
+A fix is allowed when the gate speed is ≤ 10 km/h or unknown. Refused fixes
+leave no row. Rows are written while a recording is calibrating or
+recording, never after Stop.
+
+Ages are compared in whole nanoseconds, so exactly 2.0 s and 5.0 s still
+count. A negative age counts as fresh. This happens when the reply or fix is
+stamped after `now`, from clock skew between sources or a negative `ageS`.
+Such an input is not clamped to zero and not discarded: it is the most recent
+there is.
+
+`speedSource` and `gateSpeedKmh` record what the gate actually used.
+`obdSpeedKmh`/`obdSpeedT` and `gpsSpeedKmh` are written whenever a reading
+existed, even one too old (or, for GPS, too inaccurate) to gate. So a row with
+`obdSpeedKmh` present and `speedSource` other than `obd` means the OBD speed
+was more than 2 s old at confirm.
+
+`speedSource` values are frozen strings (`ManualFixSample.SpeedSource`).
+
 ## Versions
 
 | Version | Changes |
 |---|---|
 | 1 | Header (`formatVersion`, `sessionID`, `startedAt`, `referenceUptimeSeconds`, `app`, `device`, `notes`); kinds `motion`, `location`, `obd`, `marker`. |
 | 2 | Header `adapter`, `polling`, `sensors`, `mount`, `vehicle`, `timeZone`. `motion.magneticAccuracy`. `location` `receivedT`, `fixTime`, `ageS`, `ellipsoidalAltitude`, `simulated`, `accessory`; `t` defined as fix time. `obd` `requestT`, `command`, `ecu`, `seq`; `raw` becomes the full header-on reply. New kinds `accel`, `gyro`, `mag`, `baro`, `elm`, `adapter`, `link`, `lifecycle`, `stats`. |
+| 3 | New kind `manualFix` (`speedSource` vocabulary `obd`, `gps`, `unknown`). Nothing else changed: every v2 row is written and read exactly as before. A v2 reader refuses a v3 file rather than keep the new rows as unrecognized. |
 
 Within v2, without a version bump (both read unchanged by every v2 reader):
 M4 added the `lifecycle` value `locationAuthorization` (`event` is an open
@@ -516,8 +568,9 @@ and the start-up init rows at the head of a recording (existing kinds and
 strings only).
 
 Every version stays readable. v2 only adds optional fields, so DriveLogger
-decodes a v1 file into the same types with those fields absent. Frozen fixtures
-for both versions are in `LogFormatCompatibilityTests`.
+decodes a v1 file into the same types with those fields absent. v3 only adds a
+kind. Frozen fixtures for all three versions are in
+`LogFormatCompatibilityTests`.
 
 ## Reading recordings outside DriveLogger
 
@@ -545,7 +598,9 @@ cd Core && swift run -c release inspect_log <file.jsonl.gz|file.jsonl> [--csv <d
 
 Prints the header, events per kind, rates, gaps over 50 ms, OBD latency
 (`t − requestT`) percentiles, `elm` outcome counts and a damage/truncation
-report. `--csv` writes one CSV per kind: `t` in integer nanoseconds, empty cell
+report, and lists every `manualFix` (`t`, `speedSource`, gate speed,
+press-to-confirm delay, coordinates, note). `--csv` writes one CSV per kind
+(`manualFix.csv` has every field): `t` in integer nanoseconds, empty cell
 for an absent field, RFC 4180 quoting, compact JSON for `stats.counts` and for
 unknown kinds. `--strict` stops at the first damaged member or malformed line.
 Exit codes: `0` the file was read (warnings such as truncation, damage or

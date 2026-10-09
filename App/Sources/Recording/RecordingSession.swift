@@ -74,6 +74,22 @@ struct LiveStatus: Hashable, Sendable {
     var availableDiskBytes: Int64?
 }
 
+/// The moment a manual-fix long-press began, on one recording's clock
+/// (`RecordingSession.manualFixPressTime()`). Only the session creates one,
+/// and `recordManualFix` refuses one from another recording, so `pressedT`
+/// is always on the clock of the recording it is written to.
+struct ManualFixPress: Hashable, Sendable {
+    /// The recording whose clock `t` is on.
+    let generation: Int
+    /// `clock.now()` when the press began.
+    let t: MonotonicTimestamp
+
+    fileprivate init(generation: Int, t: MonotonicTimestamp) {
+        self.generation = generation
+        self.t = t
+    }
+}
+
 /// Wires sensors, the OBD link and the writer into one recording.
 ///
 /// **One clock.** Each recording creates exactly one `SessionClock` (on
@@ -113,7 +129,8 @@ struct LiveStatus: Hashable, Sendable {
 /// init (`link`, `elm`, `adapter`; above), `locationAuthorization` (one per
 /// `LocationAuthorizationReporting` source, after the source rows: phone
 /// builds), `calibrationStart` /
-/// `calibrationEnd`, `stop` (detail = stop reason), `background` /
+/// `calibrationEnd`, `stop` (detail = stop reason), `manualFix` (format v3,
+/// `recordManualFix`), `background` /
 /// `foreground`, `memoryWarning`, `thermalState` (at start when not nominal,
 /// and on every change), `protectedDataUnavailable`, `lowDiskSpace`, `error`
 /// (a source that is unavailable or failed to start, no background location
@@ -276,6 +293,10 @@ final class RecordingSession {
     /// whether or not a recording was running: `consumed` in the
     /// `lastInitEvents` dedup contract. Internal for tests.
     @ObservationIgnored private(set) var consumedLinkEvents = 0
+    /// `replyUptime` of the reading behind `live.obdSpeedKmh`: the OBD age
+    /// in `manualFixGate` and the `manualFix` row's `obdSpeedT`. Set and
+    /// cleared with it.
+    @ObservationIgnored private var obdSpeedUptime: Double?
 
     /// `detail` of the `lifecycle` `error` row written when a recording has
     /// no background execution (R4.1-5). Free text under the existing
@@ -480,6 +501,107 @@ final class RecordingSession {
     func mark(_ text: String) {
         guard let rec = recording, rec.isWritable else { return }
         rec.sink.record(.marker(text, at: rec.clock.now()))
+    }
+
+    // MARK: - Manual position fix (M4.2)
+
+    /// `ManualFixGate` on the live OBD speed and the live reference fix:
+    /// whether a manual fix would be allowed now, and on which speed. For
+    /// display; `recordManualFix` evaluates it again at confirm.
+    ///
+    /// Ages (OBD reply ≤ 2 s, reference fix ≤ 5 s) are measured at the
+    /// moment this is read: during a recording `now` is `clock.now()` on the
+    /// recording's clock, and the OBD reply time is its uptime on that clock.
+    /// Outside a recording it is display-only. Ages are then measured on the
+    /// same uptime base (`uptime`, with no session offset), and no reference
+    /// fix counts, since `live.referenceFix` exists only while recording.
+    ///
+    /// The value changes with time even when nothing observable does: a
+    /// view stays current only if it is re-rendered. While recording,
+    /// `live` changes at least once a second (`elapsed`), so an observing
+    /// view lags by at most about 1 s.
+    var manualFixGate: ManualFixGate.Result {
+        if let rec = recording {
+            return gate(at: rec.clock)
+        }
+        return ManualFixGate.evaluate(
+            now: MonotonicTimestamp(seconds: uptime.uptimeSeconds),
+            obdSpeedKmh: live.obdSpeedKmh,
+            obdSpeedT: obdSpeedUptime.map { MonotonicTimestamp(seconds: $0) },
+            referenceFix: nil
+        )
+    }
+
+    /// A recording is calibrating or recording (not stopping) and the gate
+    /// allows a fix: `recordManualFix` would write a row now.
+    var canRecordManualFix: Bool {
+        manualFixRecording != nil && manualFixGate.isAllowed
+    }
+
+    /// The moment a long-press begins, on the current recording's clock, to
+    /// hand back to `recordManualFix` as `pressedAt`. nil when no recording
+    /// is calibrating or recording. Does not check the gate: it is checked
+    /// at confirm.
+    func manualFixPressTime() -> ManualFixPress? {
+        guard let rec = manualFixRecording else { return nil }
+        return ManualFixPress(generation: rec.generation, t: rec.clock.now())
+    }
+
+    /// Writes one `manualFix` row (format v3) at `clock.now()`, the confirm
+    /// time, and returns true. Writes nothing and returns false when no
+    /// recording is calibrating or recording, when `pressedAt` belongs to
+    /// another recording, when `ManualFixGate` refuses at that same instant
+    /// (above 10 km/h on an OBD reply ≤ 2 s old or a reference fix ≤ 5 s
+    /// old), or when the coordinate is not a finite WGS 84 position. The
+    /// row's `t` is the instant the gate was evaluated at.
+    ///
+    /// `obdSpeedT` is the last primary-ECU speed reply's own uptime on the
+    /// recording's clock (the `t` of its `obd` row). It and `obdSpeedKmh`
+    /// are written even when the reply was too old to gate. A non-finite or
+    /// negative `mapSpanM` is dropped; `note` is trimmed and cut to 80
+    /// characters (`ManualFixSample.normalizedNote`).
+    @discardableResult
+    func recordManualFix(
+        latitude: Double,
+        longitude: Double,
+        pressedAt: ManualFixPress,
+        mapSpanM: Double?,
+        note: String?
+    ) -> Bool {
+        guard let rec = manualFixRecording, pressedAt.generation == rec.generation else { return false }
+        let obdSpeedKmh = live.obdSpeedKmh
+        let obdSpeedT = obdSpeedKmh == nil ? nil : obdSpeedUptime.map { rec.clock.timestamp(uptimeSeconds: $0) }
+        let now = rec.clock.now()
+        guard let sample = ManualFixGate.sample(
+            now: now,
+            latitude: latitude,
+            longitude: longitude,
+            pressedT: pressedAt.t,
+            mapSpanM: mapSpanM,
+            obdSpeedKmh: obdSpeedKmh,
+            obdSpeedT: obdSpeedT,
+            referenceFix: live.referenceFix,
+            note: note
+        ) else { return false }
+        rec.sink.record(LogEvent(timestamp: now, payload: .manualFix(sample)))
+        return true
+    }
+
+    /// The gate at `clock.now()`, with the OBD reply's uptime on `clock`.
+    private func gate(at clock: SessionClock) -> ManualFixGate.Result {
+        ManualFixGate.evaluate(
+            now: clock.now(),
+            obdSpeedKmh: live.obdSpeedKmh,
+            obdSpeedT: obdSpeedUptime.map { clock.timestamp(uptimeSeconds: $0) },
+            referenceFix: live.referenceFix
+        )
+    }
+
+    /// The recording a manual fix may be written to: calibrating or
+    /// recording, and its stop row not yet queued.
+    private var manualFixRecording: ActiveRecording? {
+        guard state == .calibrating || state == .recording, let rec = recording, rec.isWritable else { return nil }
+        return rec
     }
 
     /// Writes `background`/`foreground` rows while recording; flushes on
@@ -894,10 +1016,12 @@ final class RecordingSession {
         switch event {
         case .session(.reading(let reading)) where reading.measurement.pid == .vehicleSpeed && reading.isFromPrimaryECU:
             live.obdSpeedKmh = reading.measurement.value
+            obdSpeedUptime = reading.replyUptime
         case .session(.pollRate(let hz, _)):
             live.obdHz = hz
         case .ble(_, let to, _, _) where to != .connected:
             live.obdSpeedKmh = nil
+            obdSpeedUptime = nil
             live.obdHz = 0
         default:
             break

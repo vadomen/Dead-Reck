@@ -583,3 +583,223 @@ struct RecordingSessionTests {
         #expect(session.availableDiskBytes == RecordingFixtures.roomy + 1)
     }
 }
+
+/// The manual "I'm here" fix (M4.2): one `manualFix` row per confirmed pin,
+/// stamped on the recording's clock, written only while recording and only
+/// when `ManualFixGate` allows it.
+@Suite("RecordingSession manual fix", .serialized)
+@MainActor
+struct RecordingSessionManualFixTests {
+    static func reading(_ value: Double, ecu: String = "7E8", uptime: Double = ProcessInfo.processInfo.systemUptime) -> LinkEvent {
+        .session(.reading(OBDReading(
+            seq: 1, command: "010D0C1", ecu: ecu,
+            measurement: OBDMeasurement(pid: .vehicleSpeed, value: value, unit: .kilometersPerHour),
+            raw: "7E803410D05", requestUptime: uptime - 0.04, replyUptime: uptime
+        )))
+    }
+
+    static func manualFixes(_ events: [LogEvent]) -> [(t: MonotonicTimestamp, sample: ManualFixSample)] {
+        events.compactMap { if case .manualFix(let sample) = $0.payload { ($0.timestamp, sample) } else { nil } }
+    }
+
+    @Test("Writes one manualFix row: pin, press time, map span, OBD speed and the time of its reply, gate, trimmed note")
+    func writesOneRow() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let link = FakeLink()
+        let session = RecordingFixtures.session(link: link, store: scratch.store)
+        try await session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
+        let url = try #require(session.currentFile)
+
+        let replyUptime = ProcessInfo.processInfo.systemUptime
+        link.send(Self.reading(5, uptime: replyUptime))
+        link.send(Self.reading(80, ecu: "7E9"))  // not the primary ECU: ignored
+        #expect(await eventually(2) { session.live.obdSpeedKmh == 5 })
+        #expect(session.manualFixGate == ManualFixGate.Result(speedSource: .obd, speedKmh: 5, isAllowed: true))
+        #expect(session.canRecordManualFix)
+
+        let press = try #require(session.manualFixPressTime())
+        try await Task.sleep(for: .milliseconds(30))
+        #expect(session.recordManualFix(latitude: 0.001, longitude: -0.002, pressedAt: press, mapSpanM: 300, note: "  gate  "))
+        await session.stop()
+
+        let (header, events, _) = try RecordingFixtures.read(url)
+        #expect(header.formatVersion == .v3)
+        let fixes = Self.manualFixes(events)
+        #expect(fixes.count == 1)
+        let (t, fix) = try #require(fixes.first)
+        #expect(fix.latitude == 0.001 && fix.longitude == -0.002)
+        #expect(fix.pressedT == press.t)
+        #expect(t.nanoseconds - fix.pressedT.nanoseconds >= 30_000_000, "t is the confirm time, after the press")
+        #expect(fix.mapSpanM == 300)
+        #expect(fix.obdSpeedKmh == 5)
+        #expect(fix.speedSource == "obd")
+        #expect(fix.gateSpeedKmh == 5)
+        #expect(fix.gpsSpeedKmh == nil)
+        #expect(fix.note == "gate")
+        // obdSpeedT: the reply's own uptime on this recording's clock, i.e.
+        // the `t` of the obd row it came from.
+        let obdSpeedT = try #require(fix.obdSpeedT)
+        let expected = MonotonicTimestamp(seconds: replyUptime - header.referenceUptimeSeconds)
+        #expect(abs(obdSpeedT.nanoseconds - expected.nanoseconds) <= 1)
+        let obdRow = try #require(events.first { if case .obd(let s) = $0.payload { s.value == 5 } else { false } })
+        #expect(obdRow.timestamp == obdSpeedT)
+    }
+
+    @Test("Refused, with nothing written, when not recording: before start, after stop, and with a press from an earlier recording")
+    func refusedWhenNotRecording() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let link = FakeLink()
+        let session = RecordingFixtures.session(link: link, store: scratch.store)
+        link.send(Self.reading(0))
+        #expect(await eventually(2) { session.live.obdSpeedKmh == 0 })
+        #expect(session.manualFixGate.isAllowed)
+        #expect(!session.canRecordManualFix)
+        #expect(session.manualFixPressTime() == nil)
+
+        // Calibrating counts as recording.
+        let starting = Task { try await session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .milliseconds(300)) }
+        #expect(await eventually(2) { session.state == .calibrating })
+        #expect(session.canRecordManualFix)
+        let earlier = try #require(session.manualFixPressTime())
+        try await starting.value
+        let first = try #require(session.currentFile)
+        await session.stop()
+        #expect(!session.canRecordManualFix)
+        #expect(session.manualFixPressTime() == nil)
+        #expect(!session.recordManualFix(latitude: 0, longitude: 0, pressedAt: earlier, mapSpanM: nil, note: nil))
+
+        // A press taken on another recording's clock is refused.
+        try await session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
+        let second = try #require(session.currentFile)
+        #expect(!session.recordManualFix(latitude: 0, longitude: 0, pressedAt: earlier, mapSpanM: nil, note: nil))
+        await session.stop()
+
+        for url in [first, second] {
+            let (_, events, _) = try RecordingFixtures.read(url)
+            #expect(Self.manualFixes(events).isEmpty)
+        }
+    }
+
+    @Test("Refused above 10 km/h OBD speed; allowed at 10; OBD speed is forgotten when the link drops")
+    func refusedAboveLimit() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let link = FakeLink()
+        let session = RecordingFixtures.session(link: link, store: scratch.store)
+        try await session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
+        let url = try #require(session.currentFile)
+
+        link.send(Self.reading(10.01))
+        #expect(await eventually(2) { session.live.obdSpeedKmh == 10.01 })
+        #expect(session.manualFixGate == ManualFixGate.Result(speedSource: .obd, speedKmh: 10.01, isAllowed: false))
+        #expect(!session.canRecordManualFix)
+        let press = try #require(session.manualFixPressTime(), "the press can begin; the gate decides at confirm")
+        #expect(!session.recordManualFix(latitude: 0, longitude: 0, pressedAt: press, mapSpanM: nil, note: nil))
+
+        link.send(Self.reading(10))
+        #expect(await eventually(2) { session.live.obdSpeedKmh == 10 })
+        #expect(session.recordManualFix(latitude: 0, longitude: 0, pressedAt: press, mapSpanM: nil, note: "at ten"))
+
+        link.send(.ble(from: .connected, to: .disconnected, reason: "link lost", uptime: ProcessInfo.processInfo.systemUptime))
+        #expect(await eventually(2) { session.live.obdSpeedKmh == nil })
+        #expect(session.manualFixGate.speedSource == .unknown)
+        #expect(session.recordManualFix(latitude: 0, longitude: 0, pressedAt: press, mapSpanM: nil, note: "no link"))
+        await session.stop()
+
+        let (_, events, _) = try RecordingFixtures.read(url)
+        let fixes = Self.manualFixes(events).map(\.sample)
+        #expect(fixes.map(\.note) == ["at ten", "no link"])
+        #expect(fixes[0].speedSource == "obd" && fixes[0].gateSpeedKmh == 10 && fixes[0].obdSpeedT != nil)
+        #expect(fixes[1].speedSource == "unknown" && fixes[1].obdSpeedKmh == nil && fixes[1].obdSpeedT == nil)
+    }
+
+    @Test("Without OBD speed: GPS speed gates when the fix is good and fresh (gps), else unknown and allowed")
+    func gpsAndUnknown() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let source = FakeReferenceFixSource()
+        let session = RecordingFixtures.session(sources: [source], store: scratch.store)
+        try await session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
+        let url = try #require(session.currentFile)
+        let slow = source.fix(speed: 1)  // 3.6 km/h
+        source.latestReferenceFix = slow
+        #expect(await eventually(3) { session.live.referenceFix == slow })
+        #expect(session.live.obdSpeedKmh == nil)
+
+        let gate = session.manualFixGate
+        #expect(gate.speedSource == .gps && gate.isAllowed)
+        #expect(abs((gate.speedKmh ?? 0) - 3.6) < 1e-9)
+        let press = try #require(session.manualFixPressTime())
+        #expect(session.recordManualFix(latitude: 0, longitude: 0, pressedAt: press, mapSpanM: nil, note: "gps"))
+
+        // Fast, accurate and fresh: refused.
+        let fast = source.fix(speed: 5)  // 18 km/h
+        source.latestReferenceFix = fast
+        #expect(await eventually(3) { session.live.referenceFix == fast })
+        #expect(!session.canRecordManualFix)
+        #expect(!session.recordManualFix(latitude: 0, longitude: 0, pressedAt: press, mapSpanM: nil, note: "refused"))
+
+        // Fast but too inaccurate to trust: unknown, allowed; GPS speed kept for reference.
+        let vague = source.fix(speed: 5, horizontalAccuracy: 100.01)
+        source.latestReferenceFix = vague
+        #expect(await eventually(3) { session.live.referenceFix == vague })
+        #expect(session.manualFixGate == ManualFixGate.Result(speedSource: .unknown, speedKmh: nil, isAllowed: true))
+        #expect(session.recordManualFix(latitude: 0, longitude: 0, pressedAt: press, mapSpanM: nil, note: "unknown"))
+
+        // Fast and accurate but older than 5 s (fix time = receivedT − ageS): unknown, allowed.
+        let old = source.fix(speed: 5, receivedAgoS: 3, ageS: 2.5)
+        source.latestReferenceFix = old
+        #expect(await eventually(3) { session.live.referenceFix == old })
+        #expect(session.manualFixGate == ManualFixGate.Result(speedSource: .unknown, speedKmh: nil, isAllowed: true))
+        #expect(session.recordManualFix(latitude: 0, longitude: 0, pressedAt: press, mapSpanM: nil, note: "stale fix"))
+        await session.stop()
+
+        let (_, events, _) = try RecordingFixtures.read(url)
+        let fixes = Self.manualFixes(events).map(\.sample)
+        #expect(fixes.map(\.note) == ["gps", "unknown", "stale fix"])
+        #expect(fixes[0].speedSource == "gps")
+        #expect(fixes[1].speedSource == "unknown" && fixes[1].gateSpeedKmh == nil)
+        #expect(fixes[2].speedSource == "unknown" && fixes[2].gateSpeedKmh == nil)
+        #expect(fixes.allSatisfy { $0.obdSpeedKmh == nil && $0.obdSpeedT == nil })
+        #expect(abs((fixes[0].gpsSpeedKmh ?? 0) - 3.6) < 1e-9)
+        #expect(abs((fixes[1].gpsSpeedKmh ?? 0) - 18) < 1e-9)
+        #expect(abs((fixes[2].gpsSpeedKmh ?? 0) - 18) < 1e-9)
+        // Display only: the reference fixes themselves were never written.
+        #expect(!events.contains { $0.payload.kind == "location" })
+    }
+
+    @Test("The gate ages with the clock: an OBD speed over 2 s old stops gating with no new event, and is still recorded")
+    func obdSpeedGoesStale() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let link = FakeLink()
+        let session = RecordingFixtures.session(link: link, store: scratch.store)
+        try await session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
+        let url = try #require(session.currentFile)
+
+        // A reply 1.6 s old: fresh for now.
+        link.send(Self.reading(30, uptime: ProcessInfo.processInfo.systemUptime - 1.6))
+        #expect(await eventually(2) { session.live.obdSpeedKmh == 30 })
+        #expect(session.manualFixGate == ManualFixGate.Result(speedSource: .obd, speedKmh: 30, isAllowed: false))
+        let press = try #require(session.manualFixPressTime())
+        #expect(!session.recordManualFix(latitude: 0, longitude: 0, pressedAt: press, mapSpanM: nil, note: "fresh"))
+
+        // Nothing new arrives; time passes.
+        #expect(await eventually(3) { session.manualFixGate.speedSource == .unknown })
+        #expect(session.manualFixGate.isAllowed)
+        #expect(session.canRecordManualFix)
+        #expect(session.recordManualFix(latitude: 0, longitude: 0, pressedAt: press, mapSpanM: nil, note: "stale"))
+        await session.stop()
+
+        let (_, events, _) = try RecordingFixtures.read(url)
+        let fixes = Self.manualFixes(events)
+        #expect(fixes.map(\.sample.note) == ["stale"])
+        let (t, fix) = try #require(fixes.first)
+        #expect(fix.speedSource == "unknown" && fix.gateSpeedKmh == nil)
+        #expect(fix.obdSpeedKmh == 30, "the last reading is recorded even when too old to gate")
+        let obdSpeedT = try #require(fix.obdSpeedT)
+        #expect(obdSpeedT.interval(to: t) > ManualFixGate.maxOBDAgeS)
+    }
+}

@@ -7,8 +7,10 @@ import Foundation
 //
 // Prints the header, events per kind, achieved rates, gaps over 50 ms in the
 // 100 Hz streams, OBD latency percentiles (t - requestT), `elm` outcome
-// counts, the recorder's own stats rows and the truncation report; `--csv`
-// writes one CSV per kind for analysis in Python. `--strict` stops at the
+// counts, the recorder's own stats rows, manual position fixes (v3) and the
+// truncation report; `--csv` writes one CSV per kind for analysis in Python
+// (`manualFix.csv` included). Reads every format version `LogCodec` knows
+// (v1–v3) and refuses a newer one. `--strict` stops at the
 // first malformed line or damaged member instead of skipping it.
 //
 // The analysis lives in DriveLoggerCore (`RecordingAnalyzer`,

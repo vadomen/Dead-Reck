@@ -19,8 +19,15 @@ public enum LogFormatVersion: Int, Hashable, Sendable, Codable, CaseIterable, Co
     /// decode into the same structs with those fields `nil`.
     case v2 = 2
 
+    /// v2 plus the kind `manualFix`: a position the driver confirmed on the
+    /// map (`ManualFixSample`). Nothing else changed, so v1 and v2 files
+    /// decode exactly as before. A v2 reader refuses a v3 header; that is
+    /// the version bump's purpose, since a v2 reader would otherwise keep
+    /// the new rows only as `unrecognized`.
+    case v3 = 3
+
     /// The version new recordings are written in.
-    public static let current: LogFormatVersion = .v2
+    public static let current: LogFormatVersion = .v3
 
     public static func < (lhs: LogFormatVersion, rhs: LogFormatVersion) -> Bool {
         lhs.rawValue < rhs.rawValue

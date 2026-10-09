@@ -388,3 +388,107 @@ struct LogFormatCompatibilityV2Tests {
         for (value, string) in layers { #expect(value.rawValue == string) }
     }
 }
+
+/// Format v3 counterpart. Same rule: frozen when v3 was introduced (M4.2) and
+/// never edited to fit a later change. v3 = v2 + the kind `manualFix`; the
+/// fixture has one row per `speedSource` value, from every optional field
+/// present to none. Coordinates are small offsets from (0, 0): no real place.
+@Suite("Log format compatibility v3")
+struct LogFormatCompatibilityV3Tests {
+    let codec = LogCodec()
+
+    static let version3Recording = #"""
+        {"app":{"build":"12","name":"DriveLogger","version":"0.3.0"},"device":{"model":"iPhone16,1","systemName":"iOS","systemVersion":"18.6"},"formatVersion":3,"mount":"windscreen, portrait","polling":{"adaptiveTiming":1,"command":"010D0C1","multiPID":true,"pids":[13,12],"requestHeader":"7E0","responseCount":1,"rpmEvery":1,"timeoutMs":200},"referenceUptimeSeconds":7200.5,"sessionID":"5C0A2E1B-7D3F-4B6A-9E8C-1F2D3A4B5C6D","startedAt":"2026-01-01T00:00:00Z","timeZone":"UTC","vehicle":"test vehicle"}
+        {"data":{"event":"start"},"kind":"lifecycle","t":0}
+        {"data":{"command":"010D0C1","ecu":"7E8","pid":13,"raw":"7E803410D05\r\r","requestT":950000000,"seq":7,"unit":"km/h","value":5},"kind":"obd","t":1000000000}
+        {"data":{"ageS":0.25,"altitude":10,"course":-1,"courseAccuracy":-1,"horizontalAccuracy":35,"latitude":0.0125,"longitude":-0.025,"receivedT":1750000000,"speed":1.5,"speedAccuracy":0.75,"verticalAccuracy":12},"kind":"location","t":1500000000}
+        {"data":{"gateSpeedKmh":5,"gpsSpeedKmh":5.4,"latitude":0.0125,"longitude":-0.025,"mapSpanM":250,"note":"tunnel exit, north gate","obdSpeedKmh":5,"obdSpeedT":1000000000,"pressedT":1800000000,"speedSource":"obd"},"kind":"manualFix","t":2500000000}
+        {"data":{"gateSpeedKmh":3.6,"gpsSpeedKmh":3.6,"latitude":-0.0375,"longitude":0.05,"mapSpanM":1200.5,"pressedT":6000000000,"speedSource":"gps"},"kind":"manualFix","t":7500000000}
+        {"data":{"latitude":0,"longitude":0,"pressedT":8000000000,"speedSource":"unknown"},"kind":"manualFix","t":9000000000}
+        {"data":{"bytesWritten":4096,"counts":{"lifecycle":1,"location":1,"manualFix":3,"obd":1},"dropped":0,"gaps":{"accel":0,"gyro":0,"motion":0},"maxGapMs":{},"motionHz":0,"obdHz":0.1,"queueDepthMax":2,"timeouts":0,"windowS":10},"kind":"stats","t":10000000000}
+        {"data":{"detail":"user","event":"stop"},"kind":"lifecycle","t":10500000000}
+        """#
+
+    var document: LogDocument {
+        get throws { try codec.document(from: Data(Self.version3Recording.utf8)) }
+    }
+
+    static func ms(_ value: Int64) -> MonotonicTimestamp {
+        MonotonicTimestamp(nanoseconds: value * 1_000_000)
+    }
+
+    @Test("A v3 recording parses")
+    func readsVersion3Header() throws {
+        let header = try document.header
+        #expect(header.formatVersion == .v3)
+        #expect(header.startedAt == Date(timeIntervalSince1970: 1_767_225_600))
+        #expect(header.referenceUptimeSeconds == 7_200.5)
+        #expect(header.polling?.requestHeader == "7E0")
+        #expect(header.timeZone == "UTC")
+        #expect(header.adapter == nil)
+    }
+
+    @Test("Every v3 row decodes to its own payload, none as unrecognized")
+    func readsEveryRow() throws {
+        let events = try document.events
+        #expect(events.count == 8)
+        #expect(events.map(\.payload.kind) == [
+            "lifecycle", "obd", "location", "manualFix", "manualFix", "manualFix", "stats", "lifecycle",
+        ])
+        for event in events {
+            if case .unrecognized(let kind, _) = event.payload {
+                Issue.record("\(kind) decoded as unrecognized")
+            }
+        }
+    }
+
+    @Test("manualFix rows keep every field, and absent ones stay absent")
+    func readsManualFixes() throws {
+        let events = try document.events
+        let fixes = events.compactMap { event -> (MonotonicTimestamp, ManualFixSample)? in
+            guard case .manualFix(let fix) = event.payload else { return nil }
+            return (event.timestamp, fix)
+        }
+        #expect(fixes.count == 3)
+
+        let (t, obd) = fixes[0]
+        #expect(t == Self.ms(2_500))
+        #expect(obd == ManualFixSample(
+            latitude: 0.0125, longitude: -0.025,
+            pressedT: Self.ms(1_800),
+            mapSpanM: 250,
+            obdSpeedKmh: 5, obdSpeedT: Self.ms(1_000),
+            gpsSpeedKmh: 5.4,
+            speedSource: "obd", gateSpeedKmh: 5,
+            note: "tunnel exit, north gate"
+        ))
+        // obdSpeedT is the `t` of the obd row it came from.
+        #expect(obd.obdSpeedT == events[1].timestamp)
+
+        #expect(fixes[1].1 == ManualFixSample(
+            latitude: -0.0375, longitude: 0.05, pressedT: Self.ms(6_000), mapSpanM: 1_200.5,
+            gpsSpeedKmh: 3.6, speedSource: "gps", gateSpeedKmh: 3.6
+        ))
+        #expect(fixes[2].1 == ManualFixSample(latitude: 0, longitude: 0, pressedT: Self.ms(8_000), speedSource: "unknown"))
+    }
+
+    @Test("Rewriting a v3 recording reproduces it unchanged")
+    func rewritesVersion3Identically() throws {
+        let original = Data(Self.version3Recording.utf8)
+        let rewritten = try codec.encode(try document)
+        #expect(rewritten == original + Data("\n".utf8))
+    }
+
+    @Test("v3 is a declared, readable version")
+    func version3IsDeclared() {
+        #expect(LogFormatVersion(rawValue: 3) == .v3)
+        #expect(LogFormatVersion.v3 <= .current)
+    }
+
+    @Test("The v3 kind and the speedSource vocabulary are stable on-disk strings")
+    func stringsAreStable() {
+        #expect(LogEventKind.manualFix.rawValue == "manualFix")
+        let sources: [(ManualFixSample.SpeedSource, String)] = [(.obd, "obd"), (.gps, "gps"), (.unknown, "unknown")]
+        for (value, string) in sources { #expect(value.rawValue == string) }
+    }
+}

@@ -13,6 +13,15 @@ enum AnalysisFixtures {
         )
     }
 
+    /// A manual fix confirmed at `ms`, pressed 2.4 s earlier, near (0, 0).
+    static func manualFix(at ms: Double) -> LogEvent {
+        LogEvent(timestamp: Self.ms(ms), payload: .manualFix(ManualFixSample(
+            latitude: 0.0125, longitude: -0.025, pressedT: Self.ms(ms - 2_400), mapSpanM: 250,
+            obdSpeedKmh: 5, obdSpeedT: Self.ms(ms - 3_200), gpsSpeedKmh: 5.4,
+            speedSource: "obd", gateSpeedKmh: 5, note: "tunnel exit"
+        )))
+    }
+
     static let header = LogHeader(
         sessionID: LogFixtures.sessionID,
         startedAt: Date(timeIntervalSince1970: 1_700_000_000),
@@ -165,6 +174,40 @@ struct RecordingAnalysisTests {
             #expect(text.contains(needle), "missing \(needle) in\n\(text)")
         }
     }
+
+    @Test("Manual fixes are counted and listed: t, speedSource, gate speed, press-to-confirm delay, note")
+    func manualFixes() {
+        var analyzer = RecordingAnalyzer(header: F.header)
+        analyzer.observe(F.manualFix(at: 4_200))
+        analyzer.observe(LogEvent(timestamp: F.ms(9_000), payload: .manualFix(
+            ManualFixSample(latitude: 0, longitude: 0, pressedT: F.ms(8_500), speedSource: "unknown")
+        )))
+        let summary = analyzer.summary(report: LogReadReport(members: 1, truncatedTail: false, skippedLineIndices: []))
+        #expect(summary.manualFixes.count == 2)
+        #expect(summary.manualFixes.first?.t == F.ms(4_200))
+        #expect(summary.manualFixes.first?.sample.speedSource == "obd")
+        #expect(summary.kinds.first { $0.kind == "manualFix" }?.count == 2)
+
+        let text = summary.render()
+        for needle in [
+            "Manual fixes  2",
+            "4.200 s  obd 5.0 km/h  pressed 2.40 s earlier  0.0125000, -0.0250000  note: tunnel exit",
+            "9.000 s  unknown -  pressed 0.50 s earlier  0.0000000, 0.0000000",
+        ] {
+            #expect(text.contains(needle), "missing \(needle) in\n\(text)")
+        }
+    }
+
+    @Test("No manual fixes: a v3 recording says none, an older one says nothing")
+    func noManualFixes() {
+        var v3 = F.header
+        v3.formatVersion = .v3
+        let empty = LogReadReport(members: 1, truncatedTail: false, skippedLineIndices: [])
+        #expect(RecordingAnalyzer(header: v3).summary(report: empty).render().contains("Manual fixes  none"))
+        var v2 = F.header
+        v2.formatVersion = .v2
+        #expect(!RecordingAnalyzer(header: v2).summary(report: empty).render().contains("Manual fixes"))
+    }
 }
 
 @Suite("Recording CSV")
@@ -189,6 +232,7 @@ struct RecordingCSVTests {
                 maxGapMs: ["motion": 61.5], timeouts: 0, queueDepthMax: 3, dropped: 0, bytesWritten: 77
             ))),
             LogEvent(timestamp: t, payload: .unrecognized(kind: "future/kind", data: .object(["a": .int(1)]))),
+            LogEvent(timestamp: t, payload: .manualFix(ManualFixSample(latitude: 0, longitude: 0, pressedT: t, speedSource: "unknown"))),
         ]
     }()
 
@@ -215,6 +259,23 @@ struct RecordingCSVTests {
         let motion = RecordingCSV.values(for: .motion(LogFixtures.motion, at: .zero))
         #expect(motion[1] == "0.1")
         #expect(motion.last == "")                         // magneticAccuracy absent
+    }
+
+    @Test("manualFix.csv has every field; absent optional fields are empty cells")
+    func manualFixValues() {
+        #expect(RecordingCSV.columns(for: "manualFix") == [
+            "t", "latitude", "longitude", "pressedT", "mapSpanM", "obdSpeedKmh", "obdSpeedT",
+            "gpsSpeedKmh", "speedSource", "gateSpeedKmh", "note",
+        ])
+        #expect(RecordingCSV.values(for: AnalysisFixtures.manualFix(at: 4_200)) == [
+            "4200000000", "0.0125", "-0.025", "1800000000", "250.0", "5.0", "1000000000",
+            "5.4", "obd", "5.0", "tunnel exit",
+        ])
+        let minimal = LogEvent(timestamp: .zero, payload: .manualFix(
+            ManualFixSample(latitude: 0, longitude: 0, pressedT: .zero, speedSource: "unknown")
+        ))
+        #expect(RecordingCSV.values(for: minimal) == ["0", "0.0", "0.0", "0", "", "", "", "", "unknown", "", ""])
+        #expect(RecordingCSV.fileName(for: "manualFix") == "manualFix.csv")
     }
 
     @Test("The exporter writes one CSV per kind with a header row")

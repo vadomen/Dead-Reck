@@ -64,7 +64,7 @@ import Foundation
 /// avoids road snapping (docs/PLAN.md §6).
 @MainActor
 final class ReferenceLocationSource: SensorSource, LiveReferenceFixReporting, BackgroundExecutionProviding,
-    LocationAuthorizationReporting {
+    LocationAuthorizationReporting, CachedLocationProviding {
     let name = "referenceLocation"
 
     /// The most recent fix, for the dashboard only. Never written anywhere
@@ -76,6 +76,9 @@ final class ReferenceLocationSource: SensorSource, LiveReferenceFixReporting, Ba
     let delegate = ReferenceLocationDelegate()
     /// Where authorisation is read: `manager` in the app, a fake in tests.
     private let authorization: any LocationAuthorizationProviding
+    /// Where the cached position is read: `manager` in the app, a fake in
+    /// tests.
+    private let lastKnownLocation: any LastKnownLocationProviding
     private var backgroundSession: CLBackgroundActivitySession?
     private var running = false
 
@@ -84,12 +87,19 @@ final class ReferenceLocationSource: SensorSource, LiveReferenceFixReporting, Ba
     /// calls once when the manager is created).
     var onAvailabilityChange: (@MainActor () -> Void)?
 
-    /// - Parameter authorization: nil reads the source's own
-    ///   `CLLocationManager`; tests pass a fake.
-    init(authorization: (any LocationAuthorizationProviding)? = nil) {
+    /// - Parameters:
+    ///   - authorization: nil reads the source's own `CLLocationManager`;
+    ///     tests pass a fake.
+    ///   - lastKnownLocation: nil reads the same manager's `location`;
+    ///     tests pass a fake.
+    init(
+        authorization: (any LocationAuthorizationProviding)? = nil,
+        lastKnownLocation: (any LastKnownLocationProviding)? = nil
+    ) {
         let manager = CLLocationManager()
         self.manager = manager
         self.authorization = authorization ?? manager
+        self.lastKnownLocation = lastKnownLocation ?? manager
         manager.delegate = delegate
         delegate.observeAuthorization { [weak self] in
             Task { @MainActor in self?.onAvailabilityChange?() }
@@ -141,6 +151,14 @@ final class ReferenceLocationSource: SensorSource, LiveReferenceFixReporting, Ba
     /// confirm that it keeps the app running.
     var locationAuthorizationDetail: String {
         LocationAuthorizationSnapshot(authorization).detail(backgroundActivitySessionHeld: backgroundSession != nil)
+    }
+
+    /// The system's cached position (`CLLocationManager.location`) for the
+    /// map camera, read only while authorisation is `authorizedWhenInUse` or
+    /// `authorizedAlways`. Starts nothing: no authorisation request and no
+    /// updates. A recording is not needed. Display only, never written.
+    var cachedLocation: CachedLocation? {
+        CachedLocation.read(authorization: authorization.authorizationStatus, from: lastKnownLocation)
     }
 
     func stop() {

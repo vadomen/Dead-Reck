@@ -140,6 +140,41 @@ final class FakeLocationSource: FakeBackgroundSource, LocationAuthorizationRepor
     var locationAuthorizationDetail = "authorizationStatus=authorizedWhenInUse, accuracyAuthorization=full, backgroundActivitySession=held"
 }
 
+/// A `FakeSource` that shows a reference fix the test sets, as
+/// `ReferenceLocationSource` does on a phone (`LiveReferenceFixReporting`).
+/// Nothing is written for it: only `live.referenceFix` sees it. Keeps the
+/// recording's clock so `fix` can stamp `receivedT` on it.
+@MainActor
+final class FakeReferenceFixSource: FakeSource, LiveReferenceFixReporting {
+    var latestReferenceFix: LocationSample?
+    private(set) var clock: SessionClock?
+
+    override func start(clock: SessionClock, sink: LogSink) throws {
+        self.clock = clock
+        try super.start(clock: clock, sink: sink)
+    }
+
+    /// A fix near (0, 0) with the given speed (m/s) and accuracies,
+    /// received `receivedAgoS` before now on the recording's clock, `ageS`
+    /// old at receipt. Call after `start`.
+    func fix(
+        speed: Double,
+        speedAccuracy: Double = 0.5,
+        horizontalAccuracy: Double = 10,
+        receivedAgoS: Double = 0,
+        ageS: Double = 0
+    ) -> LocationSample {
+        let now = clock?.now() ?? .zero
+        return LocationSample(
+            latitude: 0.001, longitude: -0.002, altitude: 5,
+            horizontalAccuracy: horizontalAccuracy, verticalAccuracy: 4,
+            speed: speed, speedAccuracy: speedAccuracy, course: -1, courseAccuracy: -1,
+            receivedT: MonotonicTimestamp(nanoseconds: now.nanoseconds - Int64(receivedAgoS * 1e9)),
+            ageS: ageS
+        )
+    }
+}
+
 /// `LocationAuthorizationProviding` whose answers the test sets.
 final class FakeLocationAuthorization: LocationAuthorizationProviding {
     var authorizationStatus: CLAuthorizationStatus

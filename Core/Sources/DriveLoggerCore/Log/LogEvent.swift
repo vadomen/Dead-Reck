@@ -18,6 +18,8 @@ public enum LogEventKind: String, Hashable, Sendable, Codable, CaseIterable {
     case link
     case lifecycle
     case stats
+    // v3
+    case manualFix
 }
 
 /// One timestamped record in a recording.
@@ -53,6 +55,9 @@ public struct LogEvent: Hashable, Sendable, Codable {
         case link(LinkSample)
         case lifecycle(LifecycleSample)
         case stats(StatsSample)
+        /// A position the driver confirmed on the map (v3). `t` is the
+        /// confirm time.
+        case manualFix(ManualFixSample)
 
         /// A record whose `kind` this build doesn't know, with its payload kept
         /// verbatim so a round-trip through an older reader doesn't destroy
@@ -74,6 +79,7 @@ public struct LogEvent: Hashable, Sendable, Codable {
             case .link: LogEventKind.link.rawValue
             case .lifecycle: LogEventKind.lifecycle.rawValue
             case .stats: LogEventKind.stats.rawValue
+            case .manualFix: LogEventKind.manualFix.rawValue
             case .unrecognized(let kind, _): kind
             }
         }
@@ -117,6 +123,8 @@ public struct LogEvent: Hashable, Sendable, Codable {
             payload = .lifecycle(try container.decode(LifecycleSample.self, forKey: .data))
         case .stats:
             payload = .stats(try container.decode(StatsSample.self, forKey: .data))
+        case .manualFix:
+            payload = .manualFix(try container.decode(ManualFixSample.self, forKey: .data))
         case nil:
             payload = .unrecognized(
                 kind: kind,
@@ -152,6 +160,8 @@ public struct LogEvent: Hashable, Sendable, Codable {
         case .lifecycle(let sample):
             try container.encode(sample, forKey: .data)
         case .stats(let sample):
+            try container.encode(sample, forKey: .data)
+        case .manualFix(let sample):
             try container.encode(sample, forKey: .data)
         case .unrecognized(_, let data):
             try container.encodeIfPresent(data, forKey: .data)

@@ -23,6 +23,7 @@ public struct RecordingAnalyzer {
     private var lifecycle: [String: Int] = [:]
     private var errors: [String] = []
     private var markers: [RecordingSummary.Marker] = []
+    private var manualFixes: [RecordingSummary.ManualFix] = []
     private var stats = StatsAccumulation()
 
     public init(header: LogHeader) {
@@ -60,6 +61,8 @@ public struct RecordingAnalyzer {
             markers.append(RecordingSummary.Marker(t: event.timestamp, text: text))
         case .stats(let sample):
             stats.observe(sample)
+        case .manualFix(let sample):
+            manualFixes.append(RecordingSummary.ManualFix(t: event.timestamp, sample: sample))
         default:
             break
         }
@@ -91,6 +94,7 @@ public struct RecordingAnalyzer {
             lifecycle: lifecycle,
             errors: errors,
             markers: markers,
+            manualFixes: manualFixes,
             stats: stats.summary
         )
     }
@@ -250,6 +254,17 @@ public struct RecordingSummary: Hashable, Sendable {
         }
     }
 
+    /// A `manualFix` row (v3): driver-confirmed ground truth.
+    public struct ManualFix: Hashable, Sendable {
+        public var t: MonotonicTimestamp
+        public var sample: ManualFixSample
+
+        public init(t: MonotonicTimestamp, sample: ManualFixSample) {
+            self.t = t
+            self.sample = sample
+        }
+    }
+
     public var header: LogHeader
     public var report: LogReadReport
     public var eventCount: Int
@@ -266,6 +281,8 @@ public struct RecordingSummary: Hashable, Sendable {
     /// `detail` of every `lifecycle` `error` row.
     public var errors: [String]
     public var markers: [Marker]
+    /// Every `manualFix` row, in file order.
+    public var manualFixes: [ManualFix]
     /// Aggregate of the recorder's own `stats` rows.
     public var stats: Stats?
 
@@ -383,6 +400,14 @@ public struct RecordingSummary: Hashable, Sendable {
         if !markers.isEmpty {
             out.append("Markers       " + markers.map { "\(Self.format($0.t.seconds, 1)) s \($0.text)" }.joined(separator: "; "))
         }
+        if !manualFixes.isEmpty {
+            out.append("Manual fixes  \(manualFixes.count)")
+            for fix in manualFixes {
+                out.append("  " + Self.describe(fix))
+            }
+        } else if header.formatVersion >= .v3 {
+            out.append("Manual fixes  none")
+        }
         if let stats {
             let gaps = Self.counts(stats.totalGaps, order: StatsAccumulator.gapKinds.map(\.rawValue))
             out.append("Stats rows    \(stats.rows): motionHz min \(Self.format(stats.minMotionHz, 1)) mean \(Self.format(stats.meanMotionHz, 1)); obdHz min \(Self.format(stats.minObdHz, 1)) mean \(Self.format(stats.meanObdHz, 1)); queue depth max \(stats.maxQueueDepth); dropped \(stats.totalDropped); timeouts \(stats.totalTimeouts); gaps \(gaps.isEmpty ? "none" : gaps); \(stats.lastBytesWritten) bytes")
@@ -399,6 +424,19 @@ public struct RecordingSummary: Hashable, Sendable {
             out.append("  WARN \(warning)")
         }
         return out.joined(separator: "\n") + "\n"
+    }
+
+    /// `<t> s  <speedSource> <gate speed>  pressed <t − pressedT> s earlier
+    /// <lat>, <lon>[  note: <note>]`. Coordinates are user data, printed
+    /// for the analyst running the tool on their own recording.
+    static func describe(_ fix: ManualFix) -> String {
+        let sample = fix.sample
+        let gate = sample.gateSpeedKmh.map { "\(format($0, 1)) km/h" } ?? "-"
+        var line = "\(format(fix.t.seconds, 3)) s  \(sample.speedSource) \(gate)"
+        line += "  pressed \(format(sample.pressedT.interval(to: fix.t), 2)) s earlier"
+        line += "  \(format(sample.latitude, 7)), \(format(sample.longitude, 7))"
+        if let note = sample.note { line += "  note: \(note)" }
+        return line
     }
 
     static func format(_ value: Double, _ decimals: Int) -> String {

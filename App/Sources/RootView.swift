@@ -8,11 +8,13 @@ struct RootView: View {
     @State private var sessions: SessionsViewModel
     @State private var console: ConsoleViewModel
     private let session: RecordingSession
+    private let services: AppServices
     @State private var tab: MainTabView<RecordingScreen, MapScreen, SessionsScreen, ConsoleScreen>.Tab
 
     init(services: AppServices) {
         _recording = State(initialValue: RecordingViewModel(services: services))
         session = services.session
+        self.services = services
         _map = State(initialValue: MapViewModel())
         _sessions = State(initialValue: SessionsViewModel(services: services))
         _console = State(initialValue: ConsoleViewModel(services: services))
@@ -28,7 +30,13 @@ struct RootView: View {
         MainTabView(selection: $tab) {
             RecordingScreen(model: recording)
         } map: {
-            MapScreen(model: map, isSelected: tab == .map)
+            MapScreen(
+                model: map, session: session, isSelected: tab == .map,
+                cachedLocation: { [services] in
+                    services.sensors.sources.lazy
+                        .compactMap { $0 as? any CachedLocationProviding }.first?.cachedLocation
+                }
+            )
         } sessions: {
             SessionsScreen(model: sessions)
         } console: {

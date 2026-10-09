@@ -19,13 +19,18 @@ final class MapViewModel {
     private(set) var lastFixInstant: ContinuousClock.Instant?
     /// False before the first fix of a recording and after Stop.
     private(set) var isReceiving = false
+    /// Manual fixes accepted in the current recording; cleared with the track.
+    private(set) var manualFixes: [ConfirmedFix] = []
+    private var nextFixID = 0
 
     init() {}
 
     /// Preview/test seeding.
-    init(track: GPSTrack, latest: LocationSample?) {
+    init(track: GPSTrack, latest: LocationSample?, manualFixes: [ConfirmedFix] = []) {
         self.track = track
         self.latest = latest
+        self.manualFixes = manualFixes
+        nextFixID = manualFixes.count
     }
 
     /// Takes the recorder's latest fix. Does nothing when the scene is not
@@ -44,6 +49,7 @@ final class MapViewModel {
             latest = nil
             lastFixInstant = nil
             isReceiving = false
+            manualFixes = []
         }
         guard let fix else {
             isReceiving = false
@@ -59,5 +65,14 @@ final class MapViewModel {
         }
         isReceiving = true
         track.append(fix)
+    }
+
+    /// Remembers a fix the recorder accepted so the map can show it.
+    func addManualFix(latitude: Double, longitude: Double, note: String?) {
+        manualFixes.append(ConfirmedFix(
+            id: nextFixID, latitude: latitude, longitude: longitude,
+            note: ManualFixSample.normalizedNote(note)
+        ))
+        nextFixID += 1
     }
 }

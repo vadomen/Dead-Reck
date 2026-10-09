@@ -46,6 +46,9 @@ public enum RecordingCSV {
         case .stats:
             ["t", "windowS", "obdHz", "motionHz", "timeouts", "queueDepthMax", "dropped", "bytesWritten",
              "gapsMotion", "gapsAccel", "gapsGyro", "maxGapMsMotion", "maxGapMsAccel", "maxGapMsGyro", "counts"]
+        case .manualFix:
+            ["t", "latitude", "longitude", "pressedT", "mapSpanM", "obdSpeedKmh", "obdSpeedT",
+             "gpsSpeedKmh", "speedSource", "gateSpeedKmh", "note"]
         case nil:
             ["t", "data"]
         }
@@ -93,6 +96,9 @@ public enum RecordingCSV {
                     i(s.gaps["motion"]), i(s.gaps["accel"]), i(s.gaps["gyro"]),
                     d(s.maxGapMs["motion"]), d(s.maxGapMs["accel"]), d(s.maxGapMs["gyro"]),
                     json(JSONValue.object(s.counts.mapValues { .int(Int64($0)) }))]
+        case .manualFix(let f):
+            return [t, d(f.latitude), d(f.longitude), ts(f.pressedT), d(f.mapSpanM), d(f.obdSpeedKmh), ts(f.obdSpeedT),
+                    d(f.gpsSpeedKmh), f.speedSource, d(f.gateSpeedKmh), f.note ?? ""]
         case .unrecognized(_, let data):
             return [t, data.map(json) ?? ""]
         }
