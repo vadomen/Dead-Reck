@@ -773,4 +773,28 @@ Fixed (tests only; no engine change, so replay results are unchanged). Three tes
 
 Sign-flip mutation re-checked independently. `cd Core && swift test` 578 tests in 87 suites pass. No App/ change.
 
-**Round 3 (fresh reviewer) pending.**
+### Round 3
+
+Range `9753d19..d813fd6`. Reviewer: fresh `reviewer` agent. Result: 0 BLOCKER / 0 MAJOR / 1 MINOR.
+
+Verified:
+- **R13.2-1 is fixed.** Each mutation, run in a scratch copy, fails its test: sign flip, heading transform removed, Jᵀ for J, J P Jᵀ skipped or computed as Jᵀ P J, history/cumulative transform skipped (together or apart).
+- **Tolerances leave wide margins.** For example, the late-fix gap is 5e-4 m against a 0.2 m tolerance; the mutants give 14–91 m.
+- **The tests are deterministic.**
+- **Replay scoring stays consistent across a re-anchor.**
+- **The invariants hold:** imports and log format unchanged.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R13.3-1 | MINOR | N4_PLAN doesn't list R13.2-2..4 (BACKLOG targets them at N4 B). Its "acceptance replays identical before and after N4" conflicts with the engine-behaviour fixes it schedules (R13.1-6, R13.2-2/3). Its gate still names round 2. | DEFERRED | BACKLOG (N4, done when the N4 plan is revised) |
+
+**Loop stopped: no BLOCKER or MAJOR findings.**
+
+### Run 13 summary
+
+- **Rounds run:** 3.
+- **Fixed:** 5 (R13.1-1..4, R13.2-1).
+- **Rejected:** 0.
+- **Deferred:** 9 MINOR (R13.1-5..9, R13.2-2..4, R13.3-1).
+- **Final tests (at d813fd6):** `cd Core && swift test`, 578 tests in 87 suites, all pass. No App/ change in the range.
+- **Acceptance:** the N2.3 tables in `docs/NAVIGATION.md`. Rounds 2 and 3 changed tests only.
