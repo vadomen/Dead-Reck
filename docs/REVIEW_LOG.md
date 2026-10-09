@@ -716,3 +716,31 @@ Verified clean:
 | R13.1-9 | MINOR | NAVIGATION.md drift. | DEFERRED | BACKLOG |
 
 Fix: R13.1-1..4 by `navigation-engineer` on branch `n2.3-review-fixes`.
+
+Fixed on `n2.3-review-fixes`. Each fix has a regression test that failed before the fix and passes after:
+
+- **R13.1-1** (e34b5cf): the reset fires only when no particle is χ²-compatible. A low ESS alone keeps the posterior and resamples, and `manualFixResetESSFraction` is removed. Test `pinAfterRingKeepsHeadingInformation`: heading σ after the pin was 229° before the fix and is now < 5°. On manual-3, the ESS-only trigger had been the one firing.
+- **R13.1-2** (c197519):
+  - A parked latch, armed by any OBD 0. While armed, a stale step is frozen. It clears when the 1 s EMA of horizontal userAcceleration exceeds 0.09 g. Measured: yaw is useless here, because a handled phone reads 0.4–3.4 rad/s.
+  - Otherwise the stale speed error is Ornstein–Uhlenbeck with τ = 20 s.
+  - Tests:
+    - `parkedSilenceStaysBounded`: 18 472 m before the fix, 0 m after.
+    - `staleWhileMovingGrowsDiffusively`: 55 km at 10 min before, 3.0 km after; the 10/5 min ratio fell from 2.84 to 1.39.
+    - `staleZeroDoesNotFreeze` still passes.
+- **R13.1-3** (2d03b40): the plane re-anchors at the cloud mean beyond 10 km. Positions convert exactly through WGS-84; heading, covariance and history convert through the Jacobian. No RNG draws are involved. Re-anchoring was chosen over rotating the course because the plane's east axis is sheared, not rotated. Test `farFromAnchorNoConvergenceBias` (lat 55°, 100 km east): 224.5 m cross-track before the fix, 10.1 m after. No acceptance drive goes far enough to re-anchor.
+- **R13.1-4** (d0a1cfd): tests `dopplerGateRejectsGlitch`, `estimateExtrapolates` (moving and stationary), `motionGapAddsNoYaw` and `turnNoiseGrowsHeadingStd`. Each fails under its mutation.
+
+Acceptance after the fixes (seeds 1–5, mean):
+- clean-long, clean and manual: identical to N2.2.
+- jammed-A: −0.002 pp.
+- jammed-B: +0.026 pp, because the ignition-off ending is now parked instead of a random walk.
+- manual-3 pin 3: 248 → 152 m.
+- Consistency: 100 % on every acceptance drive.
+
+Same branch, user-requested follow-ups:
+- 32e52d2: mean-based adoption rule in NAVIGATION.md; R12.1-2 fixed.
+- ef5255f: stale-start rule with a threshold only (fixes > 5 s at ingest), k = 1.0, adopted under the new rule. clean and clean-long are bit-identical; jammed-A −0.008 pp, jammed-B +0.058 pp (allowed 0.1); consistency unchanged. manual-3 pins: 2/3 inside.
+
+Tests after fix: `cd Core && swift test` 575 tests in 87 suites pass. No App/ change.
+
+**Round 2 (fresh reviewer on 9753d19..HEAD) pending.**
