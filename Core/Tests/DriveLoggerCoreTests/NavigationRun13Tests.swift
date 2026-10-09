@@ -146,4 +146,93 @@ struct NavigationRun13Tests {
         #expect(abs(angleDifference(estimate.headingDeg, 0)) < 0.5, "heading \(estimate.headingDeg)°")
         #expect(run.engine.counters.manualResets == 1)
     }
+
+    // MARK: R13.1-4
+
+    @Test("R13.1-4a: a glitch fix reporting 25 m/s at OBD 10 m/s with a wrong course leaves heading unchanged")
+    func dopplerGateRejectsGlitch() throws {
+        let drive = S(initialHeadingDeg: 0, initialSpeed: 10, [.straight(seconds: 40, speed: 10)])
+        let clean = S.cleanFix()
+        let events = drive.events(fix: { t, state, rng in
+            if t < 30 { return clean(t, state, &rng) }
+            if S.at(t, 30) {  // the glitch: clean-looking, 25 m/s, course 90° ± 2°
+                return S.Fix(east: state.east, north: state.north, accuracy: 5, speed: 25, speedAccuracy: 0.5,
+                             course: 90, courseAccuracy: 2)
+            }
+            return nil
+        })
+        let (engine, samples) = S.run(events, config: S.config(particles: 400), sampleTimes: [29.9, 31])
+        let before = try #require(samples[0]), after = try #require(samples[1])
+        #expect(abs(angleDifference(after.headingDeg, before.headingDeg)) < 1,
+                "heading \(before.headingDeg)° → \(after.headingDeg)°")
+        #expect(after.headingStdDeg < 3, "heading σ \(after.headingStdDeg)°")
+        #expect(engine.counters.reseeds <= 1)
+    }
+
+    @Test("R13.1-4b: estimate(at:) 0.5 s past the last step moves v·0.5 s along heading; it does not move when stationary")
+    func estimateExtrapolates() throws {
+        func engine(after events: [LogEvent], until t: Double) -> NavigationEngine {
+            var engine = NavigationEngine(config: S.config(particles: 200))
+            for input in S.inputs(events) where input.arrival <= S.ms(t) { engine.ingest(input) }
+            return engine
+        }
+        let drive = S(initialHeadingDeg: 45, initialSpeed: 10, [.straight(seconds: 20, speed: 10)])
+        let moving = engine(after: drive.events(fix: { t, state, rng in t < 5 ? S.cleanFix()(t, state, &rng) : nil }), until: 10)
+        let a = try #require(moving.estimate(at: S.ms(10))), b = try #require(moving.estimate(at: S.ms(10.5)))
+        let de = b.east - a.east, dn = b.north - a.north
+        let distance = (de * de + dn * dn).squareRoot()
+        #expect(a.speedMps > 9.5)
+        #expect(abs(distance - a.speedMps * 0.5) < 0.05, "moved \(distance) m at \(a.speedMps) m/s")
+        #expect(abs(angleDifference(atan2(de, dn) * 180 / .pi, a.headingDeg)) < 0.5)
+
+        let parked = S(initialHeadingDeg: 45, [.stop(seconds: 20)])
+        // Gyro noise while parked: extrapolating a stationary estimate would
+        // turn it by the last yaw rate.
+        let still = engine(after: parked.events(gyroNoise: 0.05, fix: { t, state, _ in
+            S.at(t, 0) ? S.Fix(east: state.east, north: state.north, accuracy: 5, speed: 0, speedAccuracy: 0.3) : nil
+        }), until: 10)
+        let c = try #require(still.estimate(at: S.ms(10))), d = try #require(still.estimate(at: S.ms(10.5)))
+        #expect(c.stationary && c.east == d.east && c.north == d.north && c.headingDeg == d.headingDeg)
+    }
+
+    @Test("R13.1-4c: after a 60 s gap in motion samples, a large rate on the next sample adds no yaw")
+    func motionGapAddsNoYaw() throws {
+        let drive = S(initialHeadingDeg: 0, initialSpeed: 10, [.straight(seconds: 80, speed: 10)])
+        let clean = S.cleanFix()
+        let events = drive.events(fix: { t, state, rng in t < 5 ? clean(t, state, &rng) : nil }).compactMap { event -> LogEvent? in
+            guard case .motion(var sample) = event.payload else { return event }
+            let t = event.timestamp.seconds
+            if t > 10 && t < 70 { return nil }  // the gap
+            if abs(t - 70) < 0.005 {  // first sample after it: 1 rad/s clockwise
+                sample.rotationRate = Vector3(x: 0, y: 0, z: -1)
+            }
+            return .motion(sample, at: event.timestamp)
+        }
+        let (_, samples) = S.run(events, config: S.config(particles: 200), sampleTimes: [9.9, 75])
+        let before = try #require(samples[0]), after = try #require(samples[1])
+        #expect(abs(angleDifference(after.headingDeg, before.headingDeg)) < 1, "heading \(before.headingDeg)° → \(after.headingDeg)°")
+    }
+
+    @Test("R13.1-4d: heading σ grows by about 0.1°·√(degrees turned) over a 90° turn, about √(time) on a straight")
+    func turnNoiseGrowsHeadingStd() throws {
+        var config = S.config(particles: 2000)
+        config.courseSigmaFloorDeg = 0.05
+        func growth(turn: Double) throws -> Double {
+            let drive = S(initialHeadingDeg: 0, initialSpeed: 12, [.straight(seconds: 2, speed: 12),
+                                                                   .turn(degrees: turn, seconds: 6, speed: 12),
+                                                                   .straight(seconds: 2, speed: 12)])
+            let events = drive.events(fix: { t, state, _ in
+                // One near-perfect course at t = 0 initialises heading tightly.
+                S.at(t, 0) ? S.Fix(east: 0, north: 0, accuracy: 5, speed: 12, speedAccuracy: 0.3,
+                                   course: 0, courseAccuracy: 0.05) : nil
+            })
+            let samples = S.run(events, config: config, sampleTimes: [1, 9]).samples
+            let a = try #require(samples[0]).headingStdDeg, b = try #require(samples[1]).headingStdDeg
+            return (b * b - a * a).squareRoot()
+        }
+        let turning = try growth(turn: 90), straight = try growth(turn: 0)
+        // Expected: √(0.1² × 90 + 0.05² × 8) ≈ 0.95° turning, √(0.05² × 8) ≈ 0.14° straight.
+        #expect(turning > 0.8 && turning < 1.15, "σ growth over the 90° turn \(turning)°")
+        #expect(straight < 0.25, "σ growth on the straight \(straight)°")
+    }
 }
