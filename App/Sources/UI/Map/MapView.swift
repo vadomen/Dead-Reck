@@ -39,6 +39,7 @@ enum ThermalText {
 /// the recorder's 16 Hz `live` status.
 struct MapScreen: View {
     @Bindable var model: MapViewModel
+    @AppStorage("map.headingUp") private var headingUp = false
     let session: RecordingSession
     var isSelected: Bool
     /// Read once when the tab opens with no fix; the system's last position.
@@ -54,7 +55,10 @@ struct MapScreen: View {
             isReceiving: model.isReceiving,
             thermal: thermal,
             isLive: isSelected && scenePhase == .active,
-            followsUser: $model.followsUser,
+            follow: $model.follow,
+            headingUp: $headingUp,
+            bearing: model.bearing,
+            isStationary: model.isStationary,
             manualFixes: model.manualFixes,
             manual: manualActions,
             recordingFile: model.currentFile,
@@ -116,6 +120,9 @@ struct MapFeed: View {
     var body: some View {
         Color.clear
             .frame(width: 0, height: 0)
+            .onChange(of: session.live.obdSpeedKmh, initial: true) { _, kmh in
+                model.setOBDSpeed(kmh)
+            }
             .onChange(of: session.live.referenceFix) { _, fix in
                 model.ingest(
                     fix, file: session.currentFile, isActive: scenePhase == .active,
@@ -171,7 +178,12 @@ struct GPSMapView: View {
     /// Selected tab and active scene. When false no `Map` exists and the
     /// camera is not touched.
     var isLive: Bool
-    @Binding var followsUser: Bool
+    @Binding var follow: FollowController
+    @Binding var headingUp: Bool
+    /// Direction of travel, degrees from true north; nil until a good one.
+    var bearing: Double?
+    /// OBD speed is 0: the heading holds still.
+    var isStationary: Bool = false
     var manualFixes: [ConfirmedFix] = []
     var manual: ManualFixActions = .unavailable
     /// The recording the map shows; a new one (Start) clears a staged pin.
@@ -190,11 +202,23 @@ struct GPSMapView: View {
     @State private var toast: Int?
     @State private var pressBegan = false
     @State private var dragOrigin: CGPoint?
+    @State private var smoother = HeadingSmoother()
+    /// Copy of the inputs the 10 Hz heading task reads; a task closure would
+    /// otherwise see the props from when it started.
+    @State private var inputs = HeadingInputs()
+    @State private var cameraHeading = 0.0
+
+    struct HeadingInputs: Equatable {
+        var fix: LocationSample?
+        var bearing: Double?
+        var frozen = false
+    }
 
     init(
         track: GPSTrack, latest: LocationSample?, lastFixInstant: ContinuousClock.Instant?,
         isReceiving: Bool, thermal: ProcessInfo.ThermalState, isLive: Bool,
-        followsUser: Binding<Bool>, manualFixes: [ConfirmedFix] = [],
+        follow: Binding<FollowController>, headingUp: Binding<Bool> = .constant(false),
+        bearing: Double? = nil, isStationary: Bool = false, manualFixes: [ConfirmedFix] = [],
         manual: ManualFixActions = .unavailable,
         recordingFile: URL? = nil,
         cachedLocation: @escaping @MainActor () -> CachedLocation? = { nil },
@@ -206,7 +230,10 @@ struct GPSMapView: View {
         self.isReceiving = isReceiving
         self.thermal = thermal
         self.isLive = isLive
-        self._followsUser = followsUser
+        self._follow = follow
+        self._headingUp = headingUp
+        self.bearing = bearing
+        self.isStationary = isStationary
         self.manualFixes = manualFixes
         self.manual = manual
         self.recordingFile = recordingFile
@@ -221,10 +248,35 @@ struct GPSMapView: View {
                 if old == nil {
                     // First fix of a recording.
                     frame(center: fix.coordinate, accuracy: fix.horizontalAccuracy)
-                } else if followsUser {
+                } else if follow.isFollowing {
                     recenter(fix)
                 }
             }
+            .onChange(of: HeadingInputs(fix: latest, bearing: bearing, frozen: isStationary), initial: true) { _, new in
+                inputs = new
+            }
+            .onChange(of: staged != nil) { _, isStaged in
+                updateFollow { $0.pinStaged(isStaged, at: FollowClock.now) }
+            }
+            .onChange(of: headingUp) {
+                // Mode switch while following: swing the camera to the new heading.
+                if follow.isFollowing { moveCameraToCar(duration: 0.6) }
+            }
+            // Auto-resume: sleeps until the deadline; a new deadline restarts it.
+            .task(id: follow.resumeDeadline) {
+                guard let deadline = follow.resumeDeadline else { return }
+                let wait = deadline - FollowClock.now
+                if wait > 0 {
+                    try? await Task.sleep(for: .seconds(wait))
+                    if Task.isCancelled { return }
+                }
+                var next = follow
+                if next.tick(now: FollowClock.now) {
+                    follow = next
+                    moveCameraToCar(duration: 0.8)
+                }
+            }
+            .task(id: headingActive) { await runHeadingLoop() }
             // Fires on reselect/foreground too.
             .onChange(of: isLive, initial: true) { _, live in
                 guard live else { return }
@@ -257,6 +309,17 @@ struct GPSMapView: View {
             }
     }
 
+    /// The camera turns with the car: heading-up, following, a bearing exists.
+    private var headingActive: Bool {
+        headingUp && follow.isFollowing && isLive && bearing != nil
+    }
+
+    private func updateFollow(_ body: (inout FollowController) -> Void) {
+        var next = follow
+        body(&next)
+        if next != follow { follow = next }
+    }
+
     private var stale: Bool { isStale || !isReceiving }
 
     private var content: some View {
@@ -287,7 +350,7 @@ struct GPSMapView: View {
                         onCancel: cancelStaged
                     )
                 }
-                followButton
+                controls
             }
         }
     }
@@ -311,10 +374,7 @@ struct GPSMapView: View {
                         .foregroundStyle(c.opacity(0.2))
                         .stroke(c, lineWidth: 1)
                     Annotation("", coordinate: latest.coordinate) {
-                        Circle()
-                            .fill(c)
-                            .frame(width: 18, height: 18)
-                            .overlay(Circle().stroke(.white, lineWidth: 3))
+                        carMarker(color: c)
                     }
                 }
                 ForEach(manualFixes) { fix in
@@ -337,10 +397,15 @@ struct GPSMapView: View {
             .onMapCameraChange(frequency: .onEnd) { context in
                 distance = context.camera.distance
                 visibleSpanM = MapFraming.visibleSpanMeters(latitudeDelta: context.region.span.latitudeDelta)
+                if abs(context.camera.heading - cameraHeading) > 0.5 { cameraHeading = context.camera.heading }
+                // While following this is our own move and is ignored; while
+                // paused, only the user (or pan inertia) moves the camera.
+                updateFollow { $0.cameraSettled(at: FollowClock.now) }
             }
-            .onChange(of: position) { _, new in
-                // Only a user gesture sets this; our own recentring does not.
-                if new.positionedByUser { followsUser = false }
+            // Touch-only gestures turn Following off. No `positionedByUser`:
+            // MapKit sets it for changes the user did not make.
+            .onMapUserGesture {
+                updateFollow { $0.userGesture(at: FollowClock.now) }
             }
             .simultaneousGesture(longPress(proxy: proxy))
         }
@@ -420,9 +485,65 @@ struct GPSMapView: View {
         ))
     }
 
-    /// Recentres, keeping the user's current zoom.
+    /// Camera heading for the current mode: 0 north-up, the smoothed bearing heading-up.
+    private var targetHeading: Double { headingUp ? (smoother.heading ?? bearing ?? 0) : 0 }
+
+    /// Recentres, keeping the user's current zoom and mode.
     fileprivate func recenter(_ fix: LocationSample) {
-        position = .camera(MapCamera(centerCoordinate: fix.coordinate, distance: distance))
+        position = .camera(MapCamera(
+            centerCoordinate: fix.coordinate, distance: distance, heading: targetHeading, pitch: 0
+        ))
+    }
+
+    /// Animates back to the car at the current zoom and mode.
+    private func moveCameraToCar(duration: Double) {
+        guard isLive, let fix = latest else { return }
+        withAnimation(.easeInOut(duration: duration)) { recenter(fix) }
+    }
+
+    /// ~10 Hz while heading-up: steps the smoother and turns the camera. When
+    /// the heading holds (stopped, no new bearing) it writes nothing.
+    private func runHeadingLoop() async {
+        guard headingActive else { return }
+        var last = FollowClock.now
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(100))
+            if Task.isCancelled { return }
+            let now = FollowClock.now
+            let before = smoother.heading
+            var next = smoother
+            let heading = next.step(target: inputs.bearing, frozen: inputs.frozen, dt: now - last)
+            last = now
+            guard let heading, let fix = inputs.fix else { continue }
+            if let before, abs(HeadingSmoother.shortestDelta(from: before, to: heading)) < 0.05 { continue }
+            smoother = next
+            withAnimation(.linear(duration: 0.1)) {
+                position = .camera(MapCamera(
+                    centerCoordinate: fix.coordinate, distance: distance, heading: heading, pitch: 0
+                ))
+            }
+        }
+    }
+
+    /// Dot north-up; arrow heading-up, turned by bearing minus camera heading
+    /// so it points up while following and still shows true direction after
+    /// the user rotates the map.
+    @ViewBuilder
+    private func carMarker(color: Color) -> some View {
+        if headingUp, let bearing {
+            let shown = follow.isFollowing ? (smoother.heading ?? cameraHeading) : cameraHeading
+            Image(systemName: "location.north.fill")
+                .font(.system(size: 30))
+                .foregroundStyle(color)
+                .shadow(color: .white, radius: 1)
+                .shadow(color: .white, radius: 1)
+                .rotationEffect(.degrees(bearing - shown))
+        } else {
+            Circle()
+                .fill(color)
+                .frame(width: 18, height: 18)
+                .overlay(Circle().stroke(.white, lineWidth: 3))
+        }
     }
 
     private func overlay(stale: Bool) -> some View {
@@ -462,20 +583,60 @@ struct GPSMapView: View {
         fix.speed >= 0 ? fix.speed * 3.6 : nil
     }
 
-    private var followButton: some View {
-        Button {
-            followsUser.toggle()
-            if followsUser, isLive, let latest {
-                frame(center: latest.coordinate, accuracy: latest.horizontalAccuracy)
+    private var controls: some View {
+        VStack(alignment: .trailing, spacing: 8) {
+            if follow.resumeDeadline != nil {
+                resumeHint
             }
-        } label: {
-            Label(followsUser ? "Following" : "Follow", systemImage: followsUser ? "location.fill" : "location")
-                .font(.headline)
-                .padding(.horizontal, 18)
-                .frame(minHeight: 56)
-                .background(.regularMaterial, in: Capsule())
+            HStack(spacing: 12) {
+                headingButton
+                followButton
+            }
         }
         .padding(16)
+    }
+
+    /// Ticks at 1 Hz inside its own TimelineView; the Map is not re-rendered.
+    private var resumeHint: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { _ in
+            Text("Re-centre in \(follow.countdownSeconds(now: FollowClock.now) ?? 1) s")
+                .font(.subheadline.weight(.semibold).monospacedDigit())
+                .padding(.horizontal, 14)
+                .frame(minHeight: 36)
+                .background(.regularMaterial, in: Capsule())
+        }
+    }
+
+    private var headingButton: some View {
+        Button {
+            headingUp.toggle()
+        } label: {
+            Label(
+                headingUp ? "Heading up" : "North up",
+                systemImage: headingUp ? "location.north.line.fill" : "n.circle.fill"
+            )
+            .font(.headline)
+            .padding(.horizontal, 18)
+            .frame(minHeight: 56)
+            .background(.regularMaterial, in: Capsule())
+        }
+    }
+
+    private var followButton: some View {
+        Button {
+            let was = follow.isFollowing
+            updateFollow { $0.followTapped(at: FollowClock.now) }
+            if follow.isFollowing, !was { moveCameraToCar(duration: 0.8) }
+        } label: {
+            Label(
+                follow.isFollowing ? "Following" : "Follow",
+                systemImage: follow.isFollowing ? "location.fill" : "location"
+            )
+            .font(.headline)
+            .padding(.horizontal, 18)
+            .frame(minHeight: 56)
+            .background(.regularMaterial, in: Capsule())
+        }
     }
 }
 
@@ -565,7 +726,7 @@ enum MapPreviewData {
         track: MapPreviewData.track,
         latest: MapPreviewData.fix(59, accuracy: 12, gapAfter: 60),
         lastFixInstant: .now, isReceiving: true, thermal: .fair, isLive: true,
-        followsUser: .constant(true)
+        follow: .constant(FollowController(following: true))
     )
 }
 
@@ -574,21 +735,21 @@ enum MapPreviewData {
         track: MapPreviewData.track,
         latest: MapPreviewData.fix(59, accuracy: 12, gapAfter: 60),
         lastFixInstant: .now - .seconds(12), isReceiving: false, thermal: .nominal,
-        isLive: true, followsUser: .constant(false)
+        isLive: true, follow: .constant(FollowController(following: false))
     )
 }
 
 #Preview("Empty") {
     GPSMapView(
         track: GPSTrack(), latest: nil, lastFixInstant: nil, isReceiving: false,
-        thermal: .nominal, isLive: true, followsUser: .constant(true)
+        thermal: .nominal, isLive: true, follow: .constant(FollowController(following: true))
     )
 }
 
 #Preview("Not selected") {
     GPSMapView(
         track: MapPreviewData.track, latest: nil, lastFixInstant: nil, isReceiving: false,
-        thermal: .serious, isLive: false, followsUser: .constant(false)
+        thermal: .serious, isLive: false, follow: .constant(FollowController(following: false))
     )
 }
 
@@ -614,7 +775,7 @@ extension MapPreviewData {
         track: MapPreviewData.track,
         latest: MapPreviewData.fix(59, accuracy: 12, gapAfter: 60),
         lastFixInstant: .now, isReceiving: true, thermal: .nominal, isLive: true,
-        followsUser: .constant(false), manualFixes: MapPreviewData.confirmed,
+        follow: .constant(FollowController(following: false)), manualFixes: MapPreviewData.confirmed,
         manual: MapPreviewData.actions(
             canRecord: true, gate: .init(speedSource: .obd, speedKmh: 4, isAllowed: true)),
         initialStaged: StagedFix(latitude: 0.0115, longitude: 0.0005, press: nil)
@@ -626,7 +787,7 @@ extension MapPreviewData {
         track: MapPreviewData.track,
         latest: MapPreviewData.fix(59, accuracy: 12, gapAfter: 60),
         lastFixInstant: .now, isReceiving: true, thermal: .nominal, isLive: true,
-        followsUser: .constant(false), manualFixes: MapPreviewData.confirmed,
+        follow: .constant(FollowController(following: false)), manualFixes: MapPreviewData.confirmed,
         manual: MapPreviewData.actions(
             canRecord: false, gate: .init(speedSource: .obd, speedKmh: 23, isAllowed: false)),
         initialStaged: StagedFix(latitude: 0.0115, longitude: 0.0005, press: nil)
@@ -638,6 +799,27 @@ extension MapPreviewData {
         track: MapPreviewData.track,
         latest: MapPreviewData.fix(59, accuracy: 12, gapAfter: 60),
         lastFixInstant: .now, isReceiving: true, thermal: .nominal, isLive: true,
-        followsUser: .constant(true), manualFixes: MapPreviewData.confirmed
+        follow: .constant(FollowController(following: true)), manualFixes: MapPreviewData.confirmed
+    )
+}
+
+#Preview("Heading up, arrow") {
+    GPSMapView(
+        track: MapPreviewData.track,
+        latest: MapPreviewData.fix(59, accuracy: 12, gapAfter: 60),
+        lastFixInstant: .now, isReceiving: true, thermal: .nominal, isLive: true,
+        follow: .constant(FollowController(following: true)),
+        headingUp: .constant(true), bearing: 40
+    )
+}
+
+#Preview("Paused, re-centre hint") {
+    var paused = FollowController(following: true)
+    paused.userGesture(at: FollowClock.now)
+    return GPSMapView(
+        track: MapPreviewData.track,
+        latest: MapPreviewData.fix(59, accuracy: 12, gapAfter: 60),
+        lastFixInstant: .now, isReceiving: true, thermal: .nominal, isLive: true,
+        follow: .constant(paused)
     )
 }

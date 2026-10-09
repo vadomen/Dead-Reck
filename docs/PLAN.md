@@ -801,3 +801,10 @@ Replay only the current connection's init (M6.1-1) and remembered poll plan and 
 3. **Start while connected:** the replay begins with the `link` row `discovering → connected`; no `connecting`/`discovering` rows precede it.
 4. **Reused plan failing on the car:** if a `reused plan failed (…); selecting again` note ever appears, record the reason and whether the following selection picked a different plan; the next reconnect must then show the newly selected plan in its `poll plan reused …` note.
 5. **Forget / another adapter:** after Forget and re-pairing the same adapter, or after picking a different one, the first init runs the full selection and the `adaptive timing:` note (no `poll plan reused` note).
+
+### Added by M4.3 map follow + heading-up (not verified on a device)
+1. **Following survives a 10 min drive:** no unexpected loss of Following (the old `positionedByUser` handler is removed).
+2. **Pan, then wait:** the "Re-centre in N s" hint counts down from 8 and the camera animates back to the car at the same zoom; panning again during the countdown restarts it. A long fling never re-centres mid-gesture.
+3. **Pin:** long-press (recording) freezes the camera; the countdown starts only after Confirm/Cancel.
+4. **Heading-up:** the map turns smoothly with the car above 10 km/h and holds still at stops (OBD speed 0); the arrow points up while following and shows true direction after a manual rotate; the mode persists across launches.
+5. **SwiftUI gestures on `Map`:** the drag/pinch/rotate/double-tap gestures fire (Following goes off) and do not block panning, zooming or the long-press. If they fail, the fallback is an `MKMapView` wrapper; ask the user before building it.

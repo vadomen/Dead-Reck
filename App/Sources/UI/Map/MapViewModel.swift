@@ -10,7 +10,14 @@ import Observation
 final class MapViewModel {
     private(set) var track = GPSTrack()
     private(set) var latest: LocationSample?
-    var followsUser = true
+    /// Follow state; lives here so it survives the tab's view being rebuilt.
+    var follow = FollowController()
+    /// Direction of travel for heading-up (display only); nil until a good one.
+    private(set) var bearing: Double?
+    /// OBD speed is exactly 0 km/h: heading-up holds still. Set only when it
+    /// flips, so the 16 Hz status does not re-render the map.
+    private(set) var isStationary = false
+    private let bearingSource: any MapBearingSource
     /// The recording the track belongs to.
     private(set) var currentFile: URL?
 
@@ -23,10 +30,16 @@ final class MapViewModel {
     private(set) var manualFixes: [ConfirmedFix] = []
     private var nextFixID = 0
 
-    init() {}
+    init(bearingSource: (any MapBearingSource)? = nil) {
+        self.bearingSource = bearingSource ?? GPSCourseBearingSource()
+    }
 
     /// Preview/test seeding.
-    init(track: GPSTrack, latest: LocationSample?, manualFixes: [ConfirmedFix] = []) {
+    init(
+        track: GPSTrack, latest: LocationSample?, manualFixes: [ConfirmedFix] = [],
+        bearingSource: (any MapBearingSource)? = nil
+    ) {
+        self.bearingSource = bearingSource ?? GPSCourseBearingSource()
         self.track = track
         self.latest = latest
         self.manualFixes = manualFixes
@@ -50,6 +63,8 @@ final class MapViewModel {
             lastFixInstant = nil
             isReceiving = false
             manualFixes = []
+            bearingSource.reset()
+            bearing = nil
         }
         guard let fix else {
             isReceiving = false
@@ -57,6 +72,8 @@ final class MapViewModel {
         }
         if fix != latest {
             latest = fix
+            bearingSource.ingest(fix)
+            if bearingSource.bearingDegrees != bearing { bearing = bearingSource.bearingDegrees }
             var age = 0.0
             if let elapsed, let received = fix.receivedT {
                 age = max(0, elapsed - (received.seconds - (fix.ageS ?? 0)))
@@ -65,6 +82,13 @@ final class MapViewModel {
         }
         isReceiving = true
         track.append(fix)
+    }
+
+    /// OBD speed from the feed (km/h, J1979 integer; nil = no reading, which
+    /// is not stationary). Publishes only when the stationary state flips.
+    func setOBDSpeed(_ kmh: Double?) {
+        let stationary = kmh == 0
+        if stationary != isStationary { isStationary = stationary }
     }
 
     /// Remembers a fix the recorder accepted so the map can show it.
