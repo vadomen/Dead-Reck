@@ -15,6 +15,8 @@ let package = Package(
         .library(name: "DriveLoggerCore", targets: ["DriveLoggerCore"]),
         // Mac-only analysis tool: `swift run inspect_log <file>`.
         .executable(name: "inspect_log", targets: ["inspect_log"]),
+        // Mac-only navigation replay: `swift run -c release replay_nav <file>`.
+        .executable(name: "replay_nav", targets: ["replay_nav"]),
     ],
     targets: [
         .target(
@@ -23,6 +25,11 @@ let package = Package(
         ),
         .executableTarget(
             name: "inspect_log",
+            dependencies: ["DriveLoggerCore"],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
+        .executableTarget(
+            name: "replay_nav",
             dependencies: ["DriveLoggerCore"],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
