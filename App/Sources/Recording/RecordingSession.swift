@@ -74,20 +74,16 @@ struct LiveStatus: Hashable, Sendable {
     var availableDiskBytes: Int64?
 }
 
-/// The moment a manual-fix long-press began, on one recording's clock
-/// (`RecordingSession.manualFixPressTime()`). Only the session creates one,
-/// and `recordManualFix` refuses one from another recording, so `pressedT`
-/// is always on the clock of the recording it is written to.
-struct ManualFixPress: Hashable, Sendable {
-    /// The recording whose clock `t` is on.
+/// A manual fix that has been tapped and is waiting out its undo window
+/// (`RecordingSession.stageManualFix`). Written to the log when the window
+/// closes, with `t` = `sample.pressedT` = the tap time.
+struct PendingManualFix: Hashable, Identifiable, Sendable {
+    /// Unique across recordings within one session object.
+    let id: Int
+    /// The recording whose clock `sample.pressedT` is on.
     let generation: Int
-    /// `clock.now()` when the press began.
-    let t: MonotonicTimestamp
-
-    fileprivate init(generation: Int, t: MonotonicTimestamp) {
-        self.generation = generation
-        self.t = t
-    }
+    /// The row as it will be written: coordinate, span and speeds as at the tap.
+    let sample: ManualFixSample
 }
 
 /// What a live consumer of navigation input needs about one recording (N4 A).
@@ -161,7 +157,7 @@ struct RecordingNavigationFeed: Sendable {
 /// `LocationAuthorizationReporting` source, after the source rows: phone
 /// builds), `calibrationStart` /
 /// `calibrationEnd`, `stop` (detail = stop reason), `manualFix` (format v3,
-/// `recordManualFix`), `background` /
+/// `stageManualFix`, written when its undo window closes or at Stop), `background` /
 /// `foreground`, `memoryWarning`, `thermalState` (at start when not nominal,
 /// and on every change), `protectedDataUnavailable`, `lowDiskSpace`, `error`
 /// (a source that is unavailable or failed to start, no background location
@@ -327,6 +323,9 @@ final class RecordingSession {
     @ObservationIgnored private let statsInterval: Duration
     @ObservationIgnored private let diskRefreshInterval: Duration
     @ObservationIgnored private let setIdleTimerDisabled: @MainActor (Bool) -> Void
+    /// How long a staged manual fix can be undone before it is written.
+    @ObservationIgnored let manualFixUndoWindow: Duration
+    @ObservationIgnored private var nextPendingFixID = 0
 
     @ObservationIgnored private var recording: ActiveRecording?
     @ObservationIgnored private var generation = 0
@@ -341,7 +340,7 @@ final class RecordingSession {
     /// `lastInitEvents` dedup contract. Internal for tests.
     @ObservationIgnored private(set) var consumedLinkEvents = 0
     /// `replyUptime` of the reading behind `live.obdSpeedKmh`: the OBD age
-    /// in `manualFixGate` and the `manualFix` row's `obdSpeedT`. Set and
+    /// in the `manualFix` row's `obdSpeedT`. Set and
     /// cleared with it.
     @ObservationIgnored private var obdSpeedUptime: Double?
 
@@ -374,6 +373,7 @@ final class RecordingSession {
         flushInterval: Duration = .seconds(2),
         statsInterval: Duration = .seconds(10),
         diskRefreshInterval: Duration = .seconds(60),
+        manualFixUndoWindow: Duration = .seconds(3),
         setIdleTimerDisabled: @escaping @MainActor (Bool) -> Void = { UIApplication.shared.isIdleTimerDisabled = $0 }
     ) {
         precondition(stopFreeBytes < warningFreeBytes, "stopFreeBytes must be below warningFreeBytes")
@@ -392,6 +392,7 @@ final class RecordingSession {
         self.statsInterval = statsInterval
         self.diskRefreshInterval = diskRefreshInterval
         self.setIdleTimerDisabled = setIdleTimerDisabled
+        self.manualFixUndoWindow = manualFixUndoWindow
 
         // The one subscription, taken now so nothing the link reports after
         // launch is missed (single subscriber; see the type's doc).
@@ -559,34 +560,11 @@ final class RecordingSession {
         rec.sink.record(.marker(text, at: rec.clock.now()))
     }
 
-    // MARK: - Manual position fix (M4.2)
+    // MARK: - Manual position fix (double tap)
 
-    /// `ManualFixGate` on the live OBD speed and the live reference fix:
-    /// whether a manual fix would be allowed now, and on which speed. For
-    /// display; `recordManualFix` evaluates it again at confirm.
-    ///
-    /// Ages (OBD reply ≤ 2 s, reference fix ≤ 5 s) are measured at the
-    /// moment this is read: during a recording `now` is `clock.now()` on the
-    /// recording's clock, and the OBD reply time is its uptime on that clock.
-    /// Outside a recording it is display-only. Ages are then measured on the
-    /// same uptime base (`uptime`, with no session offset), and no reference
-    /// fix counts, since `live.referenceFix` exists only while recording.
-    ///
-    /// The value changes with time even when nothing observable does: a
-    /// view stays current only if it is re-rendered. While recording,
-    /// `live` changes at least once a second (`elapsed`), so an observing
-    /// view lags by at most about 1 s.
-    var manualFixGate: ManualFixGate.Result {
-        if let rec = recording {
-            return gate(at: rec.clock)
-        }
-        return ManualFixGate.evaluate(
-            now: MonotonicTimestamp(seconds: uptime.uptimeSeconds),
-            obdSpeedKmh: live.obdSpeedKmh,
-            obdSpeedT: obdSpeedUptime.map { MonotonicTimestamp(seconds: $0) },
-            referenceFix: nil
-        )
-    }
+    /// Manual fixes tapped and not yet written, in tap order. Observed: the
+    /// map draws them as pending. Empty outside a recording.
+    private(set) var pendingManualFixes: [PendingManualFix] = []
 
     /// Read-only, for the map's stopped check: `replyUptime` of the reading
     /// behind `live.obdSpeedKmh`, nil when there is none.
@@ -595,69 +573,92 @@ final class RecordingSession {
     /// Read-only: the uptime clock the OBD reply uptimes are on.
     var currentUptimeSeconds: Double { uptime.uptimeSeconds }
 
-    /// A recording is calibrating or recording (not stopping) and the gate
-    /// allows a fix: `recordManualFix` would write a row now.
-    var canRecordManualFix: Bool {
-        manualFixRecording != nil && manualFixGate.isAllowed
+    /// The current recording's clock time, to hand to `stageManualFix` as
+    /// `tapT`. nil when no recording is calibrating or recording.
+    func manualFixTapTime() -> MonotonicTimestamp? {
+        manualFixRecording?.clock.now()
     }
 
-    /// The moment a long-press begins, on the current recording's clock, to
-    /// hand back to `recordManualFix` as `pressedAt`. nil when no recording
-    /// is calibrating or recording. Does not check the gate: it is checked
-    /// at confirm.
-    func manualFixPressTime() -> ManualFixPress? {
-        guard let rec = manualFixRecording else { return nil }
-        return ManualFixPress(generation: rec.generation, t: rec.clock.now())
-    }
-
-    /// Writes one `manualFix` row (format v3) at `clock.now()`, the confirm
-    /// time, and returns true. Writes nothing and returns false when no
-    /// recording is calibrating or recording, when `pressedAt` belongs to
-    /// another recording, when `ManualFixGate` refuses at that same instant
-    /// (above 10 km/h on an OBD reply ≤ 2 s old or a reference fix ≤ 5 s
-    /// old), or when the coordinate is not a finite WGS 84 position. The
-    /// row's `t` is the instant the gate was evaluated at.
+    /// Stages a manual fix taken at `tapT` (from `manualFixTapTime()`, in the
+    /// same main-actor turn). The speeds are captured now, at the tap; the
+    /// row is written when `manualFixUndoWindow` has passed, unless
+    /// `cancelPendingManualFix` is called first. It is written with
+    /// `t` = `pressedT` = `tapT` and no note, in tap order with other pending
+    /// fixes. A pending fix is also written by Stop (before the `stop` row);
+    /// a write failure drops it.
     ///
-    /// `obdSpeedT` is the last primary-ECU speed reply's own uptime on the
-    /// recording's clock (the `t` of its `obd` row). It and `obdSpeedKmh`
-    /// are written even when the reply was too old to gate. A non-finite or
-    /// negative `mapSpanM` is dropped; `note` is trimmed and cut to 80
-    /// characters (`ManualFixSample.normalizedNote`).
+    /// There is no speed limit. Returns nil, and stages nothing, when no
+    /// recording is calibrating or recording, or the coordinate is not a
+    /// finite WGS 84 position. A non-finite or negative `mapSpanM` is
+    /// dropped from the row. The 300 m span rule is the map's.
     @discardableResult
-    func recordManualFix(
+    func stageManualFix(
         latitude: Double,
         longitude: Double,
-        pressedAt: ManualFixPress,
-        mapSpanM: Double?,
-        note: String?
-    ) -> Bool {
-        guard let rec = manualFixRecording, pressedAt.generation == rec.generation else { return false }
+        tapT: MonotonicTimestamp,
+        mapSpanM: Double?
+    ) -> PendingManualFix.ID? {
+        guard let rec = manualFixRecording else { return nil }
         let obdSpeedKmh = live.obdSpeedKmh
         let obdSpeedT = obdSpeedKmh == nil ? nil : obdSpeedUptime.map { rec.clock.timestamp(uptimeSeconds: $0) }
-        let now = rec.clock.now()
         guard let sample = ManualFixGate.sample(
-            now: now,
+            now: tapT,
             latitude: latitude,
             longitude: longitude,
-            pressedT: pressedAt.t,
+            pressedT: tapT,
             mapSpanM: mapSpanM,
             obdSpeedKmh: obdSpeedKmh,
             obdSpeedT: obdSpeedT,
-            referenceFix: live.referenceFix,
-            note: note
-        ) else { return false }
-        rec.sink.record(LogEvent(timestamp: now, payload: .manualFix(sample)))
+            referenceFix: live.referenceFix
+        ) else { return nil }
+        let pending = PendingManualFix(id: nextPendingFixID, generation: rec.generation, sample: sample)
+        nextPendingFixID += 1
+        pendingManualFixes.append(pending)
+        let window = manualFixUndoWindow
+        rec.pendingFixTimers[pending.id] = Task { [weak self] in
+            try? await Task.sleep(for: window)
+            if Task.isCancelled { return }
+            self?.commitPendingManualFixes(through: pending.id)
+        }
+        return pending.id
+    }
+
+    /// Undo: the fix is never written. False when it is already written,
+    /// dropped or unknown.
+    @discardableResult
+    func cancelPendingManualFix(_ id: PendingManualFix.ID) -> Bool {
+        guard let index = pendingManualFixes.firstIndex(where: { $0.id == id }) else { return false }
+        pendingManualFixes.remove(at: index)
+        recording?.pendingFixTimers.removeValue(forKey: id)?.cancel()
         return true
     }
 
-    /// The gate at `clock.now()`, with the OBD reply's uptime on `clock`.
-    private func gate(at clock: SessionClock) -> ManualFixGate.Result {
-        ManualFixGate.evaluate(
-            now: clock.now(),
-            obdSpeedKmh: live.obdSpeedKmh,
-            obdSpeedT: obdSpeedUptime.map { clock.timestamp(uptimeSeconds: $0) },
-            referenceFix: live.referenceFix
-        )
+    /// Writes pending fixes in tap order up to and including `id`.
+    private func commitPendingManualFixes(through id: PendingManualFix.ID) {
+        guard let last = pendingManualFixes.firstIndex(where: { $0.id == id }) else { return }
+        writePending(Array(pendingManualFixes[...last]))
+    }
+
+    /// Writes every pending fix (Stop). Call before the `stop` row.
+    private func commitAllPendingManualFixes() {
+        writePending(pendingManualFixes)
+    }
+
+    private func writePending(_ fixes: [PendingManualFix]) {
+        let ids = Set(fixes.map(\.id))
+        pendingManualFixes.removeAll { ids.contains($0.id) }
+        for fix in fixes {
+            recording?.pendingFixTimers.removeValue(forKey: fix.id)?.cancel()
+            guard let rec = recording, rec.generation == fix.generation, rec.isWritable else { continue }
+            rec.sink.record(LogEvent(timestamp: fix.sample.pressedT, payload: .manualFix(fix.sample)))
+        }
+    }
+
+    /// Nothing more can be written (write failure) or the recording is gone.
+    private func dropPendingManualFixes(_ rec: ActiveRecording) {
+        for timer in rec.pendingFixTimers.values { timer.cancel() }
+        rec.pendingFixTimers = [:]
+        pendingManualFixes.removeAll { $0.generation == rec.generation }
     }
 
     /// The recording a manual fix may be written to: calibrating or
@@ -991,6 +992,8 @@ final class RecordingSession {
         if wasCalibrating {
             rec.record(LifecycleSample(.calibrationEnd, detail: "interrupted by stop"))
         }
+        // A fix still in its undo window is the driver's mark: write it, before the stop row.
+        commitAllPendingManualFixes()
         rec.record(LifecycleSample.stop(reason))
         rec.stopRowQueued = true
         let end = rec.clock.now()
@@ -1010,6 +1013,7 @@ final class RecordingSession {
         state = .stopping
         quiesce(rec)
         rec.stopRowQueued = true   // no row of any kind after the error row
+        dropPendingManualFixes(rec)
         await rec.statsTick?.value
         let summary = await rec.writer.finish()
         enterFailed(rec, failure: summary.failure ?? rec.pendingFailure ?? failure, summary: summary)
@@ -1029,6 +1033,7 @@ final class RecordingSession {
     /// last input.
     private func finishRecording(_ rec: ActiveRecording) {
         rec.navigationTap.finish()
+        dropPendingManualFixes(rec)
         guard recording === rec else { return }
         recording = nil
         currentFile = nil
@@ -1218,6 +1223,8 @@ private final class ActiveRecording {
     var statsTimer: Task<Void, Never>?
     var statsTick: Task<Void, Never>?
     var liveTimer: Task<Void, Never>?
+    /// Undo-window timers of pending manual fixes, by `PendingManualFix.id`.
+    var pendingFixTimers: [Int: Task<Void, Never>] = [:]
 
     init(generation: Int, clock: SessionClock, writer: LogFileWriter, url: URL, navigationTap: NavigationTap) {
         self.generation = generation

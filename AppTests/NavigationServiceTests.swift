@@ -110,8 +110,8 @@ struct NavigationServiceTests {
         // Pin next to the simulated track (no literal coordinates here).
         let near = try #require(session.live.referenceFix)
         let pinLatitude = near.latitude + 0.000_1, pinLongitude = near.longitude + 0.000_2
-        let press = try #require(session.manualFixPressTime())
-        #expect(session.recordManualFix(latitude: pinLatitude, longitude: pinLongitude, pressedAt: press, mapSpanM: 240, note: nil))
+        let tapT = try #require(session.manualFixTapTime())
+        _ = try #require(session.stageManualFix(latitude: pinLatitude, longitude: pinLongitude, tapT: tapT, mapSpanM: 240))
         try await Task.sleep(for: .milliseconds(1_200))
         // Mid-recording the sidecar holds at least the header (flushed at start).
         let early = try NavSidecar.read(contentsOf: feed.sidecarURL)
@@ -132,6 +132,7 @@ struct NavigationServiceTests {
         let (_, events, _) = try RecordingFixtures.read(feed.recordingURL)
         let fixT = events.first { if case .manualFix = $0.payload { true } else { false } }?.timestamp
         #expect(pin.t == fixT)
+        #expect(pin.t == tapT, "the engine got the tap time, not the write time")
         #expect(comparison.exact, "\(comparison.report(tolerance: .default))")
         #expect(comparison.pins.matched == 1)
         let summary = try #require(await harness.service.finished.first)

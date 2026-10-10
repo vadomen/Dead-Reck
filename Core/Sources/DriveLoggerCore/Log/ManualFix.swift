@@ -1,50 +1,56 @@
 import Foundation
 
-/// `manualFix` (format v3): a position the driver confirmed on the map — "I'm
+/// `manualFix` (format v3): a position the driver marked on the map — "I'm
 /// here" — as ground truth for evaluating dead reckoning offline, above all
 /// where GNSS is jammed or absent (tunnels).
 ///
 /// An on-disk type: every stored property name is a JSON key and part of the
-/// format. The event's `t` is the confirm time on the session clock.
+/// format. Since the double-tap flow the event's `t` is the tap time on the
+/// session clock and equals `pressedT`: the row is written up to a few seconds
+/// later (an undo window) but stamped with the moment of the tap. Recordings
+/// made before that were written at confirm time: their `t − pressedT` is the
+/// confirm delay, and they were gated at 10 km/h.
 /// `speedSource` is stored as a `String` (like the other vocabularies) so a
 /// value added by a later build still decodes; `SpeedSource` produces it.
 ///
-/// The speed fields record *why the fix was allowed* (`ManualFixGate`): a pin
-/// placed while driving fast is not ground truth, so the recorder refuses one
-/// above `ManualFixGate.maxSpeedKmh`.
+/// The speed fields describe the conditions of the fix. There is no speed
+/// limit: a fix while driving is recorded with its speed.
 public struct ManualFixSample: Hashable, Sendable, Codable {
     /// Degrees, WGS 84, of the confirmed pin.
     public var latitude: Double
     /// Degrees, WGS 84, of the confirmed pin.
     public var longitude: Double
-    /// When the long-press that placed the pin began, on the session clock.
-    /// `t − pressedT` is how long the driver took to confirm.
+    /// When the pin was placed, on the session clock: the tap time. Equal to
+    /// the event's `t` (older recordings: the start of the long-press, and
+    /// `t − pressedT` is the confirm delay).
     public var pressedT: MonotonicTimestamp
-    /// Visible map span at confirm, in metres: how precisely the pin could
+    /// Visible map span at the tap, in metres: how precisely the pin could
     /// be placed. Absent when the UI did not report one.
     public var mapSpanM: Double?
-    /// Last vehicle speed from the primary ECU (`7E8`) at confirm, km/h.
+    /// Last vehicle speed from the primary ECU (`7E8`) at the tap, km/h.
     /// Absent when the link had none (not connected, or no reply yet).
-    /// Recorded even when it was too old to gate (`speedSource` then is not
+    /// Recorded even when it was too old to count (`speedSource` then is not
     /// `obd`).
     public var obdSpeedKmh: Double?
     /// When that OBD reply arrived, on the session clock: the `t` of its
     /// `obd` row. `t − obdSpeedT` is how old the speed was. Present exactly
     /// when `obdSpeedKmh` is.
     public var obdSpeedT: MonotonicTimestamp?
-    /// Speed of the latest reference GNSS fix at confirm, km/h, whenever that
+    /// Speed of the latest reference GNSS fix at the tap, km/h, whenever that
     /// fix reported a speed (`speed ≥ 0`), however old or inaccurate.
-    /// **Reference only**, recorded for analysis; it is the gate speed only
+    /// **Reference only**, recorded for analysis; it is the fix's speed only
     /// when `speedSource` is `gps`.
     public var gpsSpeedKmh: Double?
-    /// Which speed the gate used: `obd`, `gps` or `unknown`
+    /// Which speed describes the fix: `obd`, `gps` or `unknown`
     /// (`SpeedSource` raw values).
     public var speedSource: String
-    /// The speed the gate compared with its limit, km/h. Absent when
-    /// `speedSource` is `unknown`.
+    /// The speed `speedSource` names, km/h (the speed of the fix). Absent when
+    /// `speedSource` is `unknown`. Named for the 10 km/h gate older builds
+    /// applied; the name is on disk and stays.
     public var gateSpeedKmh: Double?
-    /// Optional free text from the driver: trimmed, at most
-    /// `maxNoteLength` characters, absent when empty.
+    /// Optional free text: trimmed, at most `maxNoteLength` characters,
+    /// absent when empty. The double-tap flow writes none; older recordings
+    /// may carry one.
     public var note: String?
 
     public init(
@@ -81,7 +87,7 @@ public struct ManualFixSample: Hashable, Sendable, Codable {
         /// had a valid speed, speed accuracy and position within 100 m and
         /// was at most `ManualFixGate.maxFixAgeS` old.
         case gps
-        /// Neither was usable. The fix is still allowed.
+        /// Neither was usable.
         case unknown
     }
 

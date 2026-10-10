@@ -44,46 +44,6 @@ struct MapFollowTests {
         #expect(r546349 == true)
     }
 
-    @Test("A staged pin pauses, blocks resume, and the countdown starts after Confirm/Cancel")
-    func pin() {
-        var c = FollowController()
-        c.pinStaged(true, at: t(10))
-        #expect(!c.isFollowing)
-        #expect(c.resumeDeadline == nil)
-        c.userGesture(at: t(11))
-        c.cameraSettled(at: t(12))
-        let r864774 = c.tick(now: t(1000))
-        #expect(r864774 == false)
-        #expect(!c.isFollowing)
-        c.pinStaged(false, at: t(50))
-        #expect(c.resumeDeadline == t(58))
-        let r76699 = c.tick(now: t(57.9))
-        #expect(r76699 == false)
-        let r412589 = c.tick(now: t(58))
-        #expect(r412589 == true)
-    }
-
-    @Test("Pin staged after a gesture suspends the running countdown")
-    func pinAfterGesture() {
-        var c = FollowController()
-        c.userGesture(at: t(0))
-        c.pinStaged(true, at: t(3))
-        let r662678 = c.tick(now: t(9))
-        #expect(r662678 == false)
-        c.pinStaged(false, at: t(20))
-        #expect(c.resumeDeadline == t(28))
-    }
-
-    @Test("Follow tap while a pin is staged does nothing")
-    func tapDuringPin() {
-        var c = FollowController()
-        c.pinStaged(true, at: t(0))
-        c.followTapped(at: t(1))
-        #expect(!c.isFollowing)
-        c.pinStaged(false, at: t(2))
-        #expect(c.resumeDeadline == t(10))
-    }
-
     @Test("Manual off never auto-resumes; tapping again resumes")
     func manualOff() {
         var c = FollowController()
@@ -95,9 +55,6 @@ struct MapFollowTests {
         let r856092 = c.tick(now: t(10_000))
         #expect(r856092 == false)
         #expect(!c.isFollowing)
-        c.pinStaged(true, at: t(3))
-        c.pinStaged(false, at: t(4))
-        #expect(c.resumeDeadline == nil)
         c.followTapped(at: t(5))
         #expect(c.isFollowing)
     }

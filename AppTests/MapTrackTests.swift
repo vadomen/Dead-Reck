@@ -265,32 +265,19 @@ struct MapManualFixTests {
         #expect(MapFraming.visibleSpanMeters(latitudeDelta: .nan) == nil)
     }
 
-    @Test("Manual fixes are added, notes normalised, and reset on a new file")
+    @Test("Manual fixes are added by id, undone by id, and reset on a new file")
     func fixList() {
         let model = MapViewModel()
         model.ingest(fix(t: 0), file: fileA, isActive: true)
-        model.addManualFix(latitude: 0.001, longitude: 0.002, note: "  gate ")
-        model.addManualFix(latitude: 0.003, longitude: 0.004, note: "   ")
-        #expect(model.manualFixes.count == 2)
-        #expect(model.manualFixes[0].note == "gate")
-        #expect(model.manualFixes[1].note == nil)
-        #expect(model.manualFixes[0].id != model.manualFixes[1].id)
+        model.addManualFix(id: 4, latitude: 0.001, longitude: 0.002)
+        model.addManualFix(id: 5, latitude: 0.003, longitude: 0.004)
+        model.addManualFix(id: 5, latitude: 0.003, longitude: 0.004)
+        #expect(model.manualFixes.map(\.id) == [4, 5], "a repeated id is not drawn twice")
+        model.removeManualFix(id: 4)
+        #expect(model.manualFixes.map(\.id) == [5])
         model.ingest(fix(t: 5), file: fileA, isActive: true)
-        #expect(model.manualFixes.count == 2)
+        #expect(model.manualFixes.count == 1)
         model.ingest(fix(t: 1), file: fileB, isActive: true)
         #expect(model.manualFixes.isEmpty)
-    }
-
-    @Test("Disabled reason text")
-    func reasons() {
-        func gate(_ s: ManualFixSample.SpeedSource, _ kmh: Double?, _ ok: Bool) -> ManualFixAvailability {
-            ManualFixAvailability(canRecord: ok, gate: .init(speedSource: s, speedKmh: kmh, isAllowed: ok))
-        }
-        #expect(ManualFixText.disabledReason(gate(.obd, 5, true)) == nil)
-        #expect(ManualFixText.disabledReason(gate(.obd, 23, false)) == "Slow to ≤10 km/h to confirm (OBD 23 km/h)")
-        #expect(ManualFixText.disabledReason(gate(.gps, 30.4, false)) == "Slow to ≤10 km/h to confirm (GPS 30 km/h)")
-        let notRecording = ManualFixAvailability(
-            canRecord: false, gate: .init(speedSource: .unknown, speedKmh: nil, isAllowed: true))
-        #expect(ManualFixText.disabledReason(notRecording) == "Not recording")
     }
 }

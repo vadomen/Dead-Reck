@@ -253,7 +253,8 @@ enum RecordingFixtures {
         disk: FakeDisk = FakeDisk(roomy),
         idle: IdleTimerSpy? = nil,
         statsInterval: Duration = .milliseconds(300),
-        flushInterval: Duration = .milliseconds(100)
+        flushInterval: Duration = .milliseconds(100),
+        manualFixUndoWindow: Duration = .milliseconds(150)
     ) -> RecordingSession {
         let idle = idle ?? IdleTimerSpy()
         return RecordingSession(
@@ -268,6 +269,7 @@ enum RecordingFixtures {
             flushInterval: flushInterval,
             statsInterval: statsInterval,
             diskRefreshInterval: .seconds(3_600),
+            manualFixUndoWindow: manualFixUndoWindow,
             setIdleTimerDisabled: { idle.set($0) }
         )
     }

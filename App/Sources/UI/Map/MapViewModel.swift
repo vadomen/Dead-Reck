@@ -26,9 +26,8 @@ final class MapViewModel {
     private(set) var lastFixInstant: ContinuousClock.Instant?
     /// False before the first fix of a recording and after Stop.
     private(set) var isReceiving = false
-    /// Manual fixes accepted in the current recording; cleared with the track.
+    /// Manual fixes staged in the current recording; cleared with the track.
     private(set) var manualFixes: [ConfirmedFix] = []
-    private var nextFixID = 0
 
     init(bearingSource: (any MapBearingSource)? = nil) {
         self.bearingSource = bearingSource ?? GPSCourseBearingSource()
@@ -43,7 +42,6 @@ final class MapViewModel {
         self.track = track
         self.latest = latest
         self.manualFixes = manualFixes
-        nextFixID = manualFixes.count
     }
 
     /// Takes the recorder's latest fix. Does nothing when the scene is not
@@ -93,12 +91,15 @@ final class MapViewModel {
         if stationary != isStationary { isStationary = stationary }
     }
 
-    /// Remembers a fix the recorder accepted so the map can show it.
-    func addManualFix(latitude: Double, longitude: Double, note: String?) {
-        manualFixes.append(ConfirmedFix(
-            id: nextFixID, latitude: latitude, longitude: longitude,
-            note: ManualFixSample.normalizedNote(note)
-        ))
-        nextFixID += 1
+    /// Remembers a fix the recorder staged so the map can show it. `id` is the
+    /// recorder's pending-fix id.
+    func addManualFix(id: Int, latitude: Double, longitude: Double) {
+        guard !manualFixes.contains(where: { $0.id == id }) else { return }
+        manualFixes.append(ConfirmedFix(id: id, latitude: latitude, longitude: longitude))
+    }
+
+    /// Undo: the fix is not drawn any more.
+    func removeManualFix(id: Int) {
+        manualFixes.removeAll { $0.id == id }
     }
 }

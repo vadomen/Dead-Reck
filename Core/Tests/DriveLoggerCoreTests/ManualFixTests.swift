@@ -51,7 +51,7 @@ enum ManualFixFixtures {
         )
     }
 
-    static let unknown = ManualFixGate.Result(speedSource: .unknown, speedKmh: nil, isAllowed: true)
+    static let unknown = ManualFixGate.Result(speedSource: .unknown, speedKmh: nil)
 }
 
 @Suite("Manual fix gate")
@@ -60,22 +60,22 @@ struct ManualFixGateTests {
 
     @Test("A fresh OBD speed is the gate speed whatever GPS says")
     func obdWins() {
-        #expect(F.gate(obd: 5, fix: F.fix(speed: 20)) == ManualFixGate.Result(speedSource: .obd, speedKmh: 5, isAllowed: true))
-        #expect(F.gate(obd: 30, fix: F.fix(speed: 0)) == ManualFixGate.Result(speedSource: .obd, speedKmh: 30, isAllowed: false))
-        #expect(F.gate(obd: 0) == ManualFixGate.Result(speedSource: .obd, speedKmh: 0, isAllowed: true))
+        #expect(F.gate(obd: 5, fix: F.fix(speed: 20)) == ManualFixGate.Result(speedSource: .obd, speedKmh: 5))
+        #expect(F.gate(obd: 30, fix: F.fix(speed: 0)) == ManualFixGate.Result(speedSource: .obd, speedKmh: 30))
+        #expect(F.gate(obd: 0) == ManualFixGate.Result(speedSource: .obd, speedKmh: 0))
     }
 
-    @Test("OBD speed boundary: 10 km/h is allowed, 10.01 km/h is not")
-    func obdSpeedBoundary() {
-        #expect(F.gate(obd: 10).isAllowed)
-        #expect(!F.gate(obd: 10.01).isAllowed)
-        #expect(ManualFixGate.maxSpeedKmh == 10)
+    @Test("There is no speed limit: any OBD or GPS speed is reported as it is")
+    func noSpeedLimit() {
+        #expect(F.gate(obd: 10.01) == ManualFixGate.Result(speedSource: .obd, speedKmh: 10.01))
+        #expect(F.gate(obd: 180) == ManualFixGate.Result(speedSource: .obd, speedKmh: 180))
+        #expect(F.gate(fix: F.fix(speed: 50)) == ManualFixGate.Result(speedSource: .gps, speedKmh: 180))
     }
 
     @Test("OBD age boundary: a reply exactly 2.0 s old counts, 2.01 s old does not")
     func obdAgeBoundary() {
         #expect(ManualFixGate.maxOBDAgeS == 2)
-        #expect(F.gate(obd: 30, obdAgeMs: 2_000) == ManualFixGate.Result(speedSource: .obd, speedKmh: 30, isAllowed: false))
+        #expect(F.gate(obd: 30, obdAgeMs: 2_000) == ManualFixGate.Result(speedSource: .obd, speedKmh: 30))
         #expect(F.gate(obd: 30, obdAgeMs: 2_010) == F.unknown)
         // Nanosecond precision at the boundary.
         let edge = ManualFixGate.evaluate(
@@ -97,13 +97,12 @@ struct ManualFixGateTests {
         let gate = F.gate(obd: 50, obdAgeMs: 3_000, fix: F.fix(speed: 1))
         #expect(gate.speedSource == .gps)
         #expect(gate.speedKmh == 3.6)
-        #expect(gate.isAllowed)
         // …and a stale 0 km/h does not let a fast fix through.
         let fast = F.gate(obd: 0, obdAgeMs: 2_500, fix: F.fix(speed: 20))
-        #expect(fast == ManualFixGate.Result(speedSource: .gps, speedKmh: 72, isAllowed: false))
+        #expect(fast == ManualFixGate.Result(speedSource: .gps, speedKmh: 72))
     }
 
-    @Test("Both stale: unknown, allowed")
+    @Test("Both stale: unknown")
     func bothStale() {
         #expect(F.gate(obd: 50, obdAgeMs: 2_010, fix: F.fix(speed: 20, receivedMs: F.nowMs - 5_010)) == F.unknown)
     }
@@ -111,7 +110,7 @@ struct ManualFixGateTests {
     @Test("Fix age boundary: a fix exactly 5.0 s old counts, 5.01 s old does not; fix time is receivedT − ageS")
     func fixAgeBoundary() {
         #expect(ManualFixGate.maxFixAgeS == 5)
-        let gps = ManualFixGate.Result(speedSource: .gps, speedKmh: 72, isAllowed: false)
+        let gps = ManualFixGate.Result(speedSource: .gps, speedKmh: 72)
         // Received late…
         #expect(F.gate(fix: F.fix(speed: 20, receivedMs: F.nowMs - 5_000)) == gps)
         #expect(F.gate(fix: F.fix(speed: 20, receivedMs: F.nowMs - 5_010)) == F.unknown)
@@ -130,7 +129,7 @@ struct ManualFixGateTests {
 
     @Test("Negative ages (clock skew) count as fresh")
     func negativeAges() {
-        #expect(F.gate(obd: 30, obdAgeMs: -500) == ManualFixGate.Result(speedSource: .obd, speedKmh: 30, isAllowed: false))
+        #expect(F.gate(obd: 30, obdAgeMs: -500) == ManualFixGate.Result(speedSource: .obd, speedKmh: 30))
         #expect(F.gate(fix: F.fix(speed: 20, ageS: -0.3)).speedSource == .gps)
         #expect(F.gate(fix: F.fix(speed: 20, receivedMs: F.nowMs + 1_000)).speedSource == .gps)
     }
@@ -140,25 +139,20 @@ struct ManualFixGateTests {
         let slow = F.gate(fix: F.fix(speed: 2.5))
         #expect(slow.speedSource == .gps)
         #expect(slow.speedKmh == 2.5 * 3.6)
-        #expect(slow.isAllowed)
 
         let fast = F.gate(fix: F.fix(speed: 2.78))  // 10.008 km/h
         #expect(fast.speedSource == .gps)
-        #expect(!fast.isAllowed)
-
-        let atLimit = F.gate(fix: F.fix(speed: 10 / 3.6))
-        #expect(atLimit.speedSource == .gps)
-        #expect(atLimit.isAllowed == ((10 / 3.6) * 3.6 <= 10))
+        #expect(fast.speedKmh == 2.78 * 3.6)
     }
 
     @Test("GPS horizontal accuracy boundary: 100 m counts, 100.01 m makes the speed unknown")
     func accuracyBoundary() {
-        #expect(F.gate(fix: F.fix(speed: 20, horizontalAccuracy: 100)) == ManualFixGate.Result(speedSource: .gps, speedKmh: 72, isAllowed: false))
+        #expect(F.gate(fix: F.fix(speed: 20, horizontalAccuracy: 100)) == ManualFixGate.Result(speedSource: .gps, speedKmh: 72))
         #expect(F.gate(fix: F.fix(speed: 20, horizontalAccuracy: 100.01)) == F.unknown)
         #expect(ManualFixGate.maxReferenceHorizontalAccuracyM == 100)
     }
 
-    @Test("Invalid GPS speed, speed accuracy or position makes the speed unknown, and unknown is allowed")
+    @Test("Invalid GPS speed, speed accuracy or position makes the speed unknown, and the speed is unknown")
     func invalidGPS() {
         #expect(F.gate(fix: F.fix(speed: 20, speedAccuracy: -1)) == F.unknown)
         #expect(F.gate(fix: F.fix(speed: -1)) == F.unknown)
@@ -166,13 +160,19 @@ struct ManualFixGateTests {
         #expect(F.gate() == F.unknown)
         // speedAccuracy 0 and speed 0 are valid values, not "unavailable".
         let zero = F.gate(fix: F.fix(speed: 0, speedAccuracy: 0, horizontalAccuracy: 0))
-        #expect(zero == ManualFixGate.Result(speedSource: .gps, speedKmh: 0, isAllowed: true))
+        #expect(zero == ManualFixGate.Result(speedSource: .gps, speedKmh: 0))
     }
 
-    @Test("A non-finite speed never passes the gate")
+    @Test("A non-finite speed is never used: the speed is unknown (and JSON could not hold it)")
     func nonFinite() {
-        #expect(!F.gate(obd: .nan).isAllowed)
-        #expect(!F.gate(obd: .infinity).isAllowed)
+        #expect(F.gate(obd: .nan) == F.unknown)
+        #expect(F.gate(obd: .infinity) == F.unknown)
+        #expect(F.gate(fix: F.fix(speed: .infinity)) == F.unknown)
+        let sample = ManualFixGate.sample(
+            now: F.now, latitude: 0, longitude: 0, pressedT: F.ms(9_000), mapSpanM: nil,
+            obdSpeedKmh: .nan, obdSpeedT: F.now, referenceFix: nil
+        )
+        #expect(sample?.obdSpeedKmh == nil && sample?.obdSpeedT == nil && sample?.speedSource == "unknown")
     }
 }
 
@@ -238,7 +238,7 @@ struct ManualFixSampleTests {
         #expect(none.gpsSpeedKmh == nil)
     }
 
-    @Test("A stale OBD speed and a stale fix are still recorded, but the gate used neither")
+    @Test("A stale OBD speed and a stale fix are still recorded, but neither was the fix speed")
     func staleInputsAreRecorded() throws {
         let sample = try #require(Self.sample(
             obd: 40, obdT: F.ms(F.nowMs - 2_500),
@@ -255,10 +255,14 @@ struct ManualFixSampleTests {
         #expect(gps.speedSource == "gps" && gps.gateSpeedKmh == 3.6 && gps.obdSpeedKmh == 40)
     }
 
-    @Test("Refused when the gate refuses")
-    func refusedAboveLimit() {
-        #expect(Self.sample(obd: 10.01, obdT: F.ms(F.nowMs - 100)) == nil)
-        #expect(Self.sample(fix: F.fix(speed: 3)) == nil)
+    @Test("Recorded at any speed, with the speed fields")
+    func recordedAtSpeed() throws {
+        let obd = try #require(Self.sample(obd: 50, obdT: F.ms(F.nowMs - 100), fix: F.fix(speed: 14)))
+        #expect(obd.speedSource == "obd" && obd.obdSpeedKmh == 50 && obd.gateSpeedKmh == 50)
+        #expect(obd.obdSpeedT == F.ms(F.nowMs - 100))
+        #expect(obd.gpsSpeedKmh == 14 * 3.6)
+        let gps = try #require(Self.sample(fix: F.fix(speed: 3)))
+        #expect(gps.speedSource == "gps" && gps.gateSpeedKmh == 3 * 3.6)
     }
 
     @Test("Refused for a coordinate that is not a WGS 84 position")

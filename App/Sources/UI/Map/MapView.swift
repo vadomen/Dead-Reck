@@ -63,7 +63,8 @@ struct MapScreen: View {
             bearing: model.bearing,
             isStationary: model.isStationary,
             manualFixes: model.manualFixes,
-            manual: manualActions,
+            pendingFixIDs: Set(session.pendingManualFixes.map(\.id)),
+            manual: marking,
             recordingFile: model.currentFile,
             cachedLocation: cachedLocation,
             navigation: navigation,
@@ -78,40 +79,23 @@ struct MapScreen: View {
 
 extension MapScreen {
     /// Closures only: nothing here reads `session.live` while `body` runs.
-    fileprivate var manualActions: ManualFixActions {
-        ManualFixActions(
-            beginPress: { [session] in session.manualFixPressTime() },
-            availability: { [session] in
-                ManualFixAvailability(canRecord: session.canRecordManualFix, gate: session.manualFixGate)
+    fileprivate var marking: ManualFixMarking {
+        ManualFixMarking(
+            tapTime: { [session] in session.manualFixTapTime() },
+            stage: { [session, model] latitude, longitude, tapT, spanM in
+                guard let id = session.stageManualFix(
+                    latitude: latitude, longitude: longitude, tapT: tapT, mapSpanM: spanM
+                ) else { return nil }
+                model.addManualFix(id: id, latitude: latitude, longitude: longitude)
+                return id
             },
-            confirm: { [session, model] staged, note, spanM in
-                guard let press = staged.press,
-                      session.recordManualFix(
-                        latitude: staged.latitude, longitude: staged.longitude,
-                        pressedAt: press, mapSpanM: spanM, note: note
-                      ) else { return false }
-                model.addManualFix(latitude: staged.latitude, longitude: staged.longitude, note: note)
-                return true
-            }
+            undo: { [session, model] id in
+                session.cancelPendingManualFix(id)
+                model.removeManualFix(id: id)
+            },
+            undoWindow: session.manualFixUndoWindow
         )
     }
-}
-
-/// What the map needs from the recorder for manual fixes. Closures, so the
-/// view stays plain and previews can fake them.
-struct ManualFixActions {
-    /// Call when a long-press begins; nil when not recording.
-    var beginPress: @MainActor () -> ManualFixPress?
-    /// Read only by the confirm panel.
-    var availability: @MainActor () -> ManualFixAvailability
-    /// True when the fix was recorded.
-    var confirm: @MainActor (StagedFix, String?, Double?) -> Bool
-
-    static let unavailable = ManualFixActions(
-        beginPress: { nil },
-        availability: { ManualFixAvailability(canRecord: false, gate: .init(speedSource: .unknown, speedKmh: nil, isAllowed: true)) },
-        confirm: { _, _, _ in false }
-    )
 }
 
 /// Invisible feed from the recorder to the map model. It is the only view
@@ -183,6 +167,26 @@ private struct FixAgeText: View {
     }
 }
 
+/// The one toast on the map: a recorded fix (with Undo) or the zoom hint.
+struct MapToast: Hashable {
+    enum Kind: Hashable {
+        case recorded(id: Int)
+        case zoomIn
+    }
+
+    var kind: Kind
+    /// A new toast of the same kind restarts the timer.
+    var serial = 0
+
+    /// Undo lasts as long as the recorder keeps the fix pending.
+    func duration(undoWindow: Duration) -> Duration {
+        switch kind {
+        case .recorded: undoWindow
+        case .zoomIn: .seconds(2.5)
+        }
+    }
+}
+
 /// Plain-values map screen so previews can use fake data.
 struct GPSMapView: View {
     /// A fix older than this is shown greyed out.
@@ -205,8 +209,10 @@ struct GPSMapView: View {
     /// OBD speed is 0: the heading holds still.
     var isStationary: Bool = false
     var manualFixes: [ConfirmedFix] = []
-    var manual: ManualFixActions = .unavailable
-    /// The recording the map shows; a new one (Start) clears a staged pin.
+    /// Ids of `manualFixes` still in their undo window (not yet written).
+    var pendingFixIDs: Set<Int> = []
+    var manual: ManualFixMarking = .unavailable
+    /// The recording the map shows.
     var recordingFile: URL?
     /// Last known system position, read when the tab opens with no fix.
     var cachedLocation: @MainActor () -> CachedLocation? = { nil }
@@ -215,16 +221,13 @@ struct GPSMapView: View {
     @Binding var showNavStats: Bool
 
     @State private var position: MapCameraPosition = .automatic
-    @State private var distance = 1500.0
     /// Visible north-south extent, metres, from the camera.
     @State private var visibleSpanM: Double?
     @State private var isStale = false
-    @State private var staged: StagedFix?
-    @State private var note = ""
-    @State private var notRecorded = false
-    @State private var toast: Int?
-    @State private var pressBegan = false
-    @State private var dragOrigin: CGPoint?
+    @State private var toast: MapToast?
+    @State private var toastSerial = 0
+    /// Counts recorded fixes: the success haptic fires on each.
+    @State private var recordedCount = 0
     /// Reference box: the 10 Hz smoother and write gate change without
     /// re-rendering the view (and its polylines).
     @State private var headingState = HeadingState()
@@ -237,12 +240,8 @@ struct GPSMapView: View {
     final class HeadingState {
         var smoother = HeadingSmoother()
         var gate = HeadingWriteGate()
-        /// The camera distance the driver chose (last camera report that was
-        /// not our own write); nil until they zoom. The ellipse fit widens
-        /// the view from this, never narrows it.
-        var userDistance: Double?
-        /// The distance of our latest camera write.
-        var writtenDistance = 0.0
+        /// The driver's zoom and our latest camera write (R14.2-1).
+        var zoom = FollowZoom()
     }
 
     struct HeadingInputs: Equatable {
@@ -258,10 +257,11 @@ struct GPSMapView: View {
         isReceiving: Bool, thermal: ProcessInfo.ThermalState, isLive: Bool,
         follow: Binding<FollowController>, headingUp: Binding<Bool> = .constant(false),
         bearing: Double? = nil, isStationary: Bool = false, manualFixes: [ConfirmedFix] = [],
-        manual: ManualFixActions = .unavailable,
+        pendingFixIDs: Set<Int> = [],
+        manual: ManualFixMarking = .unavailable,
         recordingFile: URL? = nil,
         cachedLocation: @escaping @MainActor () -> CachedLocation? = { nil },
-        initialStaged: StagedFix? = nil,
+        initialToast: MapToast? = nil,
         navigation: NavigationFeed? = nil,
         showNavStats: Binding<Bool> = .constant(false)
     ) {
@@ -276,12 +276,13 @@ struct GPSMapView: View {
         self.bearing = bearing
         self.isStationary = isStationary
         self.manualFixes = manualFixes
+        self.pendingFixIDs = pendingFixIDs
         self.manual = manual
         self.recordingFile = recordingFile
         self.cachedLocation = cachedLocation
         self.navigation = navigation
         self._showNavStats = showNavStats
-        self._staged = State(initialValue: initialStaged)
+        self._toast = State(initialValue: initialToast)
     }
 
     var body: some View {
@@ -301,9 +302,6 @@ struct GPSMapView: View {
                 headingUp: headingUp, following: follow.isFollowing
             ), initial: true) { _, new in
                 inputs = new
-            }
-            .onChange(of: staged != nil) { _, isStaged in
-                updateFollow { $0.pinStaged(isStaged, at: ContinuousClock.now) }
             }
             .onChange(of: headingUp) {
                 // Mode switch while following: swing the camera to the new heading.
@@ -340,9 +338,9 @@ struct GPSMapView: View {
                     )
                 }
             }
-            // Start: a pin staged in the previous recording would be refused.
+            // Start: a toast from the previous recording would offer a dead Undo.
             .onChange(of: recordingFile) {
-                cancelStaged()
+                toast = nil
                 headingState.smoother = HeadingSmoother()
                 headingState.gate.reset()
             }
@@ -361,10 +359,11 @@ struct GPSMapView: View {
                 isStale = true
             }
             .task(id: toast) {
-                guard toast != nil else { return }
-                try? await Task.sleep(for: .seconds(2))
+                guard let shown = toast else { return }
+                try? await Task.sleep(for: shown.duration(undoWindow: manual.undoWindow))
                 if !Task.isCancelled { toast = nil }
             }
+            .sensoryFeedback(.success, trigger: recordedCount)
     }
 
     /// What heading-up turns to: the dead-reckoning heading once converged,
@@ -410,23 +409,8 @@ struct GPSMapView: View {
         }
         .overlay(alignment: .bottom) {
             VStack(alignment: .trailing, spacing: 8) {
-                if toast != nil {
-                    Label("Fix recorded", systemImage: "checkmark.circle.fill")
-                        .font(.headline)
-                        .padding(.horizontal, 16)
-                        .frame(minHeight: 48)
-                        .background(.regularMaterial, in: Capsule())
-                        .frame(maxWidth: .infinity)
-                }
-                if isLive, staged != nil {
-                    ManualFixPanel(
-                        availability: manual.availability,
-                        visibleSpanM: visibleSpanM,
-                        note: $note,
-                        notRecorded: notRecorded,
-                        onConfirm: confirm,
-                        onCancel: cancelStaged
-                    )
+                if let toast {
+                    toastView(toast)
                 }
                 controls
             }
@@ -454,31 +438,15 @@ struct GPSMapView: View {
                     }
                 }
                 ForEach(manualFixes) { fix in
-                    Annotation(fix.note ?? "", coordinate: .init(latitude: fix.latitude, longitude: fix.longitude), anchor: .bottom) {
-                        Image(systemName: "flag.fill")
-                            .font(.title2)
-                            .foregroundStyle(.white)
-                            .padding(8)
-                            .background(Color.indigo, in: Circle())
-                            .overlay(Circle().stroke(.white, lineWidth: 2))
-                    }
-                }
-                if let staged {
-                    Annotation("", coordinate: .init(latitude: staged.latitude, longitude: staged.longitude), anchor: .bottom) {
-                        stagedPin(proxy: proxy, staged: staged)
+                    Annotation("", coordinate: .init(latitude: fix.latitude, longitude: fix.longitude), anchor: .bottom) {
+                        fixMarker(pending: pendingFixIDs.contains(fix.id))
                     }
                 }
             }
             .coordinateSpace(.named(Self.space))
             .onMapCameraChange(frequency: .onEnd) { context in
-                if MapChange.isSignificant(old: distance, new: context.camera.distance) {
-                    distance = context.camera.distance
-                }
                 // Not our own write: the driver zoomed.
-                let written = headingState.writtenDistance
-                if written <= 0 || abs(context.camera.distance - written) / written > 0.03 {
-                    headingState.userDistance = context.camera.distance
-                }
+                headingState.zoom.cameraReported(distance: context.camera.distance)
                 if let span = MapFraming.visibleSpanMeters(latitudeDelta: context.region.span.latitudeDelta),
                    MapChange.isSignificant(old: visibleSpanM, new: span) {
                     visibleSpanM = span
@@ -493,97 +461,96 @@ struct GPSMapView: View {
             .onMapUserGesture {
                 updateFollow { $0.userGesture(at: ContinuousClock.now) }
             }
-            .simultaneousGesture(longPress(proxy: proxy))
-        }
-    }
-
-    private func stagedPin(proxy: MapProxy, staged: StagedFix) -> some View {
-        Image(systemName: "mappin.circle.fill")
-            .font(.system(size: 44))
-            .symbolRenderingMode(.palette)
-            .foregroundStyle(.white, .orange)
-            .shadow(radius: 3)
-            .frame(width: 64, height: 64)
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0, coordinateSpace: .named(Self.space))
-                    .onChanged { value in
-                        if dragOrigin == nil {
-                            dragOrigin = proxy.convert(
-                                CLLocationCoordinate2D(latitude: staged.latitude, longitude: staged.longitude),
-                                to: .named(Self.space)
-                            )
-                        }
-                        guard let origin = dragOrigin else { return }
-                        let point = CGPoint(
-                            x: origin.x + value.translation.width,
-                            y: origin.y + value.translation.height
-                        )
-                        if let c = proxy.convert(point, from: .named(Self.space)) {
-                            self.staged?.latitude = c.latitude
-                            self.staged?.longitude = c.longitude
-                            notRecorded = false
-                        }
-                    }
-                    .onEnded { _ in dragOrigin = nil }
+            // Alongside MapKit's own double-tap zoom, which still happens.
+            .simultaneousGesture(
+                SpatialTapGesture(count: 2, coordinateSpace: .named(Self.space))
+                    .onEnded { handleDoubleTap(at: $0.location, proxy: proxy) }
             )
-    }
-
-    /// Long-press drops the pin, only while recording (`beginPress` is nil
-    /// otherwise). The press time is taken when the press is recognised.
-    private func longPress(proxy: MapProxy) -> some Gesture {
-        LongPressGesture(minimumDuration: 0.6)
-            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .named(Self.space)))
-            .onChanged { value in
-                guard !pressBegan, case .second(true, let drag?) = value else { return }
-                pressBegan = true
-                guard let press = manual.beginPress() else { return }
-                // The estimate, else the GPS fix, else the finger; the driver nudges it.
-                let finger = proxy.convert(drag.startLocation, from: .named(Self.space))?.geo
-                guard let start = PinStart.position(dr: navigation?.latest?.position, gps: latest?.geo, finger: finger)
-                else { return }
-                staged = StagedFix(latitude: start.latitude, longitude: start.longitude, press: press)
-                notRecorded = false
-            }
-            .onEnded { _ in pressBegan = false }
-    }
-
-    private func confirm() {
-        guard let staged else { return }
-        if manual.confirm(staged, note.isEmpty ? nil : note, visibleSpanM) {
-            self.staged = nil
-            note = ""
-            notRecorded = false
-            toast = (toast ?? 0) + 1
-        } else {
-            notRecorded = true
         }
     }
 
-    private func cancelStaged() {
-        staged = nil
-        note = ""
-        notRecorded = false
+    /// Flag for a manual fix; translucent while its undo window is open.
+    private func fixMarker(pending: Bool) -> some View {
+        Image(systemName: "flag.fill")
+            .font(.title2)
+            .foregroundStyle(.white)
+            .padding(8)
+            .background(Color.indigo, in: Circle())
+            .overlay(Circle().stroke(.white, lineWidth: 2))
+            .opacity(pending ? 0.55 : 1)
+    }
+
+    /// A double tap records the point under the finger. The map zooms in on
+    /// a double tap, so the coordinate (`MapProxy`), the span and the session
+    /// time are all read here, before that zoom starts.
+    private func handleDoubleTap(at point: CGPoint, proxy: MapProxy) {
+        guard let coordinate = proxy.convert(point, from: .named(Self.space)) else { return }
+        switch ManualFixTap.perform(
+            latitude: coordinate.latitude, longitude: coordinate.longitude,
+            visibleSpanM: visibleSpanM, marking: manual
+        ) {
+        case .ignored:
+            break
+        case .tooFarOut:
+            show(.zoomIn)
+        case .staged(let id, _, _):
+            recordedCount += 1
+            show(.recorded(id: id))
+        }
+    }
+
+    private func show(_ kind: MapToast.Kind) {
+        toastSerial += 1
+        toast = MapToast(kind: kind, serial: toastSerial)
+    }
+
+    @ViewBuilder
+    private func toastView(_ toast: MapToast) -> some View {
+        switch toast.kind {
+        case .recorded(let id):
+            HStack(spacing: 14) {
+                Label("Fix recorded", systemImage: "checkmark.circle.fill")
+                    .font(.headline)
+                Button("Undo") {
+                    manual.undo(id)
+                    self.toast = nil
+                }
+                .font(.headline)
+                .buttonStyle(.borderedProminent)
+                .frame(minHeight: 56)
+            }
+            .padding(.leading, 16)
+            .padding(.trailing, 8)
+            .frame(minHeight: 64)
+            .background(.regularMaterial, in: Capsule())
+            .frame(maxWidth: .infinity)
+        case .zoomIn:
+            Label(PinPrecision.hint, systemImage: "plus.magnifyingglass")
+                .font(.headline)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 16)
+                .frame(minHeight: 56)
+                .background(.regularMaterial, in: Capsule())
+                .frame(maxWidth: .infinity)
+        }
     }
 
     /// Applies the span rule as a region centred on `center` (the estimate's
     /// position instead, once there is one).
     private func frame(center: CLLocationCoordinate2D, accuracy: Double) {
         reseedHeading()
-        headingState.userDistance = nil
         let center = navigation?.latest?.position.coordinate ?? center
         let span = MapFraming.spanMeters(horizontalAccuracy: accuracy)
         if headingUp, follow.isFollowing, effectiveBearing != nil {
             // A region would be north-up; keep the mode.
             let framed = MapFraming.cameraDistance(spanMeters: span)
-            distance = framed
-            headingState.writtenDistance = framed
+            headingState.zoom.frame(distance: framed)
             position = .camera(MapCamera(
                 centerCoordinate: center, distance: framed, heading: targetHeading, pitch: 0
             ))
             return
         }
-        headingState.writtenDistance = 0
+        headingState.zoom.frame(distance: nil)
         position = .region(MKCoordinateRegion(
             center: center, latitudinalMeters: span, longitudinalMeters: span
         ))
@@ -595,14 +562,9 @@ struct GPSMapView: View {
     }
 
     /// Camera distance for a write: the driver's zoom; in heading-up with an
-    /// estimate, widened to fit its ellipse (`FollowSpan`).
+    /// estimate, widened to fit its ellipse (`FollowZoom`).
     private func followDistance(_ nav: NavDisplay?) -> Double {
-        let base = headingState.userDistance ?? distance
-        guard headingUp, let nav else { return base }
-        let span = FollowSpan.span(
-            minimum: base / MapFraming.distancePerSpan, semiMajorM: nav.semiMajorM
-        )
-        return MapFraming.cameraDistance(spanMeters: span)
+        headingState.zoom.followDistance(headingUp: headingUp, semiMajorM: nav?.semiMajorM)
     }
 
     /// Recentres, keeping the user's current zoom and mode.
@@ -610,7 +572,6 @@ struct GPSMapView: View {
         let heading = targetHeading
         headingState.gate.noteWrite(heading, at: ContinuousClock.now)
         let d = followDistance(navigation?.latest)
-        headingState.writtenDistance = d
         position = .camera(MapCamera(centerCoordinate: center, distance: d, heading: heading, pitch: 0))
     }
 
@@ -667,7 +628,6 @@ struct GPSMapView: View {
             guard write, let center = FollowTarget.center(dr: nav?.position, gps: inputs.fix?.geo),
                   nav != nil || (inputs.headingUp && target != nil) else { continue }
             let d = followDistance(nav)
-            headingState.writtenDistance = d
             headingState.gate.noteWrite(heading, at: now)
             withAnimation(.linear(duration: 0.25)) {
                 position = .camera(MapCamera(
@@ -809,53 +769,6 @@ private extension View {
             }
             .overlay(Capsule().strokeBorder(Color.primary.opacity(active ? 0 : 0.25), lineWidth: 1))
             .shadow(color: .black.opacity(0.3), radius: 4, y: 2)
-    }
-}
-
-/// The confirm panel for a staged pin. It exists only while a pin is
-/// staged, and it alone calls `availability()`, so the 16 Hz live status
-/// invalidates just this body.
-private struct ManualFixPanel: View {
-    var availability: @MainActor () -> ManualFixAvailability
-    /// Visible north-south extent of the map; Confirm needs it at most 300 m.
-    var visibleSpanM: Double?
-    @Binding var note: String
-    var notRecorded: Bool
-    var onConfirm: () -> Void
-    var onCancel: () -> Void
-
-    var body: some View {
-        let state = availability()
-        let gateReason = ManualFixText.disabledReason(state)
-        let reason = ManualFixText.confirmBlockedReason(state, visibleSpanM: visibleSpanM)
-        VStack(spacing: 10) {
-            TextField("Note (optional)", text: $note)
-                .textFieldStyle(.roundedBorder)
-                .onChange(of: note) { _, new in
-                    if new.count > ManualFixSample.maxNoteLength {
-                        note = String(new.prefix(ManualFixSample.maxNoteLength))
-                    }
-                }
-            if let reason {
-                Text(reason).font(.subheadline.weight(.semibold))
-                    .foregroundStyle(gateReason == nil ? Color.orange : Color.red)
-            } else if notRecorded {
-                Text("Not recorded").font(.subheadline.weight(.semibold)).foregroundStyle(.red)
-            }
-            HStack(spacing: 12) {
-                Button("Cancel", role: .cancel, action: onCancel)
-                    .buttonStyle(.bordered)
-                    .frame(minHeight: 56)
-                Button(action: onConfirm) {
-                    Text("I'm here").font(.title3.weight(.bold)).frame(maxWidth: .infinity, minHeight: 56)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(reason != nil)
-            }
-        }
-        .padding(12)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
-        .padding(.horizontal, 12)
     }
 }
 
@@ -1031,41 +944,30 @@ enum MapPreviewData {
 extension MapPreviewData {
     static var confirmed: [ConfirmedFix] {
         [
-            ConfirmedFix(id: 0, latitude: 0.004, longitude: 0.0015, note: "Gate"),
-            ConfirmedFix(id: 1, latitude: 0.009, longitude: -0.001, note: nil),
+            ConfirmedFix(id: 0, latitude: 0.004, longitude: 0.0015),
+            ConfirmedFix(id: 1, latitude: 0.009, longitude: -0.001),
         ]
-    }
-
-    static func actions(canRecord: Bool, gate: ManualFixGate.Result) -> ManualFixActions {
-        ManualFixActions(
-            beginPress: { nil },
-            availability: { ManualFixAvailability(canRecord: canRecord, gate: gate) },
-            confirm: { _, _, _ in false }
-        )
     }
 }
 
-#Preview("Staged pin, confirm enabled") {
+#Preview("Fix recorded, Undo toast, one pending") {
     GPSMapView(
         track: MapPreviewData.track,
         latest: MapPreviewData.fix(59, accuracy: 12, gapAfter: 60),
         lastFixInstant: .now, isReceiving: true, thermal: .nominal, isLive: true,
         follow: .constant(FollowController(following: false)), manualFixes: MapPreviewData.confirmed,
-        manual: MapPreviewData.actions(
-            canRecord: true, gate: .init(speedSource: .obd, speedKmh: 4, isAllowed: true)),
-        initialStaged: StagedFix(latitude: 0.0115, longitude: 0.0005, press: nil)
+        pendingFixIDs: [1],
+        initialToast: MapToast(kind: .recorded(id: 1))
     )
 }
 
-#Preview("Staged pin, too fast") {
+#Preview("Zoom in to place the pin") {
     GPSMapView(
         track: MapPreviewData.track,
         latest: MapPreviewData.fix(59, accuracy: 12, gapAfter: 60),
         lastFixInstant: .now, isReceiving: true, thermal: .nominal, isLive: true,
         follow: .constant(FollowController(following: false)), manualFixes: MapPreviewData.confirmed,
-        manual: MapPreviewData.actions(
-            canRecord: false, gate: .init(speedSource: .obd, speedKmh: 23, isAllowed: false)),
-        initialStaged: StagedFix(latitude: 0.0115, longitude: 0.0005, press: nil)
+        initialToast: MapToast(kind: .zoomIn)
     )
 }
 
@@ -1138,19 +1040,6 @@ extension MapPreviewData {
         headingUp: .constant(true), bearing: 40,
         navigation: NavigationFeed(display: MapPreviewData.nav(converged: true), stats: MapPreviewData.navStats),
         showNavStats: .constant(true)
-    )
-}
-
-#Preview("DR, pin needs zoom") {
-    GPSMapView(
-        track: MapPreviewData.track,
-        latest: MapPreviewData.fix(59, accuracy: 12, gapAfter: 60),
-        lastFixInstant: .now, isReceiving: true, thermal: .nominal, isLive: true,
-        follow: .constant(FollowController(following: false)),
-        manual: MapPreviewData.actions(
-            canRecord: true, gate: .init(speedSource: .obd, speedKmh: 4, isAllowed: true)),
-        initialStaged: StagedFix(latitude: 0.0119, longitude: 0.0011, press: nil),
-        navigation: NavigationFeed(display: MapPreviewData.nav(converged: false))
     )
 }
 

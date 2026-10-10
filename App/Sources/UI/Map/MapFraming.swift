@@ -1,7 +1,7 @@
 import DriveLoggerCore
 import Foundation
 
-/// Pure rules for the map camera and the manual-fix panel text. No MapKit,
+/// Pure rules for the map camera. No MapKit,
 /// so they are testable without a view.
 enum MapFraming {
     /// Smallest visible span, metres.
@@ -22,45 +22,11 @@ enum MapFraming {
     }
 }
 
-/// A pin the driver has dropped but not yet confirmed.
-struct StagedFix: Hashable {
-    var latitude: Double
-    var longitude: Double
-    /// From `RecordingSession.manualFixPressTime()` at long-press begin.
-    /// nil only in previews.
-    var press: ManualFixPress?
-}
-
-/// A manual fix that `recordManualFix` accepted, for display.
+/// A manual fix shown on the map. Drawn as pending until the recorder has
+/// written it (its undo window is over).
 struct ConfirmedFix: Hashable, Identifiable {
+    /// The recorder's `PendingManualFix.id`.
     let id: Int
     var latitude: Double
     var longitude: Double
-    /// Trimmed note, nil when empty.
-    var note: String?
-}
-
-/// What the confirm panel needs from the recorder, read inside the panel's
-/// own body so only it observes the live status.
-struct ManualFixAvailability: Hashable {
-    var canRecord: Bool
-    var gate: ManualFixGate.Result
-}
-
-enum ManualFixText {
-    /// Why Confirm is disabled, nil when it is enabled.
-    static func disabledReason(_ availability: ManualFixAvailability) -> String? {
-        if availability.canRecord { return nil }
-        let gate = availability.gate
-        if !gate.isAllowed {
-            let limit = Int(ManualFixGate.maxSpeedKmh)
-            var text = "Slow to ≤\(limit) km/h to confirm"
-            if let kmh = gate.speedKmh {
-                let source = gate.speedSource == .obd ? "OBD" : "GPS"
-                text += " (\(source) \(DisplayFormat.speed(kmh)) km/h)"
-            }
-            return text
-        }
-        return "Not recording"
-    }
 }

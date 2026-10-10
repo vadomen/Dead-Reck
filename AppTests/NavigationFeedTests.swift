@@ -127,4 +127,33 @@ struct NavigationFeedTests {
         #expect(RecordingFixtures.kinds(events, .motion).count > 10)
         #expect(RecordingFixtures.lifecycle(events).first?.sample.event == "start")
     }
+
+    @Test("The manualFix input a tap delivers carries t = the tap time, though it is written after the undo window")
+    func tapInputCarriesTapTime() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let session = RecordingFixtures.session(
+            sources: Self.sources(), store: scratch.store, manualFixUndoWindow: .milliseconds(300))
+        let collector = FeedCollector()
+        session.onNavigationFeed = { collector.take($0) }
+        try await session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
+
+        try await Task.sleep(for: .milliseconds(200))
+        let tapT = try #require(session.manualFixTapTime())
+        _ = try #require(session.stageManualFix(latitude: 0.001, longitude: 0.002, tapT: tapT, mapSpanM: 150))
+        #expect(await eventually(3) { session.pendingManualFixes.isEmpty })
+        try await Task.sleep(for: .milliseconds(200))
+        await session.stop()
+
+        let live = await collector.inputs(of: 0)
+        let fixes: [(ManualFixSample, MonotonicTimestamp)] = live.compactMap {
+            if case .manualFix(let sample, let t) = $0 { (sample, t) } else { nil }
+        }
+        #expect(fixes.count == 1)
+        let (sample, t) = try #require(fixes.first)
+        #expect(t == tapT && sample.pressedT == tapT)
+        let index = try #require(live.firstIndex { if case .manualFix = $0 { true } else { false } })
+        #expect(live[..<index].contains { $0.timestamp > tapT },
+                "inputs after the tap were delivered before the fix: it arrives late with an earlier t")
+    }
 }

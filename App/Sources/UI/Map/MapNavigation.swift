@@ -245,30 +245,108 @@ enum FollowSpan {
     }
 }
 
-/// Where a dropped "I'm here" pin starts. The driver only nudges it.
-enum PinStart {
-    static func position(dr: GeoPoint?, gps: GeoPoint?, finger: GeoPoint?) -> GeoPoint? {
-        dr ?? gps ?? finger
-    }
-}
-
-/// "I'm here" needs a zoomed-in map so the nudged pin is placed precisely.
+/// A double tap records a manual fix only on a zoomed-in map, so the point
+/// under the finger is precise.
 enum PinPrecision {
     static let maxSpanM = 300.0
     static let hint = "Zoom in to place the pin precisely"
 
-    /// An unknown span (no camera report yet) is not precise.
+    /// An unknown span (no camera report yet) is not precise. The span is the
+    /// one before the double tap's own zoom.
     static func isPreciseEnough(visibleSpanM: Double?) -> Bool {
         guard let visibleSpanM, visibleSpanM.isFinite else { return false }
         return visibleSpanM <= maxSpanM
     }
 }
 
-extension ManualFixText {
-    /// Why Confirm is disabled, nil when it is enabled: the recorder's reason
-    /// first, then the zoom rule.
-    static func confirmBlockedReason(_ availability: ManualFixAvailability, visibleSpanM: Double?) -> String? {
-        if let reason = disabledReason(availability) { return reason }
-        return PinPrecision.isPreciseEnough(visibleSpanM: visibleSpanM) ? nil : PinPrecision.hint
+/// The follow camera's distance decision (R14.2-1), pure.
+///
+/// `chosen` is the zoom the driver wants: set only by a driver gesture (a
+/// camera report that is not our own write) and by `frame()`. `writtenDistance`
+/// is the distance of our latest camera write. Heading-up widens the written
+/// distance to fit the ellipse (`FollowSpan`), always from `chosen`, so a
+/// widening is never read back as the driver's choice and the distance
+/// returns to `chosen` when the ellipse shrinks.
+struct FollowZoom: Equatable, Sendable {
+    /// A report within this fraction of `writtenDistance` is our own write.
+    static let ownWriteTolerance = 0.03
+    static let initialDistance = 1500.0
+
+    private(set) var chosen = Self.initialDistance
+    private(set) var writtenDistance = 0.0
+
+    init() {}
+
+    /// The framing rule moved the camera. `distance` is the camera distance
+    /// it wrote, nil when it wrote a region (the next report then is the
+    /// framed distance and becomes `chosen`).
+    mutating func frame(distance: Double?) {
+        if let distance {
+            chosen = distance
+            writtenDistance = distance
+        } else {
+            writtenDistance = 0
+        }
+    }
+
+    /// A camera report (end of a camera change). Not our own write: the driver zoomed.
+    mutating func cameraReported(distance: Double) {
+        guard distance.isFinite, distance > 0 else { return }
+        if writtenDistance <= 0 || abs(distance - writtenDistance) / writtenDistance > Self.ownWriteTolerance {
+            chosen = distance
+        }
+    }
+
+    /// The distance for a follow write: `chosen`, in heading-up with an
+    /// estimate widened to fit its ellipse. Records it as `writtenDistance`.
+    mutating func followDistance(headingUp: Bool, semiMajorM: Double?) -> Double {
+        let distance = Self.distance(chosen: chosen, headingUp: headingUp, semiMajorM: semiMajorM)
+        writtenDistance = distance
+        return distance
+    }
+
+    static func distance(chosen: Double, headingUp: Bool, semiMajorM: Double?) -> Double {
+        guard headingUp, let semiMajorM else { return chosen }
+        let span = FollowSpan.span(minimum: chosen / MapFraming.distancePerSpan, semiMajorM: semiMajorM)
+        return MapFraming.cameraDistance(spanMeters: span)
+    }
+}
+
+/// What a double tap on the map needs from the recorder. Closures, so the
+/// view stays plain and previews and tests can fake them.
+struct ManualFixMarking {
+    /// The recording's clock now; nil when not recording (the tap is ignored).
+    var tapTime: @MainActor () -> MonotonicTimestamp?
+    /// Stages the fix (`RecordingSession.stageManualFix`); nil when refused.
+    var stage: @MainActor (_ latitude: Double, _ longitude: Double, _ tapT: MonotonicTimestamp, _ spanM: Double?) -> Int?
+    /// Cancels a staged fix (Undo).
+    var undo: @MainActor (_ id: Int) -> Void
+    /// How long Undo is offered; the recorder writes the row after this.
+    var undoWindow: Duration = .seconds(3)
+
+    static let unavailable = ManualFixMarking(tapTime: { nil }, stage: { _, _, _, _ in nil }, undo: { _ in })
+}
+
+/// A double tap on the map: the decision, taken on what was true at the tap.
+/// The map zooms in on a double tap, so the coordinate, the span and the time
+/// are captured before the zoom starts and handed in here.
+enum ManualFixTap {
+    enum Outcome: Equatable {
+        /// Not recording, or the recorder refused the position: nothing happens.
+        case ignored
+        /// The span was over 300 m or unknown: nothing recorded, say why.
+        case tooFarOut
+        /// Staged with this id at `latitude`/`longitude`.
+        case staged(id: Int, latitude: Double, longitude: Double)
+    }
+
+    @MainActor
+    static func perform(
+        latitude: Double, longitude: Double, visibleSpanM: Double?, marking: ManualFixMarking
+    ) -> Outcome {
+        guard let tapT = marking.tapTime() else { return .ignored }
+        guard PinPrecision.isPreciseEnough(visibleSpanM: visibleSpanM) else { return .tooFarOut }
+        guard let id = marking.stage(latitude, longitude, tapT, visibleSpanM) else { return .ignored }
+        return .staged(id: id, latitude: latitude, longitude: longitude)
     }
 }

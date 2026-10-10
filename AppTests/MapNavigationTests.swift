@@ -177,35 +177,151 @@ struct MapNavigationTests {
         #expect(again.faded.count == 1)
     }
 
-    // MARK: pin start
-
-    @Test("Pin starts at the estimate, then the GPS fix, then the finger")
-    func pinStart() {
-        let dr = GeoPoint(latitude: 1, longitude: 1)
-        let gps = GeoPoint(latitude: 2, longitude: 2)
-        let finger = GeoPoint(latitude: 3, longitude: 3)
-        #expect(PinStart.position(dr: dr, gps: gps, finger: finger) == dr)
-        #expect(PinStart.position(dr: nil, gps: gps, finger: finger) == gps)
-        #expect(PinStart.position(dr: nil, gps: nil, finger: finger) == finger)
-        #expect(PinStart.position(dr: nil, gps: nil, finger: nil) == nil)
-    }
-
     // MARK: 300 m rule
 
-    @Test("Confirm needs a visible span of at most 300 m")
+    @Test("A double tap needs a visible span of at most 300 m; unknown counts as too far out")
     func zoomRule() {
         #expect(PinPrecision.isPreciseEnough(visibleSpanM: 300))
         #expect(PinPrecision.isPreciseEnough(visibleSpanM: 120))
         #expect(!PinPrecision.isPreciseEnough(visibleSpanM: 300.1))
         #expect(!PinPrecision.isPreciseEnough(visibleSpanM: nil))
         #expect(!PinPrecision.isPreciseEnough(visibleSpanM: .nan))
-        let ok = ManualFixAvailability(canRecord: true, gate: .init(speedSource: .obd, speedKmh: 3, isAllowed: true))
-        #expect(ManualFixText.confirmBlockedReason(ok, visibleSpanM: 250) == nil)
-        #expect(ManualFixText.confirmBlockedReason(ok, visibleSpanM: 500) == "Zoom in to place the pin precisely")
-        // The recorder's reason wins, and the speed gate itself is unchanged.
-        let fast = ManualFixAvailability(canRecord: false, gate: .init(speedSource: .obd, speedKmh: 23, isAllowed: false))
-        #expect(ManualFixText.confirmBlockedReason(fast, visibleSpanM: 100) == ManualFixText.disabledReason(fast))
-        #expect(ManualFixText.confirmBlockedReason(fast, visibleSpanM: 100)?.hasPrefix("Slow to") == true)
+        #expect(PinPrecision.hint == "Zoom in to place the pin precisely")
+    }
+
+    // MARK: double tap
+
+    /// Records what the tap asked the recorder for.
+    @MainActor
+    private final class FakeMarking {
+        var now: MonotonicTimestamp? = MonotonicTimestamp(seconds: 42)
+        var staged: [(Double, Double, MonotonicTimestamp, Double?)] = []
+        var accept = true
+
+        var marking: ManualFixMarking {
+            ManualFixMarking(
+                tapTime: { self.now },
+                stage: { lat, lon, tapT, span in
+                    self.staged.append((lat, lon, tapT, span))
+                    return self.accept ? 7 : nil
+                },
+                undo: { _ in }
+            )
+        }
+    }
+
+    @Test("A tap on a zoomed-in map stages the coordinate, span and time it was given")
+    @MainActor
+    func doubleTapStages() {
+        let fake = FakeMarking()
+        let outcome = ManualFixTap.perform(latitude: 0.0012, longitude: -0.0034, visibleSpanM: 250, marking: fake.marking)
+        #expect(outcome == .staged(id: 7, latitude: 0.0012, longitude: -0.0034))
+        #expect(fake.staged.count == 1)
+        #expect(fake.staged[0].0 == 0.0012 && fake.staged[0].1 == -0.0034)
+        #expect(fake.staged[0].2 == MonotonicTimestamp(seconds: 42))
+        #expect(fake.staged[0].3 == 250)
+    }
+
+    @Test("A tap over 300 m, or with an unknown span, records nothing")
+    @MainActor
+    func doubleTapTooFarOut() {
+        let fake = FakeMarking()
+        #expect(ManualFixTap.perform(latitude: 0, longitude: 0, visibleSpanM: 300.1, marking: fake.marking) == .tooFarOut)
+        #expect(ManualFixTap.perform(latitude: 0, longitude: 0, visibleSpanM: nil, marking: fake.marking) == .tooFarOut)
+        #expect(fake.staged.isEmpty)
+        #expect(ManualFixTap.perform(latitude: 0, longitude: 0, visibleSpanM: 300, marking: fake.marking) != .tooFarOut)
+    }
+
+    @Test("Not recording, or a refused position: ignored, no toast")
+    @MainActor
+    func doubleTapIgnored() {
+        let fake = FakeMarking()
+        fake.now = nil
+        #expect(ManualFixTap.perform(latitude: 0, longitude: 0, visibleSpanM: 100, marking: fake.marking) == .ignored)
+        #expect(ManualFixTap.perform(latitude: 0, longitude: 0, visibleSpanM: 1000, marking: fake.marking) == .ignored,
+                "not recording: no zoom hint either")
+        fake.now = MonotonicTimestamp(seconds: 1)
+        fake.accept = false
+        #expect(ManualFixTap.perform(latitude: 0, longitude: 0, visibleSpanM: 100, marking: fake.marking) == .ignored)
+        #expect(ManualFixMarking.unavailable.undoWindow == .seconds(3))
+    }
+
+    // MARK: follow zoom (R14.2-1)
+
+    /// The pre-fix logic, kept here as the oracle that it fails: `base` fell
+    /// back to a `distance` that every non-own camera report overwrote, and
+    /// our own widened write came back as a report.
+    private struct OldFollowDistance {
+        var distance = 1500.0
+        var userDistance: Double?
+        var writtenDistance = 0.0
+
+        mutating func frame(distance framed: Double) {
+            userDistance = nil
+            distance = framed
+            writtenDistance = framed
+        }
+
+        mutating func report(_ d: Double) {
+            distance = d    // `isSignificant`: any change over 1 %
+            if writtenDistance <= 0 || abs(d - writtenDistance) / writtenDistance > 0.03 { userDistance = d }
+        }
+
+        mutating func followDistance(headingUp: Bool, semiMajorM: Double?) -> Double {
+            let base = userDistance ?? distance
+            guard headingUp, let semiMajorM else { return base }
+            let span = FollowSpan.span(minimum: base / MapFraming.distancePerSpan, semiMajorM: semiMajorM)
+            return MapFraming.cameraDistance(spanMeters: span)
+        }
+    }
+
+    @Test("Heading-up: widen for a 400 m ellipse, then shrink: the distance returns to the driver's zoom")
+    func followZoomRoundTrip() {
+        let framed = MapFraming.cameraDistance(spanMeters: 500)
+        var zoom = FollowZoom()
+        zoom.frame(distance: framed)
+        #expect(zoom.followDistance(headingUp: true, semiMajorM: 10) == framed)
+
+        let widened = zoom.followDistance(headingUp: true, semiMajorM: 400)
+        #expect(widened > framed * 1.5, "880 m span: widened")
+        zoom.cameraReported(distance: widened)       // our own write coming back
+        #expect(zoom.chosen == framed, "a widening is not the driver's choice")
+        #expect(zoom.followDistance(headingUp: true, semiMajorM: 400) == widened, "and does not grow further")
+
+        let shrunk = zoom.followDistance(headingUp: true, semiMajorM: 10)
+        #expect(shrunk == framed)
+
+        // The same sequence on the old logic stays wide.
+        var old = OldFollowDistance()
+        old.frame(distance: framed)
+        _ = old.followDistance(headingUp: true, semiMajorM: 10)
+        let oldWide = old.followDistance(headingUp: true, semiMajorM: 400)
+        old.writtenDistance = oldWide
+        old.report(oldWide)
+        #expect(old.followDistance(headingUp: true, semiMajorM: 10) != framed, "the old logic never came back")
+    }
+
+    @Test("A driver zoom is the new chosen distance; the ellipse widens from it")
+    func followZoomDriverGesture() {
+        var zoom = FollowZoom()
+        zoom.frame(distance: 1000)
+        zoom.cameraReported(distance: 1002)           // within 3 % of our write: ours
+        #expect(zoom.chosen == 1000)
+        zoom.cameraReported(distance: 400)            // pinch
+        #expect(zoom.chosen == 400)
+        #expect(zoom.followDistance(headingUp: false, semiMajorM: 400) == 400, "north-up never widens")
+        let d = zoom.followDistance(headingUp: true, semiMajorM: 400)
+        #expect(abs(d - MapFraming.cameraDistance(spanMeters: 880)) < 1e-9)
+        zoom.cameraReported(distance: 300)            // pinches again, not matching the widened write
+        #expect(zoom.chosen == 300)
+    }
+
+    @Test("A region frame leaves the next report as the chosen distance")
+    func followZoomRegionFrame() {
+        var zoom = FollowZoom()
+        zoom.frame(distance: nil)
+        zoom.cameraReported(distance: 940)
+        #expect(zoom.chosen == 940)
     }
 
     // MARK: feed write gate

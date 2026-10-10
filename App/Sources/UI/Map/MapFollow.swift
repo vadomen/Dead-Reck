@@ -12,8 +12,7 @@ import SwiftUI
 ///
 /// States: following; paused by a gesture (auto-resumes `resumeDelay` s after
 /// the last gesture or camera change); manually off (Follow tapped while
-/// following: never auto-resumes); or paused under a staged pin (camera stays
-/// still, the countdown starts only after the pin is confirmed or cancelled).
+/// following: never auto-resumes).
 struct FollowController: Equatable, Sendable {
     static let resumeDelay: Duration = .seconds(8)
     /// Pushes closer than this to the current deadline are ignored, so a drag
@@ -22,13 +21,12 @@ struct FollowController: Equatable, Sendable {
 
     private enum Mode: Equatable, Sendable {
         case following
-        /// Paused; `nil` deadline means resume is suspended (pin staged).
-        case paused(deadline: ContinuousClock.Instant?)
+        /// Paused; the deadline is when Following comes back.
+        case paused(deadline: ContinuousClock.Instant)
         case manualOff
     }
 
     private var mode: Mode
-    private(set) var isPinStaged = false
 
     init(following: Bool = true) {
         mode = following ? .following : .manualOff
@@ -38,7 +36,7 @@ struct FollowController: Equatable, Sendable {
 
     /// When Following will come back on its own; nil if it will not.
     var resumeDeadline: ContinuousClock.Instant? {
-        guard !isPinStaged, case .paused(let deadline?) = mode else { return nil }
+        guard case .paused(let deadline) = mode else { return nil }
         return deadline
     }
 
@@ -54,7 +52,7 @@ struct FollowController: Equatable, Sendable {
     mutating func userGesture(at now: ContinuousClock.Instant) {
         switch mode {
         case .following:
-            mode = .paused(deadline: isPinStaged ? nil : now + Self.resumeDelay)
+            mode = .paused(deadline: now + Self.resumeDelay)
         case .paused:
             push(now)
         case .manualOff:
@@ -69,22 +67,9 @@ struct FollowController: Equatable, Sendable {
         if case .paused = mode { push(now) }
     }
 
-    /// A pin was staged or cleared (Confirm, Cancel, or cleared by Start).
-    mutating func pinStaged(_ staged: Bool, at now: ContinuousClock.Instant) {
-        guard staged != isPinStaged else { return }
-        isPinStaged = staged
-        if staged {
-            if mode == .following { mode = .paused(deadline: nil) }
-        } else if case .paused = mode {
-            mode = .paused(deadline: now + Self.resumeDelay)
-        }
-    }
-
     /// The Follow button. Paused: resume now. Following: off for good until
-    /// tapped again. While a pin is staged it does nothing: the camera stays
-    /// still under the pin and the pin's own countdown rules apply.
+    /// tapped again.
     mutating func followTapped(at now: ContinuousClock.Instant) {
-        guard !isPinStaged else { return }
         mode = (mode == .following) ? .manualOff : .following
     }
 
@@ -97,9 +82,8 @@ struct FollowController: Equatable, Sendable {
     }
 
     private mutating func push(_ now: ContinuousClock.Instant) {
-        guard !isPinStaged else { return }
         let deadline = now + Self.resumeDelay
-        if case .paused(let old?) = mode, deadline - old < Self.minExtension { return }
+        if case .paused(let old) = mode, deadline - old < Self.minExtension { return }
         mode = .paused(deadline: deadline)
     }
 }
