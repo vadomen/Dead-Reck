@@ -872,3 +872,18 @@ Fix: R14.2-1 by `ios-ui-engineer`, together with the new manual-fix flow (same f
 - **Findings:** 1 fixed (R14.1-1), 0 rejected, 4 MINOR deferred (R14.1-2..5).
 - **Tests at 5d7fbce:** `cd Core && swift test` passes 614 tests in 91 suites. App tests pass (232 tests in 38 suites, round 1).
 - **Merged into main by user decision.** A fresh review round on `174e34e..<merge>` is still owed. Run it when the limit resets, before relying on N4 in the field.
+
+Fixed on `n4-review-r2` (059b33f code and tests, 8436dbc docs). Plan approved by the user.
+- **R14.2-1:** `FollowZoom` keeps a `chosen` distance that our own writes never update, so a widening for the ellipse returns to the driver's zoom. The 400 m round-trip test includes an in-test copy of the old logic, which never returns.
+- **R14.2-2, superseded:** the manual-fix flow is now a double tap.
+  - The fix is recorded at the finger, at any speed, and only at a pre-zoom span ≤ 300 m.
+  - A 3 s undo window; the row is written when the window closes, with `t` = `pressedT` = tap time.
+  - Pending fixes are written before the `stop` row.
+  - Removed: the long-press pin, the confirm panel, the note field and the speed gate. Every speed field is still recorded.
+- No log-format or engine change:
+  - `Navigation/`, `LogFormat`, `LogCodec` and `LogFormatCompatibilityTests` untouched (checked with `git diff`);
+  - acceptance replays on seeds 1–5 over the six drives: 30/30 GeoJSON files byte-identical to `logs/n4b1/after` (checked independently).
+- Not verified: that `MapProxy.convert` inside the double tap's `onEnded` returns the pre-zoom coordinate. Simulator taps could not be automated, so this is a device check in PLAN.md §6, N4 C item 4.
+- Tests: `cd Core && swift test` 614 tests in 91 suites; app 236 tests in 38 suites; simulator build green.
+
+**Round 3 (fresh reviewer) pending.**
