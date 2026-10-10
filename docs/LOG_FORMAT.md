@@ -151,7 +151,7 @@ verbatim (`LogEvent.Payload.unrecognized`) instead of dropping it.
 | `link` | 2 | state transition | rare |
 | `lifecycle` | 2 | occurrence | rare |
 | `stats` | 2 | end of 10 s window | 0.1 Hz |
-| `manualFix` | 3 | driver confirmed the pin | user |
+| `manualFix` | 3 | driver double-tapped a position | user |
 
 ### `motion`
 
@@ -512,26 +512,34 @@ the window.
 
 ### `manualFix`
 
-A position the driver confirmed on the map ("I'm here"). It is ground truth
-for evaluating dead reckoning offline, most of all where GNSS is jammed or
-absent. `t` is the confirm time on the session clock. Core type:
-`ManualFixSample`.
+A position the driver marked on the map with a double tap ("I'm here"). It is
+ground truth for evaluating dead reckoning offline, most of all where GNSS is
+jammed or absent. Core type: `ManualFixSample`.
+
+**`t` = `pressedT` = the tap time** on the session clock. The row is written
+a few seconds later (a 3 s undo window; at Stop for a fix still in it), so it
+can appear after rows with a later `t`: write order is not `t` order (see
+Order). Fixes are written in tap order, so `manualFix` rows are in `t` order
+among themselves. Recordings made before the double-tap flow were written at
+confirm time: `pressedT` was when the long-press was recognised, `t − pressedT`
+was the confirm delay, and the recorder refused a fix above 10 km/h.
 
 | Field | Type, unit | Meaning |
 |---|---|---|
-| `latitude`, `longitude` | double, degrees WGS 84 | The confirmed pin. Always present. |
-| `pressedT` | int, ns | When the long-press that placed the pin began. Always present. `t − pressedT` is the time the driver took to confirm. |
-| `mapSpanM` | double, m | Visible map span at confirm: how precisely the pin could be placed. Optional. |
-| `obdSpeedKmh` | double, km/h | Last vehicle speed (PID 0x0D) from the primary ECU (`7E8`) at confirm. Absent when the link had none. Present even when too old to gate. |
+| `latitude`, `longitude` | double, degrees WGS 84 | The point under the finger at the tap (older: the confirmed pin). Always present. |
+| `pressedT` | int, ns | The tap time; equal to `t`. Always present. |
+| `mapSpanM` | double, m | Visible map span at the tap, before the double tap's own zoom: how precisely the point could be placed. At most 300 m for a new row. Optional. |
+| `obdSpeedKmh` | double, km/h | Last vehicle speed (PID 0x0D) from the primary ECU (`7E8`) at the tap. Absent when the link had none. Present even when too old to count as the fix's speed. |
 | `obdSpeedT` | int, ns | When that reply arrived: the `t` of its `obd` row. Present exactly when `obdSpeedKmh` is. `t − obdSpeedT` is the speed's age. |
-| `gpsSpeedKmh` | double, km/h | Speed of the latest reference fix at confirm, whenever it had `speed ≥ 0`, however old or inaccurate. **Reference only**: it is the gate speed only when `speedSource` is `gps`. |
-| `speedSource` | string | Which speed the gate used: `obd`, `gps` or `unknown`. Always present. |
-| `gateSpeedKmh` | double, km/h | The speed compared with the limit. Absent when `speedSource` is `unknown`. |
-| `note` | string | Driver's note: trimmed, at most 80 characters. Absent when empty. |
+| `gpsSpeedKmh` | double, km/h | Speed of the latest reference fix at the tap, whenever it had `speed ≥ 0`, however old or inaccurate. **Reference only**: it is the fix's speed only when `speedSource` is `gps`. |
+| `speedSource` | string | Which speed describes the fix: `obd`, `gps` or `unknown`. Always present. |
+| `gateSpeedKmh` | double, km/h | The speed `speedSource` names: the speed of the car at the tap. Absent when `speedSource` is `unknown`. The name is from the 10 km/h gate older builds applied. |
+| `note` | string | Free text: trimmed, at most 80 characters. Absent when empty. The double-tap flow writes none; older recordings may carry one. |
 
-The recorder writes a row only if the speed gate (`ManualFixGate`) allows it.
-A pin dropped at speed is not ground truth. The gate is evaluated at the
-confirm instant (`now` = the row's `t`):
+There is no speed limit: a fix while driving is recorded with its speed (an
+analysis may weigh it: the point is where the finger was, not where the car
+is at `t`). The speed fields describe the conditions of the fix, as of the tap
+(`now` = `t`):
 
 1. If an OBD speed is known and its reply is at most 2.0 s old
    (`now − obdSpeedT ≤ 2.0 s`), it is used (`obd`).
@@ -542,21 +550,20 @@ confirm instant (`now` = the row's `t`):
    count. A missing `ageS` counts as 0.
 3. Otherwise the speed is `unknown`.
 
-A fix is allowed when the gate speed is ≤ 10 km/h or unknown. Refused fixes
-leave no row. Rows are written while a recording is calibrating or
-recording, never after Stop.
+A fix is written while a recording is calibrating or recording, and a pending
+one is written at Stop before the `stop` row. A fix undone in its window, or
+pending when a write failure ends the recording, leaves no row.
 
 Ages are compared in whole nanoseconds, so exactly 2.0 s and 5.0 s still
 count. A negative age counts as fresh. This happens when the reply or fix is
 stamped after `now`, from clock skew between sources or a negative `ageS`.
 Such an input is not clamped to zero and not discarded: it is the most recent
-there is.
+there is. A non-finite speed is treated as absent.
 
-`speedSource` and `gateSpeedKmh` record what the gate actually used.
 `obdSpeedKmh`/`obdSpeedT` and `gpsSpeedKmh` are written whenever a reading
-existed, even one too old (or, for GPS, too inaccurate) to gate. So a row with
+existed, even one too old (or, for GPS, too inaccurate) to count. So a row with
 `obdSpeedKmh` present and `speedSource` other than `obd` means the OBD speed
-was more than 2 s old at confirm.
+was more than 2 s old at the tap.
 
 `speedSource` values are frozen strings (`ManualFixSample.SpeedSource`).
 

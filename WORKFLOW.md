@@ -228,12 +228,13 @@ Here is a bench-test log from the parked car: <path outside the repo>. Use drive
 Adds an initial map camera and the driver's "I'm here" position fix, which is ground truth for dead reckoning offline (above all where GNSS is jammed).
 
 - **Camera:** span = max(500 m, 3 × horizontalAccuracy). It is set on the first fix, when the Map tab opens with a fix, and on Following. Before recording, the reference source's cached last-known location (read only, no session) sets the initial camera.
-- **Manual fix:** a long-press stages a draggable pin; Confirm writes a `manualFix` event (format **v3**) with:
-  - the position, `pressedT` and `mapSpanM`;
+- **Manual fix:** since N4 a double tap on the map (recording, map at most 300 m) writes a `manualFix` event (format **v3**), after a 3 s Undo window, with `t` = `pressedT` = the tap time:
+  - the position under the finger and `mapSpanM`;
   - the last OBD speed and its reply time, and the GPS speed;
-  - the note;
-  - the gate used: `speedSource` obd|gps|unknown and `gateSpeedKmh`.
-- **Gate (`ManualFixGate`):** Confirm only while recording and at ≤ 10 km/h. OBD counts if ≤ 2 s old. Otherwise GPS counts if the fix is accurate (≤ 100 m, valid speed accuracy) and ≤ 5 s old. Otherwise the fix is allowed. Starting a recording clears a staged pin.
+  - no note;
+  - the speed that describes it: `speedSource` obd|gps|unknown and `gateSpeedKmh`.
+  - Earlier builds: a long-press staged a draggable pin and Confirm wrote the row, refused above 10 km/h.
+- **Speed source (`ManualFixGate`):** no limit. OBD counts if ≤ 2 s old. Otherwise GPS counts if the fix is accurate (≤ 100 m, valid speed accuracy) and ≤ 5 s old. Otherwise `unknown`.
 - **Format:** `LogFormatVersion` v3 with a new frozen v3 fixture; the v1/v2 fixtures are untouched. `inspect_log` summary and `manualFix.csv`; `LOG_FORMAT.md`; `drive-log-debrief` uses manual fixes as ground truth.
 
 ## M4.3 - Map follow + heading-up (UI only)
@@ -242,7 +243,7 @@ Fixes Following switching off by itself during drives (the `positionedByUser`
 handler is gone) and adds a heading-up camera. No Core, logging, sensor, log
 format or `RecordingSession` change.
 
-- **Follow:** only a real touch gesture (drag, pinch, rotate, double-tap) turns it off. It resumes 8 s after the last gesture or camera change, with a "Re-centre in N s" hint. A staged pin freezes the camera and suspends the countdown until Confirm/Cancel. Tapping Follow while following turns it off for good (until tapped again). Logic: `MapFollow.swift` (`FollowController`).
+- **Follow:** only a real touch gesture (drag, pinch, rotate, double-tap) turns it off. It resumes 8 s after the last gesture or camera change, with a "Re-centre in N s" hint.  Tapping Follow while following turns it off for good (until tapped again). Logic: `MapFollow.swift` (`FollowController`).
 - **Heading-up:** a separate "North up / Heading up" button (`@AppStorage("map.headingUp")`). Bearing is GPS course only (> 10 km/h, course accuracy 0...20 deg), never the compass; the camera holds still when OBD speed is exactly 0. `MapBearing.swift` (`MapBearingSource` is the seam for a later DR heading source).
 - **RecordingSession:** two read-only accessors, no behaviour change: `obdSpeedReplyUptime` and `currentUptimeSeconds`, so the map can tell a fresh OBD speed 0 (age <= `ManualFixGate.maxOBDAgeS`) from a stale one.
 - **Device checklist (not verified; PLAN.md section 6):** 10 min drive with no unexpected loss of Following; pan, then auto re-centre after 8 s; heading-up rotates smoothly and holds still at stops; the SwiftUI gestures on `Map` fire and do not block panning. If they do not, the fallback is an `MKMapView` wrapper, which needs the user's approval first.

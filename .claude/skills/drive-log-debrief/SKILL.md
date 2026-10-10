@@ -26,7 +26,7 @@ Run the `inspect_log` tool on the file, using the command listed in CLAUDE.md (e
 - Note segments where GPS looks jammed or spoofed (jumps, impossible speed) - those are exactly the conditions the app is for; mark them, do not use them as truth.
 
 ## 4. Manual fixes as ground truth (format v3+, `manualFix` rows)
-A `manualFix` is a position the driver confirmed on the map while at or below 10 km/h (or with speed unknown). It is the only ground truth in a recording that does not depend on GNSS. `inspect_log` lists them, and `--csv` writes `manualFix.csv`. See docs/LOG_FORMAT.md, `manualFix`. For each fix:
+A `manualFix` is a position the driver marked on the map (a double tap since the N4 manual-fix change; before that a confirmed long-press pin, refused above 10 km/h). Newer rows can be taken at any speed: weigh `gateSpeedKmh`, since the point is where the finger was, not where the car is. It is the only ground truth in a recording that does not depend on GNSS. `inspect_log` lists them, and `--csv` writes `manualFix.csv`. See docs/LOG_FORMAT.md, `manualFix`. For each fix:
 - **Nearest reference GPS fix at `t`:** take the `location` row whose `t` is closest to the manual fix's `t`. Report the distance between the two positions in metres (haversine), that fix's `horizontalAccuracy`, and its age (`t_manual − t_location`, in seconds; also note `ageS` if present). A distance much larger than `horizontalAccuracy` means GNSS was wrong or the pin was misplaced. Use `mapSpanM` to judge which: a pin placed on a 2 km wide map cannot be trusted to 20 m.
 - **Jammed / tunnel segments:** fixes inside segments flagged in section 3 (jumps, impossible speed, accuracy blow-up, no `location` rows) are the most valuable ones. List them separately and say whether GNSS was absent, degraded or confidently wrong there.
 - **Gate:** report `speedSource` (`obd` / `gps` / `unknown`) and `gateSpeedKmh`.
@@ -34,7 +34,7 @@ A `manualFix` is a position the driver confirmed on the map while at or below 10
   - A row with `obdSpeedKmh` present but `speedSource` not `obd` means OBD polling had stalled. Report how old it was and what it said.
   - For `gps`, the reference fix was its own gate, so weight that fix less as truth.
   - Treat `unknown` with suspicion: the car may have been moving. Check OBD speed (any age) and motion around `t`.
-- **Confirm delay:** `t − pressedT`. Several seconds means the position may belong to the moment of the press rather than the confirm, so compare against GPS at both instants if the car was moving.
+- **Confirm delay (older recordings only):** `t − pressedT`; in newer ones `t` = `pressedT` = the tap time. Older: Several seconds means the position may belong to the moment of the press rather than the confirm, so compare against GPS at both instants if the car was moving.
 - Summarise: number of fixes, median and max distance to GPS (excluding jammed segments), and the jammed-segment fixes on their own.
 - Privacy: in the report, give positions only as distances and errors. Never give coordinates.
 

@@ -8,7 +8,7 @@ N2 delivered a causal, deterministic particle filter in Core and `replay_nav`.
 N4 runs that filter live in the app and adds:
 - a blue dead-reckoning dot with its 95 % ellipse;
 - heading-up driven by the dead-reckoning heading;
-- an "I'm here" pin that starts at the estimate;
+- an "I'm here" double tap that records the point under the finger;
 - a debug stats overlay;
 - a per-recording sidecar file, so a replay can prove it reproduces what the driver saw.
 
@@ -101,12 +101,15 @@ Builds on `MapViewModel`, `GPSMapView`, `FollowController`, `HeadingState` and `
   - The `CameraHeading.choose` logic is extended in pure code and tested.
 - **Reference GPS:** unchanged, except that fixes with accuracy over 1000 m become faded dots that are not part of the polyline.
   - This lives in `GPSTrack` as a separate capped point list.
-- **"I'm here":**
-  - The pin starts at the current dead-reckoning estimate (the GPS fix before initialisation, the finger position as a last resort). The driver only nudges it.
-  - Confirm is enabled only when `visibleSpanM` ≤ 300 m. Otherwise it shows "Zoom in to place the pin precisely".
-  - `ManualFixGate` speed gate unchanged. The logged mapSpanM is computed as today.
+- **"I'm here" (replaced after review run 14, R14.2-2):** a double tap records the point under the finger. The earlier flow (long-press, a pin that starts at the estimate, a confirm panel, a 10 km/h gate) is gone.
+  - `.simultaneousGesture(SpatialTapGesture(count: 2))` on the `Map`, so MapKit's double-tap zoom still happens. At the tap, before the zoom starts, the view captures the coordinate (`MapProxy`), `visibleSpanM` and the session-clock time.
+  - Only on a map of at most 300 m (the span before the zoom; unknown counts as too far out). Otherwise nothing is recorded and a toast says "Zoom in to place the pin precisely".
+  - No speed gate; the row carries the speeds at the tap.
+  - A "Fix recorded · Undo" toast for 3 s, a success haptic and a pending marker. Undo cancels it. After the window the row is written with `t` = `pressedT` = tap time, no note. A pending fix is written at Stop, before the `stop` row; a write failure drops it.
+  - The engine gets the fix about 3 s late with the tap's `t`; `ingestManualFix` shifts the pin by the motion since. The sidecar `pin.prior` is taken at the write, so it is about v × 3 s ahead while moving (BACKLOG). Arrival-order replay applies the fix at the tap instant; `--as-live` matches live exactly.
+- **Follow zoom (R14.2-1):** `FollowZoom` keeps the driver's chosen distance apart from our own writes; the ellipse widening is always applied to the chosen distance, so it returns when the ellipse shrinks.
 - **Debug stats overlay:** toggled with `@AppStorage("debug.navStats")`. It shows ms/step, ESS, heading std, speed scale and dropped navigation inputs. Nothing is logged.
-- **Tests:** pure logic only (bearing choice, ellipse framing span, faded-fix split, pin start, the 300 m rule), in the pattern of `MapCameraLogicTests`.
+- **Tests:** pure logic only (bearing choice, ellipse framing span, faded-fix split, the 300 m rule, the double-tap decision, `FollowZoom`), in the pattern of `MapCameraLogicTests`.
 
 ### D. Device checklist: `docs/PLAN.md` §6, "Added by N4 (not verified)"
 - ms/step on the iPhone with 2000 particles (overlay and sidecar).
