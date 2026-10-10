@@ -798,3 +798,44 @@ Verified:
 - **Deferred:** 9 MINOR (R13.1-5..9, R13.2-2..4, R13.3-1).
 - **Final tests (at d813fd6):** `cd Core && swift test`, 578 tests in 87 suites, all pass. No App/ change in the range.
 - **Acceptance:** the N2.3 tables in `docs/NAVIGATION.md`. Rounds 2 and 3 changed tests only.
+
+## Run 14 — N4 live navigation (main..n4-live-nav, 174e34e..94e7a20), started 2026-10-10
+
+Range: N4 step 0, B0, A, B, C, B1 on branch `n4-live-nav`.
+
+### Round 1
+
+The first reviewer stopped on an API limit before reporting, so this round was rerun with a fresh `reviewer` agent. Result: 0 BLOCKER / 1 MAJOR / 4 MINOR.
+
+Verified clean:
+- **Tap:** runs after the enqueue, under the sink lock, for the 4 kinds and only `.enqueued`. It doesn't block, the lock order is fixed (no deadlock), stats are unchanged, and it is finished on both end paths.
+- **Delete and share:** the sidecar is deleted first; the active recording can't be deleted; share includes the sidecar.
+- **Privacy:** no positions are written outside the sidecar or the replay output.
+- **Live/replay equivalence:** the app and replay share `LiveNavigationRun`, and the grid-instant semantics match.
+- **B0:** the OU transition maths and the parked fold match stepping.
+- **B0-1:** measured from the last accepted input.
+- **B1:** the timeout, newest-wins and apply-time semantics.
+- **Service:** a fresh engine per recording, clean back-to-back handling, and bounded memory.
+- **Map:** the ellipse convention matches `ErrorEllipse`; the write gate, follow, heading-up, pin start, 300 m rule and faded fixes match the spec.
+
+Tests: `swift test` 613 tests in 91 suites; app 232 tests in 38 suites.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R14.1-1 | MAJOR | Nothing tests that only a 7E8 (or no-ECU) vehicle-speed reply decides a held fix. If every OBD row resolves it, an RPM row or a 7E9 line arriving before the 7E8 speed 0 drops the fix as "moving" (manual-3 as-live pin 1 back to ~320 m). | CONFIRMED | Verified `NavigationEngine.swift:177-179`. The mutation (resolve on every OBD row) leaves 83/83 Navigation tests green. |
+| R14.1-2 | MINOR | B0 tests 6a/6b don't check the parked fold's history appends or the exact OU integral (both mutations survive). | DEFERRED | BACKLOG |
+| R14.1-3 | MINOR | `frame()` on tab open or unlock uses a stale `navigation.latest`: a brief jump to an old position while following; after Stop it frames on the old estimate. | DEFERRED | BACKLOG |
+| R14.1-4 | MINOR | The sidecar isn't flushed on `.background`. `--compare` reports a sidecar that ends early (app killed, unwritten events) as FAIL with "no known cause". | DEFERRED | BACKLOG |
+| R14.1-5 | MINOR | Doc drift: the `FollowSpan` formula and its test title differ from N4_PLAN; the CLAUDE.md layout omits `App/Sources/Navigation`. | DEFERRED | BACKLOG |
+
+Fix: R14.1-1 by `navigation-engineer`.
+
+Fixed (test only; no engine change, so the replays are unchanged). New test `NavigationHeldFixTests/onlyPrimaryVehicleSpeedDecides`:
+- An RPM row from 7E8 followed by a 7E9 speed 0, and separately a 7E9 speed of 30 km/h, all leave the fix held.
+- A 7E8 speed 0 then applies it.
+
+Under the "resolve on every OBD row" mutation the test fails with 12 issues. I re-checked this independently.
+
+`cd Core && swift test`: 614 tests in 91 suites pass. No App/ change in this round.
+
+**Round 2 (fresh reviewer) pending.**

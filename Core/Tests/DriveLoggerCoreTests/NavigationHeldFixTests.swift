@@ -156,6 +156,40 @@ struct NavigationHeldFixTests {
         #expect(abs(estimate.north - drive.truth(at: 30).north) < 30)
     }
 
+    /// Any OBD row other than vehicle speed from the primary ECU, e.g. the
+    /// engine-RPM row of a combined 010D0C poll or a 7E9 speed line.
+    static func otherOBD(_ pid: OBDPID, _ value: Double, ecu: String, _ t: Double) -> NavigationInput {
+        .obd(OBDSample(pid: pid, value: value, unit: pid.unit, ecu: ecu), at: S.ms(t))
+    }
+
+    @Test("Only a 7E8 vehicle-speed reply decides a held fix: an RPM row or a 7E9 speed (0 or moving) leaves it held")
+    func onlyPrimaryVehicleSpeedDecides() {
+        // R14.1-1. Every non-deciding row comes before the 7E8 reply, with the
+        // same `t` as it (one combined poll), so each would decide if it could.
+        let nonDeciding: [(String, [NavigationInput])] = [
+            ("RPM then 7E9 speed 0", [Self.otherOBD(.engineSpeed, 800, ecu: "7E8", 0.015),
+                                      Self.otherOBD(.vehicleSpeed, 0, ecu: "7E9", 0.015)]),
+            ("7E9 speed moving", [Self.otherOBD(.vehicleSpeed, 30, ecu: "7E9", 0.015)]),
+        ]
+        for (label, rows) in nonDeciding {
+            var engine = Self.engine([Self.motion(0.01), Self.fix(-60, arrival: 0.06), Self.motion(0.07)] + rows
+                                     + [Self.motion(0.08)])
+            #expect(engine.hasHeldFix, "\(label): the fix must still be held")
+            #expect(!engine.isInitialized, "\(label)")
+            #expect(engine.counters.fixesHeld == 1 && engine.counters.heldFixesUsed == 0, "\(label)")
+            #expect(engine.counters.heldFixesDroppedMoving == 0 && engine.counters.heldFixesDroppedTimeout == 0,
+                    "\(label)")
+            #expect(engine.counters.fixesIgnoredStale == 0 && engine.counters.fixesUsed == 0, "\(label)")
+
+            // The primary ECU's 0 decides: the fix is used.
+            engine.ingest(Self.obd(0, 0.015))
+            engine.ingest(Self.motion(0.09))
+            #expect(engine.isInitialized && !engine.hasHeldFix, "\(label): the 7E8 0 must apply the held fix")
+            #expect(engine.counters.heldFixesUsed == 1 && engine.counters.fixesUsed == 1, "\(label)")
+            #expect(engine.counters.heldFixesDroppedMoving == 0 && engine.counters.fixesIgnoredStale == 0, "\(label)")
+        }
+    }
+
     @Test("Counters from an earlier build without the held-fix keys still decode (as 0)")
     func countersDecodeWithoutNewKeys() throws {
         let old = #"{"steps":12,"fixesUsed":3,"fixesIgnoredStale":1,"inputsRejectedTimeJump":0}"#
