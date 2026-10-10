@@ -771,10 +771,7 @@ struct GPSMapView: View {
                 headingUp ? "Heading up" : "North up",
                 systemImage: headingUp ? "location.north.line.fill" : "n.circle.fill"
             )
-            .font(.headline)
-            .padding(.horizontal, 18)
-            .frame(minHeight: 56)
-            .background(.regularMaterial, in: Capsule())
+            .mapControlStyle(active: headingUp)
         }
     }
 
@@ -788,11 +785,30 @@ struct GPSMapView: View {
                 follow.isFollowing ? "Following" : "Follow",
                 systemImage: follow.isFollowing ? "location.fill" : "location"
             )
+            .mapControlStyle(active: follow.isFollowing)
+        }
+    }
+}
+
+private extension View {
+    /// Map control capsule. The default tint (dark blue on a dark material)
+    /// is unreadable in dark mode, so the colours are explicit: white on solid
+    /// blue when the mode is on, primary text on material when it is off.
+    func mapControlStyle(active: Bool) -> some View {
+        self
             .font(.headline)
+            .foregroundStyle(active ? Color.white : Color.primary)
             .padding(.horizontal, 18)
             .frame(minHeight: 56)
-            .background(.regularMaterial, in: Capsule())
-        }
+            .background {
+                if active {
+                    Capsule().fill(Color.blue)
+                } else {
+                    Capsule().fill(.regularMaterial)
+                }
+            }
+            .overlay(Capsule().strokeBorder(Color.primary.opacity(active ? 0 : 0.25), lineWidth: 1))
+            .shadow(color: .black.opacity(0.3), radius: 4, y: 2)
     }
 }
 
