@@ -838,4 +838,13 @@ Under the "resolve on every OBD row" mutation the test fails with 12 issues. I r
 
 `cd Core && swift test`: 614 tests in 91 suites pass. No App/ change in this round.
 
-**Round 2 (fresh reviewer) pending.**
+### Round 2
+
+Not run. The fresh reviewer stopped on the weekly API limit before reporting, and the user chose to merge N4 without it.
+
+### Run 14 summary
+
+- **Rounds:** 1 completed; round 2 not run (API limit).
+- **Findings:** 1 fixed (R14.1-1), 0 rejected, 4 MINOR deferred (R14.1-2..5).
+- **Tests at 5d7fbce:** `cd Core && swift test` passes 614 tests in 91 suites. App tests pass (232 tests in 38 suites, round 1).
+- **Merged into main by user decision.** A fresh review round on `174e34e..<merge>` is still owed. Run it when the limit resets, before relying on N4 in the field.
