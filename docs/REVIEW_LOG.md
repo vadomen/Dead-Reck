@@ -842,6 +842,30 @@ Under the "resolve on every OBD row" mutation the test fails with 12 issues. I r
 
 Not run. The fresh reviewer stopped on the weekly API limit before reporting, and the user chose to merge N4 without it.
 
+### Round 2 (owed, run after the merge)
+
+Range `174e34e..cfa0cbc`, on branch `n4-review-r2`. Reviewer: fresh `reviewer` agent. Result: 0 BLOCKER / 2 MAJOR / 1 MINOR.
+
+Verified clean:
+- **Tap:** non-blocking, with leaf locks; stats are unchanged; refused events are never tapped, and the feed finishes on both end paths.
+- **Sendable surface.**
+- **Sidecar:** header at Start, closed at the feed end, bounded buffer. A write failure stops only the sidecar. Deletion removes it first, and share includes it.
+- **Privacy, log format, Core purity.**
+- **Live/replay equivalence:** a shared `LiveNavigationRun`; jumps and pins are gated by `accepts`.
+- **Engine:** B0 parked fold and exact OU macro step; B1 timeout, newest-wins, ECU filter and apply time; B0-1 resume.
+- **Service:** generation-safe end, bounded memory.
+- **Map:** ellipse convention, DR heading only once converged, the 300 m rule, faded fixes, polylines depend on `track` only. cfa0cbc reads correctly in light and dark mode.
+
+`swift test`: 614 tests in 91 suites.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R14.2-1 | MAJOR | In heading-up, follow never returns to the driver's zoom after an ellipse-fit widening. `frame()` clears `userDistance` and its own write matches `writtenDistance`, so `userDistance` stays nil. `followDistance()` then falls back to `distance`, which `onMapCameraChange` overwrites with our own widened writes, so the span only ever grows until the driver pinches. Fails PLAN.md §6 N4 C item 3. Untested. | CONFIRMED | Verified at `MapView.swift:573-580` (frame), `:474-481` (`distance` updated by any report, `userDistance` only for non-own writes) and `:600` (`base = userDistance ?? distance`). |
+| R14.2-2 | MAJOR | The pin always starts at the DR estimate, even off-screen. A driver who pans to the true spot and long-presses gets an off-screen pin. Fails PLAN.md §6 N4 C item 4, in the case manual fixes exist for. | SUPERSEDED | Verified at `MapView.swift:541-545`, `MapNavigation.swift:249-253`. As specified by N4_PLAN. The user chose to replace the flow: a double tap records at the finger, with no panel and no speed gate. Planned separately. |
+| R14.2-3 | MINOR | `replay_nav`'s track loop samples every 1 s up to a corrupt huge input arrival before the engine's B0-1 guard rejects it, so the replay hangs or runs out of memory. | DEFERRED | BACKLOG |
+
+Fix: R14.2-1 by `ios-ui-engineer`, together with the new manual-fix flow (same file), after plan approval.
+
 ### Run 14 summary
 
 - **Rounds:** 1 completed; round 2 not run (API limit).
