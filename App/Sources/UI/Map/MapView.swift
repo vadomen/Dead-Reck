@@ -62,7 +62,7 @@ struct MapScreen: View {
             headingUp: $headingUp,
             bearing: model.bearing,
             isStationary: model.isStationary,
-            manualFixes: model.manualFixes,
+            manualFixes: model.drawnManualFixes(excluding: session.droppedManualFixIDs),
             pendingFixIDs: Set(session.pendingManualFixes.map(\.id)),
             manual: marking,
             recordingFile: model.currentFile,

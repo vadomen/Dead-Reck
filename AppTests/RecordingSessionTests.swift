@@ -695,6 +695,52 @@ struct RecordingSessionManualFixTests {
         #expect(Self.manualFixes(events).first?.t == tapT)
     }
 
+    @Test("Background writes a fix still in its undo window, before the background row (R14.3-3)")
+    func backgroundWritesPending() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let (session, _, url) = try await Self.started(window: .seconds(60), scratch: scratch)
+        let tapT = try #require(session.manualFixTapTime())
+        _ = try #require(session.stageManualFix(latitude: 0.001, longitude: 0.002, tapT: tapT, mapSpanM: 200))
+
+        session.handleScenePhase(.inactive)
+        #expect(session.pendingManualFixes.count == 1, "inactive writes nothing")
+        session.handleScenePhase(.background)
+        #expect(session.pendingManualFixes.isEmpty)
+        session.handleScenePhase(.active)
+        await session.stop()
+
+        let (_, events, _) = try RecordingFixtures.read(url)
+        let fixIndex = try #require(events.firstIndex { $0.payload.kind == "manualFix" })
+        let backgroundIndex = try #require(RecordingFixtures.index(of: .background, in: events))
+        #expect(fixIndex < backgroundIndex)
+        let fixes = Self.manualFixes(events)
+        #expect(fixes.count == 1)
+        let (t, fix) = try #require(fixes.first)
+        #expect(t == tapT && fix.pressedT == tapT)
+        #expect(fix.latitude == 0.001 && fix.longitude == 0.002 && fix.mapSpanM == 200)
+    }
+
+    @Test("A write failure drops a pending fix: the map no longer draws it and no row exists (R14.3-4)")
+    func failureHidesPendingFromMap() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let (session, _, url) = try await Self.started(window: .seconds(60), scratch: scratch)
+        let generation = try #require(session.currentGeneration)
+        let id = try Self.stage(session, latitude: 0.001)
+        let model = MapViewModel(
+            track: GPSTrack(), latest: nil, manualFixes: [ConfirmedFix(id: id, latitude: 0.001, longitude: 0)])
+        #expect(model.drawnManualFixes(excluding: session.droppedManualFixIDs).map(\.id) == [id])
+
+        await session.handleWriteFailure(.diskFull, generation: generation)
+        #expect(session.pendingManualFixes.isEmpty)
+        #expect(!session.cancelPendingManualFix(id))
+        #expect(model.drawnManualFixes(excluding: session.droppedManualFixIDs).isEmpty)
+
+        let (_, events, _) = try RecordingFixtures.read(url)
+        #expect(Self.manualFixes(events).isEmpty)
+    }
+
     @Test("Several pending fixes are written in tap order")
     func tapOrder() async throws {
         let scratch = try ScratchStore()

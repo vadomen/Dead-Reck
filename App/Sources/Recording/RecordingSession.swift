@@ -566,6 +566,11 @@ final class RecordingSession {
     /// map draws them as pending. Empty outside a recording.
     private(set) var pendingManualFixes: [PendingManualFix] = []
 
+    /// Ids of fixes that were dropped without being written (write failure,
+    /// recording gone). Ids are never reused, so the set only grows; the map
+    /// must not draw these (R14.3-4).
+    private(set) var droppedManualFixIDs: Set<PendingManualFix.ID> = []
+
     /// Read-only, for the map's stopped check: `replyUptime` of the reading
     /// behind `live.obdSpeedKmh`, nil when there is none.
     var obdSpeedReplyUptime: Double? { obdSpeedUptime }
@@ -649,7 +654,10 @@ final class RecordingSession {
         pendingManualFixes.removeAll { ids.contains($0.id) }
         for fix in fixes {
             recording?.pendingFixTimers.removeValue(forKey: fix.id)?.cancel()
-            guard let rec = recording, rec.generation == fix.generation, rec.isWritable else { continue }
+            guard let rec = recording, rec.generation == fix.generation, rec.isWritable else {
+                droppedManualFixIDs.insert(fix.id)
+                continue
+            }
             rec.sink.record(LogEvent(timestamp: fix.sample.pressedT, payload: .manualFix(fix.sample)))
         }
     }
@@ -658,6 +666,9 @@ final class RecordingSession {
     private func dropPendingManualFixes(_ rec: ActiveRecording) {
         for timer in rec.pendingFixTimers.values { timer.cancel() }
         rec.pendingFixTimers = [:]
+        for fix in pendingManualFixes where fix.generation == rec.generation {
+            droppedManualFixIDs.insert(fix.id)
+        }
         pendingManualFixes.removeAll { $0.generation == rec.generation }
     }
 
@@ -677,6 +688,11 @@ final class RecordingSession {
         switch phase {
         case .background:
             guard let rec = recording, rec.isWritable else { return }
+            // A fix in its undo window is written now (R14.3-3): iOS may kill
+            // the app after this, and the driver saw the fix as recorded.
+            // `.inactive` does nothing; a fix staged later, while in the
+            // background, is written by its timer.
+            commitAllPendingManualFixes()
             rec.record(LifecycleSample(.background))
             flushInBackgroundTask(rec, reason: "background")
         case .active, .inactive:

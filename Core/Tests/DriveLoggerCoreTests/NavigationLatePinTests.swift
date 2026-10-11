@@ -66,18 +66,24 @@ struct NavigationLatePinTests {
 
     // MARK: Late pin, heading unknown
 
-    @Test("A pin 3 s late while heading is unknown lands where it lands in arrival order (8, 15, 25 m/s)",
-          arguments: [8.0, 15.0, 25.0])
-    func latePinMatchesArrivalOrder(speed: Double) throws {
+    /// Delay 3 s: the app's undo window. Delay 0.1 s: exactly one grid
+    /// step late (R14.4-2) — the pin arrives right after the step at
+    /// floor(t) + 1 step has run, the smallest delay that is late. A late
+    /// test of "more than one step past floor(t)" would take it for an
+    /// arrival-order pin and shift it by the mean motion (≤ 2.5 m at 25 m/s).
+    @Test("A pin 3 s or one grid step late while heading is unknown lands where it lands in arrival order (8, 15, 25 m/s)",
+          arguments: [8.0, 15.0, 25.0], [3.0, 0.1])
+    func latePinMatchesArrivalOrder(speed: Double, delay: Double) throws {
         let (drive, inputs) = Self.drive(speed: speed)
         let config = S.config(particles: 2000, seed: 1)
         let inOrder = Self.estimate(inputs, config: config, at: 83.5)
-        let late = Self.estimate(Self.delayingPin(inputs, at: 80, by: 3), config: config, at: 83.5)
+        let late = Self.estimate(Self.delayingPin(inputs, at: 80, by: delay), config: config, at: 83.5)
         let a = try #require(inOrder.estimate), b = try #require(late.estimate)
         #expect(inOrder.engine.counters.lateManualFixes == 0)
-        #expect(late.engine.counters.lateManualFixes == 1 && late.engine.counters.lateManualFixesMeanShift == 0)
+        #expect(late.engine.counters.lateManualFixes == 1 && late.engine.counters.lateManualFixesMeanShift == 0,
+                "pin \(delay) s late at \(speed) m/s")
         let gap = Self.distance(a, b)
-        #expect(gap < 3, "late pin \(gap) m from arrival order at \(speed) m/s (errors: in order \(drive.error(a, at: 83.5)) m, late \(drive.error(b, at: 83.5)) m)")
+        #expect(gap < 3, "pin \(delay) s late: \(gap) m from arrival order at \(speed) m/s (errors: in order \(drive.error(a, at: 83.5)) m, late \(drive.error(b, at: 83.5)) m)")
         #expect(drive.error(b, at: 83.5) < drive.error(a, at: 83.5) + 3)
         #expect(abs(angleDifference(b.headingDeg, a.headingDeg)) < 2)
     }

@@ -98,6 +98,11 @@ final class MapViewModel {
         manualFixes.append(ConfirmedFix(id: id, latitude: latitude, longitude: longitude))
     }
 
+    /// What the map draws: never a fix the session dropped without writing it.
+    func drawnManualFixes(excluding dropped: Set<Int>) -> [ConfirmedFix] {
+        dropped.isEmpty ? manualFixes : manualFixes.filter { !dropped.contains($0.id) }
+    }
+
     /// Undo: the fix is not drawn any more.
     func removeManualFix(id: Int) {
         manualFixes.removeAll { $0.id == id }
