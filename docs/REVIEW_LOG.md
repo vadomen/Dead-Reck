@@ -1011,3 +1011,48 @@ Tests: Core passes 622 tests in 92 suites; the app passes 241 tests in 38 suites
   - `cd Core && swift test`: 622 tests in 92 suites pass.
   - App: 241 tests in 38 suites pass; the simulator build is green.
   - The 30 acceptance replays are byte-identical.
+
+## Run 16: N3.1 road pack (main..n3.1-road-pack, b703157..2064dc3), started 2026-10-12
+
+The range adds the road pack format v1 (docs/ROAD_PACK.md), the Core reader, network, grid, geometry and writer (`Navigation/Roads/`), the Mac-only `RoadPackBuild` target, the `build_roads` CLI, the road tests and `tools/roads/build_packs.sh`. It changes no engine behaviour. Branch: `n3.1-road-pack`.
+
+### Round 1
+
+Reviewer: fresh `reviewer` agent. Result: 0 BLOCKER / 1 MAJOR / 5 MINOR.
+
+Verified clean: byte layout matches ROAD_PACK.md (header, section table, EDGE records); bounds and overflow checks on open, `verify()` index checks, a 40 000-mutation fuzz with no trap; version refusal; writer determinism; the grid (exact segment–rectangle distance, negative cells, long segments, latitude scaling, `maximumScale`); builder oneway, level, split and exclusion rules; OPL parsing; `RoadNetwork` de-duplication and `roadSetHash`; the `build_roads` size limit and empty-pack refusal; `build_packs.sh` quoting and output paths; Core purity; the app does not link `RoadPackBuild`; no engine, replay or log-format change; no place names, relation IDs or real coordinates committed.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R16.1-1 | MAJOR | No test checks that the writer indexes with the scale-corrected `effectiveRadiusM` instead of `searchRadiusM` (`RoadPackWriter.swift:177`). The brute-force fixture sits at (0, 0), where the scale error is ~1.5 ppm, so the mutation `let radius = grid.searchRadiusM` passes every road test. A pack near the poleward edge of a tall family box would then miss segments within 50 true metres. | FIXED | Verified: at (0, 0) R and R_eff list the same cells; `effectiveRadius()` tests the function, not the writer. Regression test `RoadPackPropertyTests/writerUsesEffectiveRadius` (synthetic 58–62° N family box, streets aligned so a cell boundary falls between R and R·scale) fails under the mutation (856 of 20 000 queries miss a segment) and passes with the real writer. |
+| R16.1-2 | MINOR | `build_roads` traps (exit 133) on a non-finite or out-of-range `--grid-bbox` and on a negative `--bench`, instead of exiting with status 2. | DEFERRED | BACKLOG |
+| R16.1-3 | MINOR | Public `RoadPack.cellEntry(_:)` has no index precondition; in `-O` builds an out-of-range index reads outside the mapping, contrary to ROAD_PACK.md:258. | DEFERRED | BACKLOG |
+| R16.1-4 | MINOR | Zero-length segments (duplicate-coordinate nodes) are kept, with bearing `atan2(0,0)` = north. | DEFERRED | BACKLOG (N3.2 must skip them) |
+| R16.1-5 | MINOR | `contentHash` covers META's `builder.commit` from HEAD, so a docs-only commit changes a rebuilt pack's hash; `-dirty` ignores untracked files. | DEFERRED | BACKLOG |
+| R16.1-6 | MINOR | The golden hash pins neither the COVR layout nor header bytes 48–55 (no coverage, `osmTimestamp` 0). | DEFERRED | BACKLOG |
+
+Tests: Core passes 657 tests in 95 suites. No App change, so no simulator build was needed.
+
+### Round 2
+
+Reviewer: fresh `reviewer` agent. Result: 0 BLOCKER / 0 MAJOR / 5 MINOR.
+
+Verified clean: the R16.1-1 test fails under both mutations (R instead of R_eff for the index and stats, and for the cell search alone) and passes with the real writer; byte layout vs ROAD_PACK.md; open and accessor safety under 30 000 mutated, rehashed and truncated packs in release; `verify()` incidence logic; version handling; hash coverage; writer determinism; grid completeness (negative cells, clamping, per-pack R_eff under de-duplication); builder rules and stable keys; `build_roads` limits, atomic write and re-verify; `build_packs.sh` fallbacks; Core purity; the app does not link `RoadPackBuild`; no engine, replay or log-format change; no place names, relation IDs or real coordinates committed.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R16.2-1 | MINOR | `build_roads --info --bench` runs the bench on a pack that failed `verify()` and traps (exit 133) instead of exiting 4. | DEFERRED | BACKLOG |
+| R16.2-2 | MINOR | `verify()` and the writer accept overlapping segment keys within one way (hand-made or hostile packs only; the builder cannot produce them). | DEFERRED | BACKLOG |
+| R16.2-3 | MINOR | Reserved header and section flag bits are ignored instead of refused. | DEFERRED | BACKLOG |
+| R16.2-4 | MINOR | `build_packs.sh` loops with `seq 0 $((COUNT-1))`; on macOS an empty `packs` array runs the loop twice with name `null`. | DEFERRED | BACKLOG |
+| R16.2-5 | MINOR | ROAD_PACK.md omits `oneway=false`/`0` as explicit two-way; `RoadNetwork` doc points to a nonexistent section. | DEFERRED | BACKLOG |
+
+Tests: Core passes 657 tests in 95 suites (eb25d79). No App change.
+
+**Loop stopped: no BLOCKER or MAJOR findings.**
+
+### Run 16 summary
+
+- **Rounds:** 2 run.
+- **Findings:** 1 MAJOR fixed (R16.1-1, regression test), 0 rejected, 10 MINOR deferred (R16.1-2..6, R16.2-1..5).
+- **Final tests:** `cd Core && swift test`: 657 tests in 95 suites pass. No App change; the simulator build was green at 2064dc3 and nothing App-facing changed since.

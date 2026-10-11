@@ -17,6 +17,11 @@ let package = Package(
         .executable(name: "inspect_log", targets: ["inspect_log"]),
         // Mac-only navigation replay: `swift run -c release replay_nav <file>`.
         .executable(name: "replay_nav", targets: ["replay_nav"]),
+        // Mac-only road pack builder: `swift run -c release build_roads`.
+        // Its library RoadPackBuild (OPL reader, graph builder) is not a
+        // product, so the app, which links only DriveLoggerCore, cannot
+        // pull it in.
+        .executable(name: "build_roads", targets: ["build_roads"]),
     ],
     targets: [
         .target(
@@ -33,9 +38,19 @@ let package = Package(
             dependencies: ["DriveLoggerCore"],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
+        .target(
+            name: "RoadPackBuild",
+            dependencies: ["DriveLoggerCore"],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
+        .executableTarget(
+            name: "build_roads",
+            dependencies: ["DriveLoggerCore", "RoadPackBuild"],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
         .testTarget(
             name: "DriveLoggerCoreTests",
-            dependencies: ["DriveLoggerCore"],
+            dependencies: ["DriveLoggerCore", "RoadPackBuild"],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
     ]

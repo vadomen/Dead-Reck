@@ -10,6 +10,16 @@
 logs/
 
 # ---------------------------------------------------------------------------
+# OpenStreetMap extracts and built road packs (docs/N3_PLAN.md). Never commit.
+#
+# Large, ODbL-licensed, and the choice of regions reveals where someone drives.
+# osm/ also holds packs.json with the admin relation IDs.
+# ---------------------------------------------------------------------------
+osm/
+*.osm.pbf
+*.roadpack
+
+# ---------------------------------------------------------------------------
 # Per-developer signing. Config/Signing.xcconfig is committed; this is not.
 # ---------------------------------------------------------------------------
 Config/Local.xcconfig
