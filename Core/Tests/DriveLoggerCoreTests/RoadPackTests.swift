@@ -277,7 +277,7 @@ struct RoadPackPropertyTests {
         let ways = try OPLReader.ways(in: Self.townLines().joined(separator: "\n"))
         let (graph, _) = try RoadGraphBuilder(classes: Set(RoadGraphBuilder.regionClasses)).build(ways: ways)
         let size = try RoadPackWriter(grid: RoadFixture.grid()).write(graph).count
-        #expect(throws: RoadPackError.tooLarge(size)) { try RoadPackWriter(grid: RoadFixture.grid(), sizeLimit: size - 1).write(graph) }
+        #expect(throws: RoadPackError.tooLarge(size: size, limit: size - 1)) { try RoadPackWriter(grid: RoadFixture.grid(), sizeLimit: size - 1).write(graph) }
         #expect(try RoadPackWriter(grid: RoadFixture.grid(), sizeLimit: size).write(graph).count == size)
         #expect(RoadPackFormat.maximumFileSize == 150_000_000)
     }

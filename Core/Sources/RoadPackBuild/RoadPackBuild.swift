@@ -128,6 +128,9 @@ public enum RoadPackBench {
         /// Mean wall time per lookup (cell search + distance test on every
         /// candidate), nanoseconds.
         public var nanosecondsPerLookup: Double
+        /// Mean wall time of the cell search alone (`CELK` binary search and
+        /// the `CELO` range), nanoseconds.
+        public var nanosecondsPerCellSearch: Double
         /// CELS entries per non-empty cell.
         public var cellEntriesP50: Int
         public var cellEntriesP95: Int
@@ -179,8 +182,19 @@ public enum RoadPackBench {
                 counts.append(n)
             }
         }
-        if sink.isNaN { print("") }  // keeps the loop from being optimised away
-        let ns = Double(elapsed.components.seconds) * 1e9 + Double(elapsed.components.attoseconds) / 1e9
+        var entries = 0
+        let searchElapsed = clock.measure {
+            for q in xs.indices {
+                let c = grid.cell(x: xs[q], y: ys[q])
+                if let index = pack.cellIndex(cx: c.cx, cy: c.cy) { entries &+= pack.cellEntryRange(index).count }
+            }
+        }
+        // Keeps the loops from being optimised away.
+        if sink.isNaN || entries < 0 { print("") }
+        func nanoseconds(_ d: Duration) -> Double {
+            Double(d.components.seconds) * 1e9 + Double(d.components.attoseconds) / 1e9
+        }
+        let ns = nanoseconds(elapsed)
 
         var cellSizes: [Int] = []
         cellSizes.reserveCapacity(pack.cellCount)
@@ -197,6 +211,7 @@ public enum RoadPackBench {
             candidatesMean: Double(counts.reduce(0, +)) / Double(n),
             withinRadiusMean: Double(within) / Double(n),
             nanosecondsPerLookup: ns / Double(n),
+            nanosecondsPerCellSearch: nanoseconds(searchElapsed) / Double(n),
             cellEntriesP50: pct(sortedCells, 0.5), cellEntriesP95: pct(sortedCells, 0.95),
             cellEntriesMax: sortedCells.last ?? 0
         )

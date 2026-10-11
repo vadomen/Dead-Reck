@@ -270,7 +270,7 @@ public struct RoadPackWriter {
             offset = (offset + s.bytes.count + 7) & ~7
         }
         let fileSize = offset
-        if let limit = sizeLimit, fileSize > limit { throw RoadPackError.tooLarge(fileSize) }
+        if let limit = sizeLimit, fileSize > limit { throw RoadPackError.tooLarge(size: fileSize, limit: limit) }
 
         var out = LittleEndianBytes()
         out.bytes.reserveCapacity(fileSize)

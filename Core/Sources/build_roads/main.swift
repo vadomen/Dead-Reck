@@ -87,7 +87,7 @@ func printBench(_ report: RoadPackBench.Report) {
     print("lookup bench (seed \(report.seed), \(report.queries) queries within the radius of a random segment):")
     print("  candidates per lookup: p50 \(report.candidatesP50), p95 \(report.candidatesP95), max \(report.candidatesMax), mean \(String(format: "%.1f", report.candidatesMean))")
     print("  of which within radius: mean \(String(format: "%.1f", report.withinRadiusMean))")
-    print("  lookup + distance test: \(String(format: "%.0f", report.nanosecondsPerLookup)) ns per lookup")
+    print("  lookup + distance test: \(String(format: "%.0f", report.nanosecondsPerLookup)) ns per lookup; cell search alone \(String(format: "%.0f", report.nanosecondsPerCellSearch)) ns")
     print("  entries per cell: p50 \(report.cellEntriesP50), p95 \(report.cellEntriesP95), max \(report.cellEntriesMax)")
 }
 
@@ -228,6 +228,9 @@ if let path = options["--coverage"] {
 let result: RoadPackBuild.Result
 do {
     result = try RoadPackBuild.build(ways: ways, parameters: parameters)
+    // An empty pack is almost always a broken pipeline (an empty or
+    // misplaced extract), not a real region without roads.
+    guard result.index.edges > 0 else { fail("\(inputURL.path): no roads of the selected classes (\(ways.count) ways read); not written", status: 1) }
 } catch let error as RoadPackError {
     if case .tooLarge = error { fail("\(error); not written (split the region at admin_level 6)", status: 3) }
     fail("\(error)", status: 1)

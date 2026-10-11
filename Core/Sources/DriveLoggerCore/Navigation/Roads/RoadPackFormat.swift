@@ -136,7 +136,7 @@ public enum RoadPackError: Error, Equatable, Sendable, CustomStringConvertible {
     case noPacks
     /// Writer input that cannot be written as a valid pack.
     case invalidContent(String)
-    case tooLarge(Int)
+    case tooLarge(size: Int, limit: Int)
 
     public var description: String {
         switch self {
@@ -157,7 +157,7 @@ public enum RoadPackError: Error, Equatable, Sendable, CustomStringConvertible {
         case .duplicatePack(let hash): "pack \(NavigationSeed.hex(hash)) loaded twice"
         case .noPacks: "no packs"
         case .invalidContent(let what): "invalid pack content: \(what)"
-        case .tooLarge(let size): "pack is \(size) bytes, over the \(RoadPackFormat.maximumFileSize)-byte limit"
+        case .tooLarge(let size, let limit): "pack is \(size) bytes, over the \(limit)-byte limit"
         }
     }
 }
