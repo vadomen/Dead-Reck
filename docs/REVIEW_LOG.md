@@ -1032,3 +1032,27 @@ Verified clean: byte layout matches ROAD_PACK.md (header, section table, EDGE re
 | R16.1-6 | MINOR | The golden hash pins neither the COVR layout nor header bytes 48–55 (no coverage, `osmTimestamp` 0). | DEFERRED | BACKLOG |
 
 Tests: Core passes 657 tests in 95 suites. No App change, so no simulator build was needed.
+
+### Round 2
+
+Reviewer: fresh `reviewer` agent. Result: 0 BLOCKER / 0 MAJOR / 5 MINOR.
+
+Verified clean: the R16.1-1 test fails under both mutations (R instead of R_eff for the index and stats, and for the cell search alone) and passes with the real writer; byte layout vs ROAD_PACK.md; open and accessor safety under 30 000 mutated, rehashed and truncated packs in release; `verify()` incidence logic; version handling; hash coverage; writer determinism; grid completeness (negative cells, clamping, per-pack R_eff under de-duplication); builder rules and stable keys; `build_roads` limits, atomic write and re-verify; `build_packs.sh` fallbacks; Core purity; the app does not link `RoadPackBuild`; no engine, replay or log-format change; no place names, relation IDs or real coordinates committed.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R16.2-1 | MINOR | `build_roads --info --bench` runs the bench on a pack that failed `verify()` and traps (exit 133) instead of exiting 4. | DEFERRED | BACKLOG |
+| R16.2-2 | MINOR | `verify()` and the writer accept overlapping segment keys within one way (hand-made or hostile packs only; the builder cannot produce them). | DEFERRED | BACKLOG |
+| R16.2-3 | MINOR | Reserved header and section flag bits are ignored instead of refused. | DEFERRED | BACKLOG |
+| R16.2-4 | MINOR | `build_packs.sh` loops with `seq 0 $((COUNT-1))`; on macOS an empty `packs` array runs the loop twice with name `null`. | DEFERRED | BACKLOG |
+| R16.2-5 | MINOR | ROAD_PACK.md omits `oneway=false`/`0` as explicit two-way; `RoadNetwork` doc points to a nonexistent section. | DEFERRED | BACKLOG |
+
+Tests: Core passes 657 tests in 95 suites (eb25d79). No App change.
+
+**Loop stopped: no BLOCKER or MAJOR findings.**
+
+### Run 16 summary
+
+- **Rounds:** 2 run.
+- **Findings:** 1 MAJOR fixed (R16.1-1, regression test), 0 rejected, 10 MINOR deferred (R16.1-2..6, R16.2-1..5).
+- **Final tests:** `cd Core && swift test`: 657 tests in 95 suites pass. No App change; the simulator build was green at 2064dc3 and nothing App-facing changed since.
