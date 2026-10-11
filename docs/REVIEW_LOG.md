@@ -931,5 +931,46 @@ Fix (user chose the per-particle shift for R14.3-1):
 
 Tests: `cd Core && swift test` 622 tests in 92 suites; app 239 tests in 38 suites (simulator CA515184…); simulator build green; Core imports Foundation only.
 
-**Round 4 (fresh reviewer) pending. This is the loop's last round.**
+### Round 4
+
+Range `174e34e..efe5023`, the loop's last round. Reviewer: fresh `reviewer` agent. Result: 0 BLOCKER / 0 MAJOR / 3 MINOR.
+
+Verified clean:
+- **R14.3-1 ring maintenance:**
+  - resample remap; jitter, which changes heading and scale only;
+  - re-anchor Jacobian, parked fold, full and partial reseed;
+  - the χ² reset and the Kalman update, neither of which touches the prediction-only motion;
+  - B0-1.
+- **Late detection at grid edges.**
+- **The covariance choice.**
+- **Forward prediction of a late initialising pin:** frozen, stale and partial stretches, and the isotropic gap term.
+- **No new RNG draws; memory bounded.**
+- **Replays unchanged:** no recorded pin can be late in arrival or file order.
+- **R14.3-2:** Undo is truthful on every path (tab return, background, Stop, new recording), and the main actor serialises it.
+
+Tests: Core 622 tests in 92 suites; app 239 tests in 38 suites.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R14.4-1 | MINOR | A late pin tapped before the engine initialised gets no compensation for the time before initialisation. `initialize` resets the ring and history, and `predictLateInitialisation` doesn't update `motionEast/North`, cumulative motion or the ring. Two pins 1.5 s apart, no GPS: 0.9 / 5.5 / 14.4 m off arrival order at 8 / 15 / 25 m/s, ellipse 10–23 % smaller, truth still inside. It is counted as a mean shift, though none was applied. | DEFERRED | BACKLOG |
+| R14.4-2 | MINOR | Two mutations survive: a one-step-late pin (`tapStepNs + stepNs < $0`, ≤ 2.5 m), and `recordMotion` removed from `macroStep` (unreachable while taps are possible). This corrects the round-3 note above: not *every* mutation of the new code fails a test. | DEFERRED | BACKLOG |
+| R14.4-3 | MINOR | `replay_nav`'s clamp note (`main.swift:167`) doesn't name `lateManualFixWindowS`. | DEFERRED | BACKLOG |
+
+**Loop stopped: no BLOCKER or MAJOR findings.**
+
+### Run 14 summary
+
+- **Rounds run:** 4. Round 2 ran after the N4 merge, by user decision.
+- **Fixed:**
+  - R14.1-1: held-fix ECU-filter test;
+  - R14.2-1: `FollowZoom`;
+  - R14.3-1: per-particle late manual fix;
+  - R14.3-2: truthful Undo.
+- **Superseded:** R14.2-2, replaced by the double-tap manual fix (user decision).
+- **Rejected:** 0.
+- **Deferred MINOR:** R14.1-2..5, R14.2-3, R14.3-3/4/6, R14.4-1..3.
+- **Moot:** R14.3-5.
+- **Final tests (efe5023):** `cd Core && swift test` 622 tests in 92 suites; app 239 tests in 38 suites; simulator build green; Core imports Foundation only.
+- **Acceptance replays:** 30/30 GeoJSON byte-identical through every round. No log-format change.
+- **Not verified on a device:** that the double tap records the pre-zoom point under the finger (PLAN.md §6, N4 C item 4).
 
