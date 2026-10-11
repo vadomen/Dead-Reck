@@ -158,6 +158,120 @@ struct RoadPackPropertyTests {
         #expect(RoadFixture.grid().effectiveRadiusM(minLatitude: 0, maxLatitude: 0) >= 50)
     }
 
+    /// Regression for R16.1-1: the writer must index with R_eff, not R.
+    /// Near (0, 0) the builder's frame cannot overstate distance materially
+    /// (N·cos φ peaks at the equator), so this uses a synthetic family box
+    /// 58°–62° N, 0°–0.1° E built with the same initialiser as
+    /// `build_roads --grid-bbox`, and data at its north edge (~62°), where
+    /// the frame (scales at 60°) overstates longitude metres by
+    /// cos 60° / cos 62° ≈ 1.065. Indexing with R would drop segments
+    /// 47–50 true metres east or west of a query.
+    @Test("Writer indexes with R_eff: a scale-distorted family frame still lists every segment within R true metres")
+    func writerUsesEffectiveRadius() throws {
+        let grid = RoadGrid(
+            southWest: RoadPoint(latE7: 580_000_000, lonE7: 0),
+            northEast: RoadPoint(latE7: 620_000_000, lonE7: 1_000_000)
+        )
+        let radius = grid.searchRadiusM
+        // Local metres around a synthetic origin near the box's north edge.
+        let originLatE7 = 619_950_000.0, originLonE7 = 500_000.0
+        let k = RoadGrid.trueMetresPerE7(latitude: originLatE7 / 1e7)
+        func point(_ east: Double, _ north: Double) -> RoadPoint {
+            RoadPoint(latE7: Int32((originLatE7 + north / k.lat).rounded()), lonE7: Int32((originLonE7 + east / k.lon).rounded()))
+        }
+        func metres(_ p: RoadPoint) -> (east: Double, north: Double) {
+            ((Double(p.lonE7) - originLonE7) * k.lon, (Double(p.latE7) - originLatE7) * k.lat)
+        }
+        // Two north-south streets (distance to them is all longitude), placed
+        // so a cell boundary lies 51.6 frame metres east of the first and
+        // west of the second: between R and R · 1.065, so a cell beyond that
+        // boundary holds points 48.5–50 true metres from the street and is
+        // listed only if the writer used R_eff. Any street position is valid
+        // input; this one is the unlucky alignment, chosen rather than hoped
+        // for. Plus an east-west street and a diagonal with a bend.
+        let originFrameX = (originLonE7 - Double(grid.originLonE7)) * grid.metresPerE7Lon
+        let boundaryX = (originFrameX / grid.cellSizeM).rounded() * grid.cellSizeM
+        func eastOfFrameX(_ frameX: Double) -> Double {
+            let lonE7 = (Double(grid.originLonE7) + frameX / grid.metresPerE7Lon).rounded()
+            return (lonE7 - originLonE7) * k.lon
+        }
+        let westStreet = eastOfFrameX(boundaryX - 51.6), eastStreet = eastOfFrameX(boundaryX + 3 * grid.cellSizeM + 51.6)
+        let shapes: [[(Double, Double)]] = [
+            [(westStreet, -400), (westStreet, 0), (westStreet, 400)],
+            [(eastStreet, -400), (eastStreet, 400)],
+            [(-400, 20), (400, 20)],
+            [(-400, -400), (-50, -120), (400, 300)],
+        ]
+        var nodeID: Int64 = 1
+        let edges = shapes.enumerated().map { i, shape -> RoadGraph.Edge in
+            defer { nodeID += 2 }
+            return RoadGraph.Edge(
+                fromNode: nodeID, toNode: nodeID + 1, points: shape.map { point($0.0, $0.1) },
+                osmWayID: Int64(i + 1), wayPointOffset: 0, highwayClass: .residential
+            )
+        }
+        // The alignment survived E7 rounding.
+        let westFrameX = grid.frame(edges[0].points[0]).x, eastFrameX = grid.frame(edges[1].points[0]).x
+        #expect(abs(boundaryX - westFrameX - 51.6) < 0.01 && abs(eastFrameX - (boundaryX + 3 * grid.cellSizeM) - 51.6) < 0.01)
+        let written = try RoadPackWriter(grid: grid).writeWithStatistics(RoadGraph(edges: edges))
+        let pack = try RoadPack(data: written.data)
+        #expect(pack.grid == grid)
+        // The fixture must be material: R_eff well above R.
+        let scale = grid.maximumScale(minLatitude: 61.99, maxLatitude: 62.0)
+        #expect(scale > 1.06 && scale < 1.07)
+        #expect(written.statistics.effectiveRadiusM > radius * 1.06)
+
+        var segments: [RoadPack.Segment] = []
+        for e in 0..<pack.edgeCount {
+            let r = pack.edge(e)
+            for j in 0..<(Int(r.pointCount) - 1) { segments.append(pack.segment(startingAt: Int(r.firstPoint) + j)) }
+        }
+        #expect(segments.count == 6)
+        var rng = NavigationRandom(seed: 1601)
+        var nearBoundary = 0, missed = 0
+        var firstMiss: String?
+        for _ in 0..<20_000 {
+            // Three quarters perpendicular to a random segment at R − 6 m to
+            // R + 1 m, so the boundary is densely sampled; the rest at a
+            // random angle within R + 5 m.
+            let s = segments[Int(rng.next() % UInt64(segments.count))]
+            let a = metres(s.a), b = metres(s.b)
+            let t = rng.nextUniform()
+            let dx = b.east - a.east, dy = b.north - a.north, length = (dx * dx + dy * dy).squareRoot()
+            let ox: Double, oy: Double
+            if rng.nextUniform() < 0.75 {
+                let r = (radius - 6 + 7 * rng.nextUniform()) * (rng.nextUniform() < 0.5 ? -1 : 1)
+                ox = -dy / length * r; oy = dx / length * r
+            } else {
+                let angle = 2 * Double.pi * rng.nextUniform(), r = (radius + 5) * rng.nextUniform()
+                ox = r * sin(angle); oy = r * cos(angle)
+            }
+            let q = point(a.east + t * dx + ox, a.north + t * dy + oy)
+            let lat = Double(q.latE7), lon = Double(q.lonE7)
+            var brute: Set<RoadSegmentKey> = []
+            for s in segments {
+                let d = RoadFixture.trueDistance(latE7: lat, lonE7: lon, s.a, s.b)
+                if d <= radius { brute.insert(s.key) }
+                if d <= radius, d > radius - 3.5 { nearBoundary += 1 }
+            }
+            let c = pack.grid.cell(latitude: q.latitude, longitude: q.longitude)
+            let listed = Set(pack.segments(inCellX: c.cx, y: c.cy).map { pack.segment(startingAt: $0).key })
+            let missing = brute.subtracting(listed)
+            if !missing.isEmpty {
+                missed += 1
+                if firstMiss == nil {
+                    let d = missing.map { key in
+                        let s = segments.first { $0.key == key }!
+                        return RoadFixture.trueDistance(latE7: lat, lonE7: lon, s.a, s.b)
+                    }
+                    firstMiss = "query \(q) misses \(missing.map(\.osmWayID).sorted()) at \(d.map { String(format: "%.2f", $0) }) m true"
+                }
+            }
+        }
+        #expect(missed == 0, "\(missed) of 20000 queries miss a segment within \(radius) m true; first: \(firstMiss ?? "-")")
+        #expect(nearBoundary > 3000)
+    }
+
     // MARK: Determinism
 
     @Test("Builder determinism: the same bytes from shuffled OPL lines (nodes and relations mixed in) and twice in a row")
