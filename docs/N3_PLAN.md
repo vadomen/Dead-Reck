@@ -1,7 +1,7 @@
 # N3 plan: OSM roads and map matching
 
-**Plan. Open questions answered 2026-10-11 (Q9 still open); see "Decisions". N3.0 has
-not started and waits for the user's go.** Model, config, replay and adoption rule: `docs/NAVIGATION.md`.
+**Plan. All open questions answered 2026-10-11; see "Decisions". N3.0 has not started
+and waits for the user's go.** Model, config, replay and adoption rule: `docs/NAVIGATION.md`.
 Roadmap: `WORKFLOW.md`, "Navigator roadmap". Owner: `navigation-engineer`, plus
 `ios-ui-engineer` for the N3.4 display. No logger, sensor or log-format change.
 
@@ -500,8 +500,7 @@ Since the double tap, a pin can be placed at any speed. Its row records `obdSpee
   - It runs only when `--roads` is given and needs clean GNSS that the engine did not
     receive. So it is defined for clean (`mask-after 230`), clean-long (`mask-after 380`)
     and informational `mask-after-motion` runs. It is **n/a on manual, manual-3 and
-    jammed-A/B**, which have no clean GNSS, unless the user supplies the driven roads for them
-    in `logs/` (Q9, still open).
+    jammed-A/B**, which have no clean GNSS and no road-level truth (Q9).
 - **Wrong-road share:** at each road-truth fix time, take the engine's `matchedEdge`. It
   scores:
   - **wrong** when it is not the truth edge (after de-duplication by way and point) and the
@@ -740,7 +739,7 @@ gating, attribution visibility (pure logic, in the `MapCameraLogicTests` pattern
 | truth point 1 | manual | 50.57 m mean | ≤ 200 m, and the adoption rule (+2.5 m) |
 | end error | jammed-A / jammed-B, use | 1.147 % / 1.068 % mean | no worse than N3.0 (+0.1 pp), ideally ≤ 0.5 % |
 | max error | clean-long / clean | 18.90 m / 13.94 m mean | no regression (adoption rule), ≤ 30 m every seed |
-| wrong-road share, by distance | clean, clean-long; jammed-A/B if road truth exists (Q9) | (new) | ≤ 5 % on clean drives, ≤ 10 % on jammed drives; revisited after the first N3.2 replays (Q8) |
+| wrong-road share, by distance | clean, clean-long (Q9) | (new) | ≤ 5 %; revisited after the first N3.2 replays (Q8) |
 | ellipse consistency (truth σ added, Q3) | all six | N3.0 baseline under the new definition | does not drop |
 | ms/step | all, Mac release | 0.058–0.079 | mean ≤ 0.15, road step ≤ 0.5 ms; device D1 |
 | determinism, causality, log format | tests | — | unchanged; `LogFormatVersion` and its fixtures untouched |
@@ -794,24 +793,25 @@ off the road the filter matched.
   the fix, no `--roads` bit-identical to N3.0, metrics tooling first, sidecar v2 in N3.3,
   no country or region names in committed docs): accepted as written.
 - **Q1:** packs are imported via Files or AirDrop; ≤ 150 MB per pack.
-- **Q2 (default):** national highways plus region packs at `admin_level` 4 and 6.
+- **Q2 (proposed default, accepted):** national highways plus region packs at `admin_level` 4 and 6.
 - **Q3:** ellipse consistency adds the truth's σ. The adoption-rule change is recorded
   explicitly in docs/NAVIGATION.md (in N3.0).
 - **Q4:** GPS fix compatibility is judged at the fix.
-- **Q5 (default):** `track` and `service=parking_aisle` excluded; `access=private` kept.
+- **Q5 (proposed default, accepted):** `track` and `service=parking_aisle` excluded; `access=private` kept.
 - **Q6 (default):** a pin with unknown speed uses 10 m/s; old long-press rows keep the
   `t − pressedT` allowance.
 - **Q7:** N2-1, N2-3 and the engine half of N4B1-1 are out of N3.
 - **Q8:** wrong-road share is measured by distance. Starting targets ≤ 5 % on clean drives
-  and ≤ 10 % on jammed drives, revisited after the first N3.2 replays.
-- **Q9: open.** Whether the user supplies the driven roads for manual, jammed-A and
-  jammed-B in `logs/`. Until then, wrong-road share is measured on the clean drives only.
+  and ≤ 10 % on jammed drives, revisited after the first N3.2 replays. With Q9 the jammed
+  target has no truth to be measured against and is not gated in N3.
+- **Q9:** no road-level truth for manual, jammed-A or jammed-B. Wrong-road share is
+  measured on the clean drives only.
 - **Q10:** the 2 ms budget is set on the iPhone 16 Pro Max.
 - **Q11 (default):** the Schmidt update (`roadAlongTrackCoupling` 0). Exact Kalman stays an
   N3.2 experiment and is adopted only through the adoption rule.
-- **Q12 (default):** a moving pin is on a road and anchors a road update; a stationary pin
+- **Q12 (proposed default, accepted):** a moving pin is on a road and anchors a road update; a stationary pin
   may be off-road and does not.
-- **Q13 (default):** no scheduled refresh. OSM data is refreshed on demand (for example
+- **Q13 (proposed default, accepted):** no scheduled refresh. OSM data is refreshed on demand (for example
   after driving a road missing from the pack). Each refresh gives a new pack hash and
   re-runs acceptance like a config change.
 
