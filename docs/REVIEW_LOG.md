@@ -974,3 +974,40 @@ Tests: Core 622 tests in 92 suites; app 239 tests in 38 suites.
 - **Acceptance replays:** 30/30 GeoJSON byte-identical through every round. No log-format change.
 - **Not verified on a device:** that the double tap records the pre-zoom point under the finger (PLAN.md §6, N4 C item 4).
 
+
+## Run 15: pre-drive manual-fix fixes (e2f7d13..7148677), started 2026-10-11
+
+The range fixes R14.3-3 (pending fixes written on background) and R14.3-4 (dropped fixes hidden on the map), and adds the one-step-late pin test (first half of R14.4-2). Branch: `backlog-r143-fixes`.
+
+### Round 1
+
+Reviewer: fresh `reviewer` agent. Result: 0 BLOCKER / 0 MAJOR / 3 MINOR.
+
+Verified clean:
+- **Ordering:** the `.background` path runs synchronously on the main actor (pending fixes, then `background` row, then flush). The flush covers everything already in the sink, so the `manualFix` row comes before `background` with its tap-time `t`.
+- **Stop, failure, calibration, `.inactive` and repeated cycles:** nothing is written twice or lost, and timers are cancelled.
+- **Undo:** the R14.3-2 guarantees still hold.
+- **Map:** ids are never reused, so a written fix cannot be hidden. `droppedManualFixIDs` costs one Int per dropped fix.
+- **Tests:** both new App tests discriminate. The one-step-late case fails under `tapStepNs + stepNs < $0` (on the counter check).
+- **T-1:** classified correctly as pre-existing timing flakiness.
+- **Format:** no log-format change; Core sources untouched.
+
+Tests: Core passes 622 tests in 92 suites; the app passes 241 tests in 38 suites.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R15.1-1 | MINOR | LOG_FORMAT.md:520 and the doc comments at `RecordingSession.swift:160, :592, :647` still say a pending fix is written only when the window closes or at Stop. Since R14.3-3 it is also written on entering the background. | DEFERRED | BACKLOG |
+| R15.1-2 | MINOR | `droppedManualFixIDs` only covers fixes dropped before they reach the sink. A fix committed on `.background` whose flush then fails (ENOSPC), with `finish()` failing too, is counted in `unwrittenEvents` but still drawn solid. The failed state is on screen. | DEFERRED | BACKLOG |
+| R15.1-3 | MINOR | The new insert in `writePending`'s skip branch (`RecordingSession.swift:658`) is untested and appears unreachable. This is the same gap as R14.3-6. | DEFERRED | BACKLOG (with R14.3-6) |
+
+**Loop stopped: no BLOCKER or MAJOR findings.**
+
+### Run 15 summary
+
+- **Rounds:** 1 run.
+- **Findings:** 0 fixed in the loop, 0 rejected, 3 MINOR deferred (R15.1-1..3).
+- **Fixed by the range itself:** R14.3-3, R14.3-4, and the first half of R14.4-2.
+- **Final tests (7148677):**
+  - `cd Core && swift test`: 622 tests in 92 suites pass.
+  - App: 241 tests in 38 suites pass; the simulator build is green.
+  - The 30 acceptance replays are byte-identical.
