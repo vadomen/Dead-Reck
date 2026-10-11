@@ -205,7 +205,7 @@ struct MapNavigationTests {
                     self.staged.append((lat, lon, tapT, span))
                     return self.accept ? 7 : nil
                 },
-                undo: { _ in }
+                undo: { _ in true }
             )
         }
     }
@@ -244,6 +244,35 @@ struct MapNavigationTests {
         fake.accept = false
         #expect(ManualFixTap.perform(latitude: 0, longitude: 0, visibleSpanM: 100, marking: fake.marking) == .ignored)
         #expect(ManualFixMarking.unavailable.undoWindow == .seconds(3))
+    }
+
+    // MARK: undo honesty (R14.3-2)
+
+    @Test("Undo after the fix was written keeps the marker and reports too late")
+    @MainActor
+    func undoTooLate() {
+        var removed: [Int] = []
+        let result = ManualFixUndo.perform(id: 3, cancel: { _ in false }, removeMarker: { removed.append($0) })
+        #expect(result == .tooLate)
+        #expect(removed.isEmpty)
+    }
+
+    @Test("Undo while pending cancels and removes the marker")
+    @MainActor
+    func undoPending() {
+        var cancelled: [Int] = []
+        var removed: [Int] = []
+        let result = ManualFixUndo.perform(
+            id: 3, cancel: { cancelled.append($0); return true }, removeMarker: { removed.append($0) })
+        #expect(result == .removed)
+        #expect(cancelled == [3] && removed == [3])
+    }
+
+    @Test("Undo is offered only while pending, also when a restarted view task re-reads it")
+    func undoOffer() {
+        #expect(ManualFixUndo.offersUndo(id: 3, pendingIDs: [3, 4]))
+        #expect(!ManualFixUndo.offersUndo(id: 3, pendingIDs: [4]))
+        #expect(!ManualFixUndo.offersUndo(id: 3, pendingIDs: []), "after a tab switch the id is long gone")
     }
 
     // MARK: follow zoom (R14.2-1)

@@ -886,4 +886,50 @@ Fixed on `n4-review-r2` (059b33f code and tests, 8436dbc docs). Plan approved by
 - Not verified: that `MapProxy.convert` inside the double tap's `onEnded` returns the pre-zoom coordinate. Simulator taps could not be automated, so this is a device check in PLAN.md §6, N4 C item 4.
 - Tests: `cd Core && swift test` 614 tests in 91 suites; app 236 tests in 38 suites; simulator build green.
 
-**Round 3 (fresh reviewer) pending.**
+### Round 3
+
+Range `174e34e..b4cfa21`. Reviewer: fresh `reviewer` agent. Result: 0 BLOCKER / 2 MAJOR / 4 MINOR.
+
+Verified clean:
+- **Log format:** the `manualFix` row keys and `speedSource` strings are unchanged; `LogFormatVersion`/`LogCodec`/`LogFormatCompatibilityTests` are untouched.
+- **A row with an earlier `t`:** safe for the writer, the reader, `inspect_log` (per-kind order) and the stats.
+- **Undo-window races:** at Stop, fixes are written before the `stop` row. On failure they are dropped. The generation is checked at write, and no fix is written twice.
+- **Engine:** no change.
+- **The gate:** removed cleanly.
+- **R14.2-1:** fixed by `FollowZoom`.
+- **Removed code:** fully gone.
+
+Tests: Core 614 tests in 91 suites; app 236 tests in 38 suites.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R14.3-1 | MAJOR | A late pin is compensated by the cloud's *mean* displacement since the tap (`shiftSince`, `NavigationEngine.swift:897-900`). While heading is unknown (a ring-shaped cloud), that mean is about 0 although each particle moved v × 3 s. Probe: the live dot stays 24 / 31 / 57 m behind at 8 / 15 / 25 m/s, against 0.1–12.5 m in arrival order. A pin that initialises the engine ignores the 3 s entirely; at 25 m/s the truth falls outside the 95 % ellipse. No test: with `since = 0` all 84 Navigation tests pass. The plan's and N4_PLAN's claim that the compensation is correct is wrong in this case. | CONFIRMED | Mutation reproduced: `since` set to zero, 84/84 Navigation tests green. |
+| R14.3-2 | MAJOR | Undo can lie. The `undo` closure ignores `cancelPendingManualFix`'s result and always removes the marker (`MapView.swift:92-95`). The toast lifetime is a view `.task` (`:361-365`), restarted on a tab return, so "Fix recorded · Undo" can be offered after the row is already written. A misplaced tap the driver believes undone stays in the recording as ground truth. | CONFIRMED | Verified at `MapView.swift:92-95` and `:361-365`; `cancelPendingManualFix` returns false once the fix is written (`RecordingSession.swift:629-634`). |
+| R14.3-3 | MINOR | Pending fixes are not written on `.background`; a kill within the window plus the flush interval loses a fix shown as recorded. | DEFERRED | BACKLOG |
+| R14.3-4 | MINOR | After a write failure drops pending fixes, the model still draws them as solid, "written" flags. | DEFERRED | BACKLOG |
+| R14.3-5 | MINOR | History ring capacity comes from `maxFixAgeS` × `stepHz`, not the undo window; `--set maxFixAgeS=2` truncates the late-pin shift. | DEFERRED | BACKLOG |
+| R14.3-6 | MINOR | The test title "a fix from an earlier recording is not written to the next" overclaims: no fix is pending at that stop. | DEFERRED | BACKLOG |
+
+Fix (user chose the per-particle shift for R14.3-1):
+- **R14.3-1** (`navigation-engineer`):
+  - Each particle keeps a 5 s ring of its own predicted motion (`lateManualFixWindowS`). A pin whose `t` is behind the grid targets pin + that particle's own motion since `t`, for both the Kalman update and the χ² reset.
+  - The ring follows resample, re-anchor, the parked fold, and reseed (a reseeded particle's past is rebuilt from its new heading).
+  - A pin older than the ring uses own motion plus the mean shift for the rest.
+  - A late initialising pin starts at the tap and is predicted forward over the steps run since, from a small pre-initialisation step record. No new RNG draws.
+  - Tests in `NavigationLatePinTests` (8 tests, 12 cases). 3 s late, heading unknown: 14 / 29 / 52 m → 0.0 / 0.1 / 0.1 m from arrival order at 8 / 15 / 25 m/s. The late initialising pin now keeps the truth inside its ellipse.
+  - Each mutation of the new code fails a test.
+  - Checked independently: with the window at 0 (the old mean shift), `latePinMatchesArrivalOrder` fails on distance (`gap < 3`).
+  - Replays: 30/30 GeoJSON byte-identical to `logs/mf/after` (checked independently). `late 0` in every run, so no recorded pin is late. `--as-live --compare` on manual-3 is exact.
+  - Cost: 2.4 MB at N = 2000; +0.007 ms/step; max ingest ≤ 0.66 ms on the Mac.
+- **R14.3-2** (`ios-ui-engineer`):
+  - `ManualFixUndo`: Undo is offered only while the fix is pending, and the marker is removed only when the cancel succeeds.
+  - A "Fix recorded" toast is dismissed as soon as its id leaves the pending list, including after a tab switch.
+  - A late Undo shows "Already recorded, not undone" and keeps the flag.
+  - Two of three new tests fail against the old logic; the third is a guard.
+- **R14.3-5**: moot. The mean history is now sized max(`maxFixAgeS`, `lateManualFixWindowS`), with a test.
+- **R14.3-4**: not done (deferred).
+
+Tests: `cd Core && swift test` 622 tests in 92 suites; app 239 tests in 38 suites (simulator CA515184…); simulator build green; Core imports Foundation only.
+
+**Round 4 (fresh reviewer) pending. This is the loop's last round.**
+

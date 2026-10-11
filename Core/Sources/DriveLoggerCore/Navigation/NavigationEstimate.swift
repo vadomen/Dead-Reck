@@ -123,6 +123,14 @@ public struct NavigationCounters: Hashable, Sendable, Codable {
     public var reseeds = 0
     public var manualFixes = 0
     public var manualResets = 0
+    /// Manual fixes ingested after grid steps beyond their own `t` (the
+    /// app's double-tap pin, written when its undo window closes; R14.3-1).
+    /// Included in `manualFixes`. 0 in arrival order.
+    public var lateManualFixes = 0
+    /// Late manual fixes older than the per-particle ring
+    /// (`lateManualFixWindowS`): shifted by the cloud's mean motion, or,
+    /// for an initialising one, given the isotropic gap allowance.
+    public var lateManualFixesMeanShift = 0
     public var resamples = 0
     /// Times the local plane moved to the cloud's mean (R13.1-3).
     public var reanchors = 0
@@ -147,6 +155,7 @@ extension NavigationCounters {
         case steps, zuptSteps, staleSpeedSteps, staleParkedSteps, fixesUsed, networkFixesUsed, fixesIgnoredStale
         case fixesHeld, heldFixesUsed, heldFixesDroppedMoving, heldFixesDroppedTimeout, heldFixesReplaced
         case fixesIgnoredInvalid, courseUpdates, speedUpdates, reseeds, manualFixes, manualResets, resamples
+        case lateManualFixes, lateManualFixesMeanShift
         case reanchors, coalescedSteps, macroSteps, inputsRejectedTimeJump
     }
 
@@ -174,6 +183,8 @@ extension NavigationCounters {
         reseeds = try value(.reseeds)
         manualFixes = try value(.manualFixes)
         manualResets = try value(.manualResets)
+        lateManualFixes = try value(.lateManualFixes)
+        lateManualFixesMeanShift = try value(.lateManualFixesMeanShift)
         resamples = try value(.resamples)
         reanchors = try value(.reanchors)
         coalescedSteps = try value(.coalescedSteps)

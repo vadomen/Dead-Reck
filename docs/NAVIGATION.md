@@ -128,8 +128,10 @@ updates reweight only by what heading and scale actually predict.
     because the camera frames the ellipse and the driver trusts it.
   - **Latency**: a v2/v3 fix's `t` is the fix time, before its arrival. The fix
     is shifted by the engine's own mean displacement and yaw since `t`, taken
-    from a ring of cumulative mean motion (10 s). This is causal and needs no
-    per-particle history.
+    from a ring of cumulative mean motion (max(`maxFixAgeS`,
+    `lateManualFixWindowS`), 10 s). This is causal and needs no per-particle
+    history. It is right for a converged cloud. It is not right while heading
+    is unknown (see late manual fix below).
   - **Stale fixes** (age > 10 s at arrival) are ignored unless OBD says the car
     is stopped.
   - **Held stale fix** (N4-B1, backlog N4B-1): a stale fix that arrives
@@ -175,6 +177,62 @@ updates reweight only by what heading and scale actually predict.
   reset (R13.1-1): that is the pin carrying the most information. For example,
   a ring-shaped cloud after km of unknown heading is cut down to the headings
   that lead to the pin, and resampling keeps that posterior.
+  - **Late manual fix** (R14.3-1). The double-tap flow writes the row when its
+    3 s undo window closes, with `t` = the tap, so the live engine (and
+    `--as-live`) ingests it about 3 s late. A pin is *late* when grid steps have
+    already run past floor(`t`). In arrival order this never happens: the
+    engine steps to floor(`t`) and then ingests. On a late pin each particle is
+    updated as of `t`: its target is the pin plus *that particle's own*
+    prediction displacement since `t`.
+    - Why not the mean shift: while heading is unknown the cloud is a ring, so
+      its mean displacement is about 0 although every particle moved
+      v × 3 s along its own heading. With the mean shift the live dot stayed
+      14 / 29 / 52 m from the arrival-order result at 8 / 15 / 25 m/s
+      (synthetic, 2000 particles). With the per-particle shift it stays
+      0.0 / 0.1 / 0.1 m away.
+    - Ring: each particle's cumulative prediction-only displacement
+      (`motionEast/North`, no update corrections) is snapshotted at every grid
+      step for `lateManualFixWindowS` (5 s: the 3 s window plus write and
+      scheduling delay). It follows the cloud:
+      - resampling remaps it by the same index map;
+      - re-anchoring maps it by the Jacobian, as the mean history;
+      - the parked catch-up fold records the last snapshots, bit-identical to
+        stepping;
+      - a reseeded particle gets the past it would have had with its new
+        heading and scale, from each step's yaw and OBD distance (not the
+        cloud's mean motion, which is about 0 exactly when reseeds happen).
+    - Covariance: the update uses each particle's covariance now, not at `t`.
+      The along/cross-track noise grown since `t` is at most
+      0.36 m²/m × v × 3 s ≈ 27 m² at 25 m/s, against R ≥ 900 m² (σ ≥ 30 m).
+      Leaving it in widens the likelihood by under 1.5 % in σ, which is
+      conservative. The posterior is then at most that Q too tight (σ about
+      0.4 m at 30 m). Removing it would need the per-particle Q since `t` too.
+    - Older than the ring: own motion over the ring plus the cloud's mean
+      motion from `t` to the ring's oldest snapshot (counter
+      `lateManualFixesMeanShift`).
+    - **Late initialising pin** (no cloud yet, so no per-particle history): the
+      cloud starts at the tap and is predicted forward over the grid steps run
+      since, from a small record of pre-initialisation steps (yaw, OBD speed,
+      and fresh / stale / frozen as `step` would decide). Each particle moves
+      with its own heading and scale, and its covariance grows by the
+      along/cross-track noise of that distance. Stale steps add the OU integral
+      variance along the heading. No random numbers are drawn; the heading and
+      scale random walks over those seconds (about 0.1°) are left out. Time the
+      record does not cover adds an isotropic (v × gap)². The result has the
+      same ellipse as a pin that arrived at the tap (within 5 %). At 25 m/s the
+      truth is 87.5 m away, inside a 171.9 m semi-major. Without it the cloud
+      sat at the tap with a 76.9 m semi-major, and the truth was outside. This
+      was chosen over inflating σ by `vObd` × age, because with heading unknown
+      the motion is a ring of radius v × age, not a disc, and the forward
+      prediction reproduces exactly that.
+    - `lateManualFixWindowS` 0 disables all of this (every pin gets the mean
+      shift, as before). Counters: `lateManualFixes`,
+      `lateManualFixesMeanShift`. Memory: two rings of
+      (window × stepHz + 1) × N Doubles plus one scratch buffer for the
+      resample remap (51 × 2000 × 24 B ≈ 2.4 MB at the defaults). Cost on the
+      replay set (Mac, release, 2000 particles): +0.007 ms/step, from
+      snapshotting 2 × N Doubles per step. Max ingest went from 0.13–0.36 ms to
+      0.25–0.66 ms (the resample remap; a reseed's reconstruction).
 - **Local plane re-anchoring** (R13.1-3): the plane's east axis uses each
   point's own cos φ, so far from the anchor it is sheared, and true north tilts
   by about Δλ·sin φ (1.28° at 100 km east, latitude 55°). That would bias
@@ -302,6 +360,7 @@ every result.
 | reseedHeadingStdDeg / reseedNoSupportSigma / reseedFraction | 30 / 4 / 0.5 | clean-fix reseed |
 | manualFixSigmaMinM / manualFixSpanDivisor | 30 / 12 | manual pin σ = max(min, mapSpanM / divisor); min without a span |
 | manualFixResetChi2 | 25 | manual reset when every particle is further than this from the pin (χ², 2 dof) |
+| lateManualFixWindowS | 5 | per-particle motion ring for late manual fixes (R14.3-1); also the minimum length of the mean-motion history. 0 disables (mean shift for every pin). Clamped to 0–60 |
 | resampleESSFraction | 0.5 | resampling threshold |
 | resampleHeadingJitterDeg / resampleScaleJitter | 0.2 / 0.0005 | jitter after resampling |
 | convergedHeadingStdDeg | 10 | `converged` threshold |

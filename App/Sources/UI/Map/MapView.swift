@@ -90,8 +90,10 @@ extension MapScreen {
                 return id
             },
             undo: { [session, model] id in
-                session.cancelPendingManualFix(id)
-                model.removeManualFix(id: id)
+                ManualFixUndo.perform(
+                    id: id, cancel: { session.cancelPendingManualFix($0) },
+                    removeMarker: { model.removeManualFix(id: $0) }
+                ) == .removed
             },
             undoWindow: session.manualFixUndoWindow
         )
@@ -172,6 +174,8 @@ struct MapToast: Hashable {
     enum Kind: Hashable {
         case recorded(id: Int)
         case zoomIn
+        /// Undo came too late: the row is in the file.
+        case alreadyRecorded
     }
 
     var kind: Kind
@@ -182,7 +186,7 @@ struct MapToast: Hashable {
     func duration(undoWindow: Duration) -> Duration {
         switch kind {
         case .recorded: undoWindow
-        case .zoomIn: .seconds(2.5)
+        case .zoomIn, .alreadyRecorded: .seconds(2.5)
         }
     }
 }
@@ -358,7 +362,11 @@ struct GPSMapView: View {
                 }
                 isStale = true
             }
+            // The toast lives as long as the fix is pending, not as long as a
+            // view task: leaving the tab cancels the task, not the toast.
+            .onChange(of: pendingFixIDs) { dismissIfWritten() }
             .task(id: toast) {
+                dismissIfWritten()
                 guard let shown = toast else { return }
                 try? await Task.sleep(for: shown.duration(undoWindow: manual.undoWindow))
                 if !Task.isCancelled { toast = nil }
@@ -499,6 +507,14 @@ struct GPSMapView: View {
         }
     }
 
+    /// A recorded-fix toast whose fix left the pending list goes away.
+    private func dismissIfWritten() {
+        if case .recorded(let id)? = toast?.kind,
+           !ManualFixUndo.offersUndo(id: id, pendingIDs: pendingFixIDs) {
+            toast = nil
+        }
+    }
+
     private func show(_ kind: MapToast.Kind) {
         toastSerial += 1
         toast = MapToast(kind: kind, serial: toastSerial)
@@ -511,19 +527,31 @@ struct GPSMapView: View {
             HStack(spacing: 14) {
                 Label("Fix recorded", systemImage: "checkmark.circle.fill")
                     .font(.headline)
-                Button("Undo") {
-                    manual.undo(id)
-                    self.toast = nil
+                if ManualFixUndo.offersUndo(id: id, pendingIDs: pendingFixIDs) {
+                    Button("Undo") {
+                        if manual.undo(id) {
+                            self.toast = nil
+                        } else {
+                            show(.alreadyRecorded)
+                        }
+                    }
+                    .font(.headline)
+                    .buttonStyle(.borderedProminent)
+                    .frame(minHeight: 56)
                 }
-                .font(.headline)
-                .buttonStyle(.borderedProminent)
-                .frame(minHeight: 56)
             }
             .padding(.leading, 16)
             .padding(.trailing, 8)
             .frame(minHeight: 64)
             .background(.regularMaterial, in: Capsule())
             .frame(maxWidth: .infinity)
+        case .alreadyRecorded:
+            Label("Already recorded, not undone", systemImage: "exclamationmark.triangle.fill")
+                .font(.headline)
+                .padding(.horizontal, 16)
+                .frame(minHeight: 56)
+                .background(.regularMaterial, in: Capsule())
+                .frame(maxWidth: .infinity)
         case .zoomIn:
             Label(PinPrecision.hint, systemImage: "plus.magnifyingglass")
                 .font(.headline)

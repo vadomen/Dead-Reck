@@ -192,6 +192,20 @@ public struct NavigationConfig: Hashable, Sendable, Codable {
     /// heading and scale hypotheses kept. A low ESS alone is not a reason
     /// to reset — that is the pin carrying information (R13.1-1).
     public var manualFixResetChi2 = 25.0
+    /// A manual fix whose `t` is before the engine's last grid step (the
+    /// app writes a double-tap pin when its 3 s undo window closes, `t` =
+    /// the tap) is applied to each particle as of `t`: the pin plus that
+    /// particle's own motion since, from a ring of per-particle positions
+    /// this many seconds long (R14.3-1). Older than the ring, the pin falls
+    /// back to the cloud's mean motion since `t`. Also sizes the record of
+    /// pre-initialisation steps a late initialising pin is predicted
+    /// forward over. Memory: 3 × (window × stepHz + 1) × particleCount
+    /// Doubles, two rings and the resample remap's scratch (2.4 MB at 5 s,
+    /// 10 Hz, 2000 particles). 5 s covers the 3 s
+    /// window plus write and scheduling delay. 0 disables (every pin
+    /// shifted by the mean motion, as before R14.3-1); clamped to
+    /// 0…`maxLateManualFixWindowS`.
+    public var lateManualFixWindowS = 5.0
 
     // MARK: Resampling
 
@@ -223,6 +237,9 @@ extension NavigationConfig {
     /// (an absurd `--set`) would overflow the nanosecond arithmetic in
     /// `estimate(at:)` (B0-1); an hour is far beyond any sensible horizon.
     public static let maxExtrapolationHorizonS = 3_600.0
+    /// Largest `lateManualFixWindowS`, s: the ring's memory grows with it
+    /// (60 s at 10 Hz and 2000 particles is about 29 MB).
+    public static let maxLateManualFixWindowS = 60.0
 
     /// This configuration with values the engine cannot use safely clamped
     /// (B0-1). `NavigationEngine.init` applies it, so `engine.config` is the
@@ -232,6 +249,8 @@ extension NavigationConfig {
     ///   non-finite value becomes the default.
     /// - `maxForwardJumpS`: a non-finite or non-positive value becomes the
     ///   default (there is no "off": an infinite jump is never plausible).
+    /// - `lateManualFixWindowS`: into 0…`maxLateManualFixWindowS`; a
+    ///   non-finite value becomes the default.
     public func validated() -> NavigationConfig {
         var config = self
         let defaults = NavigationConfig()
@@ -242,6 +261,10 @@ extension NavigationConfig {
         if !(config.maxForwardJumpS.isFinite && config.maxForwardJumpS > 0) {
             config.maxForwardJumpS = defaults.maxForwardJumpS
         }
+        if !config.lateManualFixWindowS.isFinite {
+            config.lateManualFixWindowS = defaults.lateManualFixWindowS
+        }
+        config.lateManualFixWindowS = min(max(config.lateManualFixWindowS, 0), Self.maxLateManualFixWindowS)
         return config
     }
 

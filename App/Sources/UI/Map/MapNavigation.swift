@@ -319,12 +319,36 @@ struct ManualFixMarking {
     var tapTime: @MainActor () -> MonotonicTimestamp?
     /// Stages the fix (`RecordingSession.stageManualFix`); nil when refused.
     var stage: @MainActor (_ latitude: Double, _ longitude: Double, _ tapT: MonotonicTimestamp, _ spanM: Double?) -> Int?
-    /// Cancels a staged fix (Undo).
-    var undo: @MainActor (_ id: Int) -> Void
+    /// Cancels a staged fix (Undo). False when it is already written or
+    /// dropped: nothing was undone.
+    var undo: @MainActor (_ id: Int) -> Bool
     /// How long Undo is offered; the recorder writes the row after this.
     var undoWindow: Duration = .seconds(3)
 
-    static let unavailable = ManualFixMarking(tapTime: { nil }, stage: { _, _, _, _ in nil }, undo: { _ in })
+    static let unavailable = ManualFixMarking(tapTime: { nil }, stage: { _, _, _, _ in nil }, undo: { _ in false })
+}
+
+/// Undo and its toast, decided on the recorder's pending list only (R14.3-2).
+enum ManualFixUndo {
+    enum Result: Equatable {
+        case removed
+        /// The row is already written (or dropped): the flag stays, say so.
+        case tooLate
+    }
+
+    /// Undo is offered only while the fix is still pending. A toast outliving
+    /// its view task (tab switch) must not offer it again.
+    static func offersUndo(id: Int, pendingIDs: Set<Int>) -> Bool {
+        pendingIDs.contains(id)
+    }
+
+    /// Removes the marker only when the recorder really cancelled the write.
+    @MainActor
+    static func perform(id: Int, cancel: (Int) -> Bool, removeMarker: (Int) -> Void) -> Result {
+        guard cancel(id) else { return .tooLate }
+        removeMarker(id)
+        return .removed
+    }
 }
 
 /// A double tap on the map: the decision, taken on what was true at the tap.

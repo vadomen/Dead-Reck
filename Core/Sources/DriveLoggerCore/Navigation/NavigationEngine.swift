@@ -50,6 +50,18 @@ import Foundation
 /// `t`, from a short history of cumulative mean motion — causal and without
 /// per-particle history.
 ///
+/// **Late manual fix** (R14.3-1): the app writes a double-tap pin when its
+/// undo window closes, about 3 s after the tap, with `t` = the tap. A pin
+/// whose `t` is before the last grid step is applied to each particle as of
+/// `t`: the pin plus that particle's own motion since `t`, from a short
+/// per-particle ring (`lateManualFixWindowS`). The mean shift would be
+/// wrong while heading is unknown: a ring-shaped cloud's mean barely moves
+/// although every particle moved v × 3 s along its own heading. A late pin
+/// that initialises the engine starts the cloud at the tap and predicts it
+/// forward over the steps since, from a pre-initialisation record of yaw
+/// and OBD speed. In arrival order a pin is never late, so neither path
+/// runs there.
+///
 /// **Held stale fix** (N4B-1): a stale fix (older than `maxFixAgeS`) is
 /// used only while the car is stopped. When it arrives before OBD can say
 /// so — no OBD reply yet, or only a stale one — it is held, not dropped,
@@ -76,6 +88,11 @@ public struct NavigationEngine: Sendable {
     /// Speed error while OBD is stale and the car is not parked, m/s
     /// (Ornstein–Uhlenbeck, `staleSpeedDecayS`); 0 otherwise.
     var speedOffset: [Double] = []
+    /// Cumulative own motion (prediction displacement only, no update
+    /// corrections), metres, for late manual fixes (R14.3-1). Only
+    /// differences against `motionRing` are used.
+    var motionEast: [Double] = []
+    var motionNorth: [Double] = []
     /// Normalised: logsumexp(logWeight) == 0.
     var logWeight: [Double] = []
     /// exp(logWeight), sums to 1.
@@ -116,6 +133,10 @@ public struct NavigationEngine: Sendable {
     private var cumulativeNorth = 0.0
     private var cumulativeYaw = 0.0
     private var history: MotionHistory
+    /// Each particle's `motionEast/North` at recent grid steps (R14.3-1).
+    private(set) var motionRing: ParticleMotionRing
+    /// Grid steps before initialisation, for a late initialising pin.
+    private var preInitSteps: PreInitSteps
 
     private var lastNetworkFixNs: Int64?
 
@@ -152,7 +173,14 @@ public struct NavigationEngine: Sendable {
         self.config = config
         rng = NavigationRandom(seed: config.seed)
         stepNs = Int64((1_000_000_000 / config.stepHz).rounded())
-        history = MotionHistory(capacity: Int((config.maxFixAgeS * config.stepHz).rounded(.up)) + 2)
+        // At least the per-particle window, so a late pin older than the
+        // ring still finds its mean shift (R14.3-5).
+        history = MotionHistory(capacity: Int((max(config.maxFixAgeS, config.lateManualFixWindowS)
+                                               * config.stepHz).rounded(.up)) + 2)
+        let ringSlots = config.lateManualFixWindowS > 0
+            ? Int((config.lateManualFixWindowS * config.stepHz).rounded(.up)) + 1 : 0
+        motionRing = ParticleMotionRing(capacity: ringSlots)
+        preInitSteps = PreInitSteps(capacity: ringSlots)
     }
 
     // MARK: Ingest
@@ -225,7 +253,9 @@ public struct NavigationEngine: Sendable {
         guard target > last else { return }
         guard isInitialized else {
             // Before initialisation a step only moves the clock and drops
-            // the pending yaw: jump straight to the target.
+            // the pending yaw: jump straight to the target (recorded for a
+            // late initialising pin).
+            recordPreInitStep(at: target, dt: Double(target - last) / 1e9, yaw: pendingYaw)
             lastStepNs = target
             pendingYaw = 0
             return
@@ -266,6 +296,9 @@ public struct NavigationEngine: Sendable {
             lastMeanSpeed = 0
             for k in max(0, count - history.capacity)..<count {
                 history.append(first + Int64(k) * stepNs, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: nil)
+            }
+            for k in max(0, count - motionRing.capacity)..<count {
+                recordMotion(at: first + Int64(k) * stepNs)
             }
             lastStepNs = first + Int64(count - 1) * stepNs
             pendingYaw = 0
@@ -384,7 +417,10 @@ public struct NavigationEngine: Sendable {
         lastStepNs = ns
         let yaw = pendingYaw
         pendingYaw = 0
-        guard isInitialized else { return }
+        guard isInitialized else {
+            recordPreInitStep(at: ns, dt: dt, yaw: yaw)
+            return
+        }
         counters.steps += 1
 
         var fresh = false
@@ -402,6 +438,7 @@ public struct NavigationEngine: Sendable {
             lastStepStationary = true
             lastMeanSpeed = 0
             history.append(ns, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: 0)
+            recordMotion(at: ns)
             return
         }
         let stale = !fresh
@@ -411,6 +448,7 @@ public struct NavigationEngine: Sendable {
             lastStepStationary = true
             lastMeanSpeed = 0
             history.append(ns, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: nil)
+            recordMotion(at: ns)
             return
         }
         if stale {
@@ -459,6 +497,7 @@ public struct NavigationEngine: Sendable {
         lastStepStationary = false
         lastMeanSpeed = meanSpeed
         history.append(ns, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: fresh ? vObd : nil)
+        recordMotion(at: ns, obdDistance: vObd * dt)
         if counters.steps % reanchorCheckSteps == 0 {
             reanchorIfNeeded()
         }
@@ -482,6 +521,8 @@ public struct NavigationEngine: Sendable {
         let dNorth = distance * c
         east[i] += dEast
         north[i] += dNorth
+        motionEast[i] += dEast
+        motionNorth[i] += dNorth
         // Along- and cross-track noise grow the position covariance in
         // proportion to the distance travelled.
         let qAlong = alongPerM * abs(distance)
@@ -549,6 +590,7 @@ public struct NavigationEngine: Sendable {
         lastStepStationary = false
         lastMeanSpeed = meanSpeed
         history.append(ns, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: nil)
+        recordMotion(at: ns, obdDistance: vObd * dt)
         if counters.steps / reanchorCheckSteps != checkBefore {
             reanchorIfNeeded()
         }
@@ -597,7 +639,7 @@ public struct NavigationEngine: Sendable {
     /// Positions convert exactly through WGS-84; headings, covariances and the
     /// motion history through the Jacobian of the old→new plane map at the
     /// mean. Deterministic: no random numbers are drawn.
-    private mutating func reanchorIfNeeded() {
+    mutating func reanchorIfNeeded() {
         guard let old = tangentPlane else { return }
         var me = 0.0, mn = 0.0
         for i in 0..<east.count {
@@ -633,6 +675,10 @@ public struct NavigationEngine: Sendable {
         let linear = { (e: Double, n: Double) in (jee * e + jen * n, jne * e + jnn * n) }
         (cumulativeEast, cumulativeNorth) = linear(cumulativeEast, cumulativeNorth)
         history.transformDisplacements(linear)
+        for i in 0..<east.count {
+            (motionEast[i], motionNorth[i]) = linear(motionEast[i], motionNorth[i])
+        }
+        motionRing.transform(linear)
         tangentPlane = new
         counters.reanchors += 1
     }
@@ -660,6 +706,8 @@ public struct NavigationEngine: Sendable {
         heading = east
         scale = east
         speedOffset = east
+        motionEast = east
+        motionNorth = east
         logWeight = [Double](repeating: -log(Double(n)), count: n)
         weight = [Double](repeating: 1 / Double(n), count: n)
         effectiveSampleSize = Double(n)
@@ -679,6 +727,8 @@ public struct NavigationEngine: Sendable {
         cumulativeYaw = 0
         history.removeAll()
         history.append(lastStepNs ?? ns, 0, 0, 0, speed: nil)
+        motionRing.removeAll(particles: n)
+        recordMotion(at: lastStepNs ?? ns)
         lastStepStationary = isStopped(at: ns)
         lastMeanSpeed = 0
     }
@@ -869,6 +919,7 @@ public struct NavigationEngine: Sendable {
         let count = east.count
         let k = Int((config.reseedFraction * Double(count)).rounded())
         let averageLogWeight = -log(Double(count))
+        let basis = motionRing.reconstructionBasis(cumulativeYaw: cumulativeYaw)
         for _ in 0..<k {
             let i = min(count - 1, Int(rng.nextUniform() * Double(count)))
             east[i] = e
@@ -879,6 +930,12 @@ public struct NavigationEngine: Sendable {
             heading[i] = Self.wrap2Pi(course + courseSigma * rng.nextGaussian())
             speedOffset[i] = 0
             logWeight[i] = averageLogWeight
+            // A new particle has no past of its own: reconstruct it as if
+            // it had always had this heading and scale (not the cloud's
+            // mean motion, about 0 while heading is unknown, which is when
+            // reseeds happen).
+            motionRing.reconstructHistory(particle: i, heading: heading[i], scale: scale[i],
+                                          motionEast: motionEast[i], motionNorth: motionNorth[i], basis: basis)
         }
         normalizeWeights()
     }
@@ -890,18 +947,46 @@ public struct NavigationEngine: Sendable {
               abs(sample.latitude) <= 90, abs(sample.longitude) <= 180 else { return }
         counters.manualFixes += 1
         let sigma = config.manualFixSigma(mapSpanM: sample.mapSpanM)
+        // Late: grid steps already ran after the pin's own instant (the app
+        // writes a double-tap pin when its undo window closes). In arrival
+        // order the engine has just stepped to floor(t): never late.
+        // `lateManualFixWindowS` 0 restores the mean shift for every pin.
+        let tapStepNs = Self.floorToGrid(ns, stepNs)
+        let late = config.lateManualFixWindowS > 0 && (lastStepNs.map { tapStepNs < $0 } ?? false)
         guard let plane = tangentPlane else {
             initialize(latitude: sample.latitude, longitude: sample.longitude, sigma: sigma, heading: nil, at: ns)
+            if late {
+                counters.lateManualFixes += 1
+                predictLateInitialisation(fromStep: tapStepNs)
+            }
             return
         }
-        let since = shiftSince(ns)
         let pin = plane.enu(latitude: sample.latitude, longitude: sample.longitude)
-        let targetEast = pin.east + since.east
-        let targetNorth = pin.north + since.north
+        // The pin as each particle sees it now. Not late (arrival order):
+        // shifted by the cloud's mean motion since `t`, which is 0 there.
+        // Late: by each particle's own motion since `t` (`lateMotion`).
+        let since = shiftSince(ns)
+        var targetEast = [Double](repeating: pin.east + since.east, count: east.count)
+        var targetNorth = [Double](repeating: pin.north + since.north, count: east.count)
+        if late {
+            counters.lateManualFixes += 1
+            if motionRing.slot(atOrBefore: ns) == nil { counters.lateManualFixesMeanShift += 1 }
+            if let motion = lateMotion(since: ns, meanShift: (since.east, since.north)) {
+                for i in 0..<east.count {
+                    targetEast[i] = pin.east + motion.east[i]
+                    targetNorth[i] = pin.north + motion.north[i]
+                }
+            }
+        }
+        // Covariance: compared with each particle's Gaussian now, not at
+        // `t`; the along/cross-track noise grown since `t` (≤ 0.36 m²/m ×
+        // v × 3 s ≈ 27 m² at 25 m/s, against R ≥ 900 m²) is left in, which
+        // widens the likelihood by < 1.5 % in σ (conservative) and leaves
+        // the posterior at most that Q too tight (σ ≈ 0.4 m at 30 m).
         let prior = (logWeight, east, north, covEE, covEN, covNN)
         var nearest = Double.infinity
         for i in 0..<east.count {
-            let update = positionUpdate(i, east: targetEast, north: targetNorth, variance: sigma * sigma)
+            let update = positionUpdate(i, east: targetEast[i], north: targetNorth[i], variance: sigma * sigma)
             logWeight[i] += update.logLikelihood
             nearest = min(nearest, update.mahalanobis2)
         }
@@ -912,13 +997,14 @@ public struct NavigationEngine: Sendable {
         // that posterior and resample (R13.1-1).
         if nearest > config.manualFixResetChi2 {
             // The prior has practically no support at the pin: the driver's
-            // "I'm here" wins. Positions restart at it; heading and scale
+            // "I'm here" wins. Positions restart at it (a late pin: at it
+            // plus each particle's own motion since); heading and scale
             // hypotheses and their weights are kept.
             counters.manualResets += 1
             (logWeight, east, north, covEE, covEN, covNN) = prior
             for i in 0..<east.count {
-                east[i] = targetEast
-                north[i] = targetNorth
+                east[i] = targetEast[i]
+                north[i] = targetNorth[i]
                 covEE[i] = sigma * sigma
                 covEN[i] = 0
                 covNN[i] = sigma * sigma
@@ -927,6 +1013,128 @@ public struct NavigationEngine: Sendable {
             normalizeWeights()
         }
         resampleIfNeeded()
+    }
+
+    /// Each particle's own motion since `ns`, for a late manual fix
+    /// (R14.3-1): its prediction displacement since the latest ring
+    /// snapshot at or before `ns`. When `ns` is older than the ring, the
+    /// displacement since the oldest snapshot plus the cloud's mean motion
+    /// from `ns` to it: `meanShift` (the mean motion since `ns`) minus the
+    /// mean motion since the oldest snapshot (counted in
+    /// `lateManualFixesMeanShift`). nil when the ring is empty
+    /// (`lateManualFixWindowS` 0).
+    func lateMotion(since ns: Int64, meanShift: (east: Double, north: Double))
+        -> (east: [Double], north: [Double])? {
+        guard let oldest = motionRing.oldestSlot else { return nil }
+        let inRing = motionRing.slot(atOrBefore: ns)
+        let slot = inRing ?? oldest
+        var extraEast = 0.0, extraNorth = 0.0
+        if inRing == nil {
+            let ringShift = shiftSince(motionRing.time(oldest))
+            extraEast = meanShift.east - ringShift.east
+            extraNorth = meanShift.north - ringShift.north
+        }
+        var e = [Double](repeating: 0, count: east.count), n = e
+        for i in 0..<east.count {
+            e[i] = (motionEast[i] - motionRing.east(slot, i)) + extraEast
+            n[i] = (motionNorth[i] - motionRing.north(slot, i)) + extraNorth
+        }
+        return (e, n)
+    }
+
+    /// A late pin has just initialised the cloud at the tap (R14.3-1): move
+    /// it forward over the grid steps run since `start` (the tap's grid
+    /// step), as `step` would have moved it had the pin arrived at the tap.
+    /// Deterministic, no random numbers: each particle moves along its own
+    /// heading with the recorded yaw and OBD speed times its scale, and its
+    /// covariance grows with the along/cross-track noise of that distance.
+    /// The heading and scale random walks over these few seconds (≈ 0.1°,
+    /// 2e-4) are left out. Stale steps add the unknown-speed (OU) integral
+    /// variance along each particle's heading instead of drawing offsets.
+    /// Time the record no longer covers (a pin later than
+    /// `lateManualFixWindowS`) adds an isotropic (v × gap)² with the fastest
+    /// speed seen, or the OU variance when no OBD speed is known.
+    private mutating func predictLateInitialisation(fromStep start: Int64) {
+        guard let now = lastStepNs, now > start else { return }
+        let records = preInitSteps.records(endingAfter: start)
+        let coveredFrom = records.first.map { max($0.fromNs, start) } ?? now
+        let gapS = Double(coveredFrom - start) / 1e9
+        let alongPerM = config.alongTrackNoisePerSqrtM * config.alongTrackNoisePerSqrtM
+        let crossPerM = config.crossTrackNoisePerSqrtM * config.crossTrackNoisePerSqrtM
+        var staleS = 0.0
+        for r in records where r.kind == .stale {
+            staleS += Double(r.toNs - max(r.fromNs, start)) / 1e9
+        }
+        let staleVariance = staleS > 0
+            ? Self.ouIntegralVariance(dt: staleS, sigma: config.staleSpeedNoiseMpsPerSqrtS, tau: config.staleSpeedDecayS)
+            : 0
+        for i in 0..<east.count {
+            var h = heading[i]
+            for r in records where r.kind != .frozen {
+                let fraction = r.toNs > r.fromNs ? Double(r.toNs - max(r.fromNs, start)) / Double(r.toNs - r.fromNs) : 1
+                let dYaw = r.yaw * fraction
+                let distance = r.speed * scale[i] * Double(r.toNs - max(r.fromNs, start)) / 1e9
+                let mid = h + 0.5 * dYaw
+                let s = sin(mid), c = cos(mid)
+                east[i] += distance * s
+                north[i] += distance * c
+                let qAlong = alongPerM * abs(distance), qCross = crossPerM * abs(distance)
+                covEE[i] += qAlong * s * s + qCross * c * c
+                covNN[i] += qAlong * c * c + qCross * s * s
+                covEN[i] += (qAlong - qCross) * s * c
+                h += dYaw
+            }
+            heading[i] = Self.wrap2Pi(h)
+            if staleVariance > 0 {
+                let s = sin(heading[i]), c = cos(heading[i])
+                covEE[i] += staleVariance * s * s
+                covNN[i] += staleVariance * c * c
+                covEN[i] += staleVariance * s * c
+            }
+        }
+        if gapS > 0 {
+            counters.lateManualFixesMeanShift += 1
+            var v = isFresh(at: now) ? (obdSpeedKmh.map { $0 > 0 ? ($0 + config.obdSpeedOffsetKmh) / 3.6 : 0 } ?? 0) : 0
+            for r in records { v = max(v, r.speed) }
+            let extra = v > 0
+                ? (v * gapS) * (v * gapS)
+                : Self.ouIntegralVariance(dt: gapS, sigma: config.staleSpeedNoiseMpsPerSqrtS, tau: config.staleSpeedDecayS)
+            for i in 0..<east.count {
+                covEE[i] += extra
+                covNN[i] += extra
+            }
+        }
+        if let last = records.last {
+            lastStepStationary = last.kind == .frozen
+            var meanScale = 0.0
+            for i in 0..<scale.count { meanScale += weight[i] * scale[i] }
+            lastMeanSpeed = last.kind == .frozen ? 0 : last.speed * meanScale
+        }
+    }
+
+    /// Records a grid step run before initialisation (`step` or the
+    /// pre-initialisation clock jump in `advance`), with the branch `step`
+    /// would take, for a late initialising pin.
+    private mutating func recordPreInitStep(at ns: Int64, dt: Double, yaw: Double) {
+        guard preInitSteps.capacity > 0 else { return }
+        var fresh = false
+        var v = 0.0
+        if let kmh = obdSpeedKmh, let t = obdNs {
+            fresh = Double(ns - t) / 1e9 <= config.obdMaxAgeS
+            v = kmh > 0 ? (kmh + config.obdSpeedOffsetKmh) / 3.6 : 0
+        }
+        let kind: PreInitSteps.Kind = (fresh && v == 0) || (!fresh && parkedSinceZero) ? .frozen : fresh ? .known : .stale
+        let from = ns - Int64((dt * 1e9).rounded())
+        preInitSteps.append(.init(fromNs: from, toNs: ns, yaw: yaw, speed: kind == .frozen ? 0 : v, kind: kind))
+    }
+
+    /// Snapshots every particle's own cumulative motion at grid step `ns`,
+    /// with the step's cumulative yaw and its OBD distance before scale
+    /// (`obdDistance`, m: 0 when frozen), from which a reseeded particle's
+    /// past is reconstructed.
+    private mutating func recordMotion(at ns: Int64, obdDistance: Double = 0) {
+        guard motionRing.capacity > 0 else { return }
+        motionRing.append(ns, east: motionEast, north: motionNorth, yaw: cumulativeYaw, obdDistance: obdDistance)
     }
 
     /// Kalman update of particle `i`'s position with an isotropic position
@@ -955,7 +1163,9 @@ public struct NavigationEngine: Sendable {
 
     // MARK: Weights and resampling
 
-    private mutating func normalizeWeights() {
+    /// Internal, not private: the ring-consistency tests skew the weights
+    /// and resample directly.
+    mutating func normalizeWeights() {
         var maxLog = -Double.infinity
         for l in logWeight where l > maxLog { maxLog = l }
         guard maxLog.isFinite else {
@@ -980,7 +1190,7 @@ public struct NavigationEngine: Sendable {
         effectiveSampleSize = 1 / sumSquares
     }
 
-    private mutating func resampleIfNeeded() {
+    mutating func resampleIfNeeded() {
         let n = east.count
         guard effectiveSampleSize < config.resampleESSFraction * Double(n) else { return }
         counters.resamples += 1
@@ -1001,6 +1211,7 @@ public struct NavigationEngine: Sendable {
         let jitterHeading = config.resampleHeadingJitterDeg * .pi / 180
         var newEast = east, newNorth = north, newEE = covEE, newEN = covEN, newNN = covNN
         var newHeading = heading, newScale = scale, newOffset = speedOffset
+        var newMotionEast = motionEast, newMotionNorth = motionNorth
         for i in 0..<n {
             let k = indices[i]
             newEast[i] = east[k]
@@ -1011,7 +1222,10 @@ public struct NavigationEngine: Sendable {
             newHeading[i] = Self.wrap2Pi(heading[k] + jitterHeading * rng.nextGaussian())
             newScale[i] = scale[k] + config.resampleScaleJitter * rng.nextGaussian()
             newOffset[i] = speedOffset[k]
+            newMotionEast[i] = motionEast[k]
+            newMotionNorth[i] = motionNorth[k]
         }
+        motionRing.remap(indices)
         east = newEast
         north = newNorth
         covEE = newEE
@@ -1020,6 +1234,8 @@ public struct NavigationEngine: Sendable {
         heading = newHeading
         scale = newScale
         speedOffset = newOffset
+        motionEast = newMotionEast
+        motionNorth = newMotionNorth
         let u0 = -log(Double(n))
         for i in 0..<n {
             logWeight[i] = u0
@@ -1210,5 +1426,245 @@ struct MotionHistory: Sendable {
             if chronological(mid).t <= t { lo = mid } else { hi = mid - 1 }
         }
         return chronological(lo)
+    }
+}
+
+/// Each particle's cumulative own motion (`NavigationEngine.motionEast`,
+/// `motionNorth`) at the most recent `capacity` grid steps, for late manual
+/// fixes (R14.3-1). Structure of arrays: slot `k` holds particle `i` at
+/// `k × particles + i`. Kept consistent with the cloud: `remap` follows a
+/// resample's index map, `transform` a re-anchor's linear map, and
+/// `reconstructHistory` gives a reseeded particle the past it would have
+/// had with its new heading and scale.
+/// Memory: 3 × capacity × particles Doubles once a resample has run (two
+/// rings and `remap`'s scratch; 51 × 2000 × 24 B ≈ 2.4 MB at the
+/// defaults).
+struct ParticleMotionRing: Sendable {
+    let capacity: Int
+    private(set) var particles = 0
+    private var times: [Int64] = []
+    /// Per slot: the engine's cumulative yaw, and the OBD distance (before
+    /// scale) of the step that ended there.
+    private var yaws: [Double] = []
+    private var obdDistances: [Double] = []
+    private var eastSlots: [Double] = []
+    private var northSlots: [Double] = []
+    /// Scratch for `remap`, the size of one of the two arrays above.
+    private var spare: [Double] = []
+    /// Slots filled, and the physical slot the next append writes.
+    private(set) var count = 0
+    private var head = 0
+
+    init(capacity: Int) {
+        self.capacity = max(0, capacity)
+    }
+
+    /// Empties the ring and sizes it for `n` particles.
+    mutating func removeAll(particles n: Int) {
+        count = 0
+        head = 0
+        guard capacity > 0 else { return }
+        if particles != n || eastSlots.count != capacity * n {
+            particles = n
+            times = [Int64](repeating: 0, count: capacity)
+            yaws = [Double](repeating: 0, count: capacity)
+            obdDistances = yaws
+            eastSlots = [Double](repeating: 0, count: capacity * n)
+            northSlots = eastSlots
+            // Allocated now, not at the first resample: no allocation
+            // inside a 10 Hz step.
+            spare = eastSlots
+        }
+    }
+
+    mutating func append(_ t: Int64, east: [Double], north: [Double], yaw: Double, obdDistance: Double) {
+        guard capacity > 0, east.count == particles, north.count == particles else { return }
+        let slot = head
+        let base = slot * particles
+        times[slot] = t
+        yaws[slot] = yaw
+        obdDistances[slot] = obdDistance
+        eastSlots.withUnsafeMutableBufferPointer { dst in
+            east.withUnsafeBufferPointer { src in
+                for i in 0..<particles { dst[base + i] = src[i] }
+            }
+        }
+        northSlots.withUnsafeMutableBufferPointer { dst in
+            north.withUnsafeBufferPointer { src in
+                for i in 0..<particles { dst[base + i] = src[i] }
+            }
+        }
+        head = (head + 1) % capacity
+        count = min(count + 1, capacity)
+    }
+
+    /// Physical slot of chronological entry `k` (0 = oldest).
+    private func physical(_ k: Int) -> Int {
+        (head - count + k + capacity) % capacity
+    }
+
+    /// The physical slot of the latest snapshot at or before `t`; nil when
+    /// the ring is empty or every snapshot is later (`t` older than the
+    /// ring).
+    func slot(atOrBefore t: Int64) -> Int? {
+        guard count > 0, times[physical(0)] <= t else { return nil }
+        var lo = 0, hi = count - 1
+        while lo < hi {
+            let mid = (lo + hi + 1) / 2
+            if times[physical(mid)] <= t { lo = mid } else { hi = mid - 1 }
+        }
+        return physical(lo)
+    }
+
+    /// The physical slot of the oldest snapshot; nil when empty.
+    var oldestSlot: Int? { count > 0 ? physical(0) : nil }
+
+    /// The time of a physical slot.
+    func time(_ slot: Int) -> Int64 { times[slot] }
+
+    /// Every snapshot, oldest first: time and each particle's motion (for
+    /// tests: the layout of the physical slots differs between a folded and
+    /// a stepped stretch, the chronological content must not).
+    func chronological() -> [(t: Int64, east: [Double], north: [Double])] {
+        (0..<count).map { k in
+            let base = physical(k) * particles
+            return (times[physical(k)], Array(eastSlots[base..<base + particles]),
+                    Array(northSlots[base..<base + particles]))
+        }
+    }
+
+    @inline(__always) func east(_ slot: Int, _ i: Int) -> Double { eastSlots[slot * particles + i] }
+    @inline(__always) func north(_ slot: Int, _ i: Int) -> Double { northSlots[slot * particles + i] }
+
+    /// After a resample: particle `i` is old particle `indices[i]`. One
+    /// gather per filled slot into a spare buffer, then a swap.
+    mutating func remap(_ indices: [Int]) {
+        guard count > 0, indices.count == particles else { return }
+        let n = particles
+        let slots = (0..<count).map { physical($0) * n }
+        var scratch = spare
+        spare = []
+        if scratch.count != eastSlots.count { scratch = [Double](repeating: 0, count: eastSlots.count) }
+        func gather(_ source: inout [Double], into dst: inout [Double]) {
+            dst.withUnsafeMutableBufferPointer { d in
+                source.withUnsafeBufferPointer { s in
+                    indices.withUnsafeBufferPointer { map in
+                        for base in slots {
+                            for i in 0..<n { d[base + i] = s[base + map[i]] }
+                        }
+                    }
+                }
+            }
+            swap(&source, &dst)
+        }
+        gather(&eastSlots, into: &scratch)
+        gather(&northSlots, into: &scratch)
+        spare = scratch
+    }
+
+    /// After a re-anchor: the linear part of the old→new plane map applied
+    /// to every snapshot (only differences are used).
+    mutating func transform(_ map: (Double, Double) -> (Double, Double)) {
+        for k in 0..<count {
+            let slot = physical(k)
+            let base = slot * particles
+            for i in 0..<particles {
+                (eastSlots[base + i], northSlots[base + i]) = map(eastSlots[base + i], northSlots[base + i])
+            }
+        }
+    }
+
+    /// Per-step unit displacements of the ring, newest step first, for
+    /// `reconstructHistory`: step k (from snapshot k − 1 to k) moved
+    /// OBD distance × (sin, cos)(heading − back), where `back` is the yaw
+    /// from the step's midpoint to now. Stored as distance × (cos, sin) of
+    /// `back`, so a particle's displacement is a rotation by its heading:
+    /// no trigonometry per particle and slot.
+    func reconstructionBasis(cumulativeYaw: Double) -> [(cosBack: Double, sinBack: Double)] {
+        guard count > 1 else { return [] }
+        var basis: [(cosBack: Double, sinBack: Double)] = []
+        basis.reserveCapacity(count - 1)
+        for k in stride(from: count - 1, to: 0, by: -1) {
+            let slot = physical(k), previous = physical(k - 1)
+            let d = obdDistances[slot]
+            let back = cumulativeYaw - 0.5 * (yaws[slot] + yaws[previous])
+            basis.append(d != 0 ? (d * cos(back), d * sin(back)) : (0, 0))
+        }
+        return basis
+    }
+
+    /// A reseeded particle has no motion of its own: reconstruct it as if
+    /// it had always had `heading` and `scale`, walking back from the
+    /// newest snapshot over each step's OBD distance × scale along the
+    /// heading it had then (now minus the yaw since, at the step's
+    /// midpoint; `basis` from `reconstructionBasis`). Unknown-speed steps
+    /// use the held OBD speed, as `step` does for a particle with no speed
+    /// error. The particle's current `motionEast/North` is kept; only its
+    /// snapshots change.
+    mutating func reconstructHistory(particle i: Int, heading: Double, scale: Double,
+                                     motionEast e: Double, motionNorth n: Double,
+                                     basis: [(cosBack: Double, sinBack: Double)]) {
+        guard i < particles, count > 0 else { return }
+        // sin(h − b) = sin h cos b − cos h sin b; cos(h − b) = cos h cos b + sin h sin b.
+        let sh = sin(heading) * scale, ch = cos(heading) * scale
+        var de = 0.0, dn = 0.0
+        for k in stride(from: count - 1, through: 0, by: -1) {
+            let slot = physical(k)
+            eastSlots[slot * particles + i] = e - de
+            northSlots[slot * particles + i] = n - dn
+            guard k > 0 else { break }
+            let u = basis[count - 1 - k]
+            de += sh * u.cosBack - ch * u.sinBack
+            dn += ch * u.cosBack + sh * u.sinBack
+        }
+    }
+}
+
+/// The grid steps run before initialisation, newest `capacity`: what a late
+/// initialising pin is predicted forward over (R14.3-1). A few hundred
+/// bytes.
+struct PreInitSteps: Sendable {
+    enum Kind: Sendable {
+        /// Fresh OBD speed: moves at `speed` × scale.
+        case known
+        /// Stale OBD speed, not parked: unknown speed (held `speed`).
+        case stale
+        /// Fresh OBD 0 or parked: nothing moves.
+        case frozen
+    }
+
+    struct Record: Sendable {
+        var fromNs: Int64
+        var toNs: Int64
+        /// Yaw over the step, radians.
+        var yaw: Double
+        /// OBD speed with the truncation offset, m/s (0 when frozen).
+        var speed: Double
+        var kind: Kind
+    }
+
+    let capacity: Int
+    private var records: [Record] = []
+    private var head = 0
+
+    init(capacity: Int) {
+        self.capacity = max(0, capacity)
+        records.reserveCapacity(self.capacity)
+    }
+
+    mutating func append(_ record: Record) {
+        guard capacity > 0 else { return }
+        if records.count < capacity {
+            records.append(record)
+        } else {
+            records[head] = record
+            head = (head + 1) % capacity
+        }
+    }
+
+    /// Records ending after `t`, oldest first.
+    func records(endingAfter t: Int64) -> [Record] {
+        let ordered = records.count < capacity ? records : Array(records[head...] + records[..<head])
+        return ordered.filter { $0.toNs > t }
     }
 }
