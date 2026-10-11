@@ -319,9 +319,107 @@ The pipeline that produces the OPL is under "Pipeline" below.
 
 ## Pipeline
 
-The osmium commands and `tools/roads/build_packs.sh` are added and verified in N3.1
-step 6 (see docs/N3_PLAN.md, "Builder pipeline").
+Verified with osmium-tool 1.19.1 / libosmium 2.23.1 on a Geofabrik country extract.
+`tools/roads/build_packs.sh [osm/packs.json]` runs the whole pipeline. The commands
+it runs for one region pack, run by hand from the repository root, give the same
+bytes:
+
+```bash
+SRC=osm/src/<country>-latest.osm.pbf; W=osm/work; P=<pack>; REL=<relationID>   # from osm/packs.json
+TS=$(osmium fileinfo -g header.option.osmosis_replication_timestamp $SRC)       # e.g. 2026-01-01T00:00:00Z
+BOX=$(osmium fileinfo -g header.boxes $SRC | tr -d '()')                         # family grid box
+SHA=$(shasum -a 256 $SRC | cut -d' ' -f1)
+osmium tags-filter -O $SRC w/highway=<classes> -o $W/roads.osm.pbf
+osmium tags-filter -O $SRC r/boundary=administrative -o $W/admin.osm.pbf
+osmium getid -O -r -t $W/admin.osm.pbf r$REL -o $W/boundary-$P.osm.pbf
+osmium export -O $W/boundary-$P.osm.pbf --geometry-types=polygon -a type,id \
+  -f geojsonseq -x print_record_separator=false -o $W/boundary-$P.geojsonseq
+jq -c "select(.properties.\"@type\" == \"relation\" and .properties.\"@id\" == $REL) \
+  | {type: \"Feature\", properties: {}, geometry}" $W/boundary-$P.geojsonseq > $W/boundary-$P.geojson
+# extracts.json: {"extracts": [{"output": "<pack>.osm.pbf",
+#   "polygon": {"file_name": "boundary-<pack>.geojson", "file_type": "geojson"}}, ...]}
+osmium extract -O -c $W/extracts.json -d $W --strategy complete_ways $W/roads.osm.pbf  # all regions, one pass
+osmium add-locations-to-ways -O $W/$P.osm.pbf -f opl -o $W/$P.opl
+cd Core && swift run -c release build_roads ../$W/$P.opl --classes region --grid-bbox "$BOX" \
+  --osm-timestamp "$TS" --source-sha256 $SHA --osmium-version 1.19.1 --strategy complete_ways \
+  --coverage ../$W/boundary-$P.geojson --relation-id $REL --admin-level 4 \
+  --out ../osm/packs/$P.roadpack
+swift run -c release build_roads --info ../osm/packs/$P.roadpack --bench 100000
+swift run -c release build_roads --network ../osm/packs/national.roadpack ../osm/packs/$P.roadpack
+```
+
+The national pack is not cut by a polygon. It takes its classes from `roads.osm.pbf`
+(`osmium tags-filter $W/roads.osm.pbf w/highway=motorway,…,primary_link`), so it
+keeps the extract's border spillover. Its coverage polygon is the country relation,
+exported as above.
+
+What N3.1 found wrong in the plan's first draft of these commands:
+- **The polygon from `getid -r`.** `osmium getid -r` on an admin relation also pulls in
+  its `subarea` member relations with their tags. Used as `osmium extract`'s polygon,
+  that OSM file merges every boundary in it. Here that was the region plus 10
+  admin_level-10 subareas, overlapping, which the man page calls undefined. The
+  extract kept 970 ways instead of 55 278.
+  - `-t` (`--remove-tags`) strips the tags of everything not asked for, which leaves one
+    polygon.
+  - The pipeline goes further and exports that one relation to a single-feature
+    GeoJSON with `osmium export` and `jq`. The same file then serves as the extract
+    polygon and as the pack's `COVR`, so the builder needs no OSM-XML polygon reader.
+- **Output paths.** In config mode `osmium extract` writes outputs relative to the
+  **current directory**, not the config file's, unless `"directory"` or `-d` is given.
+  Polygon `file_name`s are relative to the config file. Without `-d`, the outputs
+  landed in the working directory and `add-locations-to-ways` found no input.
+  `build_roads` now refuses an empty pack, so this cannot pass silently.
+- **Grid box and timestamp come from the source.** `osmium extract` output carries
+  neither the source's header bounding box nor its replication timestamp, so both are
+  read from the source. `fileinfo -g header.option.osmosis_replication_timestamp`
+  returns the ISO 8601 time, and `build_roads --osm-timestamp` accepts it as is.
+- **`-O`** (`--overwrite`) is needed on every re-run. osmium otherwise refuses to
+  replace an existing output.
+- `--coverage` takes the GeoJSON polygon, not the `getid` OSM file.
 
 ## Measured
 
-Pack statistics and the cell-size comparison are added in N3.1 step 7.
+N3.1, osmium 1.19.1, `build_roads` release on an Apple-silicon Mac. Source: a
+country extract of about 880 MB. Packs are named by alias only.
+
+| pack | ways kept | nodes | edges | segments | cells | cell entries (per segment) | size | build_roads | verify |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| national (motorway/trunk/primary + links) | 49 685 | 48 808 | 56 163 | 369 250 | 1 342 432 | 4 033 617 (10.9) | 41.3 MB | 1.5 s | 69 ms |
+| region-A (admin_level 4, every drivable class) | 51 070 | 72 050 | 86 671 | 231 390 | 106 345 | 1 782 883 (7.7) | 17.3 MB | 0.5 s | 29 ms |
+
+Notes on the table:
+- **Dropped from region-A:** 4 192 ways for `service=parking_aisle` and 16 for
+  `area=yes`.
+- **Time:** the whole script for both packs takes 20 s. Most of it is the two
+  `tags-filter` passes over the country file, about 5 s and 4 s.
+- **Determinism:** a second run gives byte-identical packs.
+- **De-duplication:** both packs share one grid ID. Loaded together, region-A has
+  11 415 segments shadowed by national, which is exactly its motorway/trunk/primary
+  segments, counted independently from the OPL. The count is the same in the reverse
+  order.
+- **Size:** both packs are well under 150 MB.
+
+**Lookup bench:** `--bench 200000`, seed 1. Each query is a random point within 50 m
+of a random segment, which is how particles near a road would be placed.
+- "Lookup + distance" covers the cell search plus the frame conversion and
+  point–segment distance for every candidate.
+- "Cell search" is the `CELK` binary search and the `CELO` range alone.
+- Region-A times are the median of 3 runs. National is a single run.
+
+| pack, cell | candidates p50 / p95 / max (mean) | within 50 m (mean) | lookup + distance | cell search | cells | size | build_roads |
+|---|---|---:|---:|---:|---:|---:|---:|
+| region-A, 32 m | 20 / 47 / 141 (22.3) | 13.3 | 717 ns | 92 ns | 394 720 | 32.2 MB | 0.96 s |
+| **region-A, 64 m** | **28 / 64 / 175 (31.3)** | 13.3 | **740 ns** | 69 ns | 106 345 | **17.3 MB** | 0.53 s |
+| region-A, 128 m | 49 / 104 / 208 (52.8) | 13.3 | 1002 ns | 51 ns | 29 486 | 12.6 MB | 0.38 s |
+| national, 64 m | 6 / 37 / 176 (10.9) | 6.2 | 568 ns | 134 ns | 1 342 432 | 41.3 MB | 1.5 s |
+
+**Default cell size: 64 m, unchanged.**
+- 32 m cuts the candidates by about 30 % (p95 47 vs 64). It almost doubles the pack
+  (32.2 vs 17.3 MB, with CELS at 2.6× as many entries) and is no faster per lookup:
+  the larger index costs as much in cache misses as the fewer candidates save.
+- 128 m is 35 % slower per lookup and puts p95 at 104 candidates, above the 64 per
+  particle that N3.2's perf test allows (docs/N3_PLAN.md, N3.2 test 14). It saves only
+  4.7 MB.
+- At 64 m, p95 is exactly 64 in the densest pack. The N3.2 budget therefore needs the
+  heading test before the distance test, as planned, and the cell cache's plane
+  segments, not the per-candidate E7 conversion measured here.

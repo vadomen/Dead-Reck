@@ -70,7 +70,8 @@ b64b4a4 and later commits changed App code and tests only.
     pin σ therefore barely changes this set (see "Manual fixes").
   - The ~100 m uncertainty of manual-3's pins 2–3 is not explained by their recorded
     speed: 1–2 m at 4–8 km/h.
-- **Tools.** Neither osmium-tool nor pyosmium is installed on this Mac (checked).
+- **Tools.** At planning time neither osmium-tool nor pyosmium was installed on this Mac.
+  osmium-tool 1.19.1 was installed for N3.1.
 
 ## Design
 
@@ -395,8 +396,8 @@ UInt64, length UInt64. Entries are sorted by offset, non-overlapping and inside 
       query disc's area. That is a few tens of segments in a dense city.
     - 128 m would be about 7× the disc area, roughly twice the candidates per particle. 32 m
       roughly doubles the duplication per segment.
-    - N3.1 measures 32 / 64 / 128 m on the densest pack: candidates per lookup (p50, p95,
-      max), index size and query time. Then it fixes the default.
+    - N3.1 measured 32 / 64 / 128 m on the densest pack: candidates per lookup (p50, p95,
+      max), index size and query time. **64 m stays the default** (see the N3.1 result).
   - **R-tree rejected:**
     - The queries are fixed-radius around a compact cloud, which suits a grid.
     - An R-tree means pointer-chasing and branchy log-n queries.
@@ -421,21 +422,41 @@ hash, round-trip tests run in `swift test`, and the only external tool is
 
 ```bash
 # osm/ is git-ignored; packs.json (the list of admin relation IDs) lives there too.
-osmium fileinfo -g header.option.osmosis_replication_timestamp osm/src/<country>-latest.osm.pbf
-osmium tags-filter osm/src/<country>-latest.osm.pbf w/highway=<classes> -o osm/work/roads.osm.pbf
-osmium tags-filter osm/src/<country>-latest.osm.pbf r/boundary=administrative -o osm/work/admin.osm.pbf
-osmium getid -r osm/work/admin.osm.pbf r<relationID> -o osm/work/region-<id>.osm      # admin_level 4 or 6
-osmium extract -c osm/work/extracts.json --strategy complete_ways osm/work/roads.osm.pbf  # all regions, one pass
-osmium add-locations-to-ways osm/work/<pack>.osm.pbf -f opl -o osm/work/<pack>.opl
-cd Core && swift run -c release build_roads osm/work/<pack>.opl --osm-timestamp <ts> --source-sha256 <hex> \
-  --classes <list> --coverage osm/work/region-<id>.osm --out ../osm/packs/<pack>.roadpack
-swift run -c release build_roads --info ../osm/packs/<pack>.roadpack   # header, counts, hash check, cell statistics
+# Verified in N3.1 (osmium-tool 1.19.1); docs/ROAD_PACK.md "Pipeline" has the full block.
+osmium fileinfo -g header.option.osmosis_replication_timestamp osm/src/<country>-latest.osm.pbf   # ISO 8601
+osmium fileinfo -g header.boxes osm/src/<country>-latest.osm.pbf                                 # family grid box
+osmium tags-filter -O osm/src/<country>-latest.osm.pbf w/highway=<classes> -o osm/work/roads.osm.pbf
+osmium tags-filter -O osm/src/<country>-latest.osm.pbf r/boundary=administrative -o osm/work/admin.osm.pbf
+osmium getid -O -r -t osm/work/admin.osm.pbf r<relationID> -o osm/work/boundary-<pack>.osm.pbf   # admin_level 4 or 6
+osmium export -O osm/work/boundary-<pack>.osm.pbf --geometry-types=polygon -a type,id \
+  -f geojsonseq -x print_record_separator=false -o osm/work/boundary-<pack>.geojsonseq
+jq -c 'select(.properties."@type" == "relation" and .properties."@id" == <relationID>)
+  | {type: "Feature", properties: {}, geometry}' osm/work/boundary-<pack>.geojsonseq > osm/work/boundary-<pack>.geojson
+osmium extract -O -c osm/work/extracts.json -d osm/work --strategy complete_ways osm/work/roads.osm.pbf  # all regions, one pass
+osmium add-locations-to-ways -O osm/work/<pack>.osm.pbf -f opl -o osm/work/<pack>.opl
+cd Core && swift run -c release build_roads ../osm/work/<pack>.opl --classes region --grid-bbox <box> \
+  --osm-timestamp <ts> --source-sha256 <hex> --osmium-version <v> --strategy complete_ways \
+  --coverage ../osm/work/boundary-<pack>.geojson --relation-id <relationID> --admin-level 4 \
+  --out ../osm/packs/<pack>.roadpack
+swift run -c release build_roads --info ../osm/packs/<pack>.roadpack --bench 100000   # header, counts, hash check, cell statistics
 ```
 
-These commands are verified in N3.1. osmium is not installed here, so neither the flags nor
-the polygon-from-relation input are checked yet.
+Verified in N3.1. The first draft of this block had four problems, all fixed above:
+1. `getid -r` alone also returns the relation's `subarea` relations with their tags,
+   and `osmium extract` merged them into one overlapping polygon: 970 instead of
+   55 278 ways on region-A. `-t` and the single-relation GeoJSON fix that.
+2. `osmium extract -c` writes its outputs relative to the current directory unless
+   `-d` or `"directory"` is given.
+3. The extract output has neither the source's bounding box nor its timestamp, so
+   both are read from the source.
+4. `-O` is needed on re-runs.
+
+The national pack is not cut. It is `tags-filter` on `roads.osm.pbf` with the national
+classes, and the country relation serves as its coverage.
 - **Script:** `tools/roads/build_packs.sh` (outside Core) runs the osmium steps from
-  `osm/packs.json` and records the osmium version in `META`.
+  `osm/packs.json` and records the osmium version, the source's SHA-256 and replication
+  timestamp, and the builder commit in `META`. A run is deterministic: a second run
+  gives byte-identical packs.
 - **Packs:**
   - **National highways:** `motorway`, `trunk`, `primary` and their `_link`s, for driving
     between regions.
@@ -620,6 +641,26 @@ stay bit-identical):
 - Every built pack is ≤ 150 MB (Q1); `build_roads` fails a build over the limit. If a
   region pack exceeds it, it is split at `admin_level` 6.
 - `git check-ignore` confirms that `osm/` and the packs are ignored.
+
+**Result (N3.1, measured; details in docs/ROAD_PACK.md "Measured"):**
+- **national:** 41.3 MB, 56 163 edges, 369 250 segments, built in 1.5 s, verified in 69 ms;
+  candidates per lookup p50 6, p95 37, max 176.
+- **region-A** (admin_level 4, every drivable class): 17.3 MB, 86 671 edges, 231 390
+  segments, built in 0.5 s, verified in 29 ms; candidates per lookup p50 28, p95 64, max 175.
+- The whole pipeline takes 20 s. A rebuild gives byte-identical packs, and both packs
+  share one grid ID.
+- Region-A loaded after national has 11 415 shadowed segments. That is exactly its
+  national-class segments.
+- **Cell size on region-A**, as p95 candidates / pack size / lookup + distance time:
+
+  | cell | p95 candidates | size | lookup + distance |
+  |---|---:|---:|---:|
+  | 32 m | 47 | 32.2 MB | 717 ns |
+  | 64 m | 64 | 17.3 MB | 740 ns |
+  | 128 m | 104 | 12.6 MB | 1002 ns |
+
+  **The default stays at 64 m.** 32 m doubles the size for no speed gain, and 128 m
+  exceeds 64 candidates at p95.
 
 ### N3.2 — road update in replay_nav only, behind `--roads <pack>` (repeatable)
 
