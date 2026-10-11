@@ -379,8 +379,8 @@ What N3.1 found wrong in the plan's first draft of these commands:
 
 ## Measured
 
-N3.1, osmium 1.19.1, `build_roads` release on an Apple-silicon Mac. Source: a
-country extract of about 880 MB. Packs are named by alias only.
+N3.1, osmium 1.19.1, `build_roads` release on an Apple-silicon Mac. Source: one
+Geofabrik country extract. Packs are named by alias only.
 
 | pack | ways kept | nodes | edges | segments | cells | cell entries (per segment) | size | build_roads | verify |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
