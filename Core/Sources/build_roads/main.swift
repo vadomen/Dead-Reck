@@ -12,6 +12,7 @@ import RoadPackBuild
 //       [--coverage <polygon.geojson>] [--admin-level <n>] [--relation-id <id>]
 //       [--max-size <bytes>] [--bench <queries>]
 //   swift run -c release build_roads --info <pack.roadpack> [--bench <queries>] [--json]
+//   swift run -c release build_roads --network <pack.roadpack>...
 //
 // The OPL comes from `osmium add-locations-to-ways -f opl` (node locations
 // on each way); tools/roads/build_packs.sh runs the osmium steps. Every pack
@@ -22,7 +23,10 @@ import RoadPackBuild
 //
 // --info prints the header, counts, sections, META, the hash check and the
 // cell statistics; --bench adds seeded lookup statistics (candidates per
-// lookup, ns per lookup). Packs and their META can reveal where someone
+// lookup, ns per lookup). --network loads the packs together in the given
+// order (same grid ID required) and prints roadSetHash and how many of each
+// later pack's segments the earlier packs shadow (de-duplication). Packs
+// and their META can reveal where someone
 // drives: keep them in the git-ignored osm/.
 //
 // Data: © OpenStreetMap contributors, ODbL 1.0.
@@ -41,6 +45,7 @@ let usage = """
     [--source-name <s>] [--source-sha256 <hex>] [--osmium-version <s>] [--strategy <s>] [--commit <s>] \
     [--coverage <polygon.geojson>] [--admin-level <n>] [--relation-id <id>] [--max-size <bytes>] [--bench <n>]
            build_roads --info <pack.roadpack> [--bench <n>] [--json]
+           build_roads --network <pack.roadpack>...
     """
 
 var arguments = Array(CommandLine.arguments.dropFirst())
@@ -57,7 +62,7 @@ while !arguments.isEmpty {
     if argument == "-h" || argument == "--help" {
         print(usage)
         exit(0)
-    } else if argument == "--json" {
+    } else if argument == "--json" || argument == "--network" {
         flags.insert(argument)
     } else if valued.contains(argument) {
         guard !arguments.isEmpty else { fail("\(argument) needs a value\n\(usage)", status: 2) }
@@ -144,6 +149,34 @@ if let path = options["--info"] {
         if let bench { printBench(bench) }
     }
     exit(verifyError == nil ? 0 : 4)
+}
+
+// MARK: --network
+
+if flags.contains("--network") {
+    guard !positional.isEmpty, options.isEmpty else { fail(usage, status: 2) }
+    let network: RoadNetwork
+    do {
+        network = try RoadNetwork(packs: positional.map { try RoadPack(contentsOf: URL(fileURLWithPath: $0)) })
+    } catch {
+        fail("\(error)", status: 4)
+    }
+    print("road network of \(network.packs.count) packs: roadSetHash \(network.roadSetHashHex), gridID \(NavigationSeed.hex(network.gridID))")
+    print("  data: \(RoadPackFormat.attribution), \(RoadPackFormat.license)")
+    for (p, pack) in network.packs.enumerated() {
+        var shadowed = 0
+        if p > 0 {
+            for e in 0..<pack.edgeCount {
+                let r = pack.edge(e)
+                for k in 0..<(Int(r.pointCount) - 1) {
+                    let key = RoadSegmentKey(osmWayID: r.osmWayID, index: r.wayPointOffset + UInt32(k))
+                    if network.isShadowed(key, inPack: p) { shadowed += 1 }
+                }
+            }
+        }
+        print("  [\(p)] \(URL(fileURLWithPath: positional[p]).lastPathComponent): contentHash \(NavigationSeed.hex(pack.contentHash)), segments \(pack.segmentCount), shadowed by earlier packs \(shadowed)")
+    }
+    exit(0)
 }
 
 // MARK: Build
