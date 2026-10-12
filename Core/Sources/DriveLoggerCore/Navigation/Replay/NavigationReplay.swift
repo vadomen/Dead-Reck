@@ -507,7 +507,14 @@ private struct ReplayRun {
         var longitude: Double
         var sigma: Double?
         var notScored: NavigationReplay.NotScored?
+        /// Index in `inputs` of the input this checkpoint comes from (a
+        /// withheld clean fix, a manual fix); nil for truth-file entries.
+        var inputIndex: Int?
     }
+
+    /// Inputs the engine would reject as implausible forward time jumps
+    /// (`NavigationEngine.accepts`), by index in `inputs` (R14.2-3).
+    var skippedInputs: Set<Int> = []
 
     var pinScoring = ReplayResult.PinScoring(pairWindowS: 0)
 
@@ -533,9 +540,27 @@ private struct ReplayRun {
         var trackIndex = 0
 
         let clock = ContinuousClock()
+        var endNs = firstNs
 
-        for input in inputs {
+        for (index, input) in inputs.enumerated() {
             let arrival = input.arrival.nanoseconds
+            var reason: WithholdReason?
+            if case .location(let sample, let t) = input {
+                reason = NavigationReplay.withholdReason(sample, at: t, options: options, motionStart: motionStart)
+            }
+            // R14.2-3: an input the engine would reject as an implausible
+            // forward time jump (a corrupt huge `t`) is not on the replay's
+            // timeline. Scoring and sampling up to its arrival would mean one
+            // `estimate` per second up to that `t`, and its fix, distance and
+            // pin are as corrupt as its time. The engine still counts it
+            // (`inputsRejectedTimeJump`) unless it is a withheld fix, which the
+            // engine never receives. Its pending checkpoints are dropped.
+            guard engine.accepts(input) else {
+                skippedInputs.insert(index)
+                if reason == nil { engine.ingest(input) }
+                continue
+            }
+            endNs = arrival
             // Score and sample everything due at or before this arrival, from
             // the state before it is ingested.
             while true {
@@ -553,7 +578,6 @@ private struct ReplayRun {
             }
 
             if case .location(let sample, let t) = input {
-                let reason = NavigationReplay.withholdReason(sample, at: t, options: options, motionStart: motionStart)
                 fixes.append(ReplayResult.Fix(
                     t: t.seconds, arrivalT: input.arrival.seconds,
                     latitude: sample.latitude, longitude: sample.longitude,
@@ -561,7 +585,7 @@ private struct ReplayRun {
                 ))
                 if reason != nil { continue }
             }
-            if case .manualFix(let sample, let t) = input, engine.accepts(input) {
+            if case .manualFix(let sample, let t) = input {
                 recordPin(sample, at: t)
             }
             if case .obd(let sample, let t) = input {
@@ -575,30 +599,36 @@ private struct ReplayRun {
             engineNs += ns
             maxIngestNs = max(maxIngestNs, ns)
         }
+        // The end is the last input on the timeline: the last one, unless
+        // trailing inputs were skipped (then the truth `end` is scored there).
         while nextCheckpoint < schedule.count {
-            score(schedule[nextCheckpoint])
+            var item = schedule[nextCheckpoint]
+            if item.kind == .truthEnd { item.t = endNs }
+            score(item)
             nextCheckpoint += 1
         }
-        sampleTrack(at: lastNs, withEllipse: true)
+        sampleTrack(at: endNs, withEllipse: true)
 
-        return finish(firstNs: firstNs, lastNs: lastNs)
+        return finish(firstNs: firstNs, lastNs: endNs)
     }
 
     mutating func buildSchedule(lastNs: Int64) -> [Scheduled] {
         var schedule: [Scheduled] = []
         var manualIndices: [Int] = []
-        for input in inputs {
+        for (index, input) in inputs.enumerated() {
             switch input {
             case .location(let sample, let t):
                 guard NavigationReplay.withholdReason(sample, at: t, options: options, motionStart: motionStart) != nil,
                       sample.horizontalAccuracy >= 0,
                       sample.horizontalAccuracy <= options.config.cleanFixAccM else { continue }
                 schedule.append(Scheduled(t: t.nanoseconds, kind: .cleanFix, latitude: sample.latitude,
-                                          longitude: sample.longitude, sigma: sample.horizontalAccuracy))
+                                          longitude: sample.longitude, sigma: sample.horizontalAccuracy,
+                                          inputIndex: index))
             case .manualFix(let sample, let t):
                 manualIndices.append(schedule.count)
                 schedule.append(Scheduled(t: t.nanoseconds, kind: .manualFix, latitude: sample.latitude,
-                                          longitude: sample.longitude, sigma: options.config.manualFixSigma(mapSpanM: sample.mapSpanM)))
+                                          longitude: sample.longitude, sigma: options.config.manualFixSigma(mapSpanM: sample.mapSpanM),
+                                          inputIndex: index))
             default:
                 continue
             }
@@ -627,6 +657,10 @@ private struct ReplayRun {
     }
 
     mutating func score(_ item: Scheduled) {
+        // A checkpoint from a skipped input (R14.2-3) is not scored. One that
+        // falls due before its own input is reached (a fix whose `t` is
+        // plausible but whose arrival is not) was already scored on its `t`.
+        if let index = item.inputIndex, skippedInputs.contains(index) { return }
         let t = MonotonicTimestamp(nanoseconds: item.t)
         let travelled = distance.distance(at: item.t)
         var checkpoint = ReplayResult.Checkpoint(

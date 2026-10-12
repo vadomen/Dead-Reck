@@ -378,6 +378,14 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
 - Inputs: motion, OBD, location and manualFix from any v1–v3 recording, fed in
   arrival order: by `t`, a location fix by `max(receivedT, t)`, ties in file
   order.
+- **Rejected inputs** (N3.0, R14.2-3): an input the engine rejects as an
+  implausible forward time jump (`maxForwardJumpS`, B0-1) is off the
+  replay's timeline. Nothing is scored or sampled up to its arrival. Its fix,
+  pin and OBD distance are not recorded, and a checkpoint it would have
+  given is dropped. The run (and a truth `end`) ends at the last input the
+  engine accepted. A real resume, two inputs within 10 s of each other, is
+  accepted from the second one on. No acceptance drive has one
+  (`inputsRejectedTimeJump` 0).
 - **Read report** (N3.0, R11.1-8): each log's `Read` line gives what the
   reader found (gzip members, truncated tail, damaged members, skipped
   lines, `inspect_log`'s "Integrity" wording). A damaged read, which shortens
