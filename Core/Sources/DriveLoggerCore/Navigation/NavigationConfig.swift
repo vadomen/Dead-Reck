@@ -186,6 +186,15 @@ public struct NavigationConfig: Hashable, Sendable, Codable {
     /// A pin placed on a map showing `mapSpanM` metres is good to about
     /// span / this (a fingertip is roughly 1/12 of the screen).
     public var manualFixSpanDivisor = 12.0
+    /// A pin marks a spot the car passed about a human reaction time before
+    /// the tap: its σ grows by v × (this + max(0, t − pressedT)), s, in
+    /// quadrature (N4MF-1). t − pressedT is the confirm delay of the old
+    /// long-press flow, 0 for a double tap. 0 restores the span-only σ for
+    /// double-tap pins.
+    public var manualFixReactionS = 1.0
+    /// v for that allowance when the pin's `speedSource` is not `obd` or
+    /// `gps` (or its speed is missing), m/s.
+    public var manualFixUnknownSpeedMps = 10.0
     /// The prior has no support at a pin when every particle puts it
     /// further than this squared Mahalanobis distance (χ², 2 dof; 25 is a
     /// tail probability of about 4e-6): positions then restart at the pin,
@@ -247,7 +256,8 @@ extension NavigationConfig {
         case maxFixAgeS, heldFixTimeoutS, courseMinSpeedMps, courseSigmaFloorDeg
         case speedUpdateMinKmh, gnssSpeedGateMps, gnssSpeedGateFraction, speedSigmaFloorMps
         case cleanFixAccM, reseedHeadingStdDeg, reseedNoSupportSigma, reseedFraction
-        case manualFixSigmaMinM, manualFixSpanDivisor, manualFixResetChi2, lateManualFixWindowS
+        case manualFixSigmaMinM, manualFixSpanDivisor, manualFixReactionS, manualFixUnknownSpeedMps
+        case manualFixResetChi2, lateManualFixWindowS
         case resampleESSFraction, resampleHeadingJitterDeg, resampleScaleJitter, convergedHeadingStdDeg
     }
 
@@ -307,6 +317,8 @@ extension NavigationConfig {
         reseedFraction = try c.decodeIfPresent(type(of: reseedFraction), forKey: .reseedFraction) ?? reseedFraction
         manualFixSigmaMinM = try c.decodeIfPresent(type(of: manualFixSigmaMinM), forKey: .manualFixSigmaMinM) ?? manualFixSigmaMinM
         manualFixSpanDivisor = try c.decodeIfPresent(type(of: manualFixSpanDivisor), forKey: .manualFixSpanDivisor) ?? manualFixSpanDivisor
+        manualFixReactionS = try c.decodeIfPresent(type(of: manualFixReactionS), forKey: .manualFixReactionS) ?? manualFixReactionS
+        manualFixUnknownSpeedMps = try c.decodeIfPresent(type(of: manualFixUnknownSpeedMps), forKey: .manualFixUnknownSpeedMps) ?? manualFixUnknownSpeedMps
         manualFixResetChi2 = try c.decodeIfPresent(type(of: manualFixResetChi2), forKey: .manualFixResetChi2) ?? manualFixResetChi2
         lateManualFixWindowS = try c.decodeIfPresent(type(of: lateManualFixWindowS), forKey: .lateManualFixWindowS) ?? lateManualFixWindowS
         resampleESSFraction = try c.decodeIfPresent(type(of: resampleESSFraction), forKey: .resampleESSFraction) ?? resampleESSFraction
@@ -382,5 +394,26 @@ extension NavigationConfig {
             return manualFixSigmaMinM
         }
         return max(manualFixSigmaMinM, span / manualFixSpanDivisor)
+    }
+
+    /// σ of a manual fix ingested at `t`, metres (N4MF-1):
+    /// √(manualFixSigma(mapSpanM:)² + (v · (τ + max(0, t − pressedT)))²),
+    /// τ = `manualFixReactionS`. v = `gateSpeedKmh` / 3.6 when
+    /// `speedSource` is `obd` or `gps` and the speed is usable, else
+    /// `manualFixUnknownSpeedMps`. Old long-press rows keep their confirm
+    /// delay t − pressedT in the allowance. This is the σ the engine
+    /// ingests; the replay scores pins with its own frozen truth σ
+    /// (`NavigationReplay.manualFixTruthSigmaM`), which this does not move.
+    public func manualFixSigma(_ sample: ManualFixSample, at t: MonotonicTimestamp) -> Double {
+        let base = manualFixSigma(mapSpanM: sample.mapSpanM)
+        let source = ManualFixSample.SpeedSource(rawValue: sample.speedSource)
+        var v = manualFixUnknownSpeedMps
+        if source == .obd || source == .gps, let kmh = sample.gateSpeedKmh, kmh.isFinite, kmh >= 0 {
+            v = kmh / 3.6
+        }
+        let delay = max(0, (Double(t.nanoseconds) - Double(sample.pressedT.nanoseconds)) / 1e9)
+        let travelled = max(0, v) * (max(0, manualFixReactionS) + (delay.isFinite ? delay : 0))
+        guard travelled.isFinite, travelled > 0 else { return base }
+        return (base * base + travelled * travelled).squareRoot()
     }
 }

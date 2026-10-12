@@ -263,4 +263,65 @@ struct NavigationN30EngineTests {
         #expect(abs(y.ellipse.semiMajorM / x.ellipse.semiMajorM - 1) < 0.05,
                 "semi-major late \(y.ellipse.semiMajorM) m vs in order \(x.ellipse.semiMajorM) m")
     }
+
+    // MARK: N4MF-1 pin σ grows with speed at the tap
+
+    static func pinSample(span: Double?, source: String, gateKmh: Double?, pressedT: Double = 100) -> ManualFixSample {
+        ManualFixSample(latitude: 0, longitude: 0, pressedT: S.ms(pressedT), mapSpanM: span,
+                        speedSource: source, gateSpeedKmh: gateKmh)
+    }
+
+    @Test("N4MF-1: σ_pin² = max(min, span/divisor)² + (v·(τ + max(0, t − pressedT)))²; unknown speed is 10 m/s")
+    func pinSigmaGrowsWithSpeed() {
+        let config = NavigationConfig()
+        func sigma(_ sample: ManualFixSample, t: Double = 100) -> Double {
+            config.manualFixSigma(sample, at: S.ms(t))
+        }
+        // Stationary: unchanged.
+        #expect(sigma(Self.pinSample(span: 1_248, source: "obd", gateKmh: 0)) == 104)
+        // 50 km/h by OBD, double tap (t = pressedT), τ 1 s: √(30² + 13.89²) = 33.06 m.
+        let v50: Double = 50 / 3.6
+        #expect(abs(sigma(Self.pinSample(span: 360, source: "obd", gateKmh: 50)) - (900 + v50 * v50).squareRoot()) < 1e-9)
+        // GPS speed counts the same.
+        #expect(sigma(Self.pinSample(span: 360, source: "gps", gateKmh: 36)) == (900 + 100.0).squareRoot())
+        // Unknown speed: 10 m/s × 1 s.
+        #expect(sigma(Self.pinSample(span: nil, source: "unknown", gateKmh: nil)) == (900 + 100.0).squareRoot())
+        // A source with a missing speed is unknown too.
+        #expect(sigma(Self.pinSample(span: nil, source: "obd", gateKmh: nil)) == (900 + 100.0).squareRoot())
+        // Old long-press row: confirmed 6.69 s after the press at 8 km/h, span 1248 m.
+        let longPress = sigma(Self.pinSample(span: 1_248, source: "obd", gateKmh: 8, pressedT: 100 - 6.69))
+        let allowance: Double = 8 / 3.6 * 7.69
+        let expected: Double = (104 * 104 + allowance * allowance).squareRoot()
+        #expect(abs(longPress - expected) < 1e-9)
+        #expect(abs(longPress - 105.4) < 0.05, "manual-3 pin 1: \(longPress) m")
+        // τ 0 and a double tap: today's σ.
+        var off = NavigationConfig()
+        off.manualFixReactionS = 0
+        #expect(off.manualFixSigma(Self.pinSample(span: 360, source: "obd", gateKmh: 50), at: S.ms(100)) == 30)
+    }
+
+    @Test("N4MF-1: a pin tapped at 50 km/h initialises the engine with the speed-grown σ; the replay's truth σ stays frozen")
+    func pinSigmaInEngineNotInTruth() throws {
+        let p = S.plane.geodetic(east: 0, north: 0)
+        let sample = ManualFixSample(latitude: p.latitude, longitude: p.longitude, pressedT: S.ms(1), mapSpanM: 360,
+                                     speedSource: "obd", gateSpeedKmh: 50)
+        var engine = NavigationEngine(config: S.config(particles: 50))
+        engine.ingest(.manualFix(sample, at: S.ms(1)))
+        let estimate = try #require(engine.estimate(at: S.ms(1)))
+        let sigma = (900 + (50 / 3.6) * (50 / 3.6)).squareRoot()
+        #expect(abs(estimate.ellipse.semiMajorM - sigma * ErrorEllipse.chiSquare95.squareRoot()) < 1e-6,
+                "semi-major \(estimate.ellipse.semiMajorM) m")
+        #expect(NavigationReplay.manualFixTruthSigmaM(mapSpanM: 360) == 30)
+    }
+
+    @Test("N4MF-1: the new config keys decode from a row that lacks them, with their defaults")
+    func pinSigmaKeysDecodeTolerantly() throws {
+        let data = NavigationConfig().canonicalJSON()
+        var object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(object.removeValue(forKey: "manualFixReactionS") != nil)
+        #expect(object.removeValue(forKey: "manualFixUnknownSpeedMps") != nil)
+        let decoded = try JSONDecoder().decode(NavigationConfig.self, from: JSONSerialization.data(withJSONObject: object))
+        #expect(decoded == NavigationConfig())
+        #expect(decoded.manualFixReactionS == 1 && decoded.manualFixUnknownSpeedMps == 10)
+    }
 }

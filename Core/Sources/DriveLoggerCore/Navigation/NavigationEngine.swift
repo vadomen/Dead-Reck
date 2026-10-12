@@ -991,7 +991,7 @@ public struct NavigationEngine: Sendable {
         guard sample.latitude.isFinite, sample.longitude.isFinite,
               abs(sample.latitude) <= 90, abs(sample.longitude) <= 180 else { return }
         counters.manualFixes += 1
-        let sigma = config.manualFixSigma(mapSpanM: sample.mapSpanM)
+        let sigma = config.manualFixSigma(sample, at: MonotonicTimestamp(nanoseconds: ns))
         // Late: grid steps already ran after the pin's own instant (the app
         // writes a double-tap pin when its undo window closes). In arrival
         // order the engine has just stepped to floor(t): never late.

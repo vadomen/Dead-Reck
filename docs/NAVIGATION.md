@@ -185,10 +185,20 @@ updates reweight only by what heading and scale actually predict.
     with unsigned OBD speed drove heading to "nose + 180°".
 - **Manual fix** ("I'm here"): σ = max(30 m, mapSpanM / 12), 30 m when the
   span is missing or not usable. A fingertip covers roughly 1/12 of the map, so
-  a pin on a 1.2 km-wide map is good to about 100 m. Caveat (M10.1-3): in
-  heading-up the logged span can be up to about 2.2× too large, which errs
-  toward a larger σ, so it is safe. The replay scores the pin checkpoint with the
-  same σ. Kalman position update. If the prior has no support at the pin (every
+  a pin on a 1.2 km-wide map is good to about 100 m. Since N3.0 (N4MF-1) σ
+  also grows with the speed at the tap: σ² = max(30, span / 12)² +
+  (v · (τ + max(0, t − pressedT)))², τ = `manualFixReactionS` (1 s), because
+  the finger marks a spot the car passed about a reaction time ago.
+  v = `gateSpeedKmh` / 3.6 when `speedSource` is `obd` or `gps`, else
+  `manualFixUnknownSpeedMps` (10 m/s). t − pressedT is the confirm delay of
+  the old long-press flow (0 for a double tap). On the replay set: manual
+  unchanged (0 km/h), manual-3 104 → 105.4 / 30.3 → 30.4 / 30.7 → 31.0 m,
+  drive-7 30 → 30.0–32.7 m (pins at 0–47 km/h). That is too small to judge
+  the rule here; it needs pins at 30–60 km/h (device item D3). Caveat (M10.1-3):
+  in heading-up the logged span can be up to about 2.2× too large, which errs
+  toward a larger σ, so it is safe. The replay scores the pin checkpoint with
+  the frozen truth σ max(30 m, span / 12) (`manualFixTruthSigmaM`, R19.1-1),
+  not with this engine σ. Kalman position update. If the prior has no support at the pin (every
   particle further than χ² = 25), positions restart at the pin while heading
   and scale hypotheses and their weights are kept. A low ESS alone does not
   reset (R13.1-1): that is the pin carrying the most information. For example,
@@ -397,6 +407,7 @@ every result.
 | cleanFixAccM | 15 | clean fix threshold |
 | reseedHeadingStdDeg / reseedNoSupportSigma / reseedFraction | 30 / 4 / 0.5 | clean-fix reseed |
 | manualFixSigmaMinM / manualFixSpanDivisor | 30 / 12 | manual pin σ = max(min, mapSpanM / divisor); min without a span |
+| manualFixReactionS / manualFixUnknownSpeedMps | 1 / 10 | pin σ grows in quadrature by v × (τ + max(0, t − pressedT)) (N4MF-1); v for an `unknown` speed source |
 | manualFixResetChi2 | 25 | manual reset when every particle is further than this from the pin (χ², 2 dof) |
 | lateManualFixWindowS | 5 | per-particle motion ring for late manual fixes (R14.3-1); also the minimum length of the mean-motion history. 0 disables (mean shift for every pin). Clamped to 0–60 |
 | resampleESSFraction | 0.5 | resampling threshold |

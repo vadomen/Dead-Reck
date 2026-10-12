@@ -258,8 +258,10 @@ struct NavigationEngineTests {
     func manualFixSigmaInEngine() throws {
         func initialised(span: Double?) throws -> NavigationEstimate {
             var engine = NavigationEngine(config: S.config(particles: 50))
-            engine.ingest(.manualFix(ManualFixSample(latitude: 0, longitude: 0, pressedT: S.ms(0), mapSpanM: span,
-                                                     speedSource: "unknown"), at: S.ms(1)))
+            // Stationary double tap (t = pressedT, OBD 0): no speed
+            // allowance (N4MF-1), the span alone sets σ.
+            engine.ingest(.manualFix(ManualFixSample(latitude: 0, longitude: 0, pressedT: S.ms(1), mapSpanM: span,
+                                                     speedSource: "obd", gateSpeedKmh: 0), at: S.ms(1)))
             return try #require(engine.estimate(at: S.ms(1)))
         }
         let k = ErrorEllipse.chiSquare95.squareRoot()
