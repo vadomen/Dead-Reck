@@ -68,16 +68,26 @@ updates reweight only by what heading and scale actually predict.
   - **Otherwise, unknown speed.** Each particle's speed error follows an
     Ornstein–Uhlenbeck process (2.5 m/s per √s, decaying with τ = 20 s, so its
     spread levels off at about 7.9 m/s), and heading noise is ×3. The
-    offsets are antithetic in pairs (R11.1-7): particles 2k and 2k + 1 share
-    one noise draw with opposite signs, so the offsets sum to 0. With
-    independent draws the *realised* mean drifted, about √(Var I(t) / N):
-    measured on a synthetic 10 min stretch at 15 m/s (N = 2000, seeds 1–10),
-    3.8–48.8 m, RMS 28.7 m. Antithetic: RMS 9.1 m (max 14.1 m); the rest is
-    heading spread, since a pair cancels along each particle's own heading.
-    The ellipse is unchanged (95 % semi-major 2.8–3.1 km). A resample or
-    reseed that breaks a pair is repaired at the next stale step (the odd
-    particle takes the negative of the even one; the marginal is the same,
-    no random numbers are drawn). The ellipse then grows like √t: about
+    noise *increments* are antithetic in pairs (R11.1-7, R20.1-1):
+    particles 2k and 2k + 1 share one noise draw per step with opposite
+    signs (in a macro step, both normals of the exact OU
+    transition), so the increments sum to 0 and add no Monte Carlo drift.
+    The offsets themselves are each particle's own: a resample keeps the
+    ones the fixes favoured, so fixes during a stale stretch still teach
+    the cloud its speed. With independent draws the *realised* mean
+    drifted, about √(Var I(t) / N): measured on a synthetic 10 min stretch
+    at 15 m/s with no fixes (N = 2000, seeds 1–10), 3.8–48.8 m, RMS 28.7 m.
+    Antithetic increments: RMS 9.1 m (max 14.1 m); the rest is heading
+    spread, since a pair cancels along each particle's own heading. The
+    ellipse is unchanged (95 % semi-major 2.8–3.1 km). R11.1-7 first
+    re-paired the offsets themselves after every resample (the odd particle
+    took the negative of the even one's). That holds the prior's marginal
+    but throws away the posterior: with clean fixes every second while
+    the car accelerated 15 → 25 m/s on stale OBD, half the learned offsets
+    were flipped each time, the mean speed stayed at the stale 15.2 m/s,
+    and the error 6 s after the last fix was 60 m instead of 16 m
+    (R20.1-1; N = 1000).
+    The ellipse then grows like √t: about
     0.6 / 2.2 / 3.0 km after 1 / 5 / 10 min of OBD silence while driving. An
     unbounded random walk reached 1.5 / 19 / 55 km.
 - **Catch-up after a long silence** (R13.1-6): when every input stops (the app
@@ -1144,7 +1154,7 @@ drive-7's truth is likely, not proven, at its two excluded pins.
 | R11.2-3 | an initialising fix's σ grows by age × speed | clean-long, manual (10⁻⁵ m) and drive-7 changed, PASS |
 | R14.4-1 | a late initialising pin backfills ring, history and cumulative motion | bit-identical (no late initialising pin in the set) |
 | N4MF-1 | pin σ grows with speed at the tap | manual identical (0 km/h); manual-3 and drive-7 changed (σ +0.0–2.7 m), PASS |
-| R11.1-7 | measured, then antithetic stale speed offsets | bit-identical (no unknown-speed steps; every stale stretch is parked) |
+| R11.1-7 | measured, then antithetic stale speed-noise increments (R20.1-1: the offsets a resample chose are kept, not re-paired) | bit-identical (no unknown-speed steps; every stale stretch is parked); R20.1-1 also bit-identical, 42/42 |
 
 **Arrival order, seeds 1–5 (the baseline).** Values per seed are seeds 1 / 2 / 3 / 4 / 5.
 

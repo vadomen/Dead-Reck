@@ -1164,3 +1164,21 @@ Tests: Core passes 704 tests in 102 suites (a5e76af). No App change.
 - **Rounds:** 3 run (plus one round 2 attempt cut off by a network error before reporting).
 - **Findings:** 2 MAJOR fixed (R19.1-1 frozen pin truth σ, R19.2-1 frozen clean-fix truth selection), 0 rejected, 7 MINOR deferred (R19.1-2..4, R19.2-2..4, R19.3-1).
 - **Final tests:** `cd Core && swift test`: 704 tests in 102 suites pass. No App change in the range.
+
+## Run 20: N3.0 part 3 (main..n3.0-part3, 211d93f..38a8103), started 2026-10-12
+
+First run under the new review setup (aadfc1e). The range: drive-7 criterion decided and the N3.2 drive-7 reported target, R19.2-3 and R19.3-1 (docs), then engine fixes R11.1-4, R11.1-5, R11.2-2, R11.2-3, R14.4-1, N4MF-1 and R11.1-7, one commit each with a regression test, and the N3.0 exit table. R11.1-6 failed the adoption rule on clean (+4.64 m mean) and is not in the range. Branch: `n3.0-part3`.
+
+### Round 1
+
+Reviewer: fresh `reviewer` agent (opus, new setup). Result: 0 BLOCKER / 2 MAJOR / 1 MINOR. Mutations: 3 run, 3 survived (M1 disable `pairSpeedOffsets`, M2 drop the macro-step moving marker, M3 independent draw for the odd particle in `macroStep`).
+
+Verified clean: the exit table reproduces from `logs/n30/p3` (`judge.py`); clean seed 1 at HEAD and at 4dd5a10 byte-identical GeoJSON (R11.1-7 claim); N4MF-1 leaves the frozen truth σ untouched; the two new config keys decode tolerantly; the R14.4-1 backfill draws no random numbers; R11.2-3 inflates σ in quadrature only; the R11.1-5 marker is reset in `initialize`; odd particle counts handled; privacy.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R20.1-1 | MAJOR | R11.1-7's `pairSpeedOffsets` (`NavigationEngine.swift:733-741`, armed after every resample at :1345) overwrites each odd particle's stale speed offset with the negative of the even one's, so the speed error the GPS fixes taught the cloud is flipped back to ~0. OBD silent while accelerating with clean fixes: 1.5 / 10 / 29 m before R11.1-7, 9.9 / 50 / 98 m at HEAD, speed stuck at the stale OBD value, resamples 17 → 60. The acceptance set has no moving unknown-speed steps. | FIXED | Verified: the re-pair ran after resampling regardless of measurement updates. Fix: re-pairing removed; only the noise increments are antithetic, each particle keeps its own offset. Regression test `NavigationRun20Tests/resampleKeepsLearnedSpeedOffsets` fails at 38a8103 (59.87 m at 95 s, speed 15.2 m/s) and passes (seeds 1–40: 2.20 / 15.98 / 37.43 m vs 2.14 / 15.66 / 36.71 m before R11.1-7). 10-min drift unchanged (RMS 9.13 m). Acceptance 42/42 GeoJSON byte-identical (no stale moving or macro steps in the set). |
+| R20.1-2 | MAJOR | Missing tests for new core logic: removing the macro-step "last moving step" marker (`:626`, R11.1-5) and drawing the odd particle independently in `macroStep` (`:604-605`, R11.1-7) each pass every test. | FIXED | New tests `NavigationRun20Tests/staleFixFromMacroStretchIgnored` (fails without the macro-step marker) and `macroStaleMeanDoesNotDrift` (fails with an independent odd draw: 28.32 m RMS). |
+| R20.1-3 | MINOR | `docs/BACKLOG.md:116`: R11.2-3's status still begins "DEFERRED (remaining part)" with "DONE (N3.0 part 3)" appended; the fix covers the row. | FIXED | Status cell made DONE in this round's commit. |
+
+Tests: Core passes 722 tests in 104 suites. No App change.

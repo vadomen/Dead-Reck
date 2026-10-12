@@ -86,14 +86,13 @@ public struct NavigationEngine: Sendable {
     var heading: [Double] = []
     var scale: [Double] = []
     /// Speed error while OBD is stale and the car is not parked, m/s
-    /// (Ornstein–Uhlenbeck, `staleSpeedDecayS`); 0 otherwise. Antithetic in
-    /// pairs (2k, 2k + 1): one noise draw per pair, opposite signs, so the
-    /// offsets sum to 0 and the realised mean does not drift (R11.1-7).
+    /// (Ornstein–Uhlenbeck, `staleSpeedDecayS`); 0 otherwise. The noise
+    /// increments are antithetic in pairs (2k, 2k + 1): one draw per pair,
+    /// opposite signs, so they sum to 0 and add no Monte Carlo drift to the
+    /// realised mean (R11.1-7). The offsets themselves are whatever the
+    /// filter made them: a resample keeps the ones the fixes favoured
+    /// (R20.1-1).
     var speedOffset: [Double] = []
-    /// Whether every pair's offsets are exact negatives. Cleared when a
-    /// resample or reseed sets offsets one particle at a time; the next
-    /// stale step restores it (`pairSpeedOffsets`).
-    private var speedOffsetsPaired = true
     /// Cumulative own motion (prediction displacement only, no update
     /// corrections), metres, for late manual fixes (R14.3-1). Only
     /// differences against `motionRing` are used.
@@ -493,7 +492,6 @@ public struct NavigationEngine: Sendable {
         let alongPerM = config.alongTrackNoisePerSqrtM * config.alongTrackNoisePerSqrtM
         let crossPerM = config.crossTrackNoisePerSqrtM * config.crossTrackNoisePerSqrtM
 
-        if stale { pairSpeedOffsets() }
         var meanDEast = 0.0, meanDNorth = 0.0, meanSpeed = 0.0
         var pairNoise = 0.0
         for i in 0..<east.count {
@@ -501,8 +499,9 @@ public struct NavigationEngine: Sendable {
             let dHeading = yaw + sigmaHeading * n1
             var speed = vObd * scale[i]
             if stale {
-                // Antithetic: the even particle of a pair draws, the odd
-                // one takes the opposite (an unpaired last one draws).
+                // Antithetic increments: the even particle of a pair draws,
+                // the odd one takes the opposite (an unpaired last one
+                // draws). Each keeps its own offset (R20.1-1).
                 let noise: Double
                 if i % 2 == 0 {
                     pairNoise = rng.nextGaussian()
@@ -599,12 +598,12 @@ public struct NavigationEngine: Sendable {
         let alongPerM = config.alongTrackNoisePerSqrtM * config.alongTrackNoisePerSqrtM
         let crossPerM = config.crossTrackNoisePerSqrtM * config.crossTrackNoisePerSqrtM
 
-        pairSpeedOffsets()
         var meanDEast = 0.0, meanDNorth = 0.0, meanSpeed = 0.0
         var pairNoise = (0.0, 0.0)
         for i in 0..<east.count {
             let (n1, n2) = rng.nextGaussianPair()
-            // Antithetic, as in `step`: the pair shares (n3, n4), negated.
+            // Antithetic increments, as in `step`: the pair shares
+            // (n3, n4), negated; x0 is each particle's own.
             if i % 2 == 0 { pairNoise = rng.nextGaussianPair() }
             let (n3, n4) = i % 2 == 0 ? pairNoise : (-pairNoise.0, -pairNoise.1)
             let x0 = speedOffset[i]
@@ -722,22 +721,6 @@ public struct NavigationEngine: Sendable {
     private mutating func resetSpeedOffsets() {
         for i in speedOffset.indices { speedOffset[i] = 0 }
         speedOffsetsActive = false
-        speedOffsetsPaired = true
-    }
-
-    /// Restores antithetic pairs after a resample or reseed set offsets one
-    /// particle at a time (R11.1-7): the odd particle of each pair takes
-    /// the negative of the even one's. Its marginal is unchanged (the OU
-    /// error is symmetric), and the offsets sum to 0 again. Draws no random
-    /// numbers.
-    private mutating func pairSpeedOffsets() {
-        guard !speedOffsetsPaired else { return }
-        var i = 1
-        while i < speedOffset.count {
-            speedOffset[i] = -speedOffset[i - 1]
-            i += 2
-        }
-        speedOffsetsPaired = true
     }
 
     // MARK: Initialisation
@@ -757,7 +740,6 @@ public struct NavigationEngine: Sendable {
         heading = east
         scale = east
         speedOffset = east
-        speedOffsetsPaired = true
         motionEast = east
         motionNorth = east
         logWeight = [Double](repeating: -log(Double(n)), count: n)
@@ -1011,7 +993,6 @@ public struct NavigationEngine: Sendable {
             covEN[i] = 0
             covNN[i] = sigma * sigma
             heading[i] = Self.wrap2Pi(course + courseSigma * rng.nextGaussian())
-            if speedOffset[i] != 0 { speedOffsetsPaired = false }
             speedOffset[i] = 0
             logWeight[i] = averageLogWeight
             // A new particle has no past of its own: reconstruct it as if
@@ -1342,7 +1323,6 @@ public struct NavigationEngine: Sendable {
             newMotionNorth[i] = motionNorth[k]
         }
         motionRing.remap(indices)
-        if speedOffsetsActive { speedOffsetsPaired = false }
         east = newEast
         north = newNorth
         covEE = newEE
