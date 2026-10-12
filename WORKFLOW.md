@@ -4,11 +4,13 @@ Install once from the repo root: `mkdir -p .claude && cp -R claude-setup/ .claud
 
 | Agent | Model | Owns | Can edit |
 |---|---|---|---|
-| main session | Opus | plan, contracts, merges, orchestration | yes |
+| main session | Sonnet (Opus to verify findings / judge adoption) | plan, contracts, merges, orchestration | yes |
 | elm-ble-engineer | Opus | ELM327 protocol (Core), mock adapter, CoreBluetooth transport | yes |
 | sensors-logging-engineer | Opus | sensors, clock, log format, writer/reader, background, inspect_log | yes |
 | ios-ui-engineer | Sonnet | SwiftUI screens | App UI only |
+| navigation-engineer | Opus | DR engine, replay_nav, road graph, map matching | yes |
 | reviewer | Opus | review vs invariants | no |
+| docs-editor | Sonnet | docs-only edits, ledger/backlog row moves | docs only, no shell |
 | drive-analyst | Sonnet | field-log debrief | no |
 
 Skills: `elm327-protocol`, `ios-build-test`, `drive-log-debrief` (preloaded into the agents that need them), `review-loop` (`/review-loop <range>`).
@@ -288,6 +290,8 @@ Every engine change is judged on the replay set first and goes through `/review-
 ---
 
 ## Rules for the orchestrator
+- **Model.** The main session runs on Sonnet by default. Switch to Opus (`/model`) only to verify review findings (CONFIRMED / REJECTED) or to judge an adoption-rule verdict yourself (docs/NAVIGATION.md), then switch back. Engineer agents and the reviewer stay on Opus with effort high (their frontmatter); `ios-ui-engineer`, `drive-analyst` and `docs-editor` run on Sonnet.
+- **Docs-only work goes to `docs-editor`**, not `navigation-engineer` or another engineer: wording fixes, ledger/backlog row moves, plan text. It has no shell, so you run tests and commit.
 - **One agent at a time in the main working tree.** Parallel sessions each get their own git worktree: `git worktree add ../dead-reck-<task> -b <task>`.
   - Merge them one at a time.
   - Run `cd Core && swift test` after each merge, plus the simulator build if `App/` changed.
