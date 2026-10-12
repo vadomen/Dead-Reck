@@ -35,6 +35,28 @@ public struct NavigationEstimate: Hashable, Sendable {
     /// OBD 0) or a parked stale step (OBD stale after an OBD 0, with no IMU
     /// sign of motion since).
     public var stationary: Bool
+    /// Σ wᵢ rᵢ of the last road update: the share of the cloud on a mapped
+    /// road (N3.2). 0 after an attempt that found no road near the cloud;
+    /// nil without roads, before the first attempt, and while the cloud is
+    /// too wide for roads to engage.
+    public var onRoadShare: Double? = nil
+    /// The edge with the largest Σ wᵢ rᵢ in the last road update; nil
+    /// whenever `onRoadShare` is nil or 0.
+    public var matchedEdge: MatchedRoadEdge? = nil
+}
+
+/// An edge of a `RoadNetwork`: the pack (load order), the edge index in it
+/// and its OSM way.
+public struct MatchedRoadEdge: Hashable, Sendable, Codable {
+    public var pack: Int
+    public var edge: Int
+    public var osmWayID: Int64
+
+    public init(pack: Int, edge: Int, osmWayID: Int64) {
+        self.pack = pack
+        self.edge = edge
+        self.osmWayID = osmWayID
+    }
 }
 
 /// A 95 % confidence ellipse: semi-axes `√(5.991 λ)` of the position
@@ -153,6 +175,35 @@ public struct NavigationCounters: Hashable, Sendable, Codable {
     /// 0 on every acceptance drive.
     public var inputsRejectedTimeJump = 0
 
+    // Roads (N3.2). All 0 without a road network.
+
+    /// Road updates that ran (Steps 1–5), pin anchors included.
+    public var roadUpdates = 0
+    /// Road update attempts skipped because no particle's mean was within
+    /// `roadSearchRadiusM` of any segment (a car park, outside the pack):
+    /// exact no-ops.
+    public var roadUpdatesNoRoad = 0
+    /// Particle Gaussians split before matching (Step 1).
+    public var roadSplits = 0
+    /// Segment candidates tested against particles: a deterministic work
+    /// measure.
+    public var roadCandidateTests = 0
+    /// Candidates refused by the level rule (a bridge over the street the
+    /// particle is on, or the street under its bridge).
+    public var roadLevelBlocked = 0
+    /// GNSS fixes ignored as a whole because no road near them fits while
+    /// the cloud is on a road at speed.
+    public var fixesRejectedOffRoad = 0
+    /// Road updates forced by a moving pin.
+    public var roadPinAnchors = 0
+
+    /// The road counters' coding keys: the only keys a comparison against a
+    /// pre-N3.2 `metrics.json` may treat as 0 when missing.
+    public static let roadCounterKeys = [
+        "roadUpdates", "roadUpdatesNoRoad", "roadSplits", "roadCandidateTests", "roadLevelBlocked",
+        "fixesRejectedOffRoad", "roadPinAnchors",
+    ]
+
     public init() {}
 }
 
@@ -164,6 +215,8 @@ extension NavigationCounters {
         case fixesIgnoredInvalid, courseUpdates, speedUpdates, reseeds, manualFixes, manualResets, resamples
         case lateManualFixes, lateManualFixesMeanShift
         case reanchors, coalescedSteps, macroSteps, inputsRejectedTimeJump
+        case roadUpdates, roadUpdatesNoRoad, roadSplits, roadCandidateTests, roadLevelBlocked
+        case fixesRejectedOffRoad, roadPinAnchors
     }
 
     /// Decodes counters written by any earlier build: a counter it did not
@@ -198,5 +251,12 @@ extension NavigationCounters {
         coalescedSteps = try value(.coalescedSteps)
         macroSteps = try value(.macroSteps)
         inputsRejectedTimeJump = try value(.inputsRejectedTimeJump)
+        roadUpdates = try value(.roadUpdates)
+        roadUpdatesNoRoad = try value(.roadUpdatesNoRoad)
+        roadSplits = try value(.roadSplits)
+        roadCandidateTests = try value(.roadCandidateTests)
+        roadLevelBlocked = try value(.roadLevelBlocked)
+        fixesRejectedOffRoad = try value(.fixesRejectedOffRoad)
+        roadPinAnchors = try value(.roadPinAnchors)
     }
 }
