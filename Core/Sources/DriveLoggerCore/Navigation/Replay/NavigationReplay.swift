@@ -100,8 +100,8 @@ public enum WithholdReason: String, Hashable, Sendable, Codable {
 
 public enum NavigationReplay {
     /// The navigation inputs of a recording in arrival order: motion and OBD
-    /// by `t`, location by `receivedT ?? t`, manual fixes by `t`. Ties keep
-    /// file order.
+    /// by `t`, location by `max(receivedT, t)` (`NavigationInput.arrival`),
+    /// manual fixes by `t`. Ties keep file order.
     public static func inputs<S: Sequence>(from events: S) -> [NavigationInput] where S.Element == LogEvent {
         let indexed = events.compactMap(NavigationInput.init).enumerated().map { ($0.offset, $0.element) }
         return indexed.sorted {

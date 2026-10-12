@@ -1,4 +1,4 @@
-# Navigation engine (N2, engine update N2.1)
+# Navigation engine (N2, engine updates N2.1–N2.3, N4-B0/B1)
 
 Live dead reckoning without roads: a causal, deterministic estimator of
 position, heading and OBD speed scale, in `Core/Sources/DriveLoggerCore/Navigation/`
@@ -272,6 +272,11 @@ does not mutate the engine. For a time after the last step (R13.1-5):
     kept its last speed v;
   - plus, in every direction, the variance of the engine's own unknown-speed
     OU error integrated over s.
+
+  This hold has no time limit: the position stays at the horizon however
+  long no input arrives, and only the ellipse keeps growing (it never
+  shrinks with `t`). A non-stationary engine that hears nothing for minutes
+  therefore shows a fixed dot with a widening ellipse, not a moving one.
 
   The ellipse grows with t and never shrinks. Before this rule, 60 s past
   the last step at 20 m/s the estimate moved 1.2 km, and mid-turn its heading
@@ -961,8 +966,9 @@ the engine now initialises at Start).
 
 **This changes scoring only, not the engine.** The engine and its config are
 untouched, and it ingests every pin as before. The changes: refinement pins
-(within `--pin-pair-window`, default 3 s, of the previous pin) are no longer
-separate checkpoints, and the truth file can exclude pins (`excludePins`).
+(within `--pin-pair-window`, default 3 s, of the previous pin) are not
+scored (they stay in `checkpoints`, marked `notScored`), and the truth file
+can exclude pins (`excludePins`).
 See "replay_nav" above for the exact rule.
 
 Re-scored with one build: the six acceptance runs plus drive-7 (`--gps use`,
@@ -1131,7 +1137,10 @@ on seeds 1–5 with std 0.03), with at most 1 of 283 withheld fixes inside the
   Release performance on the phone. The ≤ 2 ms check needs a Release drive.
 
 - ≤ 2 ms per 10 Hz step with 2000 particles on an iPhone. The Mac release
-  replay gives 0.05–0.06 ms/step (largest single ingest 0.31 ms).
+  replay gives 0.06–0.08 ms/step on the acceptance set (N3.0 baseline;
+  0.05–0.06 at N2.1 before later features). The largest single ingest is
+  0.2–1.5 ms, with one 4.5 ms outlier (`logs/r144`, N3 plan). Earlier
+  tables in this document give the figures of their own time.
 - Arrival order in the live app: CoreMotion batches can arrive late; the engine
   accumulates late yaw into the next step, but this is untested on hardware.
 - `estimate(at:)` extrapolation between steps at UI rates: the first frame

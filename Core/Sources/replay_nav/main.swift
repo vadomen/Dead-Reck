@@ -183,7 +183,7 @@ if let truthPath {
 }
 
 if config.validated() != config {
-    print("note: config validation clamps extrapolationHorizonS / maxForwardJumpS; the engine runs with the clamped values")
+    print("note: config validation clamps extrapolationHorizonS / maxForwardJumpS / lateManualFixWindowS; the engine runs with the clamped values")
 }
 var baseOptions = ReplayOptions(gps: gps, holdOutAccuracyM: holdOut, config: config)
 baseOptions.asLive = asLive
