@@ -129,8 +129,11 @@ updates reweight only by what heading and scale actually predict.
   - **Latency**: a v2/v3 fix's `t` is the fix time, before its arrival. The fix
     is shifted by the engine's own mean displacement and yaw since `t`, taken
     from a ring of cumulative mean motion (max(`maxFixAgeS`,
-    `lateManualFixWindowS`), 10 s). This is causal and needs no per-particle
-    history. It is right for a converged cloud. It is not right while heading
+    `lateManualFixWindowS`), 10 s). Between two 10 Hz entries the cumulative
+    motion is interpolated linearly (R11.2-2), so a fix 0.07 s after a grid
+    step is not pushed forward by the 0.07 s × v that happened before it
+    (about 1.5 m on average at 30 m/s, always forward). This is causal and
+    needs no per-particle history. It is right for a converged cloud. It is not right while heading
     is unknown (see late manual fix below).
   - **Stale fixes** (age > 10 s at arrival) are ignored unless OBD says the car
     is stopped. Stopped is not enough when the car moved after the fix

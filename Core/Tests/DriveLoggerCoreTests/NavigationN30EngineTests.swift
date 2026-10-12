@@ -145,4 +145,44 @@ struct NavigationN30EngineTests {
         let engine = H.engine(inputs)
         #expect(engine.isInitialized && engine.counters.fixesUsed == 1 && engine.counters.fixesIgnoredStale == 0)
     }
+
+    // MARK: R11.2-2 latency shift interpolated between history entries
+
+    /// Mean signed along-track error (estimate − truth, m; positive =
+    /// ahead) just after each fix arrives, driving north at 30 m/s. Clean
+    /// fixes at whole seconds up to 5 s converge the heading; from 6 s
+    /// fixes of the exact truth at `k + offset`, arriving 0.5 s later.
+    static func alongTrackBias(offset: Double) throws -> Double {
+        let drive = S(initialHeadingDeg: 0, initialSpeed: 30, [.straight(seconds: 62, speed: 30)])
+        var extra: [LogEvent] = []
+        var arrivals: [Double] = []
+        for k in 6...60 {
+            let t = Double(k) + offset
+            let truth = drive.truth(at: t)
+            let p = S.plane.geodetic(east: truth.east, north: truth.north)
+            extra.append(.location(LocationSample(latitude: p.latitude, longitude: p.longitude, altitude: 0,
+                                                  horizontalAccuracy: 5, verticalAccuracy: -1,
+                                                  speed: 30, speedAccuracy: 0.3, course: 0, courseAccuracy: 2,
+                                                  receivedT: S.ms(t + 0.5), ageS: 0.5), at: S.ms(t)))
+            arrivals.append(t + 0.5 + 0.001)
+        }
+        let clean = S.cleanFix(accuracy: 5, positionNoise: 0)
+        let events = drive.events(fix: { t, state, rng in t <= 5 ? clean(t, state, &rng) : nil }, extra: extra)
+        let samples = S.run(events, config: S.config(particles: 400), sampleTimes: arrivals).samples
+        var sum = 0.0
+        for (t, sample) in zip(arrivals, samples).dropFirst(10) {
+            let estimate = try #require(sample)
+            sum -= drive.offset(estimate, at: t).dNorth
+        }
+        return sum / Double(arrivals.count - 10)
+    }
+
+    @Test("R11.2-2: a fix 0.07 s after a grid step is not pushed forward by 0.07 s × v: off-grid and on-grid fixes agree")
+    func latencyShiftInterpolated() throws {
+        let onGrid = try Self.alongTrackBias(offset: 0)
+        let offGrid = try Self.alongTrackBias(offset: 0.07)
+        // Before: the shift counted 0.07 s × 30 m/s = 2.1 m of motion from
+        // before the fix, and the posterior followed most of it.
+        #expect(abs(offGrid - onGrid) < 0.3, "along-track bias off-grid \(offGrid) m, on-grid \(onGrid) m")
+    }
 }

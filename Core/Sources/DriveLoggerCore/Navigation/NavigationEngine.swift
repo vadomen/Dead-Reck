@@ -1281,13 +1281,26 @@ public struct NavigationEngine: Sendable {
 
     /// Mean displacement, yaw and OBD speed since `ns`, from the motion
     /// history. A time older than the history uses its oldest entry.
+    /// Between two entries the cumulative motion is interpolated linearly
+    /// (R11.2-2): the step from the entry at or before `ns` to the next one
+    /// is uniform over its 0.1 s, so only the part after `ns` is motion
+    /// since it. Without that, a fix 0.07 s after a grid step was pushed
+    /// forward by 0.07 s × v. A time after the newest entry (the pending
+    /// part of the current step) uses the newest. The OBD speeds are the
+    /// entry's at or before `ns`.
     private func shiftSince(_ ns: Int64)
         -> (east: Double, north: Double, yaw: Double, obdSpeed: Double?, heldOBDSpeed: Double?) {
-        guard let entry = history.entry(atOrBefore: ns) else {
+        guard let (entry, next) = history.entries(around: ns) else {
             return (0, 0, 0, nil, nil)
         }
-        return (cumulativeEast - entry.east, cumulativeNorth - entry.north, cumulativeYaw - entry.yaw,
-                entry.speed, entry.held)
+        var e = entry.east, n = entry.north, y = entry.yaw
+        if let next, next.t > entry.t, ns > entry.t {
+            let f = Double(ns - entry.t) / Double(next.t - entry.t)
+            e += f * (next.east - entry.east)
+            n += f * (next.north - entry.north)
+            y += f * (next.yaw - entry.yaw)
+        }
+        return (cumulativeEast - e, cumulativeNorth - n, cumulativeYaw - y, entry.speed, entry.held)
     }
 
     /// The motion-history entry a fix stamped `ns` reads (tests).
@@ -1461,14 +1474,20 @@ struct MotionHistory: Sendable {
 
     /// The latest entry at or before `t`; the oldest if all are later.
     func entry(atOrBefore t: Int64) -> Entry? {
+        entries(around: t)?.atOrBefore
+    }
+
+    /// The latest entry at or before `t` (the oldest if all are later) and
+    /// the one after it, nil when it is the newest.
+    func entries(around t: Int64) -> (atOrBefore: Entry, next: Entry?)? {
         guard !entries.isEmpty else { return nil }
         var lo = 0, hi = entries.count - 1
-        if chronological(0).t > t { return chronological(0) }
+        if chronological(0).t > t { return (chronological(0), nil) }
         while lo < hi {
             let mid = (lo + hi + 1) / 2
             if chronological(mid).t <= t { lo = mid } else { hi = mid - 1 }
         }
-        return chronological(lo)
+        return (chronological(lo), lo + 1 < entries.count ? chronological(lo + 1) : nil)
     }
 }
 
