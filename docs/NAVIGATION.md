@@ -444,7 +444,11 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
 - Scored only against information the engine did not receive: withheld clean
   fixes (≤ 15 m), each manual fix (on the prior, just before it is ingested),
   and truth-file points and `end` (the last input). Errors are in metres and as
-  a percentage of the distance travelled so far (∫ OBD speed).
+  a percentage of the distance travelled so far (∫ OBD speed). The 15 m is a
+  frozen replay constant (`NavigationReplay.cleanFixTruthAccM`, R19.2-1), not
+  the run's `cleanFixAccM`: the engine still uses its own `cleanFixAccM` to
+  decide which fixes it treats as clean, but a `--set cleanFixAccM=…`, a sweep
+  or a new default does not change which withheld fixes are scored.
 - **Refinement pairs** (`--pin-pair-window s`, default 3, 0 disables; N3.0):
   a manual fix whose `t` is at most s seconds after the previous manual fix's
   `t` is a refinement and is not scored, because the previous pin has just
@@ -614,13 +618,20 @@ the **mean over seeds 1–5** passes:
   - What it cannot hide: adding σ_truth only widens the ellipse. An
     overconfident engine still fails against an accurate truth, and an
     inaccurate truth cannot make a miss count against the engine.
-  - The truth's σ is never the candidate's to set. A clean fix's comes from
-    its `horizontalAccuracy` over a fixed 1.51, and a pin's from a frozen
-    max(30 m, mapSpanM / 12) (R19.1-1), not from the run's config. If the
-    pin's truth σ followed the config, a change that raised the engine's
-    pin σ would pass "must not drop" by widening the truth, while the
-    engine's estimate and ellipse at the pin (scored on the prior, before
-    the pin is ingested) stayed bit-identical. Changing these constants is
+  - The truth is never the candidate's to set, neither its σ nor which
+    checkpoints it holds. A clean fix's σ comes from its `horizontalAccuracy`
+    over a fixed 1.51, and a pin's from a frozen max(30 m, mapSpanM / 12)
+    (R19.1-1), not from the run's config. If the pin's truth σ followed the
+    config, a change that raised the engine's pin σ would pass "must not
+    drop" by widening the truth, while the engine's estimate and ellipse at
+    the pin (scored on the prior, before the pin is ingested) stayed
+    bit-identical. Which withheld fixes are clean-fix truth is frozen the
+    same way: accuracy ≤ 15 m (`NavigationReplay.cleanFixTruthAccM`,
+    R19.2-1), not the run's `cleanFixAccM`. If it followed the config, a
+    change that lowered `cleanFixAccM` would drop its worst 10–15 m
+    checkpoints from clean and clean-long max error, from drive-7's worst
+    withheld clean fix and from the consistency denominators, and one that
+    raised it would add 15–30 m fixes as truth. Changing these constants is
     a change to the metric, and needs its own decision and re-baseline.
   - Baseline: on the N3.0 baseline (engine as N4-B1) the two agree on every
     acceptance drive and seed; see "N3.0 baseline: both consistency

@@ -1129,3 +1129,18 @@ Verified clean: the tolerant decoder takes each default from `self.init()` (muta
 | R19.1-4 | MINOR | Merging an old metrics row rewrites it with today's keys only, so config keys or counters removed since are dropped; the doc mentions only added keys. | DEFERRED | BACKLOG |
 
 Tests: Core passes 703 tests in 102 suites. No App change.
+
+### Round 2
+
+Reviewer: fresh `reviewer` agent (a first attempt was cut off by a network error before reporting and is not counted). Result: 0 BLOCKER / 1 MAJOR / 2 MINOR.
+
+Verified clean: R19.1-1 complete for pin σ (`manualFixSigma(` called only by the engine; frozen formula matches the engine rule at the N3.0 defaults for nil, 0, negative, NaN and ∞ spans; no config key reaches it); the regression test fails on the old line, including the gated `inside95WithTruthSigma` check; pair window, exclusion tolerance, truth points, withholding and `motionStart` do not come from the config; NAVIGATION.md :491-500 and :616-623 match the code; no engine, default, App or log-format change; Core purity; privacy.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R19.2-1 | MAJOR | Which withheld fixes are scored clean-fix truth depends on the run's `cleanFixAccM` (`NavigationReplay.swift:635`), also an engine parameter: lowering it drops the worst 10–15 m fixes from the clean / clean-long / drive-7 gates and the consistency denominators; raising it adds 15–30 m fixes as truth. Same class as R19.1-1 (different parameter; not a repeat). | FIXED | Verified at :635 vs `NavigationEngine.swift:773`. Fix: frozen `NavigationReplay.cleanFixTruthAccM` = 15 m for truth selection; the engine keeps `cleanFixAccM`. Regression test `NavigationTruthSigmaConsistencyTests/cleanFixTruthIgnoresConfig` fails with the old line (12 issues for `cleanFixAccM` 4 and 30) and passes after; on clean-long `--set cleanFixAccM=4` used to empty the gate (0 checkpoints), now 277. 42 acceptance runs identical before and after. Also found: heading-convergence distance follows the run's `convergedHeadingStdDeg`; reported, not gated, left as is (R19.2-4). |
+| R19.2-2 | MINOR | The % of distance denominator is built from the run's `obdSpeedOffsetKmh` and `obdMaxAgeS` (`NavigationReplay.swift:604-605`); 0.5 → 1.5 km/h moves a 1.2 % error by ~0.02–0.03 pp, below the 0.1 pp tolerance. | DEFERRED | BACKLOG |
+| R19.2-4 | MINOR | Heading-convergence distance uses the engine's `converged` flag (`headingStdDeg < config.convergedHeadingStdDeg`, `NavigationEngine.swift:1351`), so a candidate raising the threshold reports earlier convergence with the same particles. Reported, not gated. Found by the round 2 fixer. | DEFERRED | BACKLOG |
+| R19.2-3 | MINOR | `docs/N3_PLAN.md:502-508` N4MF-1 item 2 says pins are "scored with the σ above" (speed-dependent), contradicting its own frozen-truth sub-bullet. | DEFERRED | BACKLOG |
+
+Tests: Core passes 704 tests in 102 suites. No App change.

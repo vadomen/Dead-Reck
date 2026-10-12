@@ -321,7 +321,9 @@ public enum NavigationReplay {
 public struct ReplayResult: Hashable, Sendable, Codable {
     public struct Checkpoint: Hashable, Sendable, Codable {
         public enum Kind: String, Hashable, Sendable, Codable, CaseIterable {
-            /// A withheld GNSS fix at or under `cleanFixAccM`.
+            /// A withheld GNSS fix at or under the frozen
+            /// `NavigationReplay.cleanFixTruthAccM` (15 m), not the run's
+            /// `cleanFixAccM` (R19.2-1).
             case cleanFix
             /// A manual fix, scored on the prior just before it is ingested.
             case manualFix
@@ -632,7 +634,7 @@ private struct ReplayRun {
             case .location(let sample, let t):
                 guard NavigationReplay.withholdReason(sample, at: t, options: options, motionStart: motionStart) != nil,
                       sample.horizontalAccuracy >= 0,
-                      sample.horizontalAccuracy <= options.config.cleanFixAccM else { continue }
+                      sample.horizontalAccuracy <= NavigationReplay.cleanFixTruthAccM else { continue }
                 schedule.append(Scheduled(t: t.nanoseconds, kind: .cleanFix, latitude: sample.latitude,
                                           longitude: sample.longitude, sigma: sample.horizontalAccuracy,
                                           inputIndex: index))
@@ -792,6 +794,20 @@ extension NavigationReplay {
     /// config (`fixSigmaPerAccuracy`), so a `--set` cannot move a clean
     /// fix's truth. A pin's truth σ is frozen the same way, below.
     public static let accuracyPerSigma = 1.51
+
+    /// Largest `horizontalAccuracy` (m, inclusive) of a withheld fix that is
+    /// scored as clean-fix truth. Frozen at `NavigationConfig.cleanFixAccM`'s
+    /// value when Q3 was decided (N3.0); not read from the config (R19.2-1).
+    ///
+    /// Which fixes are truth is a property of the fixes, not of the run. The
+    /// engine still calls a fix clean by its own `cleanFixAccM` (whether its
+    /// course may set the heading), but a run that lowers it (`--set
+    /// cleanFixAccM=…`, a sweep, a new default) must not drop its worst
+    /// 10–15 m checkpoints from the max error and the consistency
+    /// denominators, nor a run that raises it add 15–30 m fixes as truth.
+    /// Changing this constant is a change to the metric and needs its own
+    /// decision and re-baseline.
+    public static let cleanFixTruthAccM = 15.0
 
     /// Smallest truth σ of a manual fix, metres, and the σ without a usable
     /// span. Frozen at `NavigationConfig.manualFixSigmaMinM`'s value when Q3

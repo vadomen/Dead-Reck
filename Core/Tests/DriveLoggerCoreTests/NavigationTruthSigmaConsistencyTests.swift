@@ -114,6 +114,52 @@ struct NavigationTruthSigmaConsistencyTests {
         }
     }
 
+    @Test("R19.2-1: clean-fix truth selection is frozen at 15 m, so the config's cleanFixAccM cannot pick the truth")
+    func cleanFixTruthIgnoresConfig() throws {
+        let drive = S(initialHeadingDeg: 45, initialSpeed: 10, [
+            .straight(seconds: 40, speed: 10), .turn(degrees: 60, seconds: 10, speed: 10),
+            .straight(seconds: 50, speed: 10), .stop(seconds: 5),
+        ])
+        // Given to the engine (t ≤ 35 s): 3 m, clean under every threshold
+        // below, so the engine runs bit-identically whatever its cleanFixAccM.
+        // Withheld (t > 35 s): mixed accuracy, noise to match, so the
+        // 10–15 m fixes carry the largest errors.
+        let withheldAcc: [Double] = [2, 3, 4, 10, 12, 15, 20, 25]
+        let events = drive.events(fix: { t, state, rng in
+            let acc = t <= 35 ? 3 : withheldAcc[Int(t.rounded()) % withheldAcc.count]
+            return S.cleanFix(accuracy: acc, positionNoise: acc / 1.51)(t, state, &rng)
+        })
+        let inputs = NavigationReplay.inputs(from: events)
+        func run(cleanFixAccM: Double?) -> ReplayResult {
+            var config = S.config(particles: 200)
+            if let cleanFixAccM { config.cleanFixAccM = cleanFixAccM }
+            return NavigationReplay.run(logName: "a", inputs: inputs,
+                                        options: ReplayOptions(gps: .maskAfter(seconds: 35), config: config))
+        }
+        let base = run(cleanFixAccM: nil)
+        let clean = base.checkpoints.filter { $0.kind == .cleanFix }
+        let withheld = base.fixes.filter { $0.withheld != nil }
+        #expect(withheld.contains { $0.accuracyM <= 4 } && withheld.contains { $0.accuracyM >= 10 && $0.accuracyM <= 15 })
+        #expect(withheld.contains { $0.accuracyM > 15 })
+        // The truth is every withheld fix at or under 15 m, boundary inclusive.
+        #expect(NavigationReplay.cleanFixTruthAccM == 15)
+        #expect(clean.map(\.t) == withheld.filter { $0.accuracyM <= 15 }.map(\.t))
+        #expect(clean.contains { $0.truthSigmaM == 15 } && !clean.contains { ($0.truthSigmaM ?? 0) > 15 })
+        let worst = try #require(clean.max { ($0.errorM ?? 0) < ($1.errorM ?? 0) })
+        #expect((worst.truthSigmaM ?? 0) >= 10, "the worst checkpoint should be a 10–15 m fix: \(worst.truthSigmaM ?? -1) m")
+        for value in [4.0, 30.0] {
+            let other = run(cleanFixAccM: value)
+            let otherClean = other.checkpoints.filter { $0.kind == .cleanFix }
+            #expect(otherClean.count == clean.count, "cleanFixAccM \(value) changed the scored clean fixes")
+            #expect(otherClean.map(\.t) == clean.map(\.t), "cleanFixAccM \(value)")
+            #expect(otherClean == clean, "cleanFixAccM \(value)")
+            #expect(other.maxErrorM == base.maxErrorM && other.maxErrorPercent == base.maxErrorPercent,
+                    "cleanFixAccM \(value): max \(other.maxErrorM ?? -1) vs \(base.maxErrorM ?? -1) m")
+            #expect(other.consistency == base.consistency, "cleanFixAccM \(value)")
+            #expect(other.consistencyWithTruthSigma == base.consistencyWithTruthSigma, "cleanFixAccM \(value)")
+        }
+    }
+
     @Test("Adding a σ never turns inside into outside, and the variant is never below the engine-only share")
     func monotone() {
         let e = ErrorEllipse(semiMajorM: 80, semiMinorM: 20, orientationDeg: 60)
