@@ -497,6 +497,10 @@ public final class RoadPack: @unchecked Sendable {
             for i in Int(r.firstPoint)..<(Int(r.firstPoint) + Int(r.pointCount)) where edgeOfPoint(i) != e {
                 throw RoadPackError.invalid(pointTag, "point \(i) is not marked with its edge \(e)")
             }
+            // No zero-length segment: its bearing would be undefined.
+            for i in Int(r.firstPoint)..<(Int(r.firstPoint) + Int(r.pointCount) - 1) where point(i) == point(i + 1) {
+                throw RoadPackError.invalid(edgeTag, "edge \(e): zero-length segment at point \(i)")
+            }
         }
         guard expectedFirst == pointCount else { throw RoadPackError.invalid(edgeTag, "edges do not cover every point") }
 
