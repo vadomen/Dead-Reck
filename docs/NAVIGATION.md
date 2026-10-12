@@ -656,7 +656,7 @@ aliases (kept outside the repository or in the git-ignored `logs/`).
 | clean | `--gps mask-after 230` | max ≤ 30 m |
 | manual | `--gps use --hold-out-acc 100` | truth point 1 ≤ 200 m; convergence reported |
 | jammed-A, jammed-B | `--gps use` | end ≤ 2.5 % of distance |
-| drive-7 | `--gps mask-after 1800` | every withheld clean fix ≤ 2.5 % of distance (proposed N3.0, see below); scored-pin and clean-fix consistency reported |
+| drive-7 | `--gps mask-after 1800` | every withheld clean fix after 1800 s ≤ 2.5 % of distance from the start (decided 2026-10-12, see below); scored-pin and clean-fix consistency reported |
 
 - **clean**: the criterion is `mask-after 230`, i.e. 30 s of clean GNSS at
   speed (from about 200 s), then 1.8 km of pure dead reckoning. That is what
@@ -686,9 +686,9 @@ aliases (kept outside the repository or in the git-ignored `logs/`).
     proven**: the user does not remember the taps. Backlog N3MF-1 uses them
     as its regression case. This leaves 7 scored pins (12 manual fixes, 3
     refinements, 2 excluded).
-  - **Criterion (proposed N3.0, 2026-10-12, for the user to confirm).**
-    Every withheld clean fix is within 2.5 % of the distance travelled at its
-    time (∫ OBD speed from the start, as for jammed-A/B). Rule: drive-7 is a
+  - **Criterion (decided 2026-10-12 by the user).**
+    Every withheld clean fix after 1800 s is within 2.5 % of the distance
+    travelled at its time (∫ OBD speed from the start, as for jammed-A/B). Rule: drive-7 is a
     jammed drive, so it takes the jammed drives' existing threshold
     unchanged, set in N2 before drive-7 existed; nothing about the
     threshold was chosen from this drive's numbers. It applies to the worst
