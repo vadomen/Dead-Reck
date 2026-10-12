@@ -586,8 +586,23 @@ the **mean over seeds 1–5** passes:
 - **Drives scored in % of distance** (jammed-A, jammed-B end error; drive-7
   worst withheld clean fix): the mean may get worse by at most 0.1
   percentage points.
-- **Ellipse consistency** (share of checkpoints inside the 95 % ellipse, mean
-  over seeds) must not drop on any drive.
+- **Ellipse consistency** (share of scored checkpoints inside the 95 %
+  ellipse, mean over seeds) must not drop on any drive. **Since N3.0 (Q3,
+  decided by the user 2026-10-11) the gated consistency is the one with the
+  truth's own σ added**: the ellipse of P + σ_truth² I (`consistencyWithTruthSigma`,
+  see "replay_nav"). Before N3.0 it was the engine's ellipse alone
+  (`consistency`). Both are reported for every run, and the engine-only one
+  stays visible, but only the variant gates.
+  - Why: roads (N3.2) will shrink the ellipse across the road to a few
+    metres, while the truth has its own error (pins σ 30–104 m, clean fixes
+    3–5 m). Against the engine's ellipse alone a correct estimate would count
+    as outside because of the truth's error, not the engine's.
+  - What it cannot hide: adding σ_truth only widens the ellipse. An
+    overconfident engine still fails against an accurate truth, and an
+    inaccurate truth cannot make a miss count against the engine.
+  - Baseline: on the N3.0 baseline (engine as N4-B1) the two agree on every
+    acceptance drive and seed; see "N3.0 baseline: both consistency
+    definitions" below. So the switch moves no previous adoption decision.
 
 The acceptance criteria themselves must still pass on every seed. manual-3 and
 manual's convergence distance are reported, not gated. This replaces the
@@ -992,6 +1007,36 @@ kind].
   compared. Under the new rule, `endErrorM`/`endErrorPercent` and
   `consistency` also differ, on the 5 drive-7 rows only, plus each
   checkpoint's new `notScored` marker.
+
+### N3.0 baseline: both consistency definitions (2026-10-12)
+
+Engine as N4-B1, default config, release build, Mac. Seeds 1–5 in arrival
+order and `--as-live` (header seed); every run gives the same counts, so one
+value stands for all six. "Engine" is `consistency` (the engine's 95 %
+ellipse). "+ truth σ" is `consistencyWithTruthSigma` (P + σ_truth² I), which
+the adoption rule gates on from N3.0. drive-7's truth is likely, not proven,
+at its two excluded pins (see "Acceptance runs").
+
+| alias | run | scored checkpoints | engine | + truth σ (gated) |
+|---|---|---|---|---|
+| clean-long | mask-after 380 | 277 clean fixes | 100 % [277/277] | 100 % [277/277] |
+| clean | mask-after 230 | 216 clean fixes | 100 % [216/216] | 100 % [216/216] |
+| manual | use, hold-out 100 | 1 pin, 2 truth points | 100 % [3/3] | 100 % [3/3] |
+| jammed-A | use | truth end | 100 % [1/1] | 100 % [1/1] |
+| jammed-B | use | truth end | 100 % [1/1] | 100 % [1/1] |
+| manual-3 (sanity) | use | 3 pins | 66.7 % [2/3] | 66.7 % [2/3] |
+| drive-7 | mask-after 1800 | 266 clean fixes, 7 pins | 99.6 % [272/273; clean 266/266, pins 6/7] | 99.6 % [272/273; clean 266/266, pins 6/7] |
+
+- The definitions differ only where the truth's σ is comparable to the
+  engine's ellipse. Here every clean-fix σ (≤ 10 m) is small against
+  ellipses of tens to hundreds of metres, and every pin or truth point that
+  was inside stays inside.
+- The two misses are far enough outside to stay outside:
+  - manual-3, pin at ≈ 897 s: 130 m error against a 106 × 82 m ellipse,
+    130 m semi-major axis with σ 31 m added (seed 1). Borderline.
+  - drive-7, first pin of the 706 s pair: 209 m against 84 × 64 m, 111 m
+    with σ 30 m added. That is the error the two excluded pins left behind
+    (backlog N3MF-1).
 
 ### N2.2 experiment: stale-fix σ grown by age (default off; superseded by N2.3)
 
