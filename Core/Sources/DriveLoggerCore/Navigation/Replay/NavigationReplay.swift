@@ -735,7 +735,7 @@ private struct ReplayRun {
         let scored = checkpoints.filter { $0.errorM != nil && $0.isScored }
         let worst = scored.max { $0.errorM! < $1.errorM! }
         let endCheckpoint = checkpoints.last { $0.kind == .truthEnd } ?? scored.last
-        let convergence = Self.convergence(track, holdS: options.convergenceHoldS)
+        let convergence = NavigationReplay.convergence(track, holdS: options.convergenceHoldS)
         let steps = engine.counters.steps
         return ReplayResult(
             logName: logName,
@@ -767,9 +767,14 @@ private struct ReplayRun {
         )
     }
 
-    /// The first track point from which `converged` holds for `holdS`
-    /// seconds (to the end of the track if it ends sooner while converged
-    /// for at least `holdS`).
+}
+
+extension NavigationReplay {
+    /// Heading convergence: the first track point from which `converged`
+    /// holds for at least `holdS` seconds (track times, inclusive), with its
+    /// distance. A run of `converged` points shorter than `holdS` does not
+    /// count, and nil if no run is long enough (the track ending inside a
+    /// run included).
     static func convergence(_ track: [ReplayResult.TrackPoint], holdS: Double) -> (t: Double, distanceM: Double)? {
         var start: ReplayResult.TrackPoint?
         for point in track {
@@ -814,6 +819,12 @@ struct DistanceIntegrator {
 /// much lower means the ellipse is overconfident. The truth's own σ is not
 /// added to the ellipse. A checkpoint that is not scored (`notScored`: a
 /// refinement pin, or one the truth file excludes) is not counted.
+///
+/// **The one denominator (R13.1-8):** a checkpoint counts when it is scored
+/// and the engine had an estimate at its time (`inside95` set). One before
+/// initialisation has no ellipse and is in neither count. Every "inside
+/// 95 %" figure `replay_nav` prints, per kind included (the clean-fix line
+/// of the summary and `metrics.md`), is taken from here.
 public struct EllipseConsistency: Hashable, Sendable, Codable {
     public struct Count: Hashable, Sendable, Codable {
         public var inside: Int

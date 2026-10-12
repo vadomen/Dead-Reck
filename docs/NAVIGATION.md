@@ -468,11 +468,19 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   engine's 95 % ellipse at their time, overall and per kind. Shown in the
   summary, `metrics.md` and `metrics.json`. A calibrated filter scores about
   95 %; much lower means the ellipse is overconfident. The truth's own σ (a
-  pin's σ, for example) is not added to the ellipse.
+  pin's σ, for example) is not added to the ellipse. One denominator (N3.0,
+  R13.1-8): a checkpoint counts when it is scored and the engine had an
+  estimate at its time. One before initialisation is in neither count, and
+  the clean-fix "inside 95 %" figure of the summary and `metrics.md` uses the
+  same counts, with "(n before initialisation)" when there are any. On every
+  acceptance drive every checkpoint has an estimate, so the numbers do not
+  change.
 - Per log: distance, checkpoints, max and end error (end = truth `end`, else the
   last checkpoint), heading-convergence distance (first time `converged` then
-  holds for 30 s), steps, ms/step (engine `ingest` wall time only), seed and
-  config.
+  holds for 30 s, inclusive; a shorter run does not count), steps, ms/step
+  (engine `ingest` wall time only), seed and config. Distance holds the last
+  OBD speed for at most `obdMaxAgeS` (2 s) across a reply gap, so a dropout
+  adds no unobserved distance beyond that.
 - Output in `--out`: `metrics.md` and `metrics.json` (merged across invocations,
   one row per log and mode), and `<log>-<mode>.geojson` (1 Hz DR track, 95 %
   ellipses every 10 s, fixes used and withheld, truth points with error lines).

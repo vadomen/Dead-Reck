@@ -170,6 +170,15 @@ public enum ReplayReport {
         return " [\(notScored.text)]"
     }
 
+    /// The clean-fix "inside 95 %" figure, with the consistency's
+    /// denominator (R13.1-8): "277/277", or "200/210 (6 before
+    /// initialisation)" when some of the `count` clean fixes had no
+    /// estimate.
+    static func cleanFixInside(_ count: Int, _ consistency: EllipseConsistency) -> String {
+        let c = consistency.byKind[ReplayResult.Checkpoint.Kind.cleanFix.rawValue] ?? .init(inside: 0, scored: 0)
+        return "\(c.inside)/\(c.scored)" + (c.scored == count ? "" : " (\(count - c.scored) before initialisation)")
+    }
+
     static func km(_ value: Double?) -> String {
         guard let value else { return "never" }
         return String(format: "%.2f km", value / 1000)
@@ -208,8 +217,8 @@ public enum ReplayReport {
         if let clean = byKind[.cleanFix], !clean.isEmpty {
             let errors = clean.compactMap(\.errorM).sorted()
             let median = errors.isEmpty ? nil : errors[errors.count / 2]
-            let inside = clean.compactMap(\.inside95).filter { $0 }.count
-            lines.append("cleanFix      \(clean.count) withheld clean fixes: median \(m(median)) m, max \(m(errors.last)) m, inside 95 % \(inside)/\(clean.count)")
+            lines.append("cleanFix      \(clean.count) withheld clean fixes: median \(m(median)) m, max \(m(errors.last)) m, inside 95 % "
+                + cleanFixInside(clean.count, result.consistency))
         }
         for pin in result.pins {
             lines.append("Pin estimate  " + pinText(pin.pin) + notScoredSuffix(pin.pin, result.checkpoints))
@@ -291,7 +300,7 @@ public enum ReplayReport {
             let clean = r.checkpoints.filter { $0.kind == .cleanFix }
             if !clean.isEmpty {
                 let errors = clean.compactMap(\.errorM).sorted()
-                out += "| cleanFix ×\(clean.count) | | | median \(m(errors.isEmpty ? nil : errors[errors.count / 2])), max \(m(errors.last)) | | | \(clean.compactMap(\.inside95).filter { $0 }.count)/\(clean.count) | | |\n"
+                out += "| cleanFix ×\(clean.count) | | | median \(m(errors.isEmpty ? nil : errors[errors.count / 2])), max \(m(errors.last)) | | | \(cleanFixInside(clean.count, r.consistency ?? EllipseConsistency(r.checkpoints))) | | |\n"
             }
             if let pins = r.pins, !pins.isEmpty {
                 out += "\nDR estimate at each manual fix (prior):\n\n"
