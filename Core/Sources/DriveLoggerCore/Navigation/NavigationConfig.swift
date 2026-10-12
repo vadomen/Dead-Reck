@@ -233,6 +233,90 @@ public struct NavigationConfig: Hashable, Sendable, Codable {
 }
 
 extension NavigationConfig {
+    /// Every stored property, in declaration order. A new property must be
+    /// added here, or it is neither encoded nor decoded
+    /// (`NavigationConfigCodingTests` checks the list against the type).
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case particleCount, seed, stepHz, headingNoiseDegPerSqrtS
+        case turnHeadingNoiseDegPerSqrtDeg, alongTrackNoisePerSqrtM, crossTrackNoisePerSqrtM, scaleNoisePerSqrtS
+        case scalePriorMean, scalePriorStd, obdSpeedOffsetKmh, obdMaxAgeS
+        case staleSpeedNoiseMpsPerSqrtS, staleSpeedDecayS, staleParkedMotionG, staleParkedMotionTauS
+        case staleHeadingNoiseFactor, maxCatchUpSteps, extrapolationHorizonS, maxForwardJumpS
+        case reanchorDistanceM, maxMotionGapS, fixSigmaPerAccuracy, fixSigmaFloorM
+        case networkFixInflation, networkFixCorrelationS, staleFixSigmaGrowthMps, staleFixAgeS
+        case maxFixAgeS, heldFixTimeoutS, courseMinSpeedMps, courseSigmaFloorDeg
+        case speedUpdateMinKmh, gnssSpeedGateMps, gnssSpeedGateFraction, speedSigmaFloorMps
+        case cleanFixAccM, reseedHeadingStdDeg, reseedNoSupportSigma, reseedFraction
+        case manualFixSigmaMinM, manualFixSpanDivisor, manualFixResetChi2, lateManualFixWindowS
+        case resampleESSFraction, resampleHeadingJitterDeg, resampleScaleJitter, convergedHeadingStdDeg
+    }
+
+    /// Decodes a config written by any earlier build (R11.2-4, R12.1-1): a
+    /// key it did not have takes its default, so `metrics.json` rows and
+    /// sidecar headers from before a key was added still decode. Unknown
+    /// keys are ignored, as before. Encoding is the synthesized one (sorted
+    /// keys in every encoder this package uses), so its bytes and
+    /// `hashHex` are unchanged.
+    ///
+    /// The defaults are today's. A row that predates a key ran with that
+    /// key's behaviour as it was then, which for a key added with a new
+    /// mechanism is usually "off", not today's default; read an old row's
+    /// config with that in mind.
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init()
+        particleCount = try c.decodeIfPresent(type(of: particleCount), forKey: .particleCount) ?? particleCount
+        seed = try c.decodeIfPresent(type(of: seed), forKey: .seed) ?? seed
+        stepHz = try c.decodeIfPresent(type(of: stepHz), forKey: .stepHz) ?? stepHz
+        headingNoiseDegPerSqrtS = try c.decodeIfPresent(type(of: headingNoiseDegPerSqrtS), forKey: .headingNoiseDegPerSqrtS) ?? headingNoiseDegPerSqrtS
+        turnHeadingNoiseDegPerSqrtDeg = try c.decodeIfPresent(type(of: turnHeadingNoiseDegPerSqrtDeg), forKey: .turnHeadingNoiseDegPerSqrtDeg) ?? turnHeadingNoiseDegPerSqrtDeg
+        alongTrackNoisePerSqrtM = try c.decodeIfPresent(type(of: alongTrackNoisePerSqrtM), forKey: .alongTrackNoisePerSqrtM) ?? alongTrackNoisePerSqrtM
+        crossTrackNoisePerSqrtM = try c.decodeIfPresent(type(of: crossTrackNoisePerSqrtM), forKey: .crossTrackNoisePerSqrtM) ?? crossTrackNoisePerSqrtM
+        scaleNoisePerSqrtS = try c.decodeIfPresent(type(of: scaleNoisePerSqrtS), forKey: .scaleNoisePerSqrtS) ?? scaleNoisePerSqrtS
+        scalePriorMean = try c.decodeIfPresent(type(of: scalePriorMean), forKey: .scalePriorMean) ?? scalePriorMean
+        scalePriorStd = try c.decodeIfPresent(type(of: scalePriorStd), forKey: .scalePriorStd) ?? scalePriorStd
+        obdSpeedOffsetKmh = try c.decodeIfPresent(type(of: obdSpeedOffsetKmh), forKey: .obdSpeedOffsetKmh) ?? obdSpeedOffsetKmh
+        obdMaxAgeS = try c.decodeIfPresent(type(of: obdMaxAgeS), forKey: .obdMaxAgeS) ?? obdMaxAgeS
+        staleSpeedNoiseMpsPerSqrtS = try c.decodeIfPresent(type(of: staleSpeedNoiseMpsPerSqrtS), forKey: .staleSpeedNoiseMpsPerSqrtS) ?? staleSpeedNoiseMpsPerSqrtS
+        staleSpeedDecayS = try c.decodeIfPresent(type(of: staleSpeedDecayS), forKey: .staleSpeedDecayS) ?? staleSpeedDecayS
+        staleParkedMotionG = try c.decodeIfPresent(type(of: staleParkedMotionG), forKey: .staleParkedMotionG) ?? staleParkedMotionG
+        staleParkedMotionTauS = try c.decodeIfPresent(type(of: staleParkedMotionTauS), forKey: .staleParkedMotionTauS) ?? staleParkedMotionTauS
+        staleHeadingNoiseFactor = try c.decodeIfPresent(type(of: staleHeadingNoiseFactor), forKey: .staleHeadingNoiseFactor) ?? staleHeadingNoiseFactor
+        maxCatchUpSteps = try c.decodeIfPresent(type(of: maxCatchUpSteps), forKey: .maxCatchUpSteps) ?? maxCatchUpSteps
+        extrapolationHorizonS = try c.decodeIfPresent(type(of: extrapolationHorizonS), forKey: .extrapolationHorizonS) ?? extrapolationHorizonS
+        maxForwardJumpS = try c.decodeIfPresent(type(of: maxForwardJumpS), forKey: .maxForwardJumpS) ?? maxForwardJumpS
+        reanchorDistanceM = try c.decodeIfPresent(type(of: reanchorDistanceM), forKey: .reanchorDistanceM) ?? reanchorDistanceM
+        maxMotionGapS = try c.decodeIfPresent(type(of: maxMotionGapS), forKey: .maxMotionGapS) ?? maxMotionGapS
+        fixSigmaPerAccuracy = try c.decodeIfPresent(type(of: fixSigmaPerAccuracy), forKey: .fixSigmaPerAccuracy) ?? fixSigmaPerAccuracy
+        fixSigmaFloorM = try c.decodeIfPresent(type(of: fixSigmaFloorM), forKey: .fixSigmaFloorM) ?? fixSigmaFloorM
+        networkFixInflation = try c.decodeIfPresent(type(of: networkFixInflation), forKey: .networkFixInflation) ?? networkFixInflation
+        networkFixCorrelationS = try c.decodeIfPresent(type(of: networkFixCorrelationS), forKey: .networkFixCorrelationS) ?? networkFixCorrelationS
+        staleFixSigmaGrowthMps = try c.decodeIfPresent(type(of: staleFixSigmaGrowthMps), forKey: .staleFixSigmaGrowthMps) ?? staleFixSigmaGrowthMps
+        staleFixAgeS = try c.decodeIfPresent(type(of: staleFixAgeS), forKey: .staleFixAgeS) ?? staleFixAgeS
+        maxFixAgeS = try c.decodeIfPresent(type(of: maxFixAgeS), forKey: .maxFixAgeS) ?? maxFixAgeS
+        heldFixTimeoutS = try c.decodeIfPresent(type(of: heldFixTimeoutS), forKey: .heldFixTimeoutS) ?? heldFixTimeoutS
+        courseMinSpeedMps = try c.decodeIfPresent(type(of: courseMinSpeedMps), forKey: .courseMinSpeedMps) ?? courseMinSpeedMps
+        courseSigmaFloorDeg = try c.decodeIfPresent(type(of: courseSigmaFloorDeg), forKey: .courseSigmaFloorDeg) ?? courseSigmaFloorDeg
+        speedUpdateMinKmh = try c.decodeIfPresent(type(of: speedUpdateMinKmh), forKey: .speedUpdateMinKmh) ?? speedUpdateMinKmh
+        gnssSpeedGateMps = try c.decodeIfPresent(type(of: gnssSpeedGateMps), forKey: .gnssSpeedGateMps) ?? gnssSpeedGateMps
+        gnssSpeedGateFraction = try c.decodeIfPresent(type(of: gnssSpeedGateFraction), forKey: .gnssSpeedGateFraction) ?? gnssSpeedGateFraction
+        speedSigmaFloorMps = try c.decodeIfPresent(type(of: speedSigmaFloorMps), forKey: .speedSigmaFloorMps) ?? speedSigmaFloorMps
+        cleanFixAccM = try c.decodeIfPresent(type(of: cleanFixAccM), forKey: .cleanFixAccM) ?? cleanFixAccM
+        reseedHeadingStdDeg = try c.decodeIfPresent(type(of: reseedHeadingStdDeg), forKey: .reseedHeadingStdDeg) ?? reseedHeadingStdDeg
+        reseedNoSupportSigma = try c.decodeIfPresent(type(of: reseedNoSupportSigma), forKey: .reseedNoSupportSigma) ?? reseedNoSupportSigma
+        reseedFraction = try c.decodeIfPresent(type(of: reseedFraction), forKey: .reseedFraction) ?? reseedFraction
+        manualFixSigmaMinM = try c.decodeIfPresent(type(of: manualFixSigmaMinM), forKey: .manualFixSigmaMinM) ?? manualFixSigmaMinM
+        manualFixSpanDivisor = try c.decodeIfPresent(type(of: manualFixSpanDivisor), forKey: .manualFixSpanDivisor) ?? manualFixSpanDivisor
+        manualFixResetChi2 = try c.decodeIfPresent(type(of: manualFixResetChi2), forKey: .manualFixResetChi2) ?? manualFixResetChi2
+        lateManualFixWindowS = try c.decodeIfPresent(type(of: lateManualFixWindowS), forKey: .lateManualFixWindowS) ?? lateManualFixWindowS
+        resampleESSFraction = try c.decodeIfPresent(type(of: resampleESSFraction), forKey: .resampleESSFraction) ?? resampleESSFraction
+        resampleHeadingJitterDeg = try c.decodeIfPresent(type(of: resampleHeadingJitterDeg), forKey: .resampleHeadingJitterDeg) ?? resampleHeadingJitterDeg
+        resampleScaleJitter = try c.decodeIfPresent(type(of: resampleScaleJitter), forKey: .resampleScaleJitter) ?? resampleScaleJitter
+        convergedHeadingStdDeg = try c.decodeIfPresent(type(of: convergedHeadingStdDeg), forKey: .convergedHeadingStdDeg) ?? convergedHeadingStdDeg
+    }
+}
+
+extension NavigationConfig {
     /// Largest `extrapolationHorizonS` the engine uses, s. A larger value
     /// (an absurd `--set`) would overflow the nanosecond arithmetic in
     /// `estimate(at:)` (B0-1); an hour is far beyond any sensible horizon.

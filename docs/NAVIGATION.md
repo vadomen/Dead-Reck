@@ -1,4 +1,4 @@
-# Navigation engine (N2, engine update N2.1)
+# Navigation engine (N2, engine updates N2.1–N2.3, N4-B0/B1)
 
 Live dead reckoning without roads: a causal, deterministic estimator of
 position, heading and OBD speed scale, in `Core/Sources/DriveLoggerCore/Navigation/`
@@ -273,6 +273,11 @@ does not mutate the engine. For a time after the last step (R13.1-5):
   - plus, in every direction, the variance of the engine's own unknown-speed
     OU error integrated over s.
 
+  This hold has no time limit: the position stays at the horizon however
+  long no input arrives, and only the ellipse keeps growing (it never
+  shrinks with `t`). A non-stationary engine that hears nothing for minutes
+  therefore shows a fixed dot with a widening ellipse, not a moving one.
+
   The ellipse grows with t and never shrinks. Before this rule, 60 s past
   the last step at 20 m/s the estimate moved 1.2 km, and mid-turn its heading
   spun 180°, with the ellipse unchanged.
@@ -372,12 +377,28 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   [--hold-out-acc <m>] [--truth ../logs/truth.json] [--seed N|header] [--particles N] \
   [--set <configKey>=<number>] [--out ../logs/out] \
   [--as-live | --file-order] [--compare <log.nav.jsonl> [--tolerance <m>] [--heading-tolerance <deg>]] \
-  [--write-sidecar <out.nav.jsonl>] [--pin-pair-window <s>]
+  [--write-sidecar <out.nav.jsonl>] [--pin-pair-window <s>] [--strict]
 ```
 
 - Inputs: motion, OBD, location and manualFix from any v1–v3 recording, fed in
   arrival order: by `t`, a location fix by `max(receivedT, t)`, ties in file
   order.
+- **Rejected inputs** (N3.0, R14.2-3): an input the engine rejects as an
+  implausible forward time jump (`maxForwardJumpS`, B0-1) is off the
+  replay's timeline. Nothing is scored or sampled up to its arrival. Its fix,
+  pin and OBD distance are not recorded, and a checkpoint it would have
+  given is dropped. The run (and a truth `end`) ends at the last input the
+  engine accepted. A real resume, two inputs within 10 s of each other, is
+  accepted from the second one on. No acceptance drive has one
+  (`inputsRejectedTimeJump` 0).
+- **Read report** (N3.0, R11.1-8): each log's `Read` line gives what the
+  reader found (gzip members, truncated tail, damaged members, skipped
+  lines, `inspect_log`'s "Integrity" wording). A damaged read, which shortens
+  the drive or leaves a hole in it (so the distance and the truth `end` are
+  scored on what was read), is a `Warning`. `--strict` reads with
+  `LogRecovery.strict` and stops with status 3 on any damage, a truncated
+  tail included, before `metrics.json` and `metrics.md` are updated. Every
+  acceptance drive reads clean.
 - `--seed header`: each log's seed is derived from its header's `sessionID`
   (`NavigationSeed`), the seed the live app used.
 - `--as-live`: replay as the app ran live: file order, `--seed header` and the
@@ -423,7 +444,11 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
 - Scored only against information the engine did not receive: withheld clean
   fixes (≤ 15 m), each manual fix (on the prior, just before it is ingested),
   and truth-file points and `end` (the last input). Errors are in metres and as
-  a percentage of the distance travelled so far (∫ OBD speed).
+  a percentage of the distance travelled so far (∫ OBD speed). The 15 m is a
+  frozen replay constant (`NavigationReplay.cleanFixTruthAccM`, R19.2-1), not
+  the run's `cleanFixAccM`: the engine still uses its own `cleanFixAccM` to
+  decide which fixes it treats as clean, but a `--set cleanFixAccM=…`, a sweep
+  or a new default does not change which withheld fixes are scored.
 - **Refinement pairs** (`--pin-pair-window s`, default 3, 0 disables; N3.0):
   a manual fix whose `t` is at most s seconds after the previous manual fix's
   `t` is a refinement and is not scored, because the previous pin has just
@@ -452,16 +477,53 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   engine's 95 % ellipse at their time, overall and per kind. Shown in the
   summary, `metrics.md` and `metrics.json`. A calibrated filter scores about
   95 %; much lower means the ellipse is overconfident. The truth's own σ (a
-  pin's σ, for example) is not added to the ellipse.
+  pin's σ, for example) is not added to this ellipse. One denominator (N3.0,
+  R13.1-8): a checkpoint counts when it is scored and the engine had an
+  estimate at its time. One before initialisation is in neither count, and
+  the clean-fix "inside 95 %" figure of the summary and `metrics.md` uses the
+  same counts, with "(n before initialisation)" when there are any. On every
+  acceptance drive every checkpoint has an estimate, so the numbers do not
+  change.
+- **Ellipse consistency with the truth's σ** (N3.0, Q3; `consistencyWithTruthSigma`
+  in `metrics.json`, `inside95WithTruthSigma` per checkpoint, the
+  "+ truth σ" line of the summary and column of `metrics.md`): the same
+  share, counted on the 95 % ellipse of P + σ_truth² I. P is the engine's
+  position covariance, the moment-matched particle mixture (each particle's
+  Gaussian plus the spread of the means), whose 95 % ellipse is the one
+  above. σ_truth per axis is: for a withheld clean fix, its
+  `horizontalAccuracy` / 1.51 (a fixed constant, not the config's
+  `fixSigmaPerAccuracy`); for a pin, a frozen max(30 m, mapSpanM / 12)
+  (30 m without a usable span; `NavigationReplay.manualFixTruthSigmaM`,
+  R19.1-1); for a truth point or `end`, its `sigmaM` (0 if absent). The pin
+  formula is the engine's `manualFixSigma` rule with its N3.0 defaults,
+  written as constants in the replay code and not read from the config:
+  the engine still weights the pin with the run's own `manualFixSigma`, but
+  a `--set manualFixSigmaMinM=…`, a sweep or a later change of the engine's
+  pin σ (a new default, the N4MF-1 speed term) does not move the truth it is
+  scored against. A pin's `truthSigmaM` in `metrics.json` and the summary is
+  this frozen σ; on a default-config run it equals the engine's pin σ, as
+  before. P + σ² I has P's axes, so each
+  semi-axis a becomes √(a² + 5.991 σ²). Same denominator as above. It is
+  computed in the replay only; the engine and its ellipse are unchanged.
 - Per log: distance, checkpoints, max and end error (end = truth `end`, else the
   last checkpoint), heading-convergence distance (first time `converged` then
-  holds for 30 s), steps, ms/step (engine `ingest` wall time only), seed and
-  config.
+  holds for 30 s, inclusive; a shorter run does not count), steps, ms/step
+  (engine `ingest` wall time only), seed and config. Distance holds the last
+  OBD speed for at most `obdMaxAgeS` (2 s) across a reply gap, so a dropout
+  adds no unobserved distance beyond that.
 - Output in `--out`: `metrics.md` and `metrics.json` (merged across invocations,
-  one row per log and mode; an existing `metrics.json` that no longer decodes
-  is reported with a warning and copied to `metrics.undecodable-<pid>.json`
-  before it is replaced), and `<log>-<mode>.geojson` (1 Hz DR track, 95 %
+  one row per log and mode), and `<log>-<mode>.geojson` (1 Hz DR track, 95 %
   ellipses every 10 s, fixes used and withheld, truth points with error lines).
+  - Rows written by earlier builds still merge (N3.0): a config key, counter
+    or metrics field added after the row was written takes its default (a
+    counter 0, a later metrics field absent). The default is today's, which
+    is not necessarily what that older build ran with.
+  - An existing `metrics.json` that does not decode at all (damaged, or not
+    a metrics file) is reported with a warning and copied to a new
+    `metrics.undecodable-<UTC time>-<pid>.json` (with `-1`, `-2`, … if the
+    name exists; an older copy is never overwritten) before it is replaced.
+    If the copy cannot be written, or the existing file cannot be read,
+    `replay_nav` stops with status 1 and leaves `metrics.json` unchanged.
 
 Truth file (git-ignored `logs/truth.json`, read at runtime), keyed by recording
 file name. The values here are illustrative:
@@ -533,16 +595,47 @@ the as-live runs use it like the arrival-order ones. Results: "N4-B1" below.
 ## Adoption rule for engine changes
 
 A change to the engine or its defaults is adopted only if, on every acceptance
-drive (clean-long, clean, manual, jammed-A, jammed-B), the **mean over seeds
-1–5** passes:
+drive (clean-long, clean, manual, jammed-A, jammed-B, and from N3.0 drive-7),
+the **mean over seeds 1–5** passes:
 
 - **Drives scored in metres** (clean-long and clean max error, manual error at
   truth point 1): the mean may get worse by at most 2 m or 5 % of the
   previous mean, whichever is larger.
-- **Drives scored in % of distance** (jammed-A, jammed-B end error): the mean
-  may get worse by at most 0.1 percentage points.
-- **Ellipse consistency** (share of checkpoints inside the 95 % ellipse, mean
-  over seeds) must not drop on any drive.
+- **Drives scored in % of distance** (jammed-A, jammed-B end error; drive-7
+  worst withheld clean fix): the mean may get worse by at most 0.1
+  percentage points.
+- **Ellipse consistency** (share of scored checkpoints inside the 95 %
+  ellipse, mean over seeds) must not drop on any drive. **Since N3.0 (Q3,
+  decided by the user 2026-10-11) the gated consistency is the one with the
+  truth's own σ added**: the ellipse of P + σ_truth² I (`consistencyWithTruthSigma`,
+  see "replay_nav"). Before N3.0 it was the engine's ellipse alone
+  (`consistency`). Both are reported for every run, and the engine-only one
+  stays visible, but only the variant gates.
+  - Why: roads (N3.2) will shrink the ellipse across the road to a few
+    metres, while the truth has its own error (pins σ 30–104 m, clean fixes
+    3–5 m). Against the engine's ellipse alone a correct estimate would count
+    as outside because of the truth's error, not the engine's.
+  - What it cannot hide: adding σ_truth only widens the ellipse. An
+    overconfident engine still fails against an accurate truth, and an
+    inaccurate truth cannot make a miss count against the engine.
+  - The truth is never the candidate's to set, neither its σ nor which
+    checkpoints it holds. A clean fix's σ comes from its `horizontalAccuracy`
+    over a fixed 1.51, and a pin's from a frozen max(30 m, mapSpanM / 12)
+    (R19.1-1), not from the run's config. If the pin's truth σ followed the
+    config, a change that raised the engine's pin σ would pass "must not
+    drop" by widening the truth, while the engine's estimate and ellipse at
+    the pin (scored on the prior, before the pin is ingested) stayed
+    bit-identical. Which withheld fixes are clean-fix truth is frozen the
+    same way: accuracy ≤ 15 m (`NavigationReplay.cleanFixTruthAccM`,
+    R19.2-1), not the run's `cleanFixAccM`. If it followed the config, a
+    change that lowered `cleanFixAccM` would drop its worst 10–15 m
+    checkpoints from clean and clean-long max error, from drive-7's worst
+    withheld clean fix and from the consistency denominators, and one that
+    raised it would add 15–30 m fixes as truth. Changing these constants is
+    a change to the metric, and needs its own decision and re-baseline.
+  - Baseline: on the N3.0 baseline (engine as N4-B1) the two agree on every
+    acceptance drive and seed; see "N3.0 baseline: both consistency
+    definitions" below. So the switch moves no previous adoption decision.
 
 The acceptance criteria themselves must still pass on every seed. manual-3 and
 manual's convergence distance are reported, not gated. This replaces the
@@ -552,9 +645,9 @@ explained.
 
 ## Acceptance runs
 
-`<clean>`, `<clean-long>`, `<manual>`, `<manual-3>`, `<jammed-A>` and
-`<jammed-B>` are the paths of the recordings known under those aliases (kept
-outside the repository).
+`<clean>`, `<clean-long>`, `<manual>`, `<manual-3>`, `<jammed-A>`,
+`<jammed-B>` and `<drive-7>` are the paths of the recordings known under those
+aliases (kept outside the repository or in the git-ignored `logs/`).
 
 | alias | run | criterion |
 |---|---|---|
@@ -563,6 +656,7 @@ outside the repository).
 | clean | `--gps mask-after 230` | max ≤ 30 m |
 | manual | `--gps use --hold-out-acc 100` | truth point 1 ≤ 200 m; convergence reported |
 | jammed-A, jammed-B | `--gps use` | end ≤ 2.5 % of distance |
+| drive-7 | `--gps mask-after 1800` | every withheld clean fix ≤ 2.5 % of distance (proposed N3.0, see below); scored-pin and clean-fix consistency reported |
 
 - **clean**: the criterion is `mask-after 230`, i.e. 30 s of clean GNSS at
   speed (from about 200 s), then 1.8 km of pure dead reckoning. That is what
@@ -575,6 +669,42 @@ outside the repository).
   still leaves the required dead reckoning. 380 s leaves 1.95 km; 390 s would
   leave 1.79 km. The recording starts mid-drive, so motion starts at 0 s. Up to
   T the car is at highway speed with 5 m fixes and 1° courses.
+- **drive-7** (added in N3.0, 2026-10-12): 19.9 km, iPhone 16 Pro Max. GNSS is
+  jammed (tower and Wi-Fi fixes only) until about 1869 s, then clean. Twelve
+  pins, three of them refinement pairs.
+  - **Truth.** The first pin of each refinement pair (pair scoring, default
+    3 s window), plus the clean fixes after 1800 s, withheld from the engine
+    by `--gps mask-after 1800` and scored. That is 266 clean fixes from
+    1870 s to the end, 16.8–19.9 km into the drive. Between the mask and the
+    first clean fix the engine gets nothing at all (the masked tower fixes
+    included). The last pin it receives is the 1764.6/1766.2 s pair, at
+    14.9 km. So the clean fixes measure about 1.9–5.0 km of pure dead
+    reckoning from a pin, after 30 min of jamming.
+  - **Excluded pins.** The pins at t ≈ 599 s and ≈ 626 s are excluded from
+    truth with `excludePins` in the truth file; the engine still ingests
+    them. They are likely about 200 m off along-track, **likely, not
+    proven**: the user does not remember the taps. Backlog N3MF-1 uses them
+    as its regression case. This leaves 7 scored pins (12 manual fixes, 3
+    refinements, 2 excluded).
+  - **Criterion (proposed N3.0, 2026-10-12, for the user to confirm).**
+    Every withheld clean fix is within 2.5 % of the distance travelled at its
+    time (∫ OBD speed from the start, as for jammed-A/B). Rule: drive-7 is a
+    jammed drive, so it takes the jammed drives' existing threshold
+    unchanged, set in N2 before drive-7 existed; nothing about the
+    threshold was chosen from this drive's numbers. It applies to the worst
+    withheld clean fix rather than only the last one, because the drive has
+    266 truth points, not one end. The baseline (1.08–1.23 %) passes with a
+    wide margin, so the criterion only catches a gross regression; the
+    adoption rule (mean worse by at most 0.1 pp) is the tighter check. For
+    that rule drive-7 is a drive scored in % of distance.
+  - **Reported, not gated:** the max error in metres, the error as a share
+    of the distance since the last pin, the consistency over the clean fixes
+    and over the 7 scored pins. The pins are not gated because two were
+    likely placed wrong and the truth for the rest is a finger on a map.
+  - **Timing.** The live build that recorded drive-7 was **Debug**
+    (`-Onone`). Its sidecar's `msPerStep` (median 2.8 ms) and `maxStepMs`
+    (45 ms) are not a device performance number. The sidecar predates the
+    `buildConfiguration` header field, so it does not say so itself.
 
 ```bash
 cd Core
@@ -583,7 +713,34 @@ swift run -c release replay_nav <manual-3> --gps use --truth ../logs/truth.json 
 swift run -c release replay_nav <clean> --gps mask-after 230 --truth ../logs/truth.json --out ../logs/out
 swift run -c release replay_nav <manual> --gps use --hold-out-acc 100 --truth ../logs/truth.json --out ../logs/out
 swift run -c release replay_nav <jammed-A> <jammed-B> --gps use --truth ../logs/truth.json --out ../logs/out
+swift run -c release replay_nav <drive-7> --gps mask-after 1800 --truth ../logs/truth.json --out ../logs/out
 ```
+
+**drive-7 baseline (N3.0, seeds 1–5 arrival order and `--as-live`, release,
+Mac, default config, engine as N4-B1).** Truth is likely, not proven, at the
+two excluded pins; the scored truth is described above.
+
+| run | max over withheld clean fixes | at | % of distance | % of distance since the last pin | clean fixes inside 95 % | scored pins (error m; * outside 95 %) | pins inside 95 % | converged at | ms/step | criterion |
+|---|---:|---|---:|---:|---|---|---|---:|---:|---|
+| seed 1 | 218.07 m | last fix (2144 s, 19.86 km) | 1.098 % | 4.39 % | 266/266 | 61 / 96 / 210\* / 99 / 27 / 89 / 25 | 6/7 | 0.58 km | 0.075 | **PASS** |
+| seed 2 | 214.30 m | last fix | 1.079 % | 4.32 % | 266/266 | 61 / 95 / 210\* / 93 / 24 / 89 / 19 | 6/7 | 0.58 km | 0.075 | **PASS** |
+| seed 3 | 243.74 m | last fix | 1.227 % | 4.91 % | 266/266 | 62 / 94 / 210\* / 47 / 9 / 89 / 13 | 6/7 | 0.58 km | 0.075 | **PASS** |
+| seed 4 | 222.61 m | last fix | 1.121 % | 4.49 % | 266/266 | 61 / 97 / 211\* / 109 / 33 / 86 / 29 | 6/7 | 0.58 km | 0.075 | **PASS** |
+| seed 5 | 231.13 m | last fix | 1.163 % | 4.66 % | 266/266 | 61 / 92 / 210\* / 106 / 30 / 89 / 27 | 6/7 | 0.58 km | 0.074 | **PASS** |
+| mean (seeds 1–5) | 225.97 m | | 1.138 % | 4.55 % | 100 % | | 85.7 % | | | **PASS** |
+| `--as-live` | 228.69 m | last fix | 1.151 % | 4.61 % | 266/266 | 62 / 92 / 210\* / 61 / 30 / 87 / 35 | 6/7 | 0.60 km | 0.080 | **PASS** |
+
+- The error grows through the masked stretch, from 95–106 m at the first
+  clean fix (1.9 km after the last pin) to the maximum at the last one
+  (5.0 km after it). The heading std at the last pins is 2.0–2.8°, and one
+  such σ over 5 km is 175–245 m sideways: the error is the size that heading
+  uncertainty alone allows, and the ellipse covers every clean fix on every
+  seed.
+- The pin outside the ellipse is the first pin of the 706 s pair (210 m on
+  every seed). That is the error the two excluded pins left behind (N3MF-1).
+- Against its distance since the last pin (4.3–4.9 %), drive-7 is worse
+  than the jammed drives are against their whole distance. That is reported,
+  not gated: the jammed rule is defined on the distance from the start.
 
 ### Baseline (N2.1: seed 1, default config, release build, Mac)
 
@@ -837,8 +994,9 @@ the engine now initialises at Start).
 
 **This changes scoring only, not the engine.** The engine and its config are
 untouched, and it ingests every pin as before. The changes: refinement pins
-(within `--pin-pair-window`, default 3 s, of the previous pin) are no longer
-separate checkpoints, and the truth file can exclude pins (`excludePins`).
+(within `--pin-pair-window`, default 3 s, of the previous pin) are not
+scored (they stay in `checkpoints`, marked `notScored`), and the truth file
+can exclude pins (`excludePins`).
 See "replay_nav" above for the exact rule.
 
 Re-scored with one build: the six acceptance runs plus drive-7 (`--gps use`,
@@ -883,6 +1041,36 @@ kind].
   compared. Under the new rule, `endErrorM`/`endErrorPercent` and
   `consistency` also differ, on the 5 drive-7 rows only, plus each
   checkpoint's new `notScored` marker.
+
+### N3.0 baseline: both consistency definitions (2026-10-12)
+
+Engine as N4-B1, default config, release build, Mac. Seeds 1–5 in arrival
+order and `--as-live` (header seed); every run gives the same counts, so one
+value stands for all six. "Engine" is `consistency` (the engine's 95 %
+ellipse). "+ truth σ" is `consistencyWithTruthSigma` (P + σ_truth² I), which
+the adoption rule gates on from N3.0. drive-7's truth is likely, not proven,
+at its two excluded pins (see "Acceptance runs").
+
+| alias | run | scored checkpoints | engine | + truth σ (gated) |
+|---|---|---|---|---|
+| clean-long | mask-after 380 | 277 clean fixes | 100 % [277/277] | 100 % [277/277] |
+| clean | mask-after 230 | 216 clean fixes | 100 % [216/216] | 100 % [216/216] |
+| manual | use, hold-out 100 | 1 pin, 2 truth points | 100 % [3/3] | 100 % [3/3] |
+| jammed-A | use | truth end | 100 % [1/1] | 100 % [1/1] |
+| jammed-B | use | truth end | 100 % [1/1] | 100 % [1/1] |
+| manual-3 (sanity) | use | 3 pins | 66.7 % [2/3] | 66.7 % [2/3] |
+| drive-7 | mask-after 1800 | 266 clean fixes, 7 pins | 99.6 % [272/273; clean 266/266, pins 6/7] | 99.6 % [272/273; clean 266/266, pins 6/7] |
+
+- The definitions differ only where the truth's σ is comparable to the
+  engine's ellipse. Here every clean-fix σ (≤ 10 m) is small against
+  ellipses of tens to hundreds of metres, and every pin or truth point that
+  was inside stays inside.
+- The two misses are far enough outside to stay outside:
+  - manual-3, pin at ≈ 897 s: 130 m error against a 106 × 82 m ellipse,
+    130 m semi-major axis with σ 31 m added (seed 1). Borderline.
+  - drive-7, first pin of the 706 s pair: 209 m against 84 × 64 m, 111 m
+    with σ 30 m added. That is the error the two excluded pins left behind
+    (backlog N3MF-1).
 
 ### N2.2 experiment: stale-fix σ grown by age (default off; superseded by N2.3)
 
@@ -972,8 +1160,15 @@ on seeds 1–5 with std 0.03), with at most 1 of 283 withheld fixes inside the
 
 ## To verify on the device (N4)
 
+- drive-7 (2026-10-12) was recorded with a **Debug** build, so its sidecar's
+  `msPerStep` (median 2.8 ms) and `maxStepMs` (45 ms) say nothing about
+  Release performance on the phone. The ≤ 2 ms check needs a Release drive.
+
 - ≤ 2 ms per 10 Hz step with 2000 particles on an iPhone. The Mac release
-  replay gives 0.05–0.06 ms/step (largest single ingest 0.31 ms).
+  replay gives 0.06–0.08 ms/step on the acceptance set (N3.0 baseline;
+  0.05–0.06 at N2.1 before later features). The largest single ingest is
+  0.2–1.5 ms, with one 4.5 ms outlier (`logs/r144`, N3 plan). Earlier
+  tables in this document give the figures of their own time.
 - Arrival order in the live app: CoreMotion batches can arrive late; the engine
   accumulates late yaw into the next step, but this is untested on hardware.
 - `estimate(at:)` extrapolation between steps at UI rates: the first frame

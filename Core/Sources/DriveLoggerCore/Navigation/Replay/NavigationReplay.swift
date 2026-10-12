@@ -100,8 +100,8 @@ public enum WithholdReason: String, Hashable, Sendable, Codable {
 
 public enum NavigationReplay {
     /// The navigation inputs of a recording in arrival order: motion and OBD
-    /// by `t`, location by `receivedT ?? t`, manual fixes by `t`. Ties keep
-    /// file order.
+    /// by `t`, location by `max(receivedT, t)` (`NavigationInput.arrival`),
+    /// manual fixes by `t`. Ties keep file order.
     public static func inputs<S: Sequence>(from events: S) -> [NavigationInput] where S.Element == LogEvent {
         let indexed = events.compactMap(NavigationInput.init).enumerated().map { ($0.offset, $0.element) }
         return indexed.sorted {
@@ -321,7 +321,9 @@ public enum NavigationReplay {
 public struct ReplayResult: Hashable, Sendable, Codable {
     public struct Checkpoint: Hashable, Sendable, Codable {
         public enum Kind: String, Hashable, Sendable, Codable, CaseIterable {
-            /// A withheld GNSS fix at or under `cleanFixAccM`.
+            /// A withheld GNSS fix at or under the frozen
+            /// `NavigationReplay.cleanFixTruthAccM` (15 m), not the run's
+            /// `cleanFixAccM` (R19.2-1).
             case cleanFix
             /// A manual fix, scored on the prior just before it is ingested.
             case manualFix
@@ -335,6 +337,10 @@ public struct ReplayResult: Hashable, Sendable, Codable {
         public var t: Double
         public var latitude: Double
         public var longitude: Double
+        /// The truth's own error, metres, as given by the truth: a clean
+        /// fix's `horizontalAccuracy` (68 % radius), a manual fix's frozen
+        /// truth σ (`NavigationReplay.manualFixTruthSigmaM`, not the σ the
+        /// run's config gives the engine, R19.1-1), a truth-file `sigmaM`.
         public var truthSigmaM: Double?
         /// Distance travelled (∫ OBD speed) up to `t`, metres.
         public var distanceM: Double
@@ -346,6 +352,11 @@ public struct ReplayResult: Hashable, Sendable, Codable {
         public var estimateLongitude: Double?
         /// Whether the truth lies inside the engine's 95 % ellipse.
         public var inside95: Bool?
+        /// Whether the truth lies inside the 95 % ellipse of the engine's
+        /// covariance plus the truth's own σ, P + σ_truth² I (Q3, the gated
+        /// consistency since N3.0; `NavigationReplay.truthSigmaPerAxisM`).
+        /// Optional so older metrics.json files decode.
+        public var inside95WithTruthSigma: Bool?
         public var headingStdDeg: Double?
         /// The engine's 95 % ellipse at `t`: semi-axes (m) and bearing of
         /// the major axis (degrees).
@@ -452,6 +463,9 @@ public struct ReplayResult: Hashable, Sendable, Codable {
     /// Ellipse consistency: scored checkpoints (all kinds) whose truth lies
     /// inside the engine's 95 % ellipse at their time.
     public var consistency: EllipseConsistency
+    /// The same with the truth's own σ added to the engine's covariance
+    /// (Q3): the consistency the adoption rule gates on since N3.0.
+    public var consistencyWithTruthSigma: EllipseConsistency
     public var steps: Int
     /// Engine wall time (ingest only, no I/O) per 10 Hz step, ms.
     public var msPerStep: Double
@@ -507,7 +521,14 @@ private struct ReplayRun {
         var longitude: Double
         var sigma: Double?
         var notScored: NavigationReplay.NotScored?
+        /// Index in `inputs` of the input this checkpoint comes from (a
+        /// withheld clean fix, a manual fix); nil for truth-file entries.
+        var inputIndex: Int?
     }
+
+    /// Inputs the engine would reject as implausible forward time jumps
+    /// (`NavigationEngine.accepts`), by index in `inputs` (R14.2-3).
+    var skippedInputs: Set<Int> = []
 
     var pinScoring = ReplayResult.PinScoring(pairWindowS: 0)
 
@@ -533,9 +554,27 @@ private struct ReplayRun {
         var trackIndex = 0
 
         let clock = ContinuousClock()
+        var endNs = firstNs
 
-        for input in inputs {
+        for (index, input) in inputs.enumerated() {
             let arrival = input.arrival.nanoseconds
+            var reason: WithholdReason?
+            if case .location(let sample, let t) = input {
+                reason = NavigationReplay.withholdReason(sample, at: t, options: options, motionStart: motionStart)
+            }
+            // R14.2-3: an input the engine would reject as an implausible
+            // forward time jump (a corrupt huge `t`) is not on the replay's
+            // timeline. Scoring and sampling up to its arrival would mean one
+            // `estimate` per second up to that `t`, and its fix, distance and
+            // pin are as corrupt as its time. The engine still counts it
+            // (`inputsRejectedTimeJump`) unless it is a withheld fix, which the
+            // engine never receives. Its pending checkpoints are dropped.
+            guard engine.accepts(input) else {
+                skippedInputs.insert(index)
+                if reason == nil { engine.ingest(input) }
+                continue
+            }
+            endNs = arrival
             // Score and sample everything due at or before this arrival, from
             // the state before it is ingested.
             while true {
@@ -553,7 +592,6 @@ private struct ReplayRun {
             }
 
             if case .location(let sample, let t) = input {
-                let reason = NavigationReplay.withholdReason(sample, at: t, options: options, motionStart: motionStart)
                 fixes.append(ReplayResult.Fix(
                     t: t.seconds, arrivalT: input.arrival.seconds,
                     latitude: sample.latitude, longitude: sample.longitude,
@@ -561,7 +599,7 @@ private struct ReplayRun {
                 ))
                 if reason != nil { continue }
             }
-            if case .manualFix(let sample, let t) = input, engine.accepts(input) {
+            if case .manualFix(let sample, let t) = input {
                 recordPin(sample, at: t)
             }
             if case .obd(let sample, let t) = input {
@@ -575,30 +613,37 @@ private struct ReplayRun {
             engineNs += ns
             maxIngestNs = max(maxIngestNs, ns)
         }
+        // The end is the last input on the timeline: the last one, unless
+        // trailing inputs were skipped (then the truth `end` is scored there).
         while nextCheckpoint < schedule.count {
-            score(schedule[nextCheckpoint])
+            var item = schedule[nextCheckpoint]
+            if item.kind == .truthEnd { item.t = endNs }
+            score(item)
             nextCheckpoint += 1
         }
-        sampleTrack(at: lastNs, withEllipse: true)
+        sampleTrack(at: endNs, withEllipse: true)
 
-        return finish(firstNs: firstNs, lastNs: lastNs)
+        return finish(firstNs: firstNs, lastNs: endNs)
     }
 
     mutating func buildSchedule(lastNs: Int64) -> [Scheduled] {
         var schedule: [Scheduled] = []
         var manualIndices: [Int] = []
-        for input in inputs {
+        for (index, input) in inputs.enumerated() {
             switch input {
             case .location(let sample, let t):
                 guard NavigationReplay.withholdReason(sample, at: t, options: options, motionStart: motionStart) != nil,
                       sample.horizontalAccuracy >= 0,
-                      sample.horizontalAccuracy <= options.config.cleanFixAccM else { continue }
+                      sample.horizontalAccuracy <= NavigationReplay.cleanFixTruthAccM else { continue }
                 schedule.append(Scheduled(t: t.nanoseconds, kind: .cleanFix, latitude: sample.latitude,
-                                          longitude: sample.longitude, sigma: sample.horizontalAccuracy))
+                                          longitude: sample.longitude, sigma: sample.horizontalAccuracy,
+                                          inputIndex: index))
             case .manualFix(let sample, let t):
                 manualIndices.append(schedule.count)
                 schedule.append(Scheduled(t: t.nanoseconds, kind: .manualFix, latitude: sample.latitude,
-                                          longitude: sample.longitude, sigma: options.config.manualFixSigma(mapSpanM: sample.mapSpanM)))
+                                          longitude: sample.longitude,
+                                          sigma: NavigationReplay.manualFixTruthSigmaM(mapSpanM: sample.mapSpanM),
+                                          inputIndex: index))
             default:
                 continue
             }
@@ -627,6 +672,10 @@ private struct ReplayRun {
     }
 
     mutating func score(_ item: Scheduled) {
+        // A checkpoint from a skipped input (R14.2-3) is not scored. One that
+        // falls due before its own input is reached (a fix whose `t` is
+        // plausible but whose arrival is not) was already scored on its `t`.
+        if let index = item.inputIndex, skippedInputs.contains(index) { return }
         let t = MonotonicTimestamp(nanoseconds: item.t)
         let travelled = distance.distance(at: item.t)
         var checkpoint = ReplayResult.Checkpoint(
@@ -644,6 +693,9 @@ private struct ReplayRun {
             checkpoint.estimateLatitude = estimate.latitude
             checkpoint.estimateLongitude = estimate.longitude
             checkpoint.inside95 = estimate.ellipse.contains(dEast: dEast, dNorth: dNorth)
+            let truthSigma = NavigationReplay.truthSigmaPerAxisM(kind: item.kind, truthSigmaM: item.sigma)
+            checkpoint.inside95WithTruthSigma = estimate.ellipse.adding(isotropicSigmaM: truthSigma)
+                .contains(dEast: dEast, dNorth: dNorth)
             checkpoint.headingStdDeg = estimate.headingStdDeg
             checkpoint.ellipseSemiMajorM = estimate.ellipse.semiMajorM
             checkpoint.ellipseSemiMinorM = estimate.ellipse.semiMinorM
@@ -701,7 +753,7 @@ private struct ReplayRun {
         let scored = checkpoints.filter { $0.errorM != nil && $0.isScored }
         let worst = scored.max { $0.errorM! < $1.errorM! }
         let endCheckpoint = checkpoints.last { $0.kind == .truthEnd } ?? scored.last
-        let convergence = Self.convergence(track, holdS: options.convergenceHoldS)
+        let convergence = NavigationReplay.convergence(track, holdS: options.convergenceHoldS)
         let steps = engine.counters.steps
         return ReplayResult(
             logName: logName,
@@ -721,6 +773,7 @@ private struct ReplayRun {
             convergedDistanceM: convergence?.distanceM,
             finalHeadingStdDeg: track.last?.headingStdDeg,
             consistency: EllipseConsistency(checkpoints),
+            consistencyWithTruthSigma: EllipseConsistency(checkpoints, withTruthSigma: true),
             steps: steps,
             msPerStep: steps > 0 ? Double(engineNs) / 1e6 / Double(steps) : 0,
             maxIngestMs: Double(maxIngestNs) / 1e6,
@@ -733,9 +786,74 @@ private struct ReplayRun {
         )
     }
 
-    /// The first track point from which `converged` holds for `holdS`
-    /// seconds (to the end of the track if it ends sooner while converged
-    /// for at least `holdS`).
+}
+
+extension NavigationReplay {
+    /// CoreLocation's `horizontalAccuracy` is a 68 % radius; for a circular
+    /// Gaussian that is 1.51 σ per axis. Fixed here, not taken from the
+    /// config (`fixSigmaPerAccuracy`), so a `--set` cannot move a clean
+    /// fix's truth. A pin's truth σ is frozen the same way, below.
+    public static let accuracyPerSigma = 1.51
+
+    /// Largest `horizontalAccuracy` (m, inclusive) of a withheld fix that is
+    /// scored as clean-fix truth. Frozen at `NavigationConfig.cleanFixAccM`'s
+    /// value when Q3 was decided (N3.0); not read from the config (R19.2-1).
+    ///
+    /// Which fixes are truth is a property of the fixes, not of the run. The
+    /// engine still calls a fix clean by its own `cleanFixAccM` (whether its
+    /// course may set the heading), but a run that lowers it (`--set
+    /// cleanFixAccM=…`, a sweep, a new default) must not drop its worst
+    /// 10–15 m checkpoints from the max error and the consistency
+    /// denominators, nor a run that raises it add 15–30 m fixes as truth.
+    /// Changing this constant is a change to the metric and needs its own
+    /// decision and re-baseline.
+    public static let cleanFixTruthAccM = 15.0
+
+    /// Smallest truth σ of a manual fix, metres, and the σ without a usable
+    /// span. Frozen at `NavigationConfig.manualFixSigmaMinM`'s value when Q3
+    /// was decided (N3.0); not read from the config (R19.1-1).
+    public static let manualFixTruthSigmaMinM = 30.0
+    /// Frozen at `NavigationConfig.manualFixSpanDivisor`'s value when Q3 was
+    /// decided (N3.0).
+    public static let manualFixTruthSpanDivisor = 12.0
+
+    /// A manual fix's truth σ for scoring, metres: max(30, mapSpanM / 12),
+    /// or 30 when the span is missing, not finite or not positive.
+    ///
+    /// This is how wide the truth is, a property of the pin, not of the run.
+    /// It is deliberately not `options.config.manualFixSigma` (the σ the
+    /// engine weights the pin with), nor `NavigationConfig()`'s defaults:
+    /// either would let a candidate config widen its own truth. A run that
+    /// raises the pin σ (`--set manualFixSigmaMinM=…`, a sweep, a new
+    /// default, a speed term) would then pass "consistency must not drop" by
+    /// moving the truth while the engine's estimate and ellipse at the pin
+    /// are unchanged (R19.1-1). Same arithmetic as the engine's rule with
+    /// its N3.0 defaults, so the two agree on a default-config run today;
+    /// a change to the engine's rule or defaults leaves this one alone.
+    public static func manualFixTruthSigmaM(mapSpanM: Double?) -> Double {
+        guard let span = mapSpanM, span.isFinite, span > 0 else { return manualFixTruthSigmaMinM }
+        return max(manualFixTruthSigmaMinM, span / manualFixTruthSpanDivisor)
+    }
+
+    /// The truth's own σ per axis, metres, for the consistency with the
+    /// truth's σ added (Q3):
+    /// - a withheld clean fix: its `horizontalAccuracy` / `accuracyPerSigma`
+    ///   (3.3 m at 5 m accuracy);
+    /// - a manual fix: its frozen truth σ (`truthSigmaM`,
+    ///   `manualFixTruthSigmaM`, independent of the run's config; 30–104 m on
+    ///   the replay set);
+    /// - a truth point or `end`: its `sigmaM` from the truth file.
+    /// 0 when the truth gives none: that checkpoint scores as without it.
+    public static func truthSigmaPerAxisM(kind: ReplayResult.Checkpoint.Kind, truthSigmaM: Double?) -> Double {
+        guard let sigma = truthSigmaM, sigma.isFinite, sigma > 0 else { return 0 }
+        return kind == .cleanFix ? sigma / accuracyPerSigma : sigma
+    }
+
+    /// Heading convergence: the first track point from which `converged`
+    /// holds for at least `holdS` seconds (track times, inclusive), with its
+    /// distance. A run of `converged` points shorter than `holdS` does not
+    /// count, and nil if no run is long enough (the track ending inside a
+    /// run included).
     static func convergence(_ track: [ReplayResult.TrackPoint], holdS: Double) -> (t: Double, distanceM: Double)? {
         var start: ReplayResult.TrackPoint?
         for point in track {
@@ -780,6 +898,12 @@ struct DistanceIntegrator {
 /// much lower means the ellipse is overconfident. The truth's own σ is not
 /// added to the ellipse. A checkpoint that is not scored (`notScored`: a
 /// refinement pin, or one the truth file excludes) is not counted.
+///
+/// **The one denominator (R13.1-8):** a checkpoint counts when it is scored
+/// and the engine had an estimate at its time (`inside95` set). One before
+/// initialisation has no ellipse and is in neither count. Every "inside
+/// 95 %" figure `replay_nav` prints, per kind included (the clean-fix line
+/// of the summary and `metrics.md`), is taken from here.
 public struct EllipseConsistency: Hashable, Sendable, Codable {
     public struct Count: Hashable, Sendable, Codable {
         public var inside: Int
@@ -798,11 +922,16 @@ public struct EllipseConsistency: Hashable, Sendable, Codable {
     /// Keyed by `ReplayResult.Checkpoint.Kind` raw value.
     public var byKind: [String: Count]
 
-    public init(_ checkpoints: [ReplayResult.Checkpoint]) {
+    /// `withTruthSigma`: count `inside95WithTruthSigma` (the engine's
+    /// covariance plus the truth's σ, Q3) instead of `inside95`. The
+    /// denominator is the same: both are set exactly when the engine had an
+    /// estimate.
+    public init(_ checkpoints: [ReplayResult.Checkpoint], withTruthSigma: Bool = false) {
         var all = Count(inside: 0, scored: 0)
         var byKind: [String: Count] = [:]
         for checkpoint in checkpoints {
-            guard let inside = checkpoint.inside95, checkpoint.isScored else { continue }
+            guard let inside = withTruthSigma ? checkpoint.inside95WithTruthSigma : checkpoint.inside95,
+                  checkpoint.isScored else { continue }
             all.scored += 1
             byKind[checkpoint.kind.rawValue, default: Count(inside: 0, scored: 0)].scored += 1
             if inside {
@@ -812,5 +941,18 @@ public struct EllipseConsistency: Hashable, Sendable, Codable {
         }
         self.all = all
         self.byKind = byKind
+    }
+}
+
+extension ErrorEllipse {
+    /// The 95 % ellipse of this ellipse's covariance P plus σ² I. P + σ² I
+    /// has P's principal axes and eigenvalues λ + σ², so each semi-axis
+    /// √(χ² λ) becomes √(semi-axis² + χ² σ²) and the orientation is kept.
+    /// Replay scoring only (Q3).
+    func adding(isotropicSigmaM sigma: Double) -> ErrorEllipse {
+        let extra = Self.chiSquare95 * sigma * sigma
+        return ErrorEllipse(semiMajorM: (semiMajorM * semiMajorM + extra).squareRoot(),
+                            semiMinorM: (semiMinorM * semiMinorM + extra).squareRoot(),
+                            orientationDeg: orientationDeg)
     }
 }

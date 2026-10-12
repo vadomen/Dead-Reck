@@ -1110,3 +1110,57 @@ Tests: Core passes 672 tests in 96 suites (54c0a6d). App changed only in d3f909f
 - **Rounds:** 1 run.
 - **Findings:** 0 fixed, 0 rejected, 5 MINOR deferred (R18.1-1..5).
 - **Final tests:** Core 672 tests in 96 suites pass; app 241 tests in 38 suites pass (d3f909f).
+
+## Run 19: N3.0 part 2 (0b59494..n3.0-part2), started 2026-10-12
+
+The range adds drive-7 to the acceptance set (criterion proposed, awaiting the user), tolerant metrics/config decoding with a safe backup (R11.2-4, R12.1-1, R18.1-2), the replay read report and `--strict` (R11.1-8), skip scheduling for rejected inputs (R14.2-3), one consistency denominator (R13.1-8), consistency with the truth's σ (Q3, code and the adoption-rule change in separate commits), catch-up tests and docs, and backlog row T-2. Claimed: estimates bit-identical on all 42 acceptance runs; NavigationEngine untouched; NavigationConfig defaults unchanged. Branch: `n3.0-part2`.
+
+### Round 1
+
+Reviewer: fresh `reviewer` agent. Result: 0 BLOCKER / 1 MAJOR / 3 MINOR.
+
+Verified clean: the tolerant decoder takes each default from `self.init()` (mutation caught), CodingKeys match the stored properties, encoding and `NavigationConfig().hashHex` unchanged, `--set` still refuses unknown keys, sidecar `--compare` never decodes a config; the backup never overwrites, is claimed only once written, exit 1 before `metrics.json` is touched; R14.2-3 rejection decided by `engine.accepts`, every input still ingested in the same order (mutations caught); `√(a² + 5.991σ²)` equals the ellipse of P + σ²I, 1.51 matches the engine's `fixSigmaPerAccuracy`; R13.1-8 and R11.1-8 tests discriminate; the Q3 adoption-rule change is explicit and in its own commit; drive-7 threshold reused unchanged and labelled; no engine, App, Log or LOG_FORMAT diff; Core purity; privacy.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R19.1-1 | MAJOR | A pin checkpoint's truth σ in the gated `consistencyWithTruthSigma` comes from the run's own config (`NavigationReplay.swift:638`, `options.config.manualFixSigma(...)`), so a change that raises pin σ (a `manualFixSigma*` default, a sweep, or N4MF-1) passes "consistency must not drop" by widening the truth while the engine's estimate and ellipse are bit-identical. | FIXED | Verified at :638 → :689; the :786 comment covered clean fixes only, and N4MF-1 changes `manualFixSigma`. Fix: pin truth σ from frozen replay constants (`NavigationReplay.manualFixTruthSigmaM`: max(30 m, mapSpanM/12)), independent of the run's config; the engine still uses its own `manualFixSigma`. N3_PLAN N4MF-1 item 2 constrained to match. Regression test `NavigationTruthSigmaConsistencyTests/pinTruthSigmaIgnoresConfig` fails with the old line (3 issues) and passes after. 42 acceptance runs identical before and after, both consistency definitions included. |
+| R19.1-2 | MINOR | No replay output gives drive-7's gated figure (worst withheld clean fix, % of distance); `maxErrorPercent` covers pins too. | DEFERRED | BACKLOG |
+| R19.1-3 | MINOR | NAVIGATION.md is ambiguous on whether drive-7's pins are inside the "consistency must not drop" gate (:594-595 vs :672-675). | DEFERRED | BACKLOG |
+| R19.1-4 | MINOR | Merging an old metrics row rewrites it with today's keys only, so config keys or counters removed since are dropped; the doc mentions only added keys. | DEFERRED | BACKLOG |
+
+Tests: Core passes 703 tests in 102 suites. No App change.
+
+### Round 2
+
+Reviewer: fresh `reviewer` agent (a first attempt was cut off by a network error before reporting and is not counted). Result: 0 BLOCKER / 1 MAJOR / 2 MINOR.
+
+Verified clean: R19.1-1 complete for pin σ (`manualFixSigma(` called only by the engine; frozen formula matches the engine rule at the N3.0 defaults for nil, 0, negative, NaN and ∞ spans; no config key reaches it); the regression test fails on the old line, including the gated `inside95WithTruthSigma` check; pair window, exclusion tolerance, truth points, withholding and `motionStart` do not come from the config; NAVIGATION.md :491-500 and :616-623 match the code; no engine, default, App or log-format change; Core purity; privacy.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R19.2-1 | MAJOR | Which withheld fixes are scored clean-fix truth depends on the run's `cleanFixAccM` (`NavigationReplay.swift:635`), also an engine parameter: lowering it drops the worst 10–15 m fixes from the clean / clean-long / drive-7 gates and the consistency denominators; raising it adds 15–30 m fixes as truth. Same class as R19.1-1 (different parameter; not a repeat). | FIXED | Verified at :635 vs `NavigationEngine.swift:773`. Fix: frozen `NavigationReplay.cleanFixTruthAccM` = 15 m for truth selection; the engine keeps `cleanFixAccM`. Regression test `NavigationTruthSigmaConsistencyTests/cleanFixTruthIgnoresConfig` fails with the old line (12 issues for `cleanFixAccM` 4 and 30) and passes after; on clean-long `--set cleanFixAccM=4` used to empty the gate (0 checkpoints), now 277. 42 acceptance runs identical before and after. Also found: heading-convergence distance follows the run's `convergedHeadingStdDeg`; reported, not gated, left as is (R19.2-4). |
+| R19.2-2 | MINOR | The % of distance denominator is built from the run's `obdSpeedOffsetKmh` and `obdMaxAgeS` (`NavigationReplay.swift:604-605`); 0.5 → 1.5 km/h moves a 1.2 % error by ~0.02–0.03 pp, below the 0.1 pp tolerance. | DEFERRED | BACKLOG |
+| R19.2-4 | MINOR | Heading-convergence distance uses the engine's `converged` flag (`headingStdDeg < config.convergedHeadingStdDeg`, `NavigationEngine.swift:1351`), so a candidate raising the threshold reports earlier convergence with the same particles. Reported, not gated. Found by the round 2 fixer. | DEFERRED | BACKLOG |
+| R19.2-3 | MINOR | `docs/N3_PLAN.md:502-508` N4MF-1 item 2 says pins are "scored with the σ above" (speed-dependent), contradicting its own frozen-truth sub-bullet. | DEFERRED | BACKLOG |
+
+Tests: Core passes 704 tests in 102 suites. No App change.
+
+### Round 3
+
+Reviewer: fresh `reviewer` agent. Result: 0 BLOCKER / 0 MAJOR / 1 MINOR.
+
+Verified clean: `NavigationReplay.swift:637` is the only place clean-fix truth is chosen and uses `cleanFixTruthAccM`; nothing outside the engine and the config reads `cleanFixAccM`; restoring the old line fails `cleanFixTruthIgnoresConfig` with 12 issues; docs and doc comments say ≤ 15 m inclusive, frozen; R14.2-3 withheld fixes never ingested and `truthEnd` uses the last accepted input; `truthSigmaPerAxisM` divides only clean-fix accuracies by 1.51; old `metrics.md` rows print "n/a" for the missing variant; Core purity; no engine, App, Log or LOG_FORMAT diff; privacy.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R19.3-1 | MINOR | The `EllipseConsistency` type comment (`NavigationReplay.swift:898-899`) still says the truth's σ is not added, although the same type now holds the gated `withTruthSigma` variant (:925-929). | DEFERRED | BACKLOG |
+
+Tests: Core passes 704 tests in 102 suites (a5e76af). No App change.
+
+**Loop stopped: no BLOCKER or MAJOR findings.**
+
+### Run 19 summary
+
+- **Rounds:** 3 run (plus one round 2 attempt cut off by a network error before reporting).
+- **Findings:** 2 MAJOR fixed (R19.1-1 frozen pin truth σ, R19.2-1 frozen clean-fix truth selection), 0 rejected, 7 MINOR deferred (R19.1-2..4, R19.2-2..4, R19.3-1).
+- **Final tests:** `cd Core && swift test`: 704 tests in 102 suites pass. No App change in the range.
