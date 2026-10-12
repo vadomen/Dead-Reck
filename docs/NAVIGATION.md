@@ -533,14 +533,15 @@ the as-live runs use it like the arrival-order ones. Results: "N4-B1" below.
 ## Adoption rule for engine changes
 
 A change to the engine or its defaults is adopted only if, on every acceptance
-drive (clean-long, clean, manual, jammed-A, jammed-B), the **mean over seeds
-1–5** passes:
+drive (clean-long, clean, manual, jammed-A, jammed-B, and from N3.0 drive-7),
+the **mean over seeds 1–5** passes:
 
 - **Drives scored in metres** (clean-long and clean max error, manual error at
   truth point 1): the mean may get worse by at most 2 m or 5 % of the
   previous mean, whichever is larger.
-- **Drives scored in % of distance** (jammed-A, jammed-B end error): the mean
-  may get worse by at most 0.1 percentage points.
+- **Drives scored in % of distance** (jammed-A, jammed-B end error; drive-7
+  worst withheld clean fix): the mean may get worse by at most 0.1
+  percentage points.
 - **Ellipse consistency** (share of checkpoints inside the 95 % ellipse, mean
   over seeds) must not drop on any drive.
 
@@ -552,9 +553,9 @@ explained.
 
 ## Acceptance runs
 
-`<clean>`, `<clean-long>`, `<manual>`, `<manual-3>`, `<jammed-A>` and
-`<jammed-B>` are the paths of the recordings known under those aliases (kept
-outside the repository).
+`<clean>`, `<clean-long>`, `<manual>`, `<manual-3>`, `<jammed-A>`,
+`<jammed-B>` and `<drive-7>` are the paths of the recordings known under those
+aliases (kept outside the repository or in the git-ignored `logs/`).
 
 | alias | run | criterion |
 |---|---|---|
@@ -563,6 +564,7 @@ outside the repository).
 | clean | `--gps mask-after 230` | max ≤ 30 m |
 | manual | `--gps use --hold-out-acc 100` | truth point 1 ≤ 200 m; convergence reported |
 | jammed-A, jammed-B | `--gps use` | end ≤ 2.5 % of distance |
+| drive-7 | `--gps mask-after 1800` | every withheld clean fix ≤ 2.5 % of distance (proposed N3.0, see below); scored-pin and clean-fix consistency reported |
 
 - **clean**: the criterion is `mask-after 230`, i.e. 30 s of clean GNSS at
   speed (from about 200 s), then 1.8 km of pure dead reckoning. That is what
@@ -575,6 +577,42 @@ outside the repository).
   still leaves the required dead reckoning. 380 s leaves 1.95 km; 390 s would
   leave 1.79 km. The recording starts mid-drive, so motion starts at 0 s. Up to
   T the car is at highway speed with 5 m fixes and 1° courses.
+- **drive-7** (added in N3.0, 2026-10-12): 19.9 km, iPhone 16 Pro Max. GNSS is
+  jammed (tower and Wi-Fi fixes only) until about 1869 s, then clean. Twelve
+  pins, three of them refinement pairs.
+  - **Truth.** The first pin of each refinement pair (pair scoring, default
+    3 s window), plus the clean fixes after 1800 s, withheld from the engine
+    by `--gps mask-after 1800` and scored. That is 266 clean fixes from
+    1870 s to the end, 16.8–19.9 km into the drive. Between the mask and the
+    first clean fix the engine gets nothing at all (the masked tower fixes
+    included). The last pin it receives is the 1764.6/1766.2 s pair, at
+    14.9 km. So the clean fixes measure about 1.9–5.0 km of pure dead
+    reckoning from a pin, after 30 min of jamming.
+  - **Excluded pins.** The pins at t ≈ 599 s and ≈ 626 s are excluded from
+    truth with `excludePins` in the truth file; the engine still ingests
+    them. They are likely about 200 m off along-track, **likely, not
+    proven**: the user does not remember the taps. Backlog N3MF-1 uses them
+    as its regression case. This leaves 7 scored pins (12 manual fixes, 3
+    refinements, 2 excluded).
+  - **Criterion (proposed N3.0, 2026-10-12, for the user to confirm).**
+    Every withheld clean fix is within 2.5 % of the distance travelled at its
+    time (∫ OBD speed from the start, as for jammed-A/B). Rule: drive-7 is a
+    jammed drive, so it takes the jammed drives' existing threshold
+    unchanged, set in N2 before drive-7 existed; nothing about the
+    threshold was chosen from this drive's numbers. It applies to the worst
+    withheld clean fix rather than only the last one, because the drive has
+    266 truth points, not one end. The baseline (1.08–1.23 %) passes with a
+    wide margin, so the criterion only catches a gross regression; the
+    adoption rule (mean worse by at most 0.1 pp) is the tighter check. For
+    that rule drive-7 is a drive scored in % of distance.
+  - **Reported, not gated:** the max error in metres, the error as a share
+    of the distance since the last pin, the consistency over the clean fixes
+    and over the 7 scored pins. The pins are not gated because two were
+    likely placed wrong and the truth for the rest is a finger on a map.
+  - **Timing.** The live build that recorded drive-7 was **Debug**
+    (`-Onone`). Its sidecar's `msPerStep` (median 2.8 ms) and `maxStepMs`
+    (45 ms) are not a device performance number. The sidecar predates the
+    `buildConfiguration` header field, so it does not say so itself.
 
 ```bash
 cd Core
@@ -583,7 +621,34 @@ swift run -c release replay_nav <manual-3> --gps use --truth ../logs/truth.json 
 swift run -c release replay_nav <clean> --gps mask-after 230 --truth ../logs/truth.json --out ../logs/out
 swift run -c release replay_nav <manual> --gps use --hold-out-acc 100 --truth ../logs/truth.json --out ../logs/out
 swift run -c release replay_nav <jammed-A> <jammed-B> --gps use --truth ../logs/truth.json --out ../logs/out
+swift run -c release replay_nav <drive-7> --gps mask-after 1800 --truth ../logs/truth.json --out ../logs/out
 ```
+
+**drive-7 baseline (N3.0, seeds 1–5 arrival order and `--as-live`, release,
+Mac, default config, engine as N4-B1).** Truth is likely, not proven, at the
+two excluded pins; the scored truth is described above.
+
+| run | max over withheld clean fixes | at | % of distance | % of distance since the last pin | clean fixes inside 95 % | scored pins (error m; * outside 95 %) | pins inside 95 % | converged at | ms/step | criterion |
+|---|---:|---|---:|---:|---|---|---|---:|---:|---|
+| seed 1 | 218.07 m | last fix (2144 s, 19.86 km) | 1.098 % | 4.39 % | 266/266 | 61 / 96 / 210\* / 99 / 27 / 89 / 25 | 6/7 | 0.58 km | 0.075 | **PASS** |
+| seed 2 | 214.30 m | last fix | 1.079 % | 4.32 % | 266/266 | 61 / 95 / 210\* / 93 / 24 / 89 / 19 | 6/7 | 0.58 km | 0.075 | **PASS** |
+| seed 3 | 243.74 m | last fix | 1.227 % | 4.91 % | 266/266 | 62 / 94 / 210\* / 47 / 9 / 89 / 13 | 6/7 | 0.58 km | 0.075 | **PASS** |
+| seed 4 | 222.61 m | last fix | 1.121 % | 4.49 % | 266/266 | 61 / 97 / 211\* / 109 / 33 / 86 / 29 | 6/7 | 0.58 km | 0.075 | **PASS** |
+| seed 5 | 231.13 m | last fix | 1.163 % | 4.66 % | 266/266 | 61 / 92 / 210\* / 106 / 30 / 89 / 27 | 6/7 | 0.58 km | 0.074 | **PASS** |
+| mean (seeds 1–5) | 225.97 m | | 1.138 % | 4.55 % | 100 % | | 85.7 % | | | **PASS** |
+| `--as-live` | 228.69 m | last fix | 1.151 % | 4.61 % | 266/266 | 62 / 92 / 210\* / 61 / 30 / 87 / 35 | 6/7 | 0.60 km | 0.080 | **PASS** |
+
+- The error grows through the masked stretch, from 95–106 m at the first
+  clean fix (1.9 km after the last pin) to the maximum at the last one
+  (5.0 km after it). The heading std at the last pins is 2.0–2.8°, and one
+  such σ over 5 km is 175–245 m sideways: the error is the size that heading
+  uncertainty alone allows, and the ellipse covers every clean fix on every
+  seed.
+- The pin outside the ellipse is the first pin of the 706 s pair (210 m on
+  every seed). That is the error the two excluded pins left behind (N3MF-1).
+- Against its distance since the last pin (4.3–4.9 %), drive-7 is worse
+  than the jammed drives are against their whole distance. That is reported,
+  not gated: the jammed rule is defined on the distance from the start.
 
 ### Baseline (N2.1: seed 1, default config, release build, Mac)
 
@@ -971,6 +1036,10 @@ on seeds 1–5 with std 0.03), with at most 1 of 283 withheld fixes inside the
   it; a new car needs its prior measured, or a wider std.
 
 ## To verify on the device (N4)
+
+- drive-7 (2026-10-12) was recorded with a **Debug** build, so its sidecar's
+  `msPerStep` (median 2.8 ms) and `maxStepMs` (45 ms) say nothing about
+  Release performance on the phone. The ≤ 2 ms check needs a Release drive.
 
 - ≤ 2 ms per 10 Hz step with 2000 particles on an iPhone. The Mac release
   replay gives 0.05–0.06 ms/step (largest single ingest 0.31 ms).
