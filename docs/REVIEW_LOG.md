@@ -1182,3 +1182,23 @@ Verified clean: the exit table reproduces from `logs/n30/p3` (`judge.py`); clean
 | R20.1-3 | MINOR | `docs/BACKLOG.md:116`: R11.2-3's status still begins "DEFERRED (remaining part)" with "DONE (N3.0 part 3)" appended; the fix covers the row. | FIXED | Status cell made DONE in this round's commit. |
 
 Tests: Core passes 722 tests in 104 suites. No App change.
+
+### Round 2
+
+Reviewer: fresh `reviewer` agent (opus, new setup). Result: 0 BLOCKER / 0 MAJOR / 1 MINOR. Mutations: M1' (odd offset negated in `step`) killed by `resampleKeepsLearnedSpeedOffsets`; M3 (independent odd draw in `macroStep`) killed by `macroStaleMeanDoesNotDrift`; M4 (re-pairing restored at the start of `macroStep` only) survived → R20.2-1.
+
+Verified clean: clean seed 1, HEAD vs 38a8103, byte-identical GeoJSON; `pairSpeedOffsets` and its arming gone; pairs 2k/2k+1 share one negated draw in `step` and (n3, n4) in `macroStep`, odd last particle draws alone; draw count and order unchanged; each increment keeps its marginal variance and posterior offsets are carried, so no variance is removed without information; R20.1-1..3 fixed; NAVIGATION.md R11.1-7 paragraph and exit-table row match the code and numbers; privacy.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R20.2-1 | MINOR | No test checks that a macro step keeps each particle's learned stale speed offset: re-pairing restored in `macroStep` alone (`NavigationEngine.swift:601-610`) passes every Navigation test (fixes until 89 s, inputs lost until 200 s: 923–937 m at HEAD vs 1064–1084 m with the mutation). Code is correct. | DEFERRED | BACKLOG |
+
+Tests: Core passes 722 tests in 104 suites (5a3e69a). No App change.
+
+**Loop stopped: no BLOCKER or MAJOR findings.**
+
+### Run 20 summary
+
+- **Rounds:** 2 run.
+- **Findings:** 2 MAJOR fixed (R20.1-1 learned stale offsets erased after resampling, R20.1-2 missing macro-step tests), 1 MINOR fixed in the round (R20.1-3), 0 rejected, 1 MINOR deferred (R20.2-1).
+- **Final tests:** `cd Core && swift test`: 722 tests in 104 suites pass. No App change.
