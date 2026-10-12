@@ -324,4 +324,41 @@ struct NavigationN30EngineTests {
         #expect(decoded == NavigationConfig())
         #expect(decoded.manualFixReactionS == 1 && decoded.manualFixUnknownSpeedMps == 10)
     }
+
+    // MARK: R11.1-7 the realised mean does not drift while speed is unknown
+
+    /// 15 m/s north, fresh OBD for 30 s and clean fixes to 20 s, then OBD
+    /// silent while driving on (not parked: no 0) for 600 s. Returns the
+    /// along-track offset (m) of the cloud's mean at 630 s from the same
+    /// run with no stale speed noise: the drift of the realised mean.
+    static func staleMeanDrift(seed: UInt64, particles: Int) throws -> (drift: Double, semiMajor: Double) {
+        let drive = S(initialHeadingDeg: 0, initialSpeed: 15, [.straight(seconds: 640, speed: 15)])
+        let clean = S.cleanFix(accuracy: 5, positionNoise: 0)
+        let events = drive.events(obdSpeed: { t, state in t < 30 ? (state.speed * 3.6).rounded(.down) : nil },
+                                  fix: { t, state, rng in t <= 20 ? clean(t, state, &rng) : nil })
+        var config = S.config(particles: particles, seed: seed)
+        let a = try #require(S.run(events, config: config, sampleTimes: [630]).samples.first ?? nil)
+        config.staleSpeedNoiseMpsPerSqrtS = 0
+        let b = try #require(S.run(events, config: config, sampleTimes: [630]).samples.first ?? nil)
+        return (a.north - b.north, a.ellipse.semiMajorM)
+    }
+
+    @Test("R11.1-7: after 10 min of unknown speed the realised mean does not drift (antithetic offsets)")
+    func staleMeanDoesNotDrift() throws {
+        var squares = 0.0
+        var semiMajors: [Double] = []
+        for seed in UInt64(1)...3 {
+            let (drift, semiMajor) = try Self.staleMeanDrift(seed: seed, particles: 1000)
+            squares += drift * drift
+            semiMajors.append(semiMajor)
+        }
+        let rms = (squares / 3).squareRoot()
+        // Before (independent offsets): 49.6 m RMS here (N = 1000), 28.7 m
+        // over seeds 1–10 at N = 2000, ~√(Var I(600 s) / N). After: 9.1 m
+        // at N = 2000; the rest is heading spread (a pair cancels along each
+        // particle's own heading). Plan threshold 20 m.
+        #expect(rms < 12, "realised mean drift \(rms) m RMS at 10 min stale")
+        // The ellipse is the unknown speed's, not shrunk: 2.9 km (95 %).
+        for semiMajor in semiMajors { #expect(semiMajor > 2_700 && semiMajor < 3_100, "semi-major \(semiMajor) m") }
+    }
 }

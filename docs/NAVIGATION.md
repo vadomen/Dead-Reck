@@ -67,8 +67,17 @@ updates reweight only by what heading and scale actually predict.
     - Every stale period in the replay set is ignition-off after a stop.
   - **Otherwise, unknown speed.** Each particle's speed error follows an
     Ornstein–Uhlenbeck process (2.5 m/s per √s, decaying with τ = 20 s, so its
-    spread levels off at about 7.9 m/s; either sign, so the mean does not
-    drift), and heading noise is ×3. The ellipse then grows like √t: about
+    spread levels off at about 7.9 m/s), and heading noise is ×3. The
+    offsets are antithetic in pairs (R11.1-7): particles 2k and 2k + 1 share
+    one noise draw with opposite signs, so the offsets sum to 0. With
+    independent draws the *realised* mean drifted, about √(Var I(t) / N):
+    measured on a synthetic 10 min stretch at 15 m/s (N = 2000, seeds 1–10),
+    3.8–48.8 m, RMS 28.7 m. Antithetic: RMS 9.1 m (max 14.1 m); the rest is
+    heading spread, since a pair cancels along each particle's own heading.
+    The ellipse is unchanged (95 % semi-major 2.8–3.1 km). A resample or
+    reseed that breaks a pair is repaired at the next stale step (the odd
+    particle takes the negative of the even one; the marginal is the same,
+    no random numbers are drawn). The ellipse then grows like √t: about
     0.6 / 2.2 / 3.0 km after 1 / 5 / 10 min of OBD silence while driving. An
     unbounded random walk reached 1.5 / 19 / 55 km.
 - **Catch-up after a long silence** (R13.1-6): when every input stops (the app
