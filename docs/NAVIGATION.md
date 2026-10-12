@@ -1,4 +1,4 @@
-# Navigation engine (N2, engine updates N2.1–N2.3, N4-B0/B1)
+# Navigation engine (N2, engine updates N2.1–N2.3, N4-B0/B1, N3.0)
 
 Live dead reckoning without roads: a causal, deterministic estimator of
 position, heading and OBD speed scale, in `Core/Sources/DriveLoggerCore/Navigation/`
@@ -1124,6 +1124,92 @@ at its two excluded pins (see "Acceptance runs").
   - drive-7, first pin of the 706 s pair: 209 m against 84 × 64 m, 111 m
     with σ 30 m added. That is the error the two excluded pins left behind
     (backlog N3MF-1).
+
+### N3.0 exit: engine fixes, the baseline N3.2 is judged against (2026-10-12)
+
+The N3.0 engine fixes (docs/N3_PLAN.md, "N3.0"), each in its own commit
+with a regression test that failed before it, judged one by one with the
+mean-based adoption rule against the item before. Release build, Mac,
+default config (two new keys: `manualFixReactionS` 1, `manualFixUnknownSpeedMps`
+10), seeds 1–5 in arrival order plus `--as-live` (header seed), all seven
+acceptance drives. "N4-B1" is the engine as in the N3.0 baseline above.
+drive-7's truth is likely, not proven, at its two excluded pins.
+
+| item | change | acceptance against the item before |
+|---|---|---|
+| R11.1-4 | course gate: the OBD speed held at the fix time, fresh or stale; a stale 0 or no reply vetoes | arrival order bit-identical; as-live clean-long's pre-session clean fix arrives before the first OBD reply and loses its course (one reseed later), max 18.78 → 19.24 m |
+| R11.1-5 | a stale fix accepted while stopped must be no older than the last moving step | bit-identical (`staleFixesIgnoredMoved` 0 on every run) |
+| R11.1-6 | **not adopted** (see below) | — |
+| R11.2-2 | latency shift interpolated between the history entries around the fix time | changed on every drive, adoption rule PASS |
+| R11.2-3 | an initialising fix's σ grows by age × speed | clean-long, manual (10⁻⁵ m) and drive-7 changed, PASS |
+| R14.4-1 | a late initialising pin backfills ring, history and cumulative motion | bit-identical (no late initialising pin in the set) |
+| N4MF-1 | pin σ grows with speed at the tap | manual identical (0 km/h); manual-3 and drive-7 changed (σ +0.0–2.7 m), PASS |
+| R11.1-7 | measured, then antithetic stale speed offsets | bit-identical (no unknown-speed steps; every stale stretch is parked) |
+
+**Arrival order, seeds 1–5 (the baseline).** Values per seed are seeds 1 / 2 / 3 / 4 / 5.
+
+| alias | run | distance | criterion | N4-B1 mean (range) | N3.0 mean (range) | per seed, N3.0 | Δ mean | allowed | inside 95 %, engine / + truth σ (gated) | converged at | ms/step |
+|---|---|---:|---|---|---|---|---:|---|---|---:|---:|
+| clean-long | mask-after 380 | 7.75 km | max ≤ 30 m | 18.90 m (18.19–20.20) | 19.42 m (18.09–20.29) | 20.29 / 18.09 / 20.01 / 19.08 / 19.62 | +0.52 m | ≤ +2 m | 100 % [277/277] / 100 % | 0.02 km | 0.065 |
+| clean | mask-after 230 | 3.58 km | max ≤ 30 m | 13.94 m (12.25–16.89) | 12.98 m (10.67–16.46) | 12.24 / 10.67 / 16.46 / 12.33 / 13.21 | −0.96 m | ≤ +2 m | 100 % [216/216] / 100 % | 0.03–0.04 km | 0.063 |
+| manual | use, hold-out 100 | 8.31 km | truth point 1 ≤ 200 m | 50.57 m (47.43–57.42) | 50.50 m (47.39–57.52) | 48.83 / 57.52 / 47.39 / 49.34 / 49.41 | −0.08 m | ≤ +2.5 m | 100 % [3/3] / 100 % | 7.27–7.68 km (known FAIL, reported) | 0.068 |
+| jammed-A | use | 11.23 km | end ≤ 2.5 % | 1.147 % (1.02–1.26) | 1.137 % (1.01–1.26) | 1.012 / 1.019 / 1.185 / 1.259 / 1.210 | −0.011 pp | ≤ +0.1 pp | 100 % [1/1] / 100 % | 8.15 km | 0.070 |
+| jammed-B | use | 5.89 km | end ≤ 2.5 % | 1.068 % (0.93–1.39) | 1.068 % (0.94–1.37) | 0.971 / 0.940 / 1.009 / 1.374 / 1.046 | −0.000 pp | ≤ +0.1 pp | 100 % [1/1] / 100 % | 5.18–5.31 km | 0.066 |
+| drive-7 | mask-after 1800 | 19.87 km | every withheld clean fix after 1800 s ≤ 2.5 % | 1.138 % (1.08–1.23) | 1.128 % (1.07–1.23) | 1.073 / 1.074 / 1.164 / 1.097 / 1.231 | −0.010 pp | ≤ +0.1 pp | 99.6 % [272/273; clean 266/266, pins 6/7] / same | 0.58 km | 0.073 |
+| manual-3 (sanity) | use | 12.05 km | reported | pins 103–104 / 458–473 / 128–131 m | pins 103–104 / 457–471 / 128–131 m | | | not gated | 66.7 % [2/3] / 66.7 % | 1.72 km | 0.071 |
+
+Every criterion passes on every seed, and the consistency with the truth's
+σ (the gated one) is unchanged on every drive: the adoption rule passes
+against N4-B1. The engine-only consistency is identical to it on every
+drive and seed. ms/step from a sequential seed-1 run (N4-B1 on the same
+Mac: 0.064–0.071); the largest single `ingest` was 0.24–0.44 ms.
+
+**drive-7, reported, not gated.** Max over the withheld clean fixes 224.0 m
+mean (213.2–244.5), at the last fix (2144 s, 19.86 km), against 226.0 m for
+N4-B1; as % of the distance since the last pin 4.52 % mean (4.30–4.93; N4-B1
+4.55 %). The scored pins (m; \* outside 95 %), seed 1: 63 / 94 / 210\* / 101 /
+29 / 86 / 24. The 706 s pair's first pin is still the one miss on every
+seed (N3MF-1).
+
+**As live (`--as-live`, header seed).**
+
+| alias | criterion | N4-B1 | N3.0 | stale fixes ignored / held and used | consistency + truth σ |
+|---|---|---|---|---|---|
+| clean-long | max ≤ 30 m | 18.78 m | 19.19 m | 0 / 0 | 100 % |
+| clean | max ≤ 30 m | 10.76 m | 13.59 m | 0 / 0 | 100 % |
+| manual | truth point 1 ≤ 200 m | 53.50 m | 53.66 m | 0 / 0 | 100 % |
+| jammed-A | end ≤ 2.5 % | 1.302 % | 1.290 % | 0 / 1 | 100 % |
+| jammed-B | end ≤ 2.5 % | 1.370 % | 1.389 % | 0 / 1 | 100 % |
+| drive-7 | every withheld clean fix ≤ 2.5 % | 1.151 % | 1.141 % | 0 / 0 | 99.6 % [272/273] |
+| manual-3 (sanity) | pin priors | 103 / 458 / 131 m | 103 / 456 / 133 m | 0 / 1 | 66.7 % [2/3] |
+
+As live, clean-long changes first with R11.1-4 (its pre-session fix loses
+its course: 18.78 → 19.24 m). Clean as live moves with R11.2-2 (10.76 →
+13.59 m), within its arrival-order seed range (10.67–16.46 m): it is one
+seed. Every criterion passes.
+
+**Every change against N4-B1, explained.**
+- clean, clean-long, manual, jammed-A/B and drive-7 moved in arrival order
+  only through R11.2-2 (every fix's latency shift changes slightly) and, on
+  clean-long, manual and drive-7, R11.2-3 (the first fix's σ grows by its
+  age × speed). manual-3 and drive-7 also moved with N4MF-1 (pins at
+  4–47 km/h: σ +0.0–2.7 m). Every move is within seed noise; none changes a
+  criterion's verdict or a consistency count.
+- R11.1-4 changes only as-live clean-long, as above. R11.1-5, R14.4-1 and
+  R11.1-7 are bit-identical on all 42 runs: the set has no stale fix
+  before a stop, no late initialising pin and no unknown-speed step.
+
+**R11.1-6, not adopted.** Excluding the reseeded particles from their own
+fix's update (each fix counted once; the posterior after one clean fix on
+an unknown heading becomes the fix's σ and course σ, not √2 tighter) fails
+the adoption rule on clean: mean 13.94 → 18.58 m (Δ +4.64 m, allowed +2 m),
+per seed 13.01 → 20.00, 16.89 → 11.15, 12.25 → 27.57, 14.49 → 16.78,
+13.06 → 17.40 m. Convergence moves 0.03 → 0.04 km on every seed, as
+expected. On seeds 6–25 (clean only, diagnosis, not tuning) the mean is
+unchanged (16.04 → 16.01 m), but the spread grows (sd 3.51 → 5.43 m) and
+one seed reaches 32.56 m, above the 30 m criterion. The other drives have
+no reseed in arrival order. The patch and its regression test are kept
+in the git-ignored `logs/`; backlog R11.1-6 stays open.
 
 ### N2.2 experiment: stale-fix σ grown by age (default off; superseded by N2.3)
 

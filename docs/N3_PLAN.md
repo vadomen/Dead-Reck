@@ -1,7 +1,8 @@
 # N3 plan: OSM roads and map matching
 
-**Plan. All open questions answered 2026-10-11; see "Decisions". N3.0 has not started
-and waits for the user's go.** Model, config, replay and adoption rule: `docs/NAVIGATION.md`.
+**Plan. All open questions answered 2026-10-11; see "Decisions". N3.0 done
+(2026-10-12) except R11.1-6, which failed the adoption rule and stays open; its exit
+table, the baseline N3.2 is judged against, is "N3.0 exit" in docs/NAVIGATION.md.** Model, config, replay and adoption rule: `docs/NAVIGATION.md`.
 Roadmap: `WORKFLOW.md`, "Navigator roadmap". Owner: `navigation-engineer`, plus
 `ios-ui-engineer` for the N3.4 display. No logger, sensor or log-format change.
 
