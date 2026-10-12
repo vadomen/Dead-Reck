@@ -223,8 +223,10 @@ struct NavigationRun13Tests {
                                                                    .straight(seconds: 2, speed: 12)])
             let events = drive.events(fix: { t, state, _ in
                 // One near-perfect course at t = 0 initialises heading tightly.
+                // It arrives just after the first OBD reply (0.05 s): with no
+                // OBD known a course is vetoed (R11.1-4).
                 S.at(t, 0) ? S.Fix(east: 0, north: 0, accuracy: 5, speed: 12, speedAccuracy: 0.3,
-                                   course: 0, courseAccuracy: 0.05) : nil
+                                   course: 0, courseAccuracy: 0.05, latency: 0.06) : nil
             })
             let samples = S.run(events, config: config, sampleTimes: [1, 9]).samples
             let a = try #require(samples[0]).headingStdDeg, b = try #require(samples[1]).headingStdDeg

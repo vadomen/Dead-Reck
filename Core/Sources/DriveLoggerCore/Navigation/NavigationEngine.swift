@@ -86,7 +86,12 @@ public struct NavigationEngine: Sendable {
     var heading: [Double] = []
     var scale: [Double] = []
     /// Speed error while OBD is stale and the car is not parked, m/s
-    /// (Ornstein–Uhlenbeck, `staleSpeedDecayS`); 0 otherwise.
+    /// (Ornstein–Uhlenbeck, `staleSpeedDecayS`); 0 otherwise. The noise
+    /// increments are antithetic in pairs (2k, 2k + 1): one draw per pair,
+    /// opposite signs, so they sum to 0 and add no Monte Carlo drift to the
+    /// realised mean (R11.1-7). The offsets themselves are whatever the
+    /// filter made them: a resample keeps the ones the fixes favoured
+    /// (R20.1-1).
     var speedOffset: [Double] = []
     /// Cumulative own motion (prediction displacement only, no update
     /// corrections), metres, for late manual fixes (R14.3-1). Only
@@ -139,6 +144,11 @@ public struct NavigationEngine: Sendable {
     private var preInitSteps: PreInitSteps
 
     private var lastNetworkFixNs: Int64?
+    /// End of the latest grid step since initialisation in which the cloud
+    /// moved (not a ZUPT or parked step); nil if none (R11.1-5). A stale
+    /// fix accepted while stopped must be no older than this: then every
+    /// step since its time was frozen and its shift is exactly 0.
+    private var lastMovingStepNs: Int64?
 
     /// A stale fix waiting for OBD to say whether the car is stopped
     /// (N4B-1). At most one: see `holdStaleFix`.
@@ -295,7 +305,8 @@ public struct NavigationEngine: Sendable {
             lastStepStationary = true
             lastMeanSpeed = 0
             for k in max(0, count - history.capacity)..<count {
-                history.append(first + Int64(k) * stepNs, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: nil)
+                history.append(first + Int64(k) * stepNs, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: nil,
+                               held: heldOBDSpeed)
             }
             for k in max(0, count - motionRing.capacity)..<count {
                 recordMotion(at: first + Int64(k) * stepNs)
@@ -404,6 +415,12 @@ public struct NavigationEngine: Sendable {
         }
     }
 
+    /// The last OBD vehicle speed, fresh or stale, in m/s with the
+    /// truncation offset (0 for a 0 reply); nil before the first reply.
+    private var heldOBDSpeed: Double? {
+        obdSpeedKmh.map { $0 > 0 ? ($0 + config.obdSpeedOffsetKmh) / 3.6 : 0 }
+    }
+
     /// Fresh OBD zero at `ns`: the car is known to be stopped.
     private func isStopped(at ns: Int64) -> Bool {
         guard let v = obdSpeedKmh, let t = obdNs else { return false }
@@ -437,7 +454,7 @@ public struct NavigationEngine: Sendable {
             counters.zuptSteps += 1
             lastStepStationary = true
             lastMeanSpeed = 0
-            history.append(ns, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: 0)
+            history.append(ns, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: 0, held: 0)
             recordMotion(at: ns)
             return
         }
@@ -447,7 +464,7 @@ public struct NavigationEngine: Sendable {
             counters.staleParkedSteps += 1
             lastStepStationary = true
             lastMeanSpeed = 0
-            history.append(ns, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: nil)
+            history.append(ns, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: nil, held: heldOBDSpeed)
             recordMotion(at: ns)
             return
         }
@@ -476,12 +493,23 @@ public struct NavigationEngine: Sendable {
         let crossPerM = config.crossTrackNoisePerSqrtM * config.crossTrackNoisePerSqrtM
 
         var meanDEast = 0.0, meanDNorth = 0.0, meanSpeed = 0.0
+        var pairNoise = 0.0
         for i in 0..<east.count {
             let (n1, n2) = rng.nextGaussianPair()
             let dHeading = yaw + sigmaHeading * n1
             var speed = vObd * scale[i]
             if stale {
-                speedOffset[i] = decay * speedOffset[i] + sigmaOffset * rng.nextGaussian()
+                // Antithetic increments: the even particle of a pair draws,
+                // the odd one takes the opposite (an unpaired last one
+                // draws). Each keeps its own offset (R20.1-1).
+                let noise: Double
+                if i % 2 == 0 {
+                    pairNoise = rng.nextGaussian()
+                    noise = pairNoise
+                } else {
+                    noise = -pairNoise
+                }
+                speedOffset[i] = decay * speedOffset[i] + sigmaOffset * noise
                 speed += speedOffset[i]
             }
             let (dEast, dNorth) = move(i, dHeading: dHeading, distance: speed * dt, scaleStep: sigmaScale * n2,
@@ -496,7 +524,8 @@ public struct NavigationEngine: Sendable {
         cumulativeYaw += yaw
         lastStepStationary = false
         lastMeanSpeed = meanSpeed
-        history.append(ns, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: fresh ? vObd : nil)
+        lastMovingStepNs = ns
+        history.append(ns, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: fresh ? vObd : nil, held: vObd)
         recordMotion(at: ns, obdDistance: vObd * dt)
         if counters.steps % reanchorCheckSteps == 0 {
             reanchorIfNeeded()
@@ -570,9 +599,13 @@ public struct NavigationEngine: Sendable {
         let crossPerM = config.crossTrackNoisePerSqrtM * config.crossTrackNoisePerSqrtM
 
         var meanDEast = 0.0, meanDNorth = 0.0, meanSpeed = 0.0
+        var pairNoise = (0.0, 0.0)
         for i in 0..<east.count {
             let (n1, n2) = rng.nextGaussianPair()
-            let (n3, n4) = rng.nextGaussianPair()
+            // Antithetic increments, as in `step`: the pair shares
+            // (n3, n4), negated; x0 is each particle's own.
+            if i % 2 == 0 { pairNoise = rng.nextGaussianPair() }
+            let (n3, n4) = i % 2 == 0 ? pairNoise : (-pairNoise.0, -pairNoise.1)
             let x0 = speedOffset[i]
             speedOffset[i] = ou.decay * x0 + ou.sigmaEnd * n3
             let integral = ou.integralGain * x0 + ou.integralOnEnd * n3 + ou.integralOwn * n4
@@ -589,7 +622,8 @@ public struct NavigationEngine: Sendable {
         cumulativeYaw += yaw
         lastStepStationary = false
         lastMeanSpeed = meanSpeed
-        history.append(ns, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: nil)
+        lastMovingStepNs = ns
+        history.append(ns, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: nil, held: heldOBDSpeed)
         recordMotion(at: ns, obdDistance: vObd * dt)
         if counters.steps / reanchorCheckSteps != checkBefore {
             reanchorIfNeeded()
@@ -725,8 +759,9 @@ public struct NavigationEngine: Sendable {
         cumulativeEast = 0
         cumulativeNorth = 0
         cumulativeYaw = 0
+        lastMovingStepNs = nil
         history.removeAll()
-        history.append(lastStepNs ?? ns, 0, 0, 0, speed: nil)
+        history.append(lastStepNs ?? ns, 0, 0, 0, speed: nil, held: heldOBDSpeed)
         motionRing.removeAll(particles: n)
         recordMotion(at: lastStepNs ?? ns)
         lastStepStationary = isStopped(at: ns)
@@ -753,6 +788,16 @@ public struct NavigationEngine: Sendable {
             }
             return
         }
+        if age > config.maxFixAgeS, let moved = lastMovingStepNs, fixNs < moved {
+            // Stopped now, but the car moved after the fix: the motion
+            // history (~`maxFixAgeS`) may not reach back to the fix, and
+            // what it misses would be left unshifted (R11.1-5). Since the
+            // last moving step every step was a ZUPT or parked step, so a
+            // fix at or after it needs no shift at all.
+            counters.staleFixesIgnoredMoved += 1
+            counters.fixesIgnoredStale += 1
+            return
+        }
         // No Doppler speed: a cell-tower or Wi-Fi position, whatever its
         // claimed accuracy.
         let network = !sample.hasValidSpeed
@@ -760,21 +805,32 @@ public struct NavigationEngine: Sendable {
             * (network ? config.networkFixInflation : 1)
             + Self.staleGrowth(fixNs: fixNs, age: age, config: config)
         // Course needs real motion: GNSS reports a few m/s of speed noise
-        // while parked, so a fresh OBD speed under the threshold vetoes it.
+        // while parked, so an OBD speed under the threshold vetoes it. The
+        // speed checked is the one OBD last reported at the fix time, fresh
+        // or stale (R11.1-4): a stale 0 (the link dropped while parked) and
+        // no OBD reply at all (parked before the adapter connects) veto; a
+        // stale moving speed (a dropout while driving) does not.
         let since = shiftSince(fixNs)
         let obdAtFix: Double? = tangentPlane == nil ? (isStopped(at: arrivalNs) ? 0 : nil) : since.obdSpeed
+        let heldAtFix: Double? = tangentPlane == nil ? heldOBDSpeed : since.heldOBDSpeed
         var dopplerConsistent = true
         if sample.speed >= 0, let v = obdAtFix {
             dopplerConsistent = abs(sample.speed - v) <= max(config.gnssSpeedGateMps, config.gnssSpeedGateFraction * v)
         }
         let courseValid = sample.hasValidCourse && sample.speed >= config.courseMinSpeedMps
-            && (obdAtFix ?? .infinity) >= config.courseMinSpeedMps && dopplerConsistent
+            && (heldAtFix ?? 0) >= config.courseMinSpeedMps && dopplerConsistent
         let courseSigma = max(sample.courseAccuracy, config.courseSigmaFloorDeg) * .pi / 180
         let clean = accuracy <= config.cleanFixAccM && courseValid
 
         guard let plane = tangentPlane else {
+            // The cloud starts at the fix, but the car has moved for the
+            // fix's age since (R11.2-3): no motion history exists yet to
+            // shift it. Its σ grows by that distance, in quadrature.
+            let travelled = Self.initialisationSpeed(fresh: isFresh(at: arrivalNs) ? heldOBDSpeed : nil,
+                                                     sample: sample) * age
             initialize(
-                latitude: sample.latitude, longitude: sample.longitude, sigma: sigma,
+                latitude: sample.latitude, longitude: sample.longitude,
+                sigma: (sigma * sigma + travelled * travelled).squareRoot(),
                 heading: clean ? (sample.course * .pi / 180, courseSigma) : nil, at: fixNs
             )
             counters.fixesUsed += 1
@@ -895,6 +951,15 @@ public struct NavigationEngine: Sendable {
         return max(0, config.staleFixSigmaGrowthMps) * age
     }
 
+    /// Speed for the age allowance of a fix that initialises the engine,
+    /// m/s: the fresh OBD speed at its arrival (`fresh`, with the truncation
+    /// offset; 0 when stopped), else the fix's own Doppler speed when
+    /// valid, else 0.
+    static func initialisationSpeed(fresh: Double?, sample: LocationSample) -> Double {
+        if let fresh { return fresh }
+        return sample.hasValidSpeed && sample.speed.isFinite ? sample.speed : 0
+    }
+
     /// Likelihood exponent for a network fix `sinceLastS` seconds after the
     /// previous one (nil: the first): `min(1, Δt / correlationS)`, clamped
     /// at 0 for a fix not after the previous one.
@@ -946,7 +1011,7 @@ public struct NavigationEngine: Sendable {
         guard sample.latitude.isFinite, sample.longitude.isFinite,
               abs(sample.latitude) <= 90, abs(sample.longitude) <= 180 else { return }
         counters.manualFixes += 1
-        let sigma = config.manualFixSigma(mapSpanM: sample.mapSpanM)
+        let sigma = config.manualFixSigma(sample, at: MonotonicTimestamp(nanoseconds: ns))
         // Late: grid steps already ran after the pin's own instant (the app
         // writes a double-tap pin when its undo window closes). In arrival
         // order the engine has just stepped to floor(t): never late.
@@ -1068,23 +1133,49 @@ public struct NavigationEngine: Sendable {
         let staleVariance = staleS > 0
             ? Self.ouIntegralVariance(dt: staleS, sigma: config.staleSpeedNoiseMpsPerSqrtS, tau: config.staleSpeedDecayS)
             : 0
-        for i in 0..<east.count {
-            var h = heading[i]
-            for r in records where r.kind != .frozen {
+        // The motion record starts at the tap's grid step, as if the pin had
+        // initialised there (R14.4-1): the ring, the mean history and the
+        // cumulative motion are backfilled step by step below, so a second
+        // late pin tapped in this stretch finds each particle's own motion
+        // since its tap, and a fix stamped in it finds its latency shift.
+        history.removeAll()
+        history.append(start, 0, 0, 0, speed: records.first?.historySpeed, held: records.first?.held)
+        motionRing.removeAll(particles: east.count)
+        recordMotion(at: start)
+        var h = heading
+        for r in records {
+            let covered = Double(r.toNs - max(r.fromNs, start)) / 1e9
+            var meanDEast = 0.0, meanDNorth = 0.0
+            var dYaw = 0.0
+            if r.kind != .frozen {
                 let fraction = r.toNs > r.fromNs ? Double(r.toNs - max(r.fromNs, start)) / Double(r.toNs - r.fromNs) : 1
-                let dYaw = r.yaw * fraction
-                let distance = r.speed * scale[i] * Double(r.toNs - max(r.fromNs, start)) / 1e9
-                let mid = h + 0.5 * dYaw
-                let s = sin(mid), c = cos(mid)
-                east[i] += distance * s
-                north[i] += distance * c
-                let qAlong = alongPerM * abs(distance), qCross = crossPerM * abs(distance)
-                covEE[i] += qAlong * s * s + qCross * c * c
-                covNN[i] += qAlong * c * c + qCross * s * s
-                covEN[i] += (qAlong - qCross) * s * c
-                h += dYaw
+                dYaw = r.yaw * fraction
+                for i in 0..<east.count {
+                    let distance = r.speed * scale[i] * covered
+                    let mid = h[i] + 0.5 * dYaw
+                    let s = sin(mid), c = cos(mid)
+                    let dEast = distance * s, dNorth = distance * c
+                    east[i] += dEast
+                    north[i] += dNorth
+                    motionEast[i] += dEast
+                    motionNorth[i] += dNorth
+                    meanDEast += weight[i] * dEast
+                    meanDNorth += weight[i] * dNorth
+                    let qAlong = alongPerM * abs(distance), qCross = crossPerM * abs(distance)
+                    covEE[i] += qAlong * s * s + qCross * c * c
+                    covNN[i] += qAlong * c * c + qCross * s * s
+                    covEN[i] += (qAlong - qCross) * s * c
+                    h[i] += dYaw
+                }
             }
-            heading[i] = Self.wrap2Pi(h)
+            cumulativeEast += meanDEast
+            cumulativeNorth += meanDNorth
+            cumulativeYaw += dYaw
+            history.append(r.toNs, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: r.historySpeed, held: r.held)
+            recordMotion(at: r.toNs, obdDistance: r.kind == .frozen ? 0 : r.speed * covered)
+        }
+        for i in 0..<east.count {
+            heading[i] = Self.wrap2Pi(h[i])
             if staleVariance > 0 {
                 let s = sin(heading[i]), c = cos(heading[i])
                 covEE[i] += staleVariance * s * s
@@ -1104,6 +1195,9 @@ public struct NavigationEngine: Sendable {
                 covNN[i] += extra
             }
         }
+        // The cloud moved over these steps: a stale fix from before them
+        // is not shifted by the history either (R11.1-5).
+        if let moved = records.last(where: { $0.kind != .frozen }) { lastMovingStepNs = moved.toNs }
         if let last = records.last {
             lastStepStationary = last.kind == .frozen
             var meanScale = 0.0
@@ -1125,7 +1219,10 @@ public struct NavigationEngine: Sendable {
         }
         let kind: PreInitSteps.Kind = (fresh && v == 0) || (!fresh && parkedSinceZero) ? .frozen : fresh ? .known : .stale
         let from = ns - Int64((dt * 1e9).rounded())
-        preInitSteps.append(.init(fromNs: from, toNs: ns, yaw: yaw, speed: kind == .frozen ? 0 : v, kind: kind))
+        // The history entry `step` would have written: the fresh speed
+        // (0 for a ZUPT), nil when stale or parked.
+        preInitSteps.append(.init(fromNs: from, toNs: ns, yaw: yaw, speed: kind == .frozen ? 0 : v, kind: kind,
+                                  historySpeed: fresh ? v : nil, held: heldOBDSpeed))
     }
 
     /// Snapshots every particle's own cumulative motion at grid step `ns`,
@@ -1248,11 +1345,31 @@ public struct NavigationEngine: Sendable {
 
     /// Mean displacement, yaw and OBD speed since `ns`, from the motion
     /// history. A time older than the history uses its oldest entry.
-    private func shiftSince(_ ns: Int64) -> (east: Double, north: Double, yaw: Double, obdSpeed: Double?) {
-        guard let entry = history.entry(atOrBefore: ns) else {
-            return (0, 0, 0, nil)
+    /// Between two entries the cumulative motion is interpolated linearly
+    /// (R11.2-2): the step from the entry at or before `ns` to the next one
+    /// is uniform over its 0.1 s, so only the part after `ns` is motion
+    /// since it. Without that, a fix 0.07 s after a grid step was pushed
+    /// forward by 0.07 s × v. A time after the newest entry (the pending
+    /// part of the current step) uses the newest. The OBD speeds are the
+    /// entry's at or before `ns`.
+    private func shiftSince(_ ns: Int64)
+        -> (east: Double, north: Double, yaw: Double, obdSpeed: Double?, heldOBDSpeed: Double?) {
+        guard let (entry, next) = history.entries(around: ns) else {
+            return (0, 0, 0, nil, nil)
         }
-        return (cumulativeEast - entry.east, cumulativeNorth - entry.north, cumulativeYaw - entry.yaw, entry.speed)
+        var e = entry.east, n = entry.north, y = entry.yaw
+        if let next, next.t > entry.t, ns > entry.t {
+            let f = Double(ns - entry.t) / Double(next.t - entry.t)
+            e += f * (next.east - entry.east)
+            n += f * (next.north - entry.north)
+            y += f * (next.yaw - entry.yaw)
+        }
+        return (cumulativeEast - e, cumulativeNorth - n, cumulativeYaw - y, entry.speed, entry.held)
+    }
+
+    /// The motion-history entry a fix stamped `ns` reads (tests).
+    func motionHistoryEntry(atOrBefore ns: Int64) -> MotionHistory.Entry? {
+        history.entry(atOrBefore: ns)
     }
 
     // MARK: Estimate
@@ -1378,6 +1495,9 @@ struct MotionHistory: Sendable {
         var yaw: Double
         /// OBD speed used at this step when fresh (m/s), nil when stale.
         var speed: Double?
+        /// The OBD speed held at this step, fresh or stale (m/s); nil before
+        /// the first reply (R11.1-4).
+        var held: Double?
     }
 
     private var entries: [Entry] = []
@@ -1401,8 +1521,8 @@ struct MotionHistory: Sendable {
         }
     }
 
-    mutating func append(_ t: Int64, _ east: Double, _ north: Double, _ yaw: Double, speed: Double?) {
-        let entry = Entry(t: t, east: east, north: north, yaw: yaw, speed: speed)
+    mutating func append(_ t: Int64, _ east: Double, _ north: Double, _ yaw: Double, speed: Double?, held: Double?) {
+        let entry = Entry(t: t, east: east, north: north, yaw: yaw, speed: speed, held: held)
         if entries.count < capacity {
             entries.append(entry)
         } else {
@@ -1418,14 +1538,20 @@ struct MotionHistory: Sendable {
 
     /// The latest entry at or before `t`; the oldest if all are later.
     func entry(atOrBefore t: Int64) -> Entry? {
+        entries(around: t)?.atOrBefore
+    }
+
+    /// The latest entry at or before `t` (the oldest if all are later) and
+    /// the one after it, nil when it is the newest.
+    func entries(around t: Int64) -> (atOrBefore: Entry, next: Entry?)? {
         guard !entries.isEmpty else { return nil }
         var lo = 0, hi = entries.count - 1
-        if chronological(0).t > t { return chronological(0) }
+        if chronological(0).t > t { return (chronological(0), nil) }
         while lo < hi {
             let mid = (lo + hi + 1) / 2
             if chronological(mid).t <= t { lo = mid } else { hi = mid - 1 }
         }
-        return chronological(lo)
+        return (chronological(lo), lo + 1 < entries.count ? chronological(lo + 1) : nil)
     }
 }
 
@@ -1641,6 +1767,10 @@ struct PreInitSteps: Sendable {
         /// OBD speed with the truncation offset, m/s (0 when frozen).
         var speed: Double
         var kind: Kind
+        /// The motion-history speeds `step` would have recorded: fresh OBD
+        /// speed (nil when stale) and the held one (nil before any reply).
+        var historySpeed: Double?
+        var held: Double?
     }
 
     let capacity: Int

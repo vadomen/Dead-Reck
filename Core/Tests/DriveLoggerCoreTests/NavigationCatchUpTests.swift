@@ -17,9 +17,10 @@ struct NavigationCatchUpTests {
     /// stretch is folded in one catch-up. A clean-looking fix stamped at
     /// 625 s (inside the gap) arrives at 631 s, 6 s late, with a 4 m/s
     /// Doppler speed and a course. It reads the motion history at 625 s:
-    /// stepped, that entry is a parked stale step (OBD unknown); without the
-    /// fold's history it would be the last fresh step (OBD 0), which vetoes
-    /// the course.
+    /// stepped, that entry is a parked stale step (no fresh speed, OBD 0
+    /// held); without the fold's history it would be the last fresh step at
+    /// 30 s. Since R11.1-4 the held 0 vetoes the course in both, so the
+    /// entry itself is compared.
     static func parkedGapWithLateFix(_ gap: Bool) -> (engine: NavigationEngine, before: NavigationCounters) {
         let drive = S(initialHeadingDeg: 30, initialSpeed: 10, [
             .straight(seconds: 20, speed: 10), .ramp(seconds: 4, from: 10, to: 0), .stop(seconds: 610),
@@ -51,10 +52,17 @@ struct NavigationCatchUpTests {
         #expect(gap.counters.coalescedSteps > 5_000 && control.counters.coalescedSteps == 0)
         #expect(gap.counters.fixesUsed - gapBefore.fixesUsed == 1)
         #expect(control.counters.fixesUsed - controlBefore.fixesUsed == 1)
-        // The late fix's course is used in both (OBD unknown at 625 s); a
-        // fold without history would veto it (OBD 0 at the last fresh step).
-        #expect(gap.counters.courseUpdates - gapBefore.courseUpdates == 1)
-        #expect(control.counters.courseUpdates - controlBefore.courseUpdates == 1)
+        // The fix reads the same history entry at 625 s in both: a parked
+        // stale step (no fresh speed, held OBD 0). A fold without history
+        // would return the last fresh step at 30 s (fresh OBD 0).
+        let folded = try #require(gap.motionHistoryEntry(atOrBefore: S.ms(625).nanoseconds))
+        let stepped = try #require(control.motionHistoryEntry(atOrBefore: S.ms(625).nanoseconds))
+        #expect(folded.t == stepped.t && folded.t == S.ms(625).nanoseconds)
+        #expect(folded.speed == nil && stepped.speed == nil && folded.held == 0 && stepped.held == 0)
+        #expect(folded.east == stepped.east && folded.north == stepped.north && folded.yaw == stepped.yaw)
+        // Parked with a stale OBD 0, its course is vetoed in both (R11.1-4).
+        #expect(gap.counters.courseUpdates == gapBefore.courseUpdates)
+        #expect(control.counters.courseUpdates == controlBefore.courseUpdates)
         let a = try #require(gap.estimate(at: S.ms(632))), b = try #require(control.estimate(at: S.ms(632)))
         #expect(a == b, "folded \(a), stepped \(b)")
     }

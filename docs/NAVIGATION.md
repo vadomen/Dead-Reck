@@ -1,4 +1,4 @@
-# Navigation engine (N2, engine updates N2.1–N2.3, N4-B0/B1)
+# Navigation engine (N2, engine updates N2.1–N2.3, N4-B0/B1, N3.0)
 
 Live dead reckoning without roads: a causal, deterministic estimator of
 position, heading and OBD speed scale, in `Core/Sources/DriveLoggerCore/Navigation/`
@@ -67,8 +67,27 @@ updates reweight only by what heading and scale actually predict.
     - Every stale period in the replay set is ignition-off after a stop.
   - **Otherwise, unknown speed.** Each particle's speed error follows an
     Ornstein–Uhlenbeck process (2.5 m/s per √s, decaying with τ = 20 s, so its
-    spread levels off at about 7.9 m/s; either sign, so the mean does not
-    drift), and heading noise is ×3. The ellipse then grows like √t: about
+    spread levels off at about 7.9 m/s), and heading noise is ×3. The
+    noise *increments* are antithetic in pairs (R11.1-7, R20.1-1):
+    particles 2k and 2k + 1 share one noise draw per step with opposite
+    signs (in a macro step, both normals of the exact OU
+    transition), so the increments sum to 0 and add no Monte Carlo drift.
+    The offsets themselves are each particle's own: a resample keeps the
+    ones the fixes favoured, so fixes during a stale stretch still teach
+    the cloud its speed. With independent draws the *realised* mean
+    drifted, about √(Var I(t) / N): measured on a synthetic 10 min stretch
+    at 15 m/s with no fixes (N = 2000, seeds 1–10), 3.8–48.8 m, RMS 28.7 m.
+    Antithetic increments: RMS 9.1 m (max 14.1 m); the rest is heading
+    spread, since a pair cancels along each particle's own heading. The
+    ellipse is unchanged (95 % semi-major 2.8–3.1 km). R11.1-7 first
+    re-paired the offsets themselves after every resample (the odd particle
+    took the negative of the even one's). That holds the prior's marginal
+    but throws away the posterior: with clean fixes every second while
+    the car accelerated 15 → 25 m/s on stale OBD, half the learned offsets
+    were flipped each time, the mean speed stayed at the stale 15.2 m/s,
+    and the error 6 s after the last fix was 60 m instead of 16 m
+    (R20.1-1; N = 1000).
+    The ellipse then grows like √t: about
     0.6 / 2.2 / 3.0 km after 1 / 5 / 10 min of OBD silence while driving. An
     unbounded random walk reached 1.5 / 19 / 55 km.
 - **Catch-up after a long silence** (R13.1-6): when every input stops (the app
@@ -129,11 +148,23 @@ updates reweight only by what heading and scale actually predict.
   - **Latency**: a v2/v3 fix's `t` is the fix time, before its arrival. The fix
     is shifted by the engine's own mean displacement and yaw since `t`, taken
     from a ring of cumulative mean motion (max(`maxFixAgeS`,
-    `lateManualFixWindowS`), 10 s). This is causal and needs no per-particle
-    history. It is right for a converged cloud. It is not right while heading
+    `lateManualFixWindowS`), 10 s). Between two 10 Hz entries the cumulative
+    motion is interpolated linearly (R11.2-2), so a fix 0.07 s after a grid
+    step is not pushed forward by the 0.07 s × v that happened before it
+    (about 1.5 m on average at 30 m/s, always forward). This is causal and
+    needs no per-particle history. It is right for a converged cloud. It is not right while heading
     is unknown (see late manual fix below).
   - **Stale fixes** (age > 10 s at arrival) are ignored unless OBD says the car
-    is stopped.
+    is stopped. Stopped is not enough when the car moved after the fix
+    (R11.1-5): the motion history holds about 10 s, so a fix from before
+    the stop could reach past it and the motion it misses would stay
+    unshifted (a 16 s old fix at a light: tens of metres at σ 5 m). A stale
+    fix is therefore used only if its time is at or after the end of the
+    last moving step since initialisation; every step since was then a ZUPT
+    or parked step, and its shift is exactly 0. Otherwise it is ignored
+    (`staleFixesIgnoredMoved`, also in `fixesIgnoredStale`). A stale fix
+    that initialises the engine has no motion to miss and is used as
+    before.
   - **Held stale fix** (N4-B1, backlog N4B-1): a stale fix that arrives
     before OBD can say whether the car is stopped (no reply yet, or only a
     stale one) is held, not dropped. The first OBD reply that is fresh at the
@@ -153,9 +184,14 @@ updates reweight only by what heading and scale actually predict.
     `heldFixesDroppedTimeout`, `heldFixesReplaced`; every drop also counts
     in `fixesIgnoredStale`. `heldFixTimeoutS` 0 restores the drop on
     arrival.
-  - **Course** is used when valid, GNSS speed ≥ 3 m/s, fresh OBD speed ≥ 3 m/s
-    (GNSS reports a few m/s of noise while parked), and GNSS speed agrees with
-    OBD within max(2 m/s, 15 %). That last gate rejects glitch fixes (the clean
+  - **Course** is used when valid, GNSS speed ≥ 3 m/s, the OBD speed last
+    reported at the fix time ≥ 3 m/s (GNSS reports a few m/s of noise while
+    parked), and GNSS speed agrees with fresh OBD within max(2 m/s, 15 %).
+    The OBD speed is the held one, fresh or stale (R11.1-4): a stale 0 (the
+    link dropped while parked) and no OBD reply at all (parked before the
+    adapter connects, or a pre-session fix that arrives before the first
+    reply) veto the course; a stale moving speed (a dropout while driving)
+    does not. That last gate rejects glitch fixes (the clean
     drive has one reporting 25 m/s at 10 m/s with a "good" course) and slow
     manoeuvres. Wrapped Gaussian with σ = max(courseAccuracy, 2°).
   - **Speed** updates the scale under the same gates, when OBD speed is above
@@ -168,10 +204,20 @@ updates reweight only by what heading and scale actually predict.
     with unsigned OBD speed drove heading to "nose + 180°".
 - **Manual fix** ("I'm here"): σ = max(30 m, mapSpanM / 12), 30 m when the
   span is missing or not usable. A fingertip covers roughly 1/12 of the map, so
-  a pin on a 1.2 km-wide map is good to about 100 m. Caveat (M10.1-3): in
-  heading-up the logged span can be up to about 2.2× too large, which errs
-  toward a larger σ, so it is safe. The replay scores the pin checkpoint with the
-  same σ. Kalman position update. If the prior has no support at the pin (every
+  a pin on a 1.2 km-wide map is good to about 100 m. Since N3.0 (N4MF-1) σ
+  also grows with the speed at the tap: σ² = max(30, span / 12)² +
+  (v · (τ + max(0, t − pressedT)))², τ = `manualFixReactionS` (1 s), because
+  the finger marks a spot the car passed about a reaction time ago.
+  v = `gateSpeedKmh` / 3.6 when `speedSource` is `obd` or `gps`, else
+  `manualFixUnknownSpeedMps` (10 m/s). t − pressedT is the confirm delay of
+  the old long-press flow (0 for a double tap). On the replay set: manual
+  unchanged (0 km/h), manual-3 104 → 105.4 / 30.3 → 30.4 / 30.7 → 31.0 m,
+  drive-7 30 → 30.0–32.7 m (pins at 0–47 km/h). That is too small to judge
+  the rule here; it needs pins at 30–60 km/h (device item D3). Caveat (M10.1-3):
+  in heading-up the logged span can be up to about 2.2× too large, which errs
+  toward a larger σ, so it is safe. The replay scores the pin checkpoint with
+  the frozen truth σ max(30 m, span / 12) (`manualFixTruthSigmaM`, R19.1-1),
+  not with this engine σ. Kalman position update. If the prior has no support at the pin (every
   particle further than χ² = 25), positions restart at the pin while heading
   and scale hypotheses and their weights are kept. A low ESS alone does not
   reset (R13.1-1): that is the pin carrying the most information. For example,
@@ -225,6 +271,13 @@ updates reweight only by what heading and scale actually predict.
       was chosen over inflating σ by `vObd` × age, because with heading unknown
       the motion is a ring of radius v × age, not a disc, and the forward
       prediction reproduces exactly that.
+      The motion record is backfilled over the same steps (R14.4-1): the
+      per-particle ring, `motionEast/North`, the mean history and the
+      cumulative motion start at the tap's grid step and advance step by
+      step. Before, they started at the initialisation, so a second late pin
+      tapped between the first tap and the late initialisation (two pins
+      1.5 s apart, no GPS) lost that motion: 7.5 / 20.6 m off arrival order
+      at 15 / 25 m/s, its ellipse 10–21 % smaller. Now within 1.5 m and 5 %.
     - `lateManualFixWindowS` 0 disables all of this (every pin gets the mean
       shift, as before). Counters: `lateManualFixes`,
       `lateManualFixesMeanShift`. Memory: two rings of
@@ -252,6 +305,15 @@ usable course gives position ± σ and heading ~ N(course, σ_course). Otherwise
 (any fix or a manual fix) it gives position ± σ and headings stratified
 uniformly over 360°. Stratification cut the seed-to-seed spread on the jammed
 drives noticeably compared with independent draws.
+
+An initialising fix starts the cloud at the fix, but the car has moved for
+the fix's age (arrival − `t`) since, and no motion history exists yet to
+shift it (R11.2-3). Its σ grows in quadrature: σ² = σ_fix² + (v · age)², with
+v the fresh OBD speed at arrival (truncation offset added; 0 when stopped),
+else the fix's own Doppler speed when valid, else 0. A 4 s old fix at
+20 m/s starts at σ ≈ 82 m instead of 5 m, so the truth 80 m ahead is inside
+the ellipse. A prompt fix (0.05 s) is within 1 % of its own σ. A fix older
+than `staleFixAgeS` also has the stale growth (1 m/s × age) in σ_fix.
 
 ### Estimate
 
@@ -364,6 +426,7 @@ every result.
 | cleanFixAccM | 15 | clean fix threshold |
 | reseedHeadingStdDeg / reseedNoSupportSigma / reseedFraction | 30 / 4 / 0.5 | clean-fix reseed |
 | manualFixSigmaMinM / manualFixSpanDivisor | 30 / 12 | manual pin σ = max(min, mapSpanM / divisor); min without a span |
+| manualFixReactionS / manualFixUnknownSpeedMps | 1 / 10 | pin σ grows in quadrature by v × (τ + max(0, t − pressedT)) (N4MF-1); v for an `unknown` speed source |
 | manualFixResetChi2 | 25 | manual reset when every particle is further than this from the pin (χ², 2 dof) |
 | lateManualFixWindowS | 5 | per-particle motion ring for late manual fixes (R14.3-1); also the minimum length of the mean-motion history. 0 disables (mean shift for every pin). Clamped to 0–60 |
 | resampleESSFraction | 0.5 | resampling threshold |
@@ -656,7 +719,7 @@ aliases (kept outside the repository or in the git-ignored `logs/`).
 | clean | `--gps mask-after 230` | max ≤ 30 m |
 | manual | `--gps use --hold-out-acc 100` | truth point 1 ≤ 200 m; convergence reported |
 | jammed-A, jammed-B | `--gps use` | end ≤ 2.5 % of distance |
-| drive-7 | `--gps mask-after 1800` | every withheld clean fix ≤ 2.5 % of distance (proposed N3.0, see below); scored-pin and clean-fix consistency reported |
+| drive-7 | `--gps mask-after 1800` | every withheld clean fix after 1800 s ≤ 2.5 % of distance from the start (decided 2026-10-12, see below); scored-pin and clean-fix consistency reported |
 
 - **clean**: the criterion is `mask-after 230`, i.e. 30 s of clean GNSS at
   speed (from about 200 s), then 1.8 km of pure dead reckoning. That is what
@@ -686,9 +749,9 @@ aliases (kept outside the repository or in the git-ignored `logs/`).
     proven**: the user does not remember the taps. Backlog N3MF-1 uses them
     as its regression case. This leaves 7 scored pins (12 manual fixes, 3
     refinements, 2 excluded).
-  - **Criterion (proposed N3.0, 2026-10-12, for the user to confirm).**
-    Every withheld clean fix is within 2.5 % of the distance travelled at its
-    time (∫ OBD speed from the start, as for jammed-A/B). Rule: drive-7 is a
+  - **Criterion (decided 2026-10-12 by the user).**
+    Every withheld clean fix after 1800 s is within 2.5 % of the distance
+    travelled at its time (∫ OBD speed from the start, as for jammed-A/B). Rule: drive-7 is a
     jammed drive, so it takes the jammed drives' existing threshold
     unchanged, set in N2 before drive-7 existed; nothing about the
     threshold was chosen from this drive's numbers. It applies to the worst
@@ -1071,6 +1134,92 @@ at its two excluded pins (see "Acceptance runs").
   - drive-7, first pin of the 706 s pair: 209 m against 84 × 64 m, 111 m
     with σ 30 m added. That is the error the two excluded pins left behind
     (backlog N3MF-1).
+
+### N3.0 exit: engine fixes, the baseline N3.2 is judged against (2026-10-12)
+
+The N3.0 engine fixes (docs/N3_PLAN.md, "N3.0"), each in its own commit
+with a regression test that failed before it, judged one by one with the
+mean-based adoption rule against the item before. Release build, Mac,
+default config (two new keys: `manualFixReactionS` 1, `manualFixUnknownSpeedMps`
+10), seeds 1–5 in arrival order plus `--as-live` (header seed), all seven
+acceptance drives. "N4-B1" is the engine as in the N3.0 baseline above.
+drive-7's truth is likely, not proven, at its two excluded pins.
+
+| item | change | acceptance against the item before |
+|---|---|---|
+| R11.1-4 | course gate: the OBD speed held at the fix time, fresh or stale; a stale 0 or no reply vetoes | arrival order bit-identical; as-live clean-long's pre-session clean fix arrives before the first OBD reply and loses its course (one reseed later), max 18.78 → 19.24 m |
+| R11.1-5 | a stale fix accepted while stopped must be no older than the last moving step | bit-identical (`staleFixesIgnoredMoved` 0 on every run) |
+| R11.1-6 | **not adopted** (see below) | — |
+| R11.2-2 | latency shift interpolated between the history entries around the fix time | changed on every drive, adoption rule PASS |
+| R11.2-3 | an initialising fix's σ grows by age × speed | clean-long, manual (10⁻⁵ m) and drive-7 changed, PASS |
+| R14.4-1 | a late initialising pin backfills ring, history and cumulative motion | bit-identical (no late initialising pin in the set) |
+| N4MF-1 | pin σ grows with speed at the tap | manual identical (0 km/h); manual-3 and drive-7 changed (σ +0.0–2.7 m), PASS |
+| R11.1-7 | measured, then antithetic stale speed-noise increments (R20.1-1: the offsets a resample chose are kept, not re-paired) | bit-identical (no unknown-speed steps; every stale stretch is parked); R20.1-1 also bit-identical, 42/42 |
+
+**Arrival order, seeds 1–5 (the baseline).** Values per seed are seeds 1 / 2 / 3 / 4 / 5.
+
+| alias | run | distance | criterion | N4-B1 mean (range) | N3.0 mean (range) | per seed, N3.0 | Δ mean | allowed | inside 95 %, engine / + truth σ (gated) | converged at | ms/step |
+|---|---|---:|---|---|---|---|---:|---|---|---:|---:|
+| clean-long | mask-after 380 | 7.75 km | max ≤ 30 m | 18.90 m (18.19–20.20) | 19.42 m (18.09–20.29) | 20.29 / 18.09 / 20.01 / 19.08 / 19.62 | +0.52 m | ≤ +2 m | 100 % [277/277] / 100 % | 0.02 km | 0.065 |
+| clean | mask-after 230 | 3.58 km | max ≤ 30 m | 13.94 m (12.25–16.89) | 12.98 m (10.67–16.46) | 12.24 / 10.67 / 16.46 / 12.33 / 13.21 | −0.96 m | ≤ +2 m | 100 % [216/216] / 100 % | 0.03–0.04 km | 0.063 |
+| manual | use, hold-out 100 | 8.31 km | truth point 1 ≤ 200 m | 50.57 m (47.43–57.42) | 50.50 m (47.39–57.52) | 48.83 / 57.52 / 47.39 / 49.34 / 49.41 | −0.08 m | ≤ +2.5 m | 100 % [3/3] / 100 % | 7.27–7.68 km (known FAIL, reported) | 0.068 |
+| jammed-A | use | 11.23 km | end ≤ 2.5 % | 1.147 % (1.02–1.26) | 1.137 % (1.01–1.26) | 1.012 / 1.019 / 1.185 / 1.259 / 1.210 | −0.011 pp | ≤ +0.1 pp | 100 % [1/1] / 100 % | 8.15 km | 0.070 |
+| jammed-B | use | 5.89 km | end ≤ 2.5 % | 1.068 % (0.93–1.39) | 1.068 % (0.94–1.37) | 0.971 / 0.940 / 1.009 / 1.374 / 1.046 | −0.000 pp | ≤ +0.1 pp | 100 % [1/1] / 100 % | 5.18–5.31 km | 0.066 |
+| drive-7 | mask-after 1800 | 19.87 km | every withheld clean fix after 1800 s ≤ 2.5 % | 1.138 % (1.08–1.23) | 1.128 % (1.07–1.23) | 1.073 / 1.074 / 1.164 / 1.097 / 1.231 | −0.010 pp | ≤ +0.1 pp | 99.6 % [272/273; clean 266/266, pins 6/7] / same | 0.58 km | 0.073 |
+| manual-3 (sanity) | use | 12.05 km | reported | pins 103–104 / 458–473 / 128–131 m | pins 103–104 / 457–471 / 128–131 m | | | not gated | 66.7 % [2/3] / 66.7 % | 1.72 km | 0.071 |
+
+Every criterion passes on every seed, and the consistency with the truth's
+σ (the gated one) is unchanged on every drive: the adoption rule passes
+against N4-B1. The engine-only consistency is identical to it on every
+drive and seed. ms/step from a sequential seed-1 run (N4-B1 on the same
+Mac: 0.064–0.071); the largest single `ingest` was 0.24–0.44 ms.
+
+**drive-7, reported, not gated.** Max over the withheld clean fixes 224.0 m
+mean (213.2–244.5), at the last fix (2144 s, 19.86 km), against 226.0 m for
+N4-B1; as % of the distance since the last pin 4.52 % mean (4.30–4.93; N4-B1
+4.55 %). The scored pins (m; \* outside 95 %), seed 1: 63 / 94 / 210\* / 101 /
+29 / 86 / 24. The 706 s pair's first pin is still the one miss on every
+seed (N3MF-1).
+
+**As live (`--as-live`, header seed).**
+
+| alias | criterion | N4-B1 | N3.0 | stale fixes ignored / held and used | consistency + truth σ |
+|---|---|---|---|---|---|
+| clean-long | max ≤ 30 m | 18.78 m | 19.19 m | 0 / 0 | 100 % |
+| clean | max ≤ 30 m | 10.76 m | 13.59 m | 0 / 0 | 100 % |
+| manual | truth point 1 ≤ 200 m | 53.50 m | 53.66 m | 0 / 0 | 100 % |
+| jammed-A | end ≤ 2.5 % | 1.302 % | 1.290 % | 0 / 1 | 100 % |
+| jammed-B | end ≤ 2.5 % | 1.370 % | 1.389 % | 0 / 1 | 100 % |
+| drive-7 | every withheld clean fix ≤ 2.5 % | 1.151 % | 1.141 % | 0 / 0 | 99.6 % [272/273] |
+| manual-3 (sanity) | pin priors | 103 / 458 / 131 m | 103 / 456 / 133 m | 0 / 1 | 66.7 % [2/3] |
+
+As live, clean-long changes first with R11.1-4 (its pre-session fix loses
+its course: 18.78 → 19.24 m). Clean as live moves with R11.2-2 (10.76 →
+13.59 m), within its arrival-order seed range (10.67–16.46 m): it is one
+seed. Every criterion passes.
+
+**Every change against N4-B1, explained.**
+- clean, clean-long, manual, jammed-A/B and drive-7 moved in arrival order
+  only through R11.2-2 (every fix's latency shift changes slightly) and, on
+  clean-long, manual and drive-7, R11.2-3 (the first fix's σ grows by its
+  age × speed). manual-3 and drive-7 also moved with N4MF-1 (pins at
+  4–47 km/h: σ +0.0–2.7 m). Every move is within seed noise; none changes a
+  criterion's verdict or a consistency count.
+- R11.1-4 changes only as-live clean-long, as above. R11.1-5, R14.4-1 and
+  R11.1-7 are bit-identical on all 42 runs: the set has no stale fix
+  before a stop, no late initialising pin and no unknown-speed step.
+
+**R11.1-6, not adopted.** Excluding the reseeded particles from their own
+fix's update (each fix counted once; the posterior after one clean fix on
+an unknown heading becomes the fix's σ and course σ, not √2 tighter) fails
+the adoption rule on clean: mean 13.94 → 18.58 m (Δ +4.64 m, allowed +2 m),
+per seed 13.01 → 20.00, 16.89 → 11.15, 12.25 → 27.57, 14.49 → 16.78,
+13.06 → 17.40 m. Convergence moves 0.03 → 0.04 km on every seed, as
+expected. On seeds 6–25 (clean only, diagnosis, not tuning) the mean is
+unchanged (16.04 → 16.01 m), but the spread grows (sd 3.51 → 5.43 m) and
+one seed reaches 32.56 m, above the 30 m criterion. The other drives have
+no reseed in arrival order. The patch and its regression test are kept
+in the git-ignored `logs/`; backlog R11.1-6 stays open.
 
 ### N2.2 experiment: stale-fix σ grown by age (default off; superseded by N2.3)
 

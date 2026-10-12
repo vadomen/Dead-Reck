@@ -895,9 +895,12 @@ struct DistanceIntegrator {
 /// How often the truth lies inside the engine's 95 % ellipse: over every
 /// scored checkpoint (withheld clean fixes, manual-fix priors, truth points
 /// and end), and per checkpoint kind. A calibrated filter scores about 95 %;
-/// much lower means the ellipse is overconfident. The truth's own σ is not
-/// added to the ellipse. A checkpoint that is not scored (`notScored`: a
-/// refinement pin, or one the truth file excludes) is not counted.
+/// much lower means the ellipse is overconfident. With `withTruthSigma:
+/// false` (`consistency`) the truth's own σ is not added to the ellipse; with
+/// `withTruthSigma: true` (`consistencyWithTruthSigma`, the gated variant,
+/// Q3) it is: P + σ_truth² I, σ_truth frozen in replay code. A checkpoint
+/// that is not scored (`notScored`: a refinement pin, or one the truth file
+/// excludes) is not counted.
 ///
 /// **The one denominator (R13.1-8):** a checkpoint counts when it is scored
 /// and the engine had an estimate at its time (`inside95` set). One before

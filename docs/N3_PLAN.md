@@ -1,7 +1,8 @@
 # N3 plan: OSM roads and map matching
 
-**Plan. All open questions answered 2026-10-11; see "Decisions". N3.0 has not started
-and waits for the user's go.** Model, config, replay and adoption rule: `docs/NAVIGATION.md`.
+**Plan. All open questions answered 2026-10-11; see "Decisions". N3.0 done
+(2026-10-12) except R11.1-6, which failed the adoption rule and stays open; its exit
+table, the baseline N3.2 is judged against, is "N3.0 exit" in docs/NAVIGATION.md.** Model, config, replay and adoption rule: `docs/NAVIGATION.md`.
 Roadmap: `WORKFLOW.md`, "Navigator roadmap". Owner: `navigation-engineer`, plus
 `ios-ui-engineer` for the N3.4 display. No logger, sensor or log-format change.
 
@@ -502,7 +503,9 @@ Since the double tap, a pin can be placed at any speed. Its row records `obdSpee
 
 **2. As ground truth (replay):**
 - Each pin is classed `stationary` (≤ 1 km/h from `obd` or `gps`), `moving` or `unknown`,
-  and scored with the σ above.
+  and scored with the **frozen truth σ** (`NavigationReplay.manualFixTruthSigmaM`,
+  max(30 m, mapSpanM / 12); see the constraint below), never with the engine's σ_pin above.
+  Item 1 changes only what the engine ingests (σ_pin), not how the pin is scored.
   - **Constraint (R19.1-1):** the pin's *truth* σ for the consistency with the truth's σ is
     frozen in replay code (`NavigationReplay.manualFixTruthSigmaM`, max(30 m, mapSpanM / 12)),
     not the engine's σ_pin, so the engine change above cannot widen its own truth. A
@@ -594,7 +597,7 @@ stay bit-identical):
 - **N4MF-2:** N4 follow-up.
 
 **Exit:**
-- An "N3.0" table in NAVIGATION.md: seeds 1–5 on the six drives, arrival order plus
+- An "N3.0" table in NAVIGATION.md: seeds 1–5 on the seven drives (with drive-7), arrival order plus
   `--as-live`.
 - Every change against N4-B1 is explained. These are correctness fixes, reported per the
   adoption rule's last paragraph.
@@ -786,10 +789,17 @@ gating, attribution visibility (pure logic, in the `MapCameraLogicTests` pattern
 | truth point 1 | manual | 50.57 m mean | ≤ 200 m, and the adoption rule (+2.5 m) |
 | end error | jammed-A / jammed-B, use | 1.147 % / 1.068 % mean | no worse than N3.0 (+0.1 pp), ideally ≤ 0.5 % |
 | max error | clean-long / clean | 18.90 m / 13.94 m mean | no regression (adoption rule), ≤ 30 m every seed |
+| worst withheld clean fix after 1800 s | drive-7, mask-after 1800 | 225.97 m mean, 1.138 % of distance from the start (4.55 % of distance since the last pin) | gated: ≤ 2.5 % of distance from the start on every seed (decided 2026-10-12), and the adoption rule (+0.1 pp). **Reported, not gated** until the first N3.2 replays: clearly below today's 226 m mean |
 | wrong-road share, by distance | clean, clean-long (Q9) | (new) | ≤ 5 %; revisited after the first N3.2 replays (Q8) |
-| ellipse consistency (truth σ added, Q3) | all six | N3.0 baseline under the new definition | does not drop |
+| ellipse consistency (truth σ added, Q3) | all seven (with drive-7) | N3.0 baseline under the new definition | does not drop |
 | ms/step | all, Mac release | 0.058–0.079 | mean ≤ 0.15, road step ≤ 0.5 ms; device D1 |
 | determinism, causality, log format | tests | — | unchanged; `LogFormatVersion` and its fixtures untouched |
+
+drive-7's reported target is about its long dead-reckoning stretch: 1.9–5.0 km of pure dead
+reckoning from the last pin, with heading std 2.0–2.8° there. Roads should bound the
+cross-track error that this heading uncertainty allows. A number for the target is set
+after the first N3.2 replays, not before. Its two excluded pins (≈ 599 s, ≈ 626 s) are
+likely, not proven, about 200 m off; they are still fed to the engine and not scored.
 
 "Ideally ≤ 0.5 %" means 56 m on jammed-A and 29 m on jammed-B. jammed-B's truth `end`
 itself has σ 30 m, so 0.5 % is at the resolution of its truth. The parked end may also be
