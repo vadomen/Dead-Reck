@@ -4,13 +4,16 @@ import Foundation
 /// git-ignored JSON file (`logs/truth.json`), never from the repository.
 ///
 /// Keyed by recording file name. Each entry may hold an `end` position (where
-/// the car stood at the last sample) and/or `points` at session-clock times;
-/// unknown keys (notes, future fields) are ignored:
+/// the car stood at the last sample), `points` at session-clock times, and
+/// `excludePins`: manual fixes of the recording that are not scored as truth
+/// (the engine still receives them). Unknown keys (notes, future fields) are
+/// ignored:
 ///
 /// ```json
 /// { "<file name>": {
 ///     "end": { "latitude": …, "longitude": …, "sigmaM": 30, "source": "…" },
 ///     "points": [ { "t": 744.3, "latitude": …, "longitude": …, "sigmaM": 30, "source": "…" } ],
+///     "excludePins": [ { "t": 100.25, "reason": "…" } ],
 ///     "note": "…" } }
 /// ```
 public struct TruthFile: Hashable, Sendable {
@@ -45,13 +48,36 @@ public struct TruthFile: Hashable, Sendable {
         }
     }
 
+    /// A manual fix that is not scored as ground truth, matched by its event
+    /// `t` (session-clock seconds) within `excludePinToleranceS`. The engine
+    /// still ingests it: this is a scoring decision only.
+    public struct ExcludedPin: Hashable, Sendable, Codable {
+        public var t: Double
+        public var reason: String?
+
+        public init(t: Double, reason: String? = nil) {
+            self.t = t
+            self.reason = reason
+        }
+    }
+
+    /// How far an `excludePins` `t` may be from the manual fix's `t`. 0.1 s
+    /// lets a `t` written to one decimal match, and is a tenth of the closest
+    /// pin spacing in the replay set (0.95 s, a refinement pair), so it never
+    /// reaches a neighbouring pin. Each entry excludes the nearest pin in
+    /// range (the earlier one on a tie).
+    public static let excludePinToleranceS = 0.1
+
     public struct Entry: Hashable, Sendable, Codable {
         public var end: Position?
         public var points: [Point]?
+        /// Manual fixes not scored as truth; optional so older files decode.
+        public var excludePins: [ExcludedPin]?
 
-        public init(end: Position? = nil, points: [Point]? = nil) {
+        public init(end: Position? = nil, points: [Point]? = nil, excludePins: [ExcludedPin]? = nil) {
             self.end = end
             self.points = points
+            self.excludePins = excludePins
         }
     }
 

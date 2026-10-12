@@ -70,6 +70,12 @@ public struct ReplayOptions: Hashable, Sendable {
     /// --file-order`): the live order, for seed sweeps. Only the label
     /// depends on it; `asLive` implies it.
     public var fileOrder = false
+    /// Refinement pairs (`replay_nav --pin-pair-window`): a manual fix at
+    /// most this many seconds after the previous manual fix is a refinement
+    /// and is not scored; 0 scores every pin (the rule before N3.0). Scoring
+    /// only: the engine ingests every pin either way. See
+    /// `NavigationReplay.pinScoring`.
+    public var pinPairWindowS = NavigationReplay.defaultPinPairWindowS
 
     public init(gps: GPSMode, holdOutAccuracyM: Double? = nil, config: NavigationConfig = NavigationConfig()) {
         self.gps = gps
@@ -197,6 +203,106 @@ public enum NavigationReplay {
         return lines
     }
 
+    // MARK: Pin scoring (replay-side, looks ahead)
+
+    /// Default `ReplayOptions.pinPairWindowS`, seconds. The refinement pairs
+    /// recorded so far are 0.95–1.60 s apart; the closest pins that are not
+    /// a pair are 27.5 s apart. 3 s is about twice the widest pair and the
+    /// length of the app's Undo toast, during which the user is still looking
+    /// at the pin just placed; at 50 km/h the car covers 42 m in 3 s, about
+    /// one pin σ, so a pin that soon after another is not an independent
+    /// check of the estimate.
+    public static let defaultPinPairWindowS = 3.0
+
+    /// Why a manual fix is not scored.
+    ///
+    /// The rule (replay-side scoring, not causal: the classification of a pin
+    /// uses the whole recording's manual fixes, and the engine never sees it):
+    /// - Manual fixes are taken in `t` order (ties in input order).
+    /// - **Refinement:** a pin whose `t` is at most `pairWindowS` after the
+    ///   previous manual fix's `t` (any manual fix, scored or not), compared
+    ///   in whole nanoseconds. The previous pin has just been ingested and
+    ///   moved the estimate, so the prior at this one is an easy hit. A chain
+    ///   (each pin within the window of the one before) therefore folds onto
+    ///   its first pin, however long it is; pins 0, 2 and 4 s apart with a 3 s
+    ///   window score only the first. `pairWindowS` ≤ 0 disables folding.
+    /// - **Excluded:** each truth-file `excludePins` entry marks the manual
+    ///   fix nearest its `t` within `TruthFile.excludePinToleranceS`. An
+    ///   excluded pin is still the "previous manual fix" for the pair rule,
+    ///   since the engine ingested it. A pin that is both is reported as
+    ///   excluded.
+    public struct NotScored: Hashable, Sendable, Codable {
+        public enum Reason: String, Hashable, Sendable, Codable {
+            case refinement
+            case excluded
+        }
+
+        public var reason: Reason
+        /// Refinement: `t` of the chain's first pin.
+        public var firstPinT: Double?
+        /// Excluded: the truth file's `reason`.
+        public var note: String?
+
+        public init(reason: Reason, firstPinT: Double? = nil, note: String? = nil) {
+            self.reason = reason
+            self.firstPinT = firstPinT
+            self.note = note
+        }
+
+        /// "refinement of t 706.3 s, not scored", "excluded by truth (…), not scored".
+        public var text: String {
+            switch reason {
+            case .refinement:
+                return "refinement" + (firstPinT.map { String(format: " of t %.1f s", $0) } ?? "") + ", not scored"
+            case .excluded:
+                return "excluded by truth" + (note.map { " (\($0))" } ?? "") + ", not scored"
+            }
+        }
+    }
+
+    /// The pin-scoring decision for `manualFixTimes` (in any order): one
+    /// entry per time, in the same order, nil for a scored pin; plus the
+    /// `exclusions` that matched no pin. See `NotScored` for the rule.
+    public static func pinScoring(
+        manualFixTimes: [MonotonicTimestamp], pairWindowS: Double, exclusions: [TruthFile.ExcludedPin] = []
+    ) -> (notScored: [NotScored?], unmatchedExclusions: [TruthFile.ExcludedPin]) {
+        var result = [NotScored?](repeating: nil, count: manualFixTimes.count)
+        let order = manualFixTimes.indices.sorted {
+            manualFixTimes[$0] != manualFixTimes[$1] ? manualFixTimes[$0] < manualFixTimes[$1] : $0 < $1
+        }
+        if pairWindowS > 0 {
+            let windowNs = (pairWindowS * 1e9).rounded()
+            var chainStart: MonotonicTimestamp?
+            var previous: MonotonicTimestamp?
+            for index in order {
+                let t = manualFixTimes[index]
+                if let previous, let start = chainStart,
+                   Double(t.nanoseconds) - Double(previous.nanoseconds) <= windowNs {
+                    result[index] = NotScored(reason: .refinement, firstPinT: start.seconds)
+                } else {
+                    chainStart = t
+                }
+                previous = t
+            }
+        }
+        var unmatched: [TruthFile.ExcludedPin] = []
+        let toleranceNs = (TruthFile.excludePinToleranceS * 1e9).rounded()
+        for exclusion in exclusions {
+            let target = Double(MonotonicTimestamp(seconds: exclusion.t).nanoseconds)
+            var best: (index: Int, distance: Double)?
+            for index in order {
+                let distance = abs(Double(manualFixTimes[index].nanoseconds) - target)
+                if distance <= toleranceNs, best.map({ distance < $0.distance }) ?? true { best = (index, distance) }
+            }
+            if let best {
+                result[best.index] = NotScored(reason: .excluded, note: exclusion.reason)
+            } else {
+                unmatched.append(exclusion)
+            }
+        }
+        return (result, unmatched)
+    }
+
     /// Replays `inputs` (arrival order, see `inputs(from:)`) through a fresh
     /// engine.
     public static func run(
@@ -246,6 +352,47 @@ public struct ReplayResult: Hashable, Sendable, Codable {
         public var ellipseSemiMajorM: Double?
         public var ellipseSemiMinorM: Double?
         public var ellipseOrientationDeg: Double?
+        /// Set for a manual fix that is not scored (a refinement or excluded
+        /// by the truth file, `NavigationReplay.pinScoring`): its error is
+        /// still measured and listed, but it is left out of max and end error
+        /// and of consistency. Optional so older metrics.json files decode;
+        /// nil (absent) for every scored checkpoint.
+        public var notScored: NavigationReplay.NotScored?
+
+        /// Whether the checkpoint counts in max/end error and consistency.
+        public var isScored: Bool { notScored == nil }
+    }
+
+    /// How the manual fixes of a run were scored.
+    public struct PinScoring: Hashable, Sendable, Codable {
+        /// `ReplayOptions.pinPairWindowS`; 0: every pin scored.
+        public var pairWindowS: Double
+        public var manualFixes: Int
+        public var scored: Int
+        /// Folded into the pair (chain) of an earlier pin.
+        public var refinements: Int
+        /// Excluded by the truth file's `excludePins`.
+        public var excluded: Int
+        /// `excludePins` times that matched no manual fix.
+        public var unmatchedExclusionsT: [Double]
+
+        public init(pairWindowS: Double, manualFixes: Int = 0, scored: Int = 0, refinements: Int = 0,
+                    excluded: Int = 0, unmatchedExclusionsT: [Double] = []) {
+            self.pairWindowS = pairWindowS
+            self.manualFixes = manualFixes
+            self.scored = scored
+            self.refinements = refinements
+            self.excluded = excluded
+            self.unmatchedExclusionsT = unmatchedExclusionsT
+        }
+
+        /// "12 manual fixes: 7 scored, 3 refinements folded into pairs (pair window 3 s), 2 excluded by truth".
+        public var text: String {
+            "\(manualFixes) manual fix\(manualFixes == 1 ? "" : "es"): \(scored) scored, \(refinements) refinement\(refinements == 1 ? "" : "s") folded into pairs (pair window "
+                + (pairWindowS > 0 ? "\(GPSMode.format(pairWindowS)) s" : "off") + "), \(excluded) excluded by truth"
+                + (unmatchedExclusionsT.isEmpty ? "" : "; excludePins matching no manual fix: "
+                    + unmatchedExclusionsT.map { String(format: "t %.3f s", $0) }.joined(separator: ", "))
+        }
     }
 
     public struct TrackPoint: Hashable, Sendable, Codable {
@@ -320,6 +467,9 @@ public struct ReplayResult: Hashable, Sendable, Codable {
     /// 95 % ellipse ring.
     public var pins: [PinEstimate] = []
 
+    /// How the manual fixes were scored (pairs, truth exclusions).
+    public var pinScoring = PinScoring(pairWindowS: 0)
+
     public var heldOutFixes: [Fix] { fixes.filter { $0.withheld == .heldOut } }
 }
 
@@ -356,7 +506,10 @@ private struct ReplayRun {
         var latitude: Double
         var longitude: Double
         var sigma: Double?
+        var notScored: NavigationReplay.NotScored?
     }
+
+    var pinScoring = ReplayResult.PinScoring(pairWindowS: 0)
 
     init(logName: String, inputs: [NavigationInput], options: ReplayOptions, truth: TruthFile.Entry?) {
         self.logName = logName
@@ -431,8 +584,9 @@ private struct ReplayRun {
         return finish(firstNs: firstNs, lastNs: lastNs)
     }
 
-    func buildSchedule(lastNs: Int64) -> [Scheduled] {
+    mutating func buildSchedule(lastNs: Int64) -> [Scheduled] {
         var schedule: [Scheduled] = []
+        var manualIndices: [Int] = []
         for input in inputs {
             switch input {
             case .location(let sample, let t):
@@ -442,12 +596,25 @@ private struct ReplayRun {
                 schedule.append(Scheduled(t: t.nanoseconds, kind: .cleanFix, latitude: sample.latitude,
                                           longitude: sample.longitude, sigma: sample.horizontalAccuracy))
             case .manualFix(let sample, let t):
+                manualIndices.append(schedule.count)
                 schedule.append(Scheduled(t: t.nanoseconds, kind: .manualFix, latitude: sample.latitude,
                                           longitude: sample.longitude, sigma: options.config.manualFixSigma(mapSpanM: sample.mapSpanM)))
             default:
                 continue
             }
         }
+        let decision = NavigationReplay.pinScoring(
+            manualFixTimes: manualIndices.map { MonotonicTimestamp(nanoseconds: schedule[$0].t) },
+            pairWindowS: options.pinPairWindowS, exclusions: truth?.excludePins ?? [])
+        for (index, notScored) in zip(manualIndices, decision.notScored) {
+            schedule[index].notScored = notScored
+        }
+        pinScoring = ReplayResult.PinScoring(
+            pairWindowS: max(0, options.pinPairWindowS), manualFixes: manualIndices.count,
+            scored: decision.notScored.filter { $0 == nil }.count,
+            refinements: decision.notScored.filter { $0?.reason == .refinement }.count,
+            excluded: decision.notScored.filter { $0?.reason == .excluded }.count,
+            unmatchedExclusionsT: decision.unmatchedExclusions.map(\.t))
         for point in truth?.points ?? [] {
             schedule.append(Scheduled(t: MonotonicTimestamp(seconds: point.t).nanoseconds, kind: .truthPoint,
                                       latitude: point.latitude, longitude: point.longitude, sigma: point.sigmaM))
@@ -466,6 +633,7 @@ private struct ReplayRun {
             kind: item.kind, t: t.seconds, latitude: item.latitude, longitude: item.longitude,
             truthSigmaM: item.sigma, distanceM: travelled
         )
+        checkpoint.notScored = item.notScored
         if let estimate = engine.estimate(at: t), let plane = engine.tangentPlane {
             let truth = plane.enu(latitude: item.latitude, longitude: item.longitude)
             let dEast = truth.east - estimate.east
@@ -530,7 +698,7 @@ private struct ReplayRun {
     }
 
     func finish(firstNs: Int64, lastNs: Int64) -> ReplayResult {
-        let scored = checkpoints.filter { $0.errorM != nil }
+        let scored = checkpoints.filter { $0.errorM != nil && $0.isScored }
         let worst = scored.max { $0.errorM! < $1.errorM! }
         let endCheckpoint = checkpoints.last { $0.kind == .truthEnd } ?? scored.last
         let convergence = Self.convergence(track, holdS: options.convergenceHoldS)
@@ -560,7 +728,8 @@ private struct ReplayRun {
             fixes: fixes,
             track: track,
             ellipses: ellipses,
-            pins: pins
+            pins: pins,
+            pinScoring: pinScoring
         )
     }
 
@@ -609,7 +778,8 @@ struct DistanceIntegrator {
 /// scored checkpoint (withheld clean fixes, manual-fix priors, truth points
 /// and end), and per checkpoint kind. A calibrated filter scores about 95 %;
 /// much lower means the ellipse is overconfident. The truth's own σ is not
-/// added to the ellipse.
+/// added to the ellipse. A checkpoint that is not scored (`notScored`: a
+/// refinement pin, or one the truth file excludes) is not counted.
 public struct EllipseConsistency: Hashable, Sendable, Codable {
     public struct Count: Hashable, Sendable, Codable {
         public var inside: Int
@@ -632,7 +802,7 @@ public struct EllipseConsistency: Hashable, Sendable, Codable {
         var all = Count(inside: 0, scored: 0)
         var byKind: [String: Count] = [:]
         for checkpoint in checkpoints {
-            guard let inside = checkpoint.inside95 else { continue }
+            guard let inside = checkpoint.inside95, checkpoint.isScored else { continue }
             all.scored += 1
             byKind[checkpoint.kind.rawValue, default: Count(inside: 0, scored: 0)].scored += 1
             if inside {

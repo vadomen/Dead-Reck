@@ -7,8 +7,12 @@ import Foundation
 //       [--hold-out-acc <m>] [--truth logs/truth.json] [--seed N|header] [--particles N]
 //       [--set <configKey>=<number>]... [--out logs/out]
 //       [--as-live | --file-order] [--compare <log.nav.jsonl> [--tolerance <m>] [--heading-tolerance <deg>]]
-//       [--write-sidecar <out.nav.jsonl>]
+//       [--write-sidecar <out.nav.jsonl>] [--pin-pair-window <s>]
 //
+// --pin-pair-window s (default 3, 0 disables): a manual fix at most s seconds
+// after the previous one is a refinement of it and is not scored (it is still
+// ingested); see `NavigationReplay.pinScoring`. Truth-file `excludePins` mark
+// manual fixes that are not scored either. Scoring only: estimates are the same.
 // --seed header: each log's seed is derived from its header's sessionID
 // (`NavigationSeed`), as the live app does. --as-live: replay as the app ran
 // live — inputs in file order (the tap's order), the header's seed and the
@@ -43,7 +47,7 @@ let usage = """
     usage: replay_nav <log.jsonl.gz>... [--gps use|mask-after <s>|mask-after-motion <s>|none] [--hold-out-acc <m>]
            [--truth <truth.json>] [--seed N|header] [--particles N] [--set <configKey>=<number>]... [--out <dir>]
            [--as-live | --file-order] [--compare <sidecar.nav.jsonl> [--tolerance <m>] [--heading-tolerance <deg>]]
-           [--write-sidecar <out.nav.jsonl>]
+           [--write-sidecar <out.nav.jsonl>] [--pin-pair-window <s>]
     """
 
 var arguments = Array(CommandLine.arguments.dropFirst())
@@ -62,6 +66,7 @@ var fileOrder = false
 var comparePath: String?
 var writeSidecarPath: String?
 var tolerance = SidecarComparison.Tolerance.default
+var pinPairWindow = NavigationReplay.defaultPinPairWindowS
 
 func number(_ text: String, _ flag: String) -> Double {
     guard let value = Double(text), value.isFinite else { fail("\(flag) needs a number, got \(text)\n\(usage)", status: 2) }
@@ -113,6 +118,10 @@ while !arguments.isEmpty {
         let degrees = number(value(), argument)
         guard degrees >= 0 else { fail("--heading-tolerance must be >= 0\n\(usage)", status: 2) }
         tolerance.degrees = degrees
+    case "--pin-pair-window":
+        let seconds = number(value(), argument)
+        guard seconds >= 0 else { fail("--pin-pair-window must be >= 0\n\(usage)", status: 2) }
+        pinPairWindow = seconds
     case "--set":
         let pair = value().split(separator: "=", maxSplits: 1).map(String.init)
         guard pair.count == 2 else { fail("--set needs key=value\n\(usage)", status: 2) }
@@ -171,6 +180,7 @@ if config.validated() != config {
 var baseOptions = ReplayOptions(gps: gps, holdOutAccuracyM: holdOut, config: config)
 baseOptions.asLive = asLive
 baseOptions.fileOrder = asLive || fileOrder
+baseOptions.pinPairWindowS = pinPairWindow
 if asLive && (gps != .use || holdOut != nil) {
     print("note: --as-live with \(baseOptions.label): the live app received every fix; this run withholds some")
 }
@@ -273,7 +283,14 @@ for path in paths {
 let jsonURL = outDirectory.appendingPathComponent("metrics.json")
 let markdownURL = outDirectory.appendingPathComponent("metrics.md")
 do {
-    let merged = try ReplayReport.mergedMetrics(existing: try? Data(contentsOf: jsonURL), adding: metrics)
+    let existing = try? Data(contentsOf: jsonURL)
+    if let reason = ReplayReport.existingMetricsDecodeError(existing) {
+        // Keep the old rows instead of replacing them silently (R11.2-4).
+        let backup = outDirectory.appendingPathComponent("metrics.undecodable-\(ProcessInfo.processInfo.processIdentifier).json")
+        try? existing?.write(to: backup)
+        print("Warning       \(jsonURL.path) does not decode (\(reason)); its rows are dropped from the merge, copy kept at \(backup.path)")
+    }
+    let merged = try ReplayReport.mergedMetrics(existing: existing, adding: metrics)
     try ReplayReport.metricsJSON(merged).write(to: jsonURL)
     try Data(ReplayReport.markdown(merged).utf8).write(to: markdownURL)
     print("Metrics       \(markdownURL.path), \(jsonURL.path) (\(merged.count) runs)")

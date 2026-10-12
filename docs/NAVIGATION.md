@@ -372,7 +372,7 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   [--hold-out-acc <m>] [--truth ../logs/truth.json] [--seed N|header] [--particles N] \
   [--set <configKey>=<number>] [--out ../logs/out] \
   [--as-live | --file-order] [--compare <log.nav.jsonl> [--tolerance <m>] [--heading-tolerance <deg>]] \
-  [--write-sidecar <out.nav.jsonl>]
+  [--write-sidecar <out.nav.jsonl>] [--pin-pair-window <s>]
 ```
 
 - Inputs: motion, OBD, location and manualFix from any v1–v3 recording, fed in
@@ -424,6 +424,29 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   fixes (≤ 15 m), each manual fix (on the prior, just before it is ingested),
   and truth-file points and `end` (the last input). Errors are in metres and as
   a percentage of the distance travelled so far (∫ OBD speed).
+- **Refinement pairs** (`--pin-pair-window s`, default 3, 0 disables; N3.0):
+  a manual fix whose `t` is at most s seconds after the previous manual fix's
+  `t` is a refinement and is not scored, because the previous pin has just
+  moved the estimate and makes it an easy hit. "Previous" means any manual
+  fix, scored or not, so a chain (each pin within s of the one before) folds
+  onto its first pin. Pins 0, 2 and 4 s apart with s = 3 score only the first.
+  Times are compared in whole nanoseconds and the boundary is inclusive. This
+  is a replay-side rule that looks at the whole recording (not causal); the
+  engine still ingests every pin. Why 3 s: the refinement pairs recorded so
+  far are 0.95–1.60 s apart, and the closest pins that are not a pair are
+  27.5 s apart. 3 s is about twice the widest pair and the length of the app's
+  Undo toast, during which the user is still looking at the pin just placed.
+- **Excluded pins**: a truth-file `excludePins` entry marks the manual fix
+  nearest its `t` within 0.1 s as not scored. The engine still ingests it, and
+  it still opens a pair window. An entry that matches no pin is printed.
+- A pin that is not scored is still measured and listed: the summary, the
+  `metrics.md` table and the pin list mark it "refinement of t … s, not
+  scored" or "excluded by truth (…), not scored". `metrics.json` keeps it in
+  `checkpoints` with `notScored` set. It is left out of max error, end error
+  (the last *scored* checkpoint when there is no truth `end`) and ellipse
+  consistency. The summary's "Pins scored" line and `metrics.json`'s
+  `pinScoring` give the window and the counts: manual fixes, scored,
+  refinements, excluded, and unmatched `excludePins`.
 - **Ellipse consistency**: the share of scored checkpoints (withheld clean
   fixes, manual-fix priors, truth points and end) whose truth lies inside the
   engine's 95 % ellipse at their time, overall and per kind. Shown in the
@@ -435,7 +458,9 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   holds for 30 s), steps, ms/step (engine `ingest` wall time only), seed and
   config.
 - Output in `--out`: `metrics.md` and `metrics.json` (merged across invocations,
-  one row per log and mode), and `<log>-<mode>.geojson` (1 Hz DR track, 95 %
+  one row per log and mode; an existing `metrics.json` that no longer decodes
+  is reported with a warning and copied to `metrics.undecodable-<pid>.json`
+  before it is replaced), and `<log>-<mode>.geojson` (1 Hz DR track, 95 %
   ellipses every 10 s, fixes used and withheld, truth points with error lines).
 
 Truth file (git-ignored `logs/truth.json`, read at runtime), keyed by recording
@@ -445,8 +470,15 @@ file name. The values here are illustrative:
 { "<recording file name>": {
     "end":    { "latitude": 0.0, "longitude": 0.0, "sigmaM": 30, "source": "…" },
     "points": [ { "t": 100.0, "latitude": 0.0, "longitude": 0.0, "sigmaM": 30, "source": "…" } ],
+    "excludePins": [ { "t": 250.125, "reason": "doubtful tap" } ],
     "note": "unknown keys are ignored" } }
 ```
+
+`excludePins` (optional, N3.0): manual fixes of the recording that are not
+scored as truth, each matched to the pin nearest its `t` (the `manualFix`
+event's session-clock seconds) within 0.1 s. The engine still receives them.
+Use it for a pin that is known or likely to be wrong. The reason goes into the
+summary and `metrics.md`.
 
 ## Live in the app (N4 B)
 
@@ -800,6 +832,57 @@ held fix makes heading converge at 1.72 km instead of 4.52 km as live.
 `--write-sidecar` followed by `--as-live --compare` is exact on jammed-A
 (1005 estimates) and manual-3 (1376 estimates, 3 pins; 1317 before, because
 the engine now initialises at Start).
+
+### N3.0 step 1: scoring rule (2026-10-12): refinement pairs and truth pin exclusion
+
+**This changes scoring only, not the engine.** The engine and its config are
+untouched, and it ingests every pin as before. The changes: refinement pins
+(within `--pin-pair-window`, default 3 s, of the previous pin) are no longer
+separate checkpoints, and the truth file can exclude pins (`excludePins`).
+See "replay_nav" above for the exact rule.
+
+Re-scored with one build: the six acceptance runs plus drive-7 (`--gps use`,
+informational), seeds 1–5, arrival order, release, default config. "Old" is
+`--pin-pair-window 0`. "New" is the default (3 s). "New + excl." adds the
+drive-7 `excludePins` for its pins at t ≈ 599 s and ≈ 626 s, which the user
+decided to exclude: they are likely, not proven, about 200 m off. Values are
+mean (range) over seeds. Consistency is all scored checkpoints [manualFix
+kind].
+
+| alias | run | manual fixes | scored old → new (refinements, excluded) | consistency old | consistency new | max error old → new | end error old → new | criterion |
+|---|---|---:|---|---|---|---|---|---|
+| clean-long | mask-after 380 | 0 | 0 → 0 | 100 % [277/277] | identical | 18.90 m (18.19–20.20), identical | 10.01 m\*, identical | unchanged |
+| clean | mask-after 230 | 0 | 0 → 0 | 100 % [216/216] | identical | 13.94 m (12.25–16.89), identical | 6.45 m\*, identical | unchanged |
+| manual | use, hold-out 100 | 1 | 1 → 1 | 100 % [3/3; pin 1/1] | identical | 259.78 m (pin prior), identical | 67.29 m\*, identical | unchanged |
+| jammed-A | use | 0 | 0 → 0 | 100 % [1/1] | identical | = end | 1.147 % (1.02–1.26), identical | unchanged |
+| jammed-B | use | 0 | 0 → 0 | 100 % [1/1] | identical | = end | 1.068 % (0.93–1.39), identical | unchanged |
+| manual-3 (sanity) | use | 3 | 3 → 3 | 66.7 % [2/3; pins 2/3] | identical | 463.46 m (458.14–472.96), identical | 129.87 m\*, identical | unchanged |
+| drive-7 (info), new | use | 12 | 12 → 9 (3, 0) | 75.0 % [9/12] | 77.8 % [7/9] | 210.23 m (209.51–211.45), identical | 10.59 m (8.53–15.74)\* → 22.50 m (12.67–29.09)\* | not gated |
+| drive-7 (info), new + excl. | use | 12 | 12 → 7 (3, 2) | 75.0 % [9/12] | 85.7 % [6/7] | 210.23 m, identical | → 22.50 m\* | not gated |
+
+\* no truth `end`: error at the last scored checkpoint.
+
+- **The six acceptance drives are unchanged.** None has two pins within 3 s:
+  their closest pins are minutes apart, and manual has a single pin. Every
+  criterion, consistency and pin number is the same under both rules.
+- **drive-7** has three refinement pairs, 1.27 s, 0.95 s and 1.60 s apart. The
+  folded second pins scored 111 m (outside the ellipse on all 5 seeds),
+  19.5 m and 10.6 m (inside). The first pins of those pairs (210 m, 24.7 m,
+  22.5 m) stay scored.
+  - Its max error (210 m, at the first pin of the 706 s pair) does not change.
+  - Its end error moves from the last pin (the 1766 s refinement) to the first
+    pin of that pair, 1.6 s earlier.
+  - Excluding 599 s (189 m, outside on every seed) and 626 s (56 m, inside on
+    every seed) removes one miss and one hit. Consistency goes 7/9 → 6/7.
+- **Identity evidence.** With the same build, every one of the 35 GeoJSON
+  files (6 acceptance runs + drive-7, × 5 seeds) is byte-identical under old,
+  new and new + excl. They are also byte-identical to the previous commit's
+  build: track, ellipses, fixes, checkpoint estimates and errors, and pin
+  estimates. In `metrics.json`, the only field that differs from the previous
+  commit's build under the old rule is the new `pinScoring`. Timing is not
+  compared. Under the new rule, `endErrorM`/`endErrorPercent` and
+  `consistency` also differ, on the 5 drive-7 rows only, plus each
+  checkpoint's new `notScored` marker.
 
 ### N2.2 experiment: stale-fix σ grown by age (default off; superseded by N2.3)
 
