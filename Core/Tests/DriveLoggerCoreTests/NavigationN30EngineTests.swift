@@ -86,4 +86,63 @@ struct NavigationN30EngineTests {
         #expect(engine.counters.courseUpdates >= 4, "course updates \(engine.counters.courseUpdates)")
         #expect(abs(angleDifference(estimate.headingDeg, 90)) < 3)
     }
+
+    // MARK: R11.1-5 a stale fix accepted while stopped needs no motion since its time
+
+    /// 10 m/s north for 30 s with clean fixes, braking to a stop over 4 s,
+    /// then stopped (fresh OBD 0) to 70 s. Plus one extra fix at `fixT`
+    /// (truth position there, 5 m), arriving at `arrival`.
+    static func stopWithStaleFix(fixT: Double, arrival: Double) -> (drive: S, events: [LogEvent]) {
+        let drive = S(initialHeadingDeg: 0, initialSpeed: 10, [
+            .straight(seconds: 30, speed: 10), .ramp(seconds: 4, from: 10, to: 0), .stop(seconds: 36),
+        ])
+        let clean = S.cleanFix(accuracy: 5, positionNoise: 0)
+        var events = drive.events(fix: { t, state, rng in t <= 30 ? clean(t, state, &rng) : nil })
+        let truth = drive.truth(at: fixT)
+        let p = S.plane.geodetic(east: truth.east, north: truth.north)
+        let stale = LocationSample(latitude: p.latitude, longitude: p.longitude, altitude: 0,
+                                   horizontalAccuracy: 5, verticalAccuracy: -1, speed: truth.speed, speedAccuracy: 0.5,
+                                   course: -1, courseAccuracy: -1, receivedT: S.ms(arrival), ageS: arrival - fixT)
+        events.append(.location(stale, at: S.ms(fixT)))
+        return (drive, events)
+    }
+
+    static func staleConfig() -> NavigationConfig {
+        var config = S.config(particles: 400)
+        // Without the stale σ growth the fix is taken at σ 5 m, so an
+        // unshifted fix pulls hard enough to see.
+        config.staleFixSigmaGrowthMps = 0
+        return config
+    }
+
+    @Test("R11.1-5: a 16 s old fix from before the stop, arriving while stopped, is ignored: the history cannot shift it")
+    func staleFixFromBeforeStopIgnored() throws {
+        // Fix at 28 s (moving), arriving at 44 s (stopped since 34 s). The
+        // ~10 s history starts at ~34 s, so the motion from 28 s to 34 s
+        // (40 m) could not be compensated: unshifted it pulls the estimate
+        // back along the track.
+        let (drive, events) = Self.stopWithStaleFix(fixT: 28, arrival: 44)
+        let (engine, samples) = S.run(events, config: Self.staleConfig(), sampleTimes: [43.9, 44.1])
+        let before = try #require(samples[0]), after = try #require(samples[1])
+        #expect(engine.counters.fixesIgnoredStale == 1 && engine.counters.staleFixesIgnoredMoved == 1,
+                "ignored stale \(engine.counters.fixesIgnoredStale)")
+        #expect(after.east == before.east && after.north == before.north)
+        #expect(drive.error(after, at: 44.1) < 2, "error \(drive.error(after, at: 44.1)) m after the stale fix")
+    }
+
+    @Test("R11.1-5: a 14 s old fix from during the stop, arriving while still stopped, is still used")
+    func staleFixDuringStopUsed() throws {
+        let (_, events) = Self.stopWithStaleFix(fixT: 36, arrival: 50)
+        let (engine, samples) = S.run(events, config: Self.staleConfig(), sampleTimes: [49.9, 50.1])
+        let before = try #require(samples[0]), after = try #require(samples[1])
+        #expect(engine.counters.fixesIgnoredStale == 0)
+        #expect(after.ellipse.semiMajorM < before.ellipse.semiMajorM, "the fix was not applied")
+    }
+
+    @Test("R11.1-5: a pre-session fix that initialises the engine while stopped is still used")
+    func staleFixInitialisesWhileStopped() throws {
+        let inputs = Self.ordered(Self.still(0, 3) + [H.obd(0, 0.05), H.fix(-120, arrival: 0.2)])
+        let engine = H.engine(inputs)
+        #expect(engine.isInitialized && engine.counters.fixesUsed == 1 && engine.counters.fixesIgnoredStale == 0)
+    }
 }

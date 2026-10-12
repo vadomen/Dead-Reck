@@ -100,10 +100,16 @@ public struct NavigationCounters: Hashable, Sendable, Codable {
     /// Fixes without a valid speed (cell tower, Wi-Fi).
     public var networkFixesUsed = 0
     /// Stale fixes (older than `maxFixAgeS`) not used: rejected on arrival
-    /// while fresh OBD said the car was moving, or held and then dropped
+    /// while fresh OBD said the car was moving, from before the car's last
+    /// motion (`staleFixesIgnoredMoved`), or held and then dropped
     /// (`heldFixesDroppedMoving`, `heldFixesDroppedTimeout`,
     /// `heldFixesReplaced`).
     public var fixesIgnoredStale = 0
+    /// Stale fixes that arrived while the car was stopped but whose fix time
+    /// is before the end of the last moving step: the car moved after the
+    /// fix, and the ~10 s motion history cannot be trusted to shift it
+    /// (R11.1-5). Included in `fixesIgnoredStale`.
+    public var staleFixesIgnoredMoved = 0
     /// Stale fixes held because OBD could not yet say whether the car was
     /// stopped (N4B-1). Each one ends used, dropped, or still held when the
     /// input ends (`NavigationEngine.hasHeldFix`).
@@ -154,6 +160,7 @@ extension NavigationCounters {
     private enum CodingKeys: String, CodingKey {
         case steps, zuptSteps, staleSpeedSteps, staleParkedSteps, fixesUsed, networkFixesUsed, fixesIgnoredStale
         case fixesHeld, heldFixesUsed, heldFixesDroppedMoving, heldFixesDroppedTimeout, heldFixesReplaced
+        case staleFixesIgnoredMoved
         case fixesIgnoredInvalid, courseUpdates, speedUpdates, reseeds, manualFixes, manualResets, resamples
         case lateManualFixes, lateManualFixesMeanShift
         case reanchors, coalescedSteps, macroSteps, inputsRejectedTimeJump
@@ -177,6 +184,7 @@ extension NavigationCounters {
         heldFixesDroppedMoving = try value(.heldFixesDroppedMoving)
         heldFixesDroppedTimeout = try value(.heldFixesDroppedTimeout)
         heldFixesReplaced = try value(.heldFixesReplaced)
+        staleFixesIgnoredMoved = try value(.staleFixesIgnoredMoved)
         fixesIgnoredInvalid = try value(.fixesIgnoredInvalid)
         courseUpdates = try value(.courseUpdates)
         speedUpdates = try value(.speedUpdates)

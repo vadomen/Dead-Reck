@@ -133,7 +133,16 @@ updates reweight only by what heading and scale actually predict.
     history. It is right for a converged cloud. It is not right while heading
     is unknown (see late manual fix below).
   - **Stale fixes** (age > 10 s at arrival) are ignored unless OBD says the car
-    is stopped.
+    is stopped. Stopped is not enough when the car moved after the fix
+    (R11.1-5): the motion history holds about 10 s, so a fix from before
+    the stop could reach past it and the motion it misses would stay
+    unshifted (a 16 s old fix at a light: tens of metres at σ 5 m). A stale
+    fix is therefore used only if its time is at or after the end of the
+    last moving step since initialisation; every step since was then a ZUPT
+    or parked step, and its shift is exactly 0. Otherwise it is ignored
+    (`staleFixesIgnoredMoved`, also in `fixesIgnoredStale`). A stale fix
+    that initialises the engine has no motion to miss and is used as
+    before.
   - **Held stale fix** (N4-B1, backlog N4B-1): a stale fix that arrives
     before OBD can say whether the car is stopped (no reply yet, or only a
     stale one) is held, not dropped. The first OBD reply that is fresh at the

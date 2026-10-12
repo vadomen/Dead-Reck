@@ -139,6 +139,11 @@ public struct NavigationEngine: Sendable {
     private var preInitSteps: PreInitSteps
 
     private var lastNetworkFixNs: Int64?
+    /// End of the latest grid step since initialisation in which the cloud
+    /// moved (not a ZUPT or parked step); nil if none (R11.1-5). A stale
+    /// fix accepted while stopped must be no older than this: then every
+    /// step since its time was frozen and its shift is exactly 0.
+    private var lastMovingStepNs: Int64?
 
     /// A stale fix waiting for OBD to say whether the car is stopped
     /// (N4B-1). At most one: see `holdStaleFix`.
@@ -503,6 +508,7 @@ public struct NavigationEngine: Sendable {
         cumulativeYaw += yaw
         lastStepStationary = false
         lastMeanSpeed = meanSpeed
+        lastMovingStepNs = ns
         history.append(ns, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: fresh ? vObd : nil, held: vObd)
         recordMotion(at: ns, obdDistance: vObd * dt)
         if counters.steps % reanchorCheckSteps == 0 {
@@ -596,6 +602,7 @@ public struct NavigationEngine: Sendable {
         cumulativeYaw += yaw
         lastStepStationary = false
         lastMeanSpeed = meanSpeed
+        lastMovingStepNs = ns
         history.append(ns, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: nil, held: heldOBDSpeed)
         recordMotion(at: ns, obdDistance: vObd * dt)
         if counters.steps / reanchorCheckSteps != checkBefore {
@@ -732,6 +739,7 @@ public struct NavigationEngine: Sendable {
         cumulativeEast = 0
         cumulativeNorth = 0
         cumulativeYaw = 0
+        lastMovingStepNs = nil
         history.removeAll()
         history.append(lastStepNs ?? ns, 0, 0, 0, speed: nil, held: heldOBDSpeed)
         motionRing.removeAll(particles: n)
@@ -758,6 +766,16 @@ public struct NavigationEngine: Sendable {
                 // OBD cannot say yet whether the car is stopped (N4B-1).
                 holdStaleFix(HeldFix(sample: sample, fixNs: fixNs, arrivalNs: arrivalNs))
             }
+            return
+        }
+        if age > config.maxFixAgeS, let moved = lastMovingStepNs, fixNs < moved {
+            // Stopped now, but the car moved after the fix: the motion
+            // history (~`maxFixAgeS`) may not reach back to the fix, and
+            // what it misses would be left unshifted (R11.1-5). Since the
+            // last moving step every step was a ZUPT or parked step, so a
+            // fix at or after it needs no shift at all.
+            counters.staleFixesIgnoredMoved += 1
+            counters.fixesIgnoredStale += 1
             return
         }
         // No Doppler speed: a cell-tower or Wi-Fi position, whatever its
@@ -1116,6 +1134,9 @@ public struct NavigationEngine: Sendable {
                 covNN[i] += extra
             }
         }
+        // The cloud moved over these steps: a stale fix from before them
+        // is not shifted by the history either (R11.1-5).
+        if let moved = records.last(where: { $0.kind != .frozen }) { lastMovingStepNs = moved.toNs }
         if let last = records.last {
             lastStepStationary = last.kind == .frozen
             var meanScale = 0.0
