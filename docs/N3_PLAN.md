@@ -455,8 +455,9 @@ The national pack is not cut. It is `tags-filter` on `roads.osm.pbf` with the na
 classes, and the country relation serves as its coverage.
 - **Script:** `tools/roads/build_packs.sh` (outside Core) runs the osmium steps from
   `osm/packs.json` and records the osmium version, the source's SHA-256 and replication
-  timestamp, and the builder commit in `META`. A run is deterministic: a second run
-  gives byte-identical packs.
+  timestamp, and the builder commit in `META` (the last commit touching the builder's
+  files, docs/ROAD_PACK.md "Hash"). A run is deterministic: a second run gives
+  byte-identical packs.
 - **Packs:**
   - **National highways:** `motorway`, `trunk`, `primary` and their `_link`s, for driving
     between regions.

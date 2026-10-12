@@ -125,8 +125,11 @@ n = nodes, m = edges, p = shape points, c = non-empty cells.
   segment is identified by its start point. There are p − m of them.
 - **Segment key:** (`osmWayID`, `wayPointOffset` + k) for the edge's k-th segment.
 - **Normalised node list:** the way's node references after the `oneway=-1` reversal,
-  with consecutive repeats of a node removed. Every pack built from the same OSM data
-  gives a segment the same key, because extracts use `--strategy complete_ways`.
+  with consecutive repeats removed: the same node ID twice in a row, and consecutive
+  distinct nodes with equal E7 coordinates (the first of each run is kept). The list
+  depends only on the way's own node IDs and locations, never on other ways or on
+  which pack is being built, so every pack built from the same OSM data gives a
+  segment the same key, because extracts use `--strategy complete_ways`.
   `RoadNetwork` uses the key to de-duplicate overlapping packs: the first loaded pack
   that has a key wins.
 - **Edge order:** edges are sorted strictly by (`osmWayID`, `wayPointOffset`), so a key
@@ -135,6 +138,26 @@ n = nodes, m = edges, p = shape points, c = non-empty cells.
   `to`.
 
 The class's raw values and the flag bits are on disk. Never renumber them.
+
+### Zero-length segments
+
+A pack has none: no segment's two points are equal, so every segment has a defined
+bearing (`atan2(0, 0)` would read as north and pass a heading test for a
+north-bound particle).
+
+- **Builder:** OSM sometimes stacks two node IDs on one position. The normalised
+  node list keeps the first of each equal-coordinate run (see EDGE), and
+  `build_roads` counts the dropped references as "points at a repeated coordinate".
+- **Topology:** the IDs of each such run are merged into one topological node, the
+  smallest ID of the set, across every kept way, and edges are split and connected
+  on the merged IDs. A way that met the dropped node therefore still meets the kept
+  one, at a junction or at a way's end. `build_roads` reports the merges as "node
+  IDs merged". A way that collapses to one point has fewer than two nodes and is
+  dropped as degenerate, but its nodes are still merged, so the ways it joined stay
+  joined.
+- **Writer and `verify()`:** both refuse a segment with equal end points, so a
+  hand-made pack cannot carry one either. A closed edge (first point = last point)
+  is not a zero-length segment.
 
 ### META
 
@@ -154,6 +177,11 @@ UTF-8 JSON, sorted keys, no build date or host, so the bytes are deterministic:
              "sha256": "<hex>"}
 }
 ```
+
+`builder.commit` is provenance: the 12-digit hash of the last commit that touched
+the files the pack bytes depend on, with `-dirty` if any of them has an uncommitted
+or untracked change (see Hash). `build_roads --commit` writes it as given and omits
+it when absent.
 
 `coverage.relationID` and the source file name reveal places. They are written into
 the pack only, which is git-ignored. Optional keys are omitted when unknown, and a
@@ -220,7 +248,19 @@ For example, φ₀ = 45° and h = 2° give 1.037, so R_eff ≈ 52 m for R = 50 m
 the **whole file**, with bytes 16–23 (the hash field itself) read as zero.
 
 - It covers the header, including the grid parameters, which change behaviour, the
-  section table, every section and the padding.
+  section table, every section and the padding. That includes all of `META`, so a
+  pack's identity includes its provenance: `builder.commit`, the source's name,
+  SHA-256 and timestamp, and the osmium version. `META` has no build time or host.
+- **`builder.commit` is scoped to the builder.** `build_packs.sh` takes it from
+  `git log -1 -- <builder paths>`, not from HEAD. The paths are
+  `Core/Sources/DriveLoggerCore/Navigation/Roads`, `NavigationSeed.swift` and
+  `LocalTangentPlane.swift` (FNV and the grid scales), `Log/JSONValue.swift` (META's
+  encoding), `Core/Sources/RoadPackBuild`, `Core/Sources/build_roads`,
+  `Core/Package.swift` and `tools/roads`. It appends `-dirty` when `git status
+  --porcelain` lists any of them, which includes untracked files. So a commit
+  outside those paths, such as a docs-only commit, leaves a rebuilt pack
+  byte-identical; a commit inside them changes the hash even if the lookups are
+  the same. That is deliberate: a pack names the builder that made it.
 - It is an identity hash, not a security measure. The SHA-256 of the *source* extract
   is in `META`.
 - A set of packs is identified by `roadSetHash`: FNV-1a 64 over the packs' content
@@ -251,6 +291,7 @@ the **whole file**, with bytes 16–23 (the hash field itself) read as zero.
   - `CELK` is strictly ascending;
   - `CELO` is strictly increasing;
   - `CELS` is ascending per cell and every entry is a segment start;
+  - no segment has equal end points (see "Zero-length segments");
   - `COVR` parses.
 
   Replay runs it at every open. The app runs it once at import and caches the result
@@ -264,12 +305,17 @@ the **whole file**, with bytes 16–23 (the hash field itself) read as zero.
 - Unknown section tags are skipped, so an optional section needs no version bump.
 - Changing a record layout, a field's meaning or the hash definition needs a new
   version. A reader keeps every version it ever read.
+- **v1 changed once before any pack was distributed** (2026-10-12): `verify()` and
+  the writer started refusing zero-length segments. No pack had left the build Mac,
+  so v1 was amended instead of bumped. From the first distributed pack on, v1 is
+  frozen.
 - **The builder is deterministic:** the same OPL, in any line order, with the same
   builder version and the same parameters gives the same bytes.
   - It processes ways in ascending ID order.
   - It iterates no `Dictionary`.
   - It writes no time or host into `META`.
 - `RoadPackBuild.builderVersion` is bumped when the output for the same input changes.
+  Version 2 collapses equal-coordinate nodes (no zero-length segments).
 - A pinned golden `contentHash` of a synthetic fixture
   (`RoadPackPropertyTests.goldenHash`) guards both.
 - A new pack build is an engine input change. It is judged with the adoption rule like
@@ -314,6 +360,8 @@ lines are skipped. It then applies these rules:
     dropped. With `complete_ways` this does not happen.
 
   A closed way with no other junction becomes one edge from its node to itself.
+- **Stacked nodes:** consecutive nodes of a way at equal E7 coordinates are collapsed
+  and their IDs merged (see "Zero-length segments").
 
 The pipeline that produces the OPL is under "Pipeline" below.
 
@@ -393,6 +441,11 @@ Notes on the table:
 - **Time:** the whole script for both packs takes 20 s. Most of it is the two
   `tags-filter` passes over the country file, about 5 s and 4 s.
 - **Determinism:** a second run gives byte-identical packs.
+- **Builder v2 (zero-length segments, 2026-10-12):** neither pack has a stacked
+  or repeated node: 0 points at a repeated coordinate and 0 node IDs merged, which
+  an independent scan of the OPL confirms. Every count in the table is unchanged;
+  only `META` (`builder.version` 2 and the commit) and so the content hashes
+  changed. A docs-only commit after the rebuild left both packs byte-identical.
 - **De-duplication:** both packs share one grid ID. Loaded together, region-A has
   11 415 segments shadowed by national, which is exactly its motorway/trunk/primary
   segments, counted independently from the OPL. The count is the same in the reverse

@@ -337,6 +337,106 @@ struct RoadGraphTests {
         #expect(RoadClass.parse(highway: "primary_link")?.isLink == true)
     }
 
+    /// Distinct OSM nodes stacked on one E7 position (R16.1-4): mid-way, at
+    /// a way's start and end, at a junction reached through the dropped
+    /// node, and a way that collapses to a single point between two others.
+    static func stackedNodeLines() -> [String] {
+        [
+            // Mid-way: 11 and 12 share (100, 0). Way 2 leaves from 12, the
+            // node way 1 drops, so the merge must keep the junction.
+            RoadFixture.way(1, Self.residential, [N(id: 10, east: 0, north: 0), N(id: 11, east: 100, north: 0), N(id: 12, east: 100, north: 0), N(id: 13, east: 200, north: 0)]),
+            RoadFixture.way(2, Self.residential, [N(id: 12, east: 100, north: 0), N(id: 20, east: 100, north: 100)]),
+            // Way end: 31 and 32 share (100, 200); way 4 starts at 32.
+            RoadFixture.way(3, Self.residential, [N(id: 30, east: 0, north: 200), N(id: 31, east: 100, north: 200), N(id: 32, east: 100, north: 200)]),
+            RoadFixture.way(4, Self.residential, [N(id: 32, east: 100, north: 200), N(id: 40, east: 200, north: 200)]),
+            // Way start: 50 and 51 share (0, 400); way 6 ends at 51.
+            RoadFixture.way(5, Self.residential, [N(id: 50, east: 0, north: 400), N(id: 51, east: 0, north: 400), N(id: 52, east: 100, north: 400)]),
+            RoadFixture.way(6, Self.residential, [N(id: 60, east: 0, north: 500), N(id: 51, east: 0, north: 400)]),
+            // Way 7 is only 70 and 71 at (300, 0): it collapses to a point
+            // and is dropped, but still joins way 8 (ends at 70) and way 9
+            // (starts at 71).
+            RoadFixture.way(7, Self.residential, [N(id: 70, east: 300, north: 0), N(id: 71, east: 300, north: 0)]),
+            RoadFixture.way(8, Self.residential, [N(id: 80, east: 300, north: -100), N(id: 70, east: 300, north: 0)]),
+            RoadFixture.way(9, Self.residential, [N(id: 71, east: 300, north: 0), N(id: 90, east: 400, north: 0)]),
+            // The same ID twice in a row is the old rule and still applies.
+            "w10 v1 dV c0 t i0 u Thighway=residential Nn100x0.0000000y-0.0010000,n100x0.0000000y-0.0010000,n101x0.0001000y-0.0010000",
+        ]
+    }
+
+    @Test("Stacked nodes at one coordinate: no zero-length segment, correct bearings, junctions and way ends still connect")
+    func stackedNodes() throws {
+        let ways = try OPLReader.ways(in: Self.stackedNodeLines().joined(separator: "\n"))
+        let (graph, stats) = try RoadGraphBuilder(classes: Set(RoadGraphBuilder.regionClasses)).build(ways: ways)
+        // 12, 32, 51 and 71 are dropped from their ways' lists (the repeated
+        // ID 100 is not counted: it is the same node).
+        #expect(stats.pointsAtRepeatedCoordinate == 4)
+        #expect(stats.nodesMerged == 4)
+        #expect(stats.waysDegenerate == 1)
+        #expect(!graph.edges.contains { $0.osmWayID == 7 })
+
+        let pack = try RoadFixture.build(Self.stackedNodeLines())
+        try pack.verify()
+
+        // No segment anywhere has a = b.
+        for e in 0..<pack.edgeCount {
+            let r = pack.edge(e)
+            for k in 0..<(Int(r.pointCount) - 1) {
+                let s = pack.segment(startingAt: Int(r.firstPoint) + k)
+                #expect(s.a != s.b, "zero-length segment \(s.key)")
+            }
+        }
+
+        // Way 1: the normalised list is [10, 11, 13]. It splits at 11, which
+        // way 2 now meets, so the halves keep offsets 0 and 1, and both
+        // segments point east.
+        let way1 = RoadFixture.edges(of: pack, way: 1)
+        #expect(way1.map(\.wayPointOffset) == [0, 1])
+        #expect(way1.map(\.pointCount) == [2, 2])
+        for k: UInt32 in 0...1 {
+            let s = try #require(pack.segment(withKey: RoadSegmentKey(osmWayID: 1, index: k)))
+            #expect(abs(RoadGeometry.bearing(from: s.a, to: s.b) - .pi / 2) < 1e-9)
+        }
+        #expect(pack.segment(withKey: RoadSegmentKey(osmWayID: 1, index: 2)) == nil)
+        let north = try #require(pack.segment(withKey: RoadSegmentKey(osmWayID: 2, index: 0)))
+        #expect(abs(RoadGeometry.bearing(from: north.a, to: north.b)) < 1e-9)
+
+        // One node per stacked position, with every edge that reaches it.
+        func node(_ east: Double, _ north: Double) throws -> Int {
+            let p = RoadFixture.point(east, north)
+            let matches = (0..<pack.nodeCount).filter { pack.node($0) == p }
+            #expect(matches.count == 1, "\(matches.count) nodes at (\(east), \(north))")
+            return try #require(matches.first)
+        }
+        func waysMeeting(at node: Int) -> [Int64] { pack.incidentEdges(node).map { pack.edge($0).osmWayID }.sorted() }
+        #expect(waysMeeting(at: try node(100, 0)) == [1, 1, 2])
+        #expect(waysMeeting(at: try node(100, 200)) == [3, 4])
+        #expect(waysMeeting(at: try node(0, 400)) == [5, 6])
+        #expect(waysMeeting(at: try node(300, 0)) == [8, 9])
+
+        // Way 3 ends and way 5 starts with the first node of the stack; the
+        // edges are one segment long.
+        #expect(RoadFixture.edges(of: pack, way: 3).map(\.pointCount) == [2])
+        #expect(RoadFixture.edges(of: pack, way: 5).map(\.pointCount) == [2])
+        // Way 10: the repeated ID collapses as before.
+        #expect(RoadFixture.edges(of: pack, way: 10).map(\.pointCount) == [2])
+    }
+
+    @Test("The writer refuses an edge with a zero-length segment")
+    func writerRefusesZeroLengthSegment() throws {
+        let a = RoadFixture.point(0, 0), b = RoadFixture.point(100, 0)
+        let graph = RoadGraph(edges: [
+            RoadGraph.Edge(fromNode: 1, toNode: 2, points: [a, b, b, RoadFixture.point(200, 0)], osmWayID: 7, wayPointOffset: 3, highwayClass: .residential),
+        ])
+        #expect(throws: RoadPackError.invalidContent("way 7 offset 3: zero-length segment at point 1")) {
+            try RoadPackWriter(grid: RoadFixture.grid()).write(graph)
+        }
+        // A closed edge is not a zero-length segment.
+        let ring = RoadGraph(edges: [
+            RoadGraph.Edge(fromNode: 1, toNode: 1, points: [a, b, RoadFixture.point(100, 100), a], osmWayID: 8, wayPointOffset: 0, highwayClass: .residential),
+        ])
+        try RoadPack(data: RoadPackWriter(grid: RoadFixture.grid()).write(ring)).verify()
+    }
+
     /// Ways with a segment within `radius` true metres of `point`, from the
     /// point's cell.
     static func within(_ pack: RoadPack, _ point: RoadPoint, radius: Double) -> Set<Int64> {

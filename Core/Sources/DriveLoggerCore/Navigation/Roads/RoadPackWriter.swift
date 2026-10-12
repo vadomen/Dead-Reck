@@ -113,6 +113,9 @@ public struct RoadPackWriter {
         for i in edges.indices {
             let e = edges[i]
             guard e.points.count >= 2 else { throw RoadPackError.invalidContent("way \(e.osmWayID) offset \(e.wayPointOffset): fewer than 2 points") }
+            for k in 1..<e.points.count where e.points[k] == e.points[k - 1] {
+                throw RoadPackError.invalidContent("way \(e.osmWayID) offset \(e.wayPointOffset): zero-length segment at point \(k - 1)")
+            }
             guard RoadGeometry.levelRange.contains(e.level) else { throw RoadPackError.invalidContent("way \(e.osmWayID): level \(e.level)") }
             guard UInt64(e.wayPointOffset) + UInt64(e.points.count) <= UInt64(UInt32.max) else {
                 throw RoadPackError.invalidContent("way \(e.osmWayID): offset overflow")

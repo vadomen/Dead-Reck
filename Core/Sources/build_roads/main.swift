@@ -288,7 +288,7 @@ func seconds(_ d: Duration) -> String {
 let b = result.builder, i = result.index
 print("built \(outURL.lastPathComponent): \(i.fileSize) bytes, contentHash \(NavigationSeed.hex(RoadPackFormat.contentHash(of: result.data)))")
 print("  data: \(RoadPackFormat.attribution), \(RoadPackFormat.license)")
-print("  ways read \(b.waysRead), kept \(b.waysKept) (oneway \(b.waysOneway), reversed \(b.waysReversed)); dropped: class \(b.waysWrongClass), area \(b.waysArea), parking aisle \(b.waysParkingAisle), degenerate \(b.waysDegenerate); node refs without location \(b.nodesWithoutLocation)")
+print("  ways read \(b.waysRead), kept \(b.waysKept) (oneway \(b.waysOneway), reversed \(b.waysReversed)); dropped: class \(b.waysWrongClass), area \(b.waysArea), parking aisle \(b.waysParkingAisle), degenerate \(b.waysDegenerate); node refs without location \(b.nodesWithoutLocation); points at a repeated coordinate \(b.pointsAtRepeatedCoordinate) (node IDs merged \(b.nodesMerged))")
 print("  nodes \(i.nodes), edges \(i.edges), points \(i.points), segments \(i.segments), cells \(i.cells), cell entries \(i.cellEntries) (R_eff \(String(format: "%.3f", i.effectiveRadiusM)) m)")
 print("  time: read \(seconds(parsed - started)), build \(seconds(built - parsed)), write + verify \(seconds(finished - built)), total \(seconds(finished - started))")
 if let n = integer("--bench") {

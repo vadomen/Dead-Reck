@@ -9,7 +9,9 @@ import Foundation
 /// what the parameters and the source say.
 public enum RoadPackBuild {
     /// Bumped when the builder's output for the same input changes.
-    public static let builderVersion = "1"
+    /// 2: consecutive nodes with equal coordinates are collapsed (no
+    /// zero-length segments) and their IDs merged.
+    public static let builderVersion = "2"
     public static let builderName = "build_roads"
 
     public struct Parameters: Hashable, Sendable {

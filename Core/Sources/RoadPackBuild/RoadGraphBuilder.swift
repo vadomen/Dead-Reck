@@ -10,9 +10,16 @@ import Foundation
 ///   `motorway_link`, `junction=roundabout` and `junction=circular` imply
 ///   oneway unless `oneway=no`; `reversible`/`alternating` and anything
 ///   else are two-way.
-/// - Removes consecutive repeats of a node. The resulting list is the
-///   way's normalised node list; a segment's key is (way, index of its
-///   start in that list), the same in every pack built from the same data.
+/// - Removes consecutive repeats of a node, and consecutive nodes with
+///   equal E7 coordinates (distinct OSM nodes stacked on one spot), keeping
+///   the first of each run. The resulting list is the way's normalised node
+///   list; a segment's key is (way, index of its start in that list). The
+///   list depends only on the way's own node IDs and locations, so a key is
+///   the same in every pack built from the same data. No edge therefore has
+///   a zero-length segment.
+/// - Merges the node IDs of each such equal-coordinate run into one
+///   topological node (the smallest ID), across all kept ways, so a way
+///   that met the dropped node still meets the kept one.
 /// - Splits ways into edges at topological nodes: nodes used more than
 ///   once (by two ways, or twice by one), way ends, and the neighbours of a
 ///   node without a location (the segments next to it are dropped).
@@ -54,6 +61,13 @@ public struct RoadGraphBuilder {
         public var waysReversed = 0
         /// Node references without a location (segments next to them dropped).
         public var nodesWithoutLocation = 0
+        /// Node references dropped from a normalised node list because their
+        /// E7 coordinates equal the previous node's (a different node ID):
+        /// each one would have been a zero-length segment.
+        public var pointsAtRepeatedCoordinate = 0
+        /// Distinct node IDs merged into another node at the same coordinates
+        /// (each set counts its size − 1).
+        public var nodesMerged = 0
         public var edges = 0
     }
 
@@ -102,6 +116,7 @@ public struct RoadGraphBuilder {
             var lanes: UInt8
         }
         var kept: [Kept] = []
+        var merged = NodeMerger()
         for way in ways {
             guard let highway = way.tags["highway"], classes.contains(highway),
                   let parsed = RoadClass.parse(highway: highway) else {
@@ -126,7 +141,20 @@ public struct RoadGraphBuilder {
             if flags.contains(.oneway) { stats.waysOneway += 1 }
             var deduplicated: [OPLWay.NodeRef] = []
             deduplicated.reserveCapacity(nodes.count)
-            for node in nodes where deduplicated.last?.id != node.id { deduplicated.append(node) }
+            for node in nodes {
+                guard let last = deduplicated.last else { deduplicated.append(node); continue }
+                if last.id == node.id { continue }
+                if let a = last.location, a == node.location {
+                    // A different node at the same E7 position: drop it and
+                    // let the kept node stand for both.
+                    stats.pointsAtRepeatedCoordinate += 1
+                    merged.union(last.id, node.id)
+                    continue
+                }
+                deduplicated.append(node)
+            }
+            // Ways dropped here still merge their stacked nodes: the
+            // zero-length way joined them.
             if deduplicated.filter({ $0.location != nil }).count < 2 {
                 stats.waysDegenerate += 1
                 continue
@@ -145,6 +173,16 @@ public struct RoadGraphBuilder {
             ))
         }
         stats.waysKept = kept.count
+
+        // One ID per set of merged nodes. Nodes are merged only with nodes
+        // at the same coordinates, which each way has already collapsed, so
+        // this creates no new consecutive repeat.
+        stats.nodesMerged = merged.mergedCount
+        if stats.nodesMerged > 0 {
+            for i in kept.indices {
+                for j in kept[i].nodes.indices { kept[i].nodes[j].id = merged.representative(kept[i].nodes[j].id) }
+            }
+        }
 
         // Uses of each node across kept ways (lookup-only).
         var uses: [Int64: Int] = [:]
@@ -187,5 +225,30 @@ public struct RoadGraphBuilder {
         }
         stats.edges = edges.count
         return (RoadGraph(edges: edges), stats)
+    }
+}
+
+/// Union–find over node IDs whose representative is the smallest ID of its
+/// set, so the result does not depend on the order of the unions. The
+/// dictionary is lookup-only.
+struct NodeMerger {
+    private var parent: [Int64: Int64] = [:]
+    private(set) var mergedCount = 0
+
+    func representative(_ id: Int64) -> Int64 {
+        var x = id
+        while let p = parent[x], p != x { x = p }
+        return x
+    }
+
+    mutating func union(_ a: Int64, _ b: Int64) {
+        let ra = representative(a), rb = representative(b)
+        guard ra != rb else { return }
+        let (low, high) = ra < rb ? (ra, rb) : (rb, ra)
+        parent[high] = low
+        mergedCount += 1
+        // Keep chains short: point both inputs at the root.
+        if a != low { parent[a] = low }
+        if b != low { parent[b] = low }
     }
 }

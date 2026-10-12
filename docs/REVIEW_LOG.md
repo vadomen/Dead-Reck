@@ -1056,3 +1056,29 @@ Tests: Core passes 657 tests in 95 suites (eb25d79). No App change.
 - **Rounds:** 2 run.
 - **Findings:** 1 MAJOR fixed (R16.1-1, regression test), 0 rejected, 10 MINOR deferred (R16.1-2..6, R16.2-1..5).
 - **Final tests:** `cd Core && swift test`: 657 tests in 95 suites pass. No App change; the simulator build was green at 2064dc3 and nothing App-facing changed since.
+
+## Run 17: N3.1 follow-ups (main..n3.1-followups, 3d6f70e..2273684), started 2026-10-12
+
+The range fixes R16.1-4 (zero-length segments collapsed in the builder, refused by the writer and `verify()`, builder version 2), R16.1-5 (`builder.commit` scoped to the builder paths, untracked files count as dirty) and R16.2-4 (`build_packs.sh` refuses an empty pack list, C-style loops). Format stays v1, changed before any pack was distributed. Branch: `n3.1-followups`.
+
+### Round 1
+
+Reviewer: fresh `reviewer` agent. Result: 0 BLOCKER / 0 MAJOR / 2 MINOR.
+
+Verified clean: stacked-node topology (a node shared by 3+ ways, way ends, a way collapsing to one point, 3-chains, cross-way chains, non-consecutive coincident nodes giving a correct closed edge); merge determinism (smallest ID per group, ascending way order); segment keys stable across extracts; writer and `verify()` refusals reject nothing the builder can produce; mutations of the ID rewrite, the `verify()` check and the writer check each fail a test; golden hash reproduces the old pin with `builderVersion` "1"; the `builder.commit` path list covers every Core file the builder uses; `git -C` and `set -u` safe; bash 3.2 C-style loops and the empty/invalid `packs` guard; Core purity; no engine, replay, log or App change; no place names, relation IDs or real coordinates; nothing under `osm/` tracked.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R17.1-1 | MINOR | The stacked-node fixture has pairs only, so dropping `representative()` inside `union()` (`RoadGraphBuilder.swift:244-252`) passes every test while splitting a 3-chain into two nodes. Shipped code is correct. | DEFERRED | BACKLOG |
+| R17.1-2 | MINOR | `build_packs.sh` checks for a non-empty `packs` array but not unique, non-empty string names; a misspelt key builds `null.roadpack`, a duplicate name overwrites the first pack. | DEFERRED | BACKLOG |
+
+Tests: Core passes 661 tests in 95 suites (2273684). No App change.
+
+**Loop stopped: no BLOCKER or MAJOR findings.**
+
+### Run 17 summary
+
+- **Rounds:** 1 run.
+- **Findings:** 0 fixed in the loop, 0 rejected, 2 MINOR deferred (R17.1-1..2).
+- **Fixed by the range itself:** R16.1-4, R16.1-5, R16.2-4.
+- **Final tests:** `cd Core && swift test`: 661 tests in 95 suites pass. No App change.

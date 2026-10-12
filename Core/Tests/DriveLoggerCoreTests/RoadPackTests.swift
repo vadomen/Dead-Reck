@@ -293,7 +293,12 @@ struct RoadPackPropertyTests {
     /// Pinned: a change here is a format or builder change and needs a new
     /// `formatVersion` or `RoadPackBuild.builderVersion` (like the
     /// `NavigationSeed` pin).
-    static let goldenContentHash: UInt64 = 0x109F_22B3_A9B5_986E
+    ///
+    /// Builder version 2 (zero-length segments collapsed): the town fixture
+    /// has no stacked nodes, so only META's `builder.version` changed; with
+    /// version "1" the bytes are those of the previous pin
+    /// 0x109F_22B3_A9B5_986E.
+    static let goldenContentHash: UInt64 = 0xDA69_74C3_C8F1_0751
     static let goldenFileSize = 10104
 
     @Test("Golden contentHash of the town fixture (format and builder stability)")
@@ -316,6 +321,22 @@ struct RoadPackPropertyTests {
         #expect(RoadPackFormat.roadSetHash([1, 2]) != RoadPackFormat.roadSetHash([2, 1]))
         #expect(RoadPackFormat.roadSetHash([]) == NavigationSeed.fnv1a64([UInt8]()))
         #expect(RoadPackFormat.roadSetHash([0x0102_0304_0506_0708]) == NavigationSeed.fnv1a64([8, 7, 6, 5, 4, 3, 2, 1]))
+    }
+
+    @Test("META's builder.commit is part of the pack identity: the same commit gives the same bytes, another commit another hash")
+    func builderCommitInHash() throws {
+        func build(_ commit: String?) throws -> Data {
+            var parameters = RoadPackBuild.Parameters(classes: RoadGraphBuilder.regionClasses, grid: RoadFixture.grid())
+            parameters.builderCommit = commit
+            return try RoadPackBuild.build(opl: Data(Self.townLines().joined(separator: "\n").utf8), parameters: parameters).data
+        }
+        let a = try build("0123456789ab")
+        #expect(try build("0123456789ab") == a)
+        #expect(RoadPackFormat.contentHash(of: try build("0123456789ab-dirty")) != RoadPackFormat.contentHash(of: a))
+        #expect(RoadPackFormat.contentHash(of: try build(nil)) != RoadPackFormat.contentHash(of: a))
+        let meta = try RoadPack(data: a).meta
+        guard case .object(let builder)? = meta?["builder"] else { Issue.record("no builder object"); return }
+        #expect(builder["commit"] == .string("0123456789ab"))
     }
 
     // MARK: Networks
@@ -514,6 +535,20 @@ struct RoadPackRejectionTests {
         Self.set64(&bytes, edge + 8, Self.get64(bytes, node + 8) + 8)
         Self.rehash(&bytes)
         #expect(throws: RoadPackError.sectionsOverlap("NODE", "EDGE")) { try Self.open(bytes) }
+    }
+
+    @Test("A zero-length segment is refused by verify()")
+    func zeroLengthSegment() throws {
+        var bytes = try Self.fixture()
+        let pack = try RoadPack(data: Data(bytes))
+        // An edge with an interior point, so its end nodes stay intact.
+        let e = try #require((0..<pack.edgeCount).first { pack.edge($0).pointCount >= 3 })
+        let first = Int(pack.edge(e).firstPoint)
+        let pnts = Int(Self.get64(bytes, try Self.entry(bytes, "PNTS") + 8))
+        for i in 0..<8 { bytes[pnts + 8 * (first + 1) + i] = bytes[pnts + 8 * first + i] }
+        Self.rehash(&bytes)
+        _ = try RoadPack(data: Data(bytes), verify: false)  // structure is fine
+        #expect(throws: RoadPackError.invalid("EDGE", "edge \(e): zero-length segment at point \(first)")) { try Self.open(bytes) }
     }
 
     @Test("Unsorted CELK is refused by verify()")

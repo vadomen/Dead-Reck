@@ -106,7 +106,8 @@ public enum RoadGeometry {
 
     /// Bearing from `a` to `b`, radians clockwise from north, on a local
     /// equirectangular approximation at their mid latitude (exact enough
-    /// for segments up to a few km).
+    /// for segments up to a few km). Undefined (0) for a = b; a verified
+    /// pack has no such segment (docs/ROAD_PACK.md, "Zero-length segments").
     public static func bearing(from a: RoadPoint, to b: RoadPoint) -> Double {
         let d = localOffset(from: a, to: b)
         return bearing(east: d.east, north: d.north)
