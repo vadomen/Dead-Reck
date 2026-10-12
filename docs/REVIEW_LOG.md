@@ -1082,3 +1082,31 @@ Tests: Core passes 661 tests in 95 suites (2273684). No App change.
 - **Findings:** 0 fixed in the loop, 0 rejected, 2 MINOR deferred (R17.1-1..2).
 - **Fixed by the range itself:** R16.1-4, R16.1-5, R16.2-4.
 - **Final tests:** `cd Core && swift test`: 661 tests in 95 suites pass. No App change.
+
+## Run 18: N3.0 part 1 (5bcfb1e..54c0a6d), started 2026-10-12
+
+The range commits the PLAN §6 ticks from drive-7 (6d2495a), the N3MF-1 backlog row (83c6c30), the sidecar `buildConfiguration` header field (d3f909f, sidecar v1, optional) and N3.0 step 1: first-pin pair scoring and truth-file `excludePins` (54c0a6d, scoring only, engine unchanged). Branch: `n3.0`.
+
+### Round 1
+
+Reviewer: fresh `reviewer` agent. Result: 0 BLOCKER / 0 MAJOR / 5 MINOR.
+
+Verified clean: no engine, config or engine-input file in the diff; scoring marks only the scoring schedule, which ingestion never reads (skipping ingestion of not-scored pins fails 6 checks); pair rule (previous manual fix, inclusive ns boundary, chains, window 0 = old result, negative refused); exclusion (nearest within 0.1 s inclusive, duplicates, on a refinement, unmatched reported); max/end error and consistency over scored checkpoints only, nil and "n/a" with nothing scored; optional `pinScoring`/`notScored` decode from older files; sidecar field optional and omitted when nil, old headers decode, `--compare` unaffected, `DEBUG` only in the Debug config; NAV_SIDECAR Versions rule consistent with N3_PLAN's v2; log format untouched; Core purity; re-score table arithmetic; PLAN B-1 correctly not verified; no coordinates, place names, relation IDs or UDIDs committed.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R18.1-1 | MINOR | The exclusion tie rule ("the earlier one on a tie") is untested; `<` → `<=` passes every test. Shipped code is correct. | DEFERRED | BACKLOG |
+| R18.1-2 | MINOR | `replay_nav` claims "copy kept" even if the `try?` backup write failed, then replaces metrics.json; the copy name is keyed by PID only. | DEFERRED | BACKLOG |
+| R18.1-3 | MINOR | The pair window is not in the mode label, so runs with different windows overwrite each other's row in one `--out` (as `--set` already does). | DEFERRED | BACKLOG |
+| R18.1-4 | MINOR | NAVIGATION.md:840 says refinement pins are "no longer separate checkpoints"; they stay in `checkpoints` with `notScored`. | DEFERRED | BACKLOG |
+| R18.1-5 | MINOR | PLAN §6 N4 A-1 is labelled "Verified" though the pre-N4 `queueDepthMax` comparison was not done (the note says so). | DEFERRED | BACKLOG |
+
+Tests: Core passes 672 tests in 96 suites (54c0a6d). App changed only in d3f909f; the simulator build and the app tests (241 in 38 suites) passed there, and App is unchanged since.
+
+**Loop stopped: no BLOCKER or MAJOR findings.**
+
+### Run 18 summary
+
+- **Rounds:** 1 run.
+- **Findings:** 0 fixed, 0 rejected, 5 MINOR deferred (R18.1-1..5).
+- **Final tests:** Core 672 tests in 96 suites pass; app 241 tests in 38 suites pass (d3f909f).

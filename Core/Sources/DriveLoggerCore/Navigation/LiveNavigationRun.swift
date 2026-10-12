@@ -40,17 +40,20 @@ public struct LiveNavigationRun: Sendable {
     public static let maxEstimatesPerGap = 600
 
     /// The app's run: the default config with the seed derived from the
-    /// recording's header.
-    public init(header: LogHeader, appBuild: String) {
+    /// recording's header. `buildConfiguration` goes into the sidecar
+    /// header (`NavSidecar.Header.buildConfiguration`).
+    public init(header: LogHeader, appBuild: String, buildConfiguration: String? = nil) {
         self.init(sessionID: header.sessionID,
                   config: NavigationConfig(seed: NavigationSeed.derive(header: header)),
-                  appBuild: appBuild)
+                  appBuild: appBuild, buildConfiguration: buildConfiguration)
     }
 
-    public init(sessionID: UUID, config: NavigationConfig, appBuild: String) {
+    public init(sessionID: UUID, config: NavigationConfig, appBuild: String,
+                buildConfiguration: String? = nil) {
         engine = NavigationEngine(config: config)
         self.sessionID = sessionID
-        header = NavSidecar.Header(sessionID: sessionID, config: engine.config, appBuild: appBuild)
+        header = NavSidecar.Header(sessionID: sessionID, config: engine.config, appBuild: appBuild,
+                                   buildConfiguration: buildConfiguration)
     }
 
     /// Feeds one input; `emit` receives the lines it produces, in order.

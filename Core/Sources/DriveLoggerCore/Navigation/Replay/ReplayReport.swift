@@ -30,6 +30,10 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
     /// The estimate just before each manual fix (sidecar `pin` form).
     /// Optional so metrics.json files written before it still decode.
     public var pins: [NavSidecar.Pin]?
+    /// How the manual fixes were scored (refinement pairs, truth
+    /// exclusions); N3.0. Optional so metrics.json files written before it
+    /// still decode (nil there: every pin was scored).
+    public var pinScoring: ReplayResult.PinScoring?
 
     public init(_ result: ReplayResult) {
         logName = result.logName
@@ -56,6 +60,7 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
         fixesUsed = result.fixes.filter { $0.withheld == nil }.count
         fixesWithheld = result.fixes.count - fixesUsed
         pins = result.pins.map(\.pin)
+        pinScoring = result.pinScoring
     }
 
     /// `metrics.json` key: one row per log and mode.
@@ -101,6 +106,14 @@ public enum ReplayReport {
                              p.headingDeg, p.headingStdDeg)
     }
 
+    /// " [refinement of t … s, not scored]" for a pin whose manual-fix
+    /// checkpoint is not scored, else "".
+    static func notScoredSuffix(_ pin: NavSidecar.Pin, _ checkpoints: [ReplayResult.Checkpoint]) -> String {
+        let t = pin.t.seconds
+        guard let notScored = checkpoints.first(where: { $0.kind == .manualFix && $0.t == t })?.notScored else { return "" }
+        return " [\(notScored.text)]"
+    }
+
     static func km(_ value: Double?) -> String {
         guard let value else { return "never" }
         return String(format: "%.2f km", value / 1000)
@@ -132,7 +145,8 @@ public enum ReplayReport {
                 let inside = cp.inside95.map { $0 ? "yes" : "no" } ?? "n/a"
                 lines.append(name + String(format: " t %.1f s, at %.0f m: ", cp.t, cp.distanceM)
                     + "error \(m(cp.errorM)) m (\(pct(cp.errorPercent))), σhead \(sigma)°, inside 95 %: \(inside)"
-                    + ", truth σ \(m(cp.truthSigmaM)) m, 95 % ellipse \(ellipse(cp))")
+                    + ", truth σ \(m(cp.truthSigmaM)) m, 95 % ellipse \(ellipse(cp))"
+                    + (cp.notScored.map { " [\($0.text)]" } ?? ""))
             }
         }
         if let clean = byKind[.cleanFix], !clean.isEmpty {
@@ -142,11 +156,14 @@ public enum ReplayReport {
             lines.append("cleanFix      \(clean.count) withheld clean fixes: median \(m(median)) m, max \(m(errors.last)) m, inside 95 % \(inside)/\(clean.count)")
         }
         for pin in result.pins {
-            lines.append("Pin estimate  " + pinText(pin.pin))
+            lines.append("Pin estimate  " + pinText(pin.pin) + notScoredSuffix(pin.pin, result.checkpoints))
+        }
+        if result.pinScoring.manualFixes > 0 || !result.pinScoring.unmatchedExclusionsT.isEmpty {
+            lines.append("Pins scored   " + result.pinScoring.text)
         }
         lines.append("Consistency   " + consistencyText(result.consistency))
         lines.append("Max error     \(m(result.maxErrorM)) m (\(pct(result.maxErrorPercent)))")
-        lines.append("End error     \(m(result.endErrorM)) m (\(pct(result.endErrorPercent)))\(result.endIsTruth ? "" : " [last checkpoint; no truth end]")")
+        lines.append("End error     \(m(result.endErrorM)) m (\(pct(result.endErrorPercent)))\(result.endIsTruth ? "" : " [last scored checkpoint; no truth end]")")
         if let last = result.track.last {
             lines.append(String(format: "Final         speed scale %.4f, σhead %.1f°", last.speedScale, last.headingStdDeg))
         }
@@ -166,12 +183,15 @@ public enum ReplayReport {
         for r in runs {
             out += "| \(r.logName) | \(r.mode) | \(m(r.distanceM)) | \(r.checkpoints.count) | \(m(r.endErrorM))\(r.endIsTruth ? "" : "*") | \(pct(r.endErrorPercent)) | \(m(r.maxErrorM)) | \(pct(r.maxErrorPercent)) | \(consistencyText(r.consistency)) | \(km(r.convergedDistanceM)) | \(String(format: "%.3f", r.msPerStep)) | \(String(format: "%.2f", r.maxIngestMs)) |\n"
         }
-        out += "\n\\* no truth `end`: error at the last checkpoint.\n"
+        out += "\n\\* no truth `end`: error at the last scored checkpoint.\n"
         for r in runs {
             out += "\n## \(r.logName) — \(r.mode)\n\n"
+            if let scoring = r.pinScoring, scoring.manualFixes > 0 || !scoring.unmatchedExclusionsT.isEmpty {
+                out += "Pins: \(scoring.text).\n\n"
+            }
             out += "| kind | t s | distance m | error m | % of distance | σ heading ° | inside 95 % | truth σ m | 95 % ellipse |\n|---|---:|---:|---:|---:|---:|---|---:|---|\n"
             for cp in r.checkpoints where cp.kind != .cleanFix {
-                out += "| \(cp.kind.rawValue) | \(String(format: "%.1f", cp.t)) | \(m(cp.distanceM)) | \(m(cp.errorM)) | \(pct(cp.errorPercent)) | \(cp.headingStdDeg.map { String(format: "%.1f", $0) } ?? "n/a") | \(cp.inside95.map { $0 ? "yes" : "no" } ?? "n/a") | \(m(cp.truthSigmaM)) | \(ellipse(cp)) |\n"
+                out += "| \(cp.kind.rawValue)\(cp.notScored.map { " (\($0.text))" } ?? "") | \(String(format: "%.1f", cp.t)) | \(m(cp.distanceM)) | \(m(cp.errorM)) | \(pct(cp.errorPercent)) | \(cp.headingStdDeg.map { String(format: "%.1f", $0) } ?? "n/a") | \(cp.inside95.map { $0 ? "yes" : "no" } ?? "n/a") | \(m(cp.truthSigmaM)) | \(ellipse(cp)) |\n"
             }
             let clean = r.checkpoints.filter { $0.kind == .cleanFix }
             if !clean.isEmpty {
@@ -180,7 +200,7 @@ public enum ReplayReport {
             }
             if let pins = r.pins, !pins.isEmpty {
                 out += "\nDR estimate at each manual fix (prior):\n\n"
-                for pin in pins { out += "- " + pinText(pin) + "\n" }
+                for pin in pins { out += "- " + pinText(pin) + notScoredSuffix(pin, r.checkpoints) + "\n" }
             }
             out += "\nSeed \(r.config.seed), \(r.config.particleCount) particles. Config:\n\n```json\n\(configJSON(r.config))\n```\n"
         }
@@ -197,6 +217,10 @@ public enum ReplayReport {
 
     /// Merges `runs` into an existing `metrics.json` document (replacing
     /// runs with the same key), so separate invocations build one table.
+    ///
+    /// An existing document that does not decode contributes no rows; call
+    /// `existingMetricsDecodeError` first to warn and keep a copy, so its rows
+    /// are not lost silently (R11.2-4, its minimal part).
     public static func mergedMetrics(existing: Data?, adding runs: [ReplayMetrics]) throws -> [ReplayMetrics] {
         var byKey: [String: ReplayMetrics] = [:]
         if let existing, let old = try? JSONDecoder().decode([ReplayMetrics].self, from: existing) {
@@ -204,6 +228,18 @@ public enum ReplayReport {
         }
         for run in runs { byKey[run.key] = run }
         return byKey.values.sorted { $0.key < $1.key }
+    }
+
+    /// Why an existing `metrics.json` does not decode, or nil when it does
+    /// (or there is none).
+    public static func existingMetricsDecodeError(_ existing: Data?) -> String? {
+        guard let existing else { return nil }
+        do {
+            _ = try JSONDecoder().decode([ReplayMetrics].self, from: existing)
+            return nil
+        } catch {
+            return String(describing: error)
+        }
     }
 
     public static func metricsJSON(_ runs: [ReplayMetrics]) throws -> Data {

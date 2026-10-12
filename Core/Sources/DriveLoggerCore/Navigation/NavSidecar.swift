@@ -8,7 +8,7 @@ import Foundation
 /// Versioned on its own, separate from the log format: the logger never
 /// reads or writes it. JSON Lines, one object per line, each with a `kind`:
 /// - `header` (first line): sidecar version, session ID, seed, the config as
-///   canonical JSON and its hash, the app build;
+///   canonical JSON and its hash, the app build and its build configuration;
 /// - `estimate`: one per second of session-clock time once the engine is
 ///   initialised, as `NavigationEngine.estimate(at:)` returned it at that
 ///   grid instant;
@@ -34,14 +34,27 @@ public enum NavSidecar {
         public var configJSON: String
         /// `CFBundleVersion` of the app that wrote the sidecar.
         public var appBuild: String
+        /// The build configuration of the app that wrote the sidecar:
+        /// `"debug"` or `"release"` (the app sets it from `#if DEBUG`), so
+        /// `msPerStep` can be read correctly: it means something only in
+        /// Release. An open string set. Optional, added within v1: nil for a
+        /// sidecar written before it existed, or by a writer that does not
+        /// know it (`replay_nav`). Not compared.
+        public var buildConfiguration: String?
 
-        public init(sessionID: UUID, config: NavigationConfig, appBuild: String) {
+        /// The values the app writes in `buildConfiguration`.
+        public static let debugBuild = "debug"
+        public static let releaseBuild = "release"
+
+        public init(sessionID: UUID, config: NavigationConfig, appBuild: String,
+                    buildConfiguration: String? = nil) {
             sidecarVersion = NavSidecar.version
             self.sessionID = sessionID
             seed = config.seed
             configHash = config.hashHex
             configJSON = String(decoding: config.canonicalJSON(), as: UTF8.self)
             self.appBuild = appBuild
+            self.buildConfiguration = buildConfiguration
         }
     }
 

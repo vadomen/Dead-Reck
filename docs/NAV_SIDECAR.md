@@ -24,7 +24,7 @@ are written as the strings `"inf"`, `"-inf"` and `"nan"`.
 
 | kind | when | fields |
 |---|---|---|
-| `header` | first line, written and flushed at Start | `sidecarVersion`, `sessionID`, `seed`, `configHash`, `configJSON`, `appBuild` |
+| `header` | first line, written and flushed at Start | `sidecarVersion`, `sessionID`, `seed`, `configHash`, `configJSON`, `appBuild`, `buildConfiguration` (optional) |
 | `estimate` | each whole second of session time, from the engine's initialisation on | `t`, `latitude`, `longitude`, `headingDeg`, `headingStdDeg`, `semiMajorM`, `semiMinorM`, `orientationDeg` (95 % ellipse), `converged`, `speedScale`, `droppedInputs`, `msPerStep`, `maxStepMs` |
 | `pin` | at each confirmed manual fix (`manualFix` row) | `t` (the fix's), `latitude`, `longitude` (where the driver put the pin), `mapSpanM`, `prior` (an `estimate` object: the engine just before it ingested the pin; absent when the pin initialised the engine) |
 
@@ -34,6 +34,14 @@ are written as the strings `"inf"`, `"-inf"` and `"nan"`.
 - **configJSON** is `NavigationConfig.canonicalJSON()` as text: compact, with
   sorted keys. **configHash** is FNV-1a 64 of those bytes, as 16 hex digits.
   The app runs the default config with the derived seed.
+- **buildConfiguration**: `"debug"` or `"release"`, the configuration of the
+  app build that wrote the sidecar (the app sets it from `#if DEBUG`). It
+  tells you how to read `msPerStep` and `maxStepMs`, which describe
+  phone performance only in a Release build. Treat it as an open string set.
+  It is absent from sidecars written before the field existed and from
+  `replay_nav --write-sidecar`, and readers decode it as nil ("not
+  recorded"). It is not compared. `replay_nav --compare` shows it on its
+  `Sidecar` line after the app build.
 - **estimate**: what `NavigationEngine.estimate(at: t)` returned at that grid
   second, from the engine state before the first input arriving at or after
   `t`. Position is latitude/longitude, not plane east/north, which jump when
@@ -48,6 +56,27 @@ are written as the strings `"inf"`, `"-inf"` and `"nan"`.
   suspended), only the first 600 seconds of the gap are written, and the grid
   then resumes at the next input. An input rejected as an implausible time
   jump (B0-1) writes nothing.
+
+## Versions
+
+| Version | Changes |
+|---|---|
+| 1 | Header, `estimate` and `pin` as above. Within v1, with no version bump: the header's optional `buildConfiguration`. |
+
+The rules for a change:
+- A new **optional** field that a reader can ignore without misreading
+  anything else stays in the current version. It must be diagnostic or
+  descriptive, never an input to `--compare`. Every reader of that version
+  decodes it, because the header and line types ignore keys they do not
+  know, and a missing key decodes as nil. `buildConfiguration` is such a
+  field.
+- A field whose absence or whose being ignored would mislead a reader needs
+  a version bump. A reader refuses a newer version. Examples: something
+  `--compare` must check, or a change in what an existing field means.
+  The road-pack hashes planned for N3.3 (docs/N3_PLAN.md, sidecar v2) are
+  such a change.
+- A new line kind is skipped and counted by older readers (`Unknown kinds`
+  below).
 
 ## Writing
 
