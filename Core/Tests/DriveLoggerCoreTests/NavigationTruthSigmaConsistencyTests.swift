@@ -73,6 +73,47 @@ struct NavigationTruthSigmaConsistencyTests {
         #expect(ReplayReport.markdown([metrics]).contains("inside 95 % + truth σ (gated)"))
     }
 
+    @Test("R19.1-1: a pin's truth σ is frozen, so raising the config's pin σ cannot widen the truth")
+    func pinTruthSigmaIgnoresConfig() throws {
+        let drive = S(initialHeadingDeg: 45, initialSpeed: 10, [.straight(seconds: 60, speed: 10), .stop(seconds: 5)])
+        let state = drive.truth(at: 40)
+        let p = S.plane.geodetic(east: state.east + 200, north: state.north)
+        let events = drive.events(fix: { t, state, rng in t <= 35 ? S.cleanFix()(t, state, &rng) : nil }, extra: [
+            LogEvent(timestamp: S.ms(40), payload: .manualFix(ManualFixSample(
+                latitude: p.latitude, longitude: p.longitude, pressedT: S.ms(40), mapSpanM: 200, speedSource: "obd"))),
+        ])
+        func pin(_ config: NavigationConfig) throws -> (ReplayResult.Checkpoint, ReplayResult) {
+            let result = NavigationReplay.run(logName: "a", inputs: NavigationReplay.inputs(from: events),
+                                              options: ReplayOptions(gps: .use, config: config))
+            return (try #require(result.checkpoints.first { $0.kind == .manualFix }), result)
+        }
+        let base = S.config(particles: 200)
+        var wide = base
+        wide.manualFixSigmaMinM = 120
+        #expect(wide.manualFixSigma(mapSpanM: 200) == 120, "the engine's pin σ does move")
+        let (a, ra) = try pin(base)
+        let (b, rb) = try pin(wide)
+        // The engine's prior at the pin does not depend on the pin's σ: bit-identical.
+        #expect(a.estimateLatitude != nil && a.estimateLatitude == b.estimateLatitude)
+        #expect(a.estimateLongitude == b.estimateLongitude && a.errorM == b.errorM)
+        #expect(a.ellipseSemiMajorM == b.ellipseSemiMajorM && a.ellipseSemiMinorM == b.ellipseSemiMinorM)
+        #expect(a.ellipseOrientationDeg == b.ellipseOrientationDeg && a.inside95 == b.inside95)
+        let semiMajor = try #require(a.ellipseSemiMajorM)
+        #expect(semiMajor < 50, "tight after 35 s of clean fixes: \(semiMajor) m")
+        // So the truth must not widen either: same σ, still outside.
+        #expect(a.truthSigmaM == 30 && b.truthSigmaM == 30)
+        #expect(a.inside95WithTruthSigma == false)
+        #expect(b.inside95WithTruthSigma == false, "a config's pin σ moved the truth")
+        #expect(ra.consistencyWithTruthSigma == rb.consistencyWithTruthSigma)
+        // The frozen formula: today's engine rule with its N3.0 defaults.
+        #expect(NavigationReplay.manualFixTruthSigmaM(mapSpanM: nil) == 30)
+        #expect(NavigationReplay.manualFixTruthSigmaM(mapSpanM: 1_248) == 104)
+        #expect(NavigationReplay.manualFixTruthSigmaM(mapSpanM: 372) == 31)
+        for bad in [0, -5, Double.nan, .infinity] {
+            #expect(NavigationReplay.manualFixTruthSigmaM(mapSpanM: bad) == 30, "span \(bad)")
+        }
+    }
+
     @Test("Adding a σ never turns inside into outside, and the variant is never below the engine-only share")
     func monotone() {
         let e = ErrorEllipse(semiMajorM: 80, semiMinorM: 20, orientationDeg: 60)

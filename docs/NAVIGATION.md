@@ -488,8 +488,17 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   Gaussian plus the spread of the means), whose 95 % ellipse is the one
   above. σ_truth per axis is: for a withheld clean fix, its
   `horizontalAccuracy` / 1.51 (a fixed constant, not the config's
-  `fixSigmaPerAccuracy`); for a pin, its σ as scored; for a truth point or
-  `end`, its `sigmaM` (0 if absent). P + σ² I has P's axes, so each
+  `fixSigmaPerAccuracy`); for a pin, a frozen max(30 m, mapSpanM / 12)
+  (30 m without a usable span; `NavigationReplay.manualFixTruthSigmaM`,
+  R19.1-1); for a truth point or `end`, its `sigmaM` (0 if absent). The pin
+  formula is the engine's `manualFixSigma` rule with its N3.0 defaults,
+  written as constants in the replay code and not read from the config:
+  the engine still weights the pin with the run's own `manualFixSigma`, but
+  a `--set manualFixSigmaMinM=…`, a sweep or a later change of the engine's
+  pin σ (a new default, the N4MF-1 speed term) does not move the truth it is
+  scored against. A pin's `truthSigmaM` in `metrics.json` and the summary is
+  this frozen σ; on a default-config run it equals the engine's pin σ, as
+  before. P + σ² I has P's axes, so each
   semi-axis a becomes √(a² + 5.991 σ²). Same denominator as above. It is
   computed in the replay only; the engine and its ellipse are unchanged.
 - Per log: distance, checkpoints, max and end error (end = truth `end`, else the
@@ -605,6 +614,14 @@ the **mean over seeds 1–5** passes:
   - What it cannot hide: adding σ_truth only widens the ellipse. An
     overconfident engine still fails against an accurate truth, and an
     inaccurate truth cannot make a miss count against the engine.
+  - The truth's σ is never the candidate's to set. A clean fix's comes from
+    its `horizontalAccuracy` over a fixed 1.51, and a pin's from a frozen
+    max(30 m, mapSpanM / 12) (R19.1-1), not from the run's config. If the
+    pin's truth σ followed the config, a change that raised the engine's
+    pin σ would pass "must not drop" by widening the truth, while the
+    engine's estimate and ellipse at the pin (scored on the prior, before
+    the pin is ingested) stayed bit-identical. Changing these constants is
+    a change to the metric, and needs its own decision and re-baseline.
   - Baseline: on the N3.0 baseline (engine as N4-B1) the two agree on every
     acceptance drive and seed; see "N3.0 baseline: both consistency
     definitions" below. So the switch moves no previous adoption decision.

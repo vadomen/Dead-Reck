@@ -335,6 +335,10 @@ public struct ReplayResult: Hashable, Sendable, Codable {
         public var t: Double
         public var latitude: Double
         public var longitude: Double
+        /// The truth's own error, metres, as given by the truth: a clean
+        /// fix's `horizontalAccuracy` (68 % radius), a manual fix's frozen
+        /// truth σ (`NavigationReplay.manualFixTruthSigmaM`, not the σ the
+        /// run's config gives the engine, R19.1-1), a truth-file `sigmaM`.
         public var truthSigmaM: Double?
         /// Distance travelled (∫ OBD speed) up to `t`, metres.
         public var distanceM: Double
@@ -635,7 +639,8 @@ private struct ReplayRun {
             case .manualFix(let sample, let t):
                 manualIndices.append(schedule.count)
                 schedule.append(Scheduled(t: t.nanoseconds, kind: .manualFix, latitude: sample.latitude,
-                                          longitude: sample.longitude, sigma: options.config.manualFixSigma(mapSpanM: sample.mapSpanM),
+                                          longitude: sample.longitude,
+                                          sigma: NavigationReplay.manualFixTruthSigmaM(mapSpanM: sample.mapSpanM),
                                           inputIndex: index))
             default:
                 continue
@@ -784,15 +789,43 @@ private struct ReplayRun {
 extension NavigationReplay {
     /// CoreLocation's `horizontalAccuracy` is a 68 % radius; for a circular
     /// Gaussian that is 1.51 σ per axis. Fixed here, not taken from the
-    /// config, so a `--set` cannot move the truth.
+    /// config (`fixSigmaPerAccuracy`), so a `--set` cannot move a clean
+    /// fix's truth. A pin's truth σ is frozen the same way, below.
     public static let accuracyPerSigma = 1.51
+
+    /// Smallest truth σ of a manual fix, metres, and the σ without a usable
+    /// span. Frozen at `NavigationConfig.manualFixSigmaMinM`'s value when Q3
+    /// was decided (N3.0); not read from the config (R19.1-1).
+    public static let manualFixTruthSigmaMinM = 30.0
+    /// Frozen at `NavigationConfig.manualFixSpanDivisor`'s value when Q3 was
+    /// decided (N3.0).
+    public static let manualFixTruthSpanDivisor = 12.0
+
+    /// A manual fix's truth σ for scoring, metres: max(30, mapSpanM / 12),
+    /// or 30 when the span is missing, not finite or not positive.
+    ///
+    /// This is how wide the truth is, a property of the pin, not of the run.
+    /// It is deliberately not `options.config.manualFixSigma` (the σ the
+    /// engine weights the pin with), nor `NavigationConfig()`'s defaults:
+    /// either would let a candidate config widen its own truth. A run that
+    /// raises the pin σ (`--set manualFixSigmaMinM=…`, a sweep, a new
+    /// default, a speed term) would then pass "consistency must not drop" by
+    /// moving the truth while the engine's estimate and ellipse at the pin
+    /// are unchanged (R19.1-1). Same arithmetic as the engine's rule with
+    /// its N3.0 defaults, so the two agree on a default-config run today;
+    /// a change to the engine's rule or defaults leaves this one alone.
+    public static func manualFixTruthSigmaM(mapSpanM: Double?) -> Double {
+        guard let span = mapSpanM, span.isFinite, span > 0 else { return manualFixTruthSigmaMinM }
+        return max(manualFixTruthSigmaMinM, span / manualFixTruthSpanDivisor)
+    }
 
     /// The truth's own σ per axis, metres, for the consistency with the
     /// truth's σ added (Q3):
     /// - a withheld clean fix: its `horizontalAccuracy` / `accuracyPerSigma`
     ///   (3.3 m at 5 m accuracy);
-    /// - a manual fix: its pin σ (`truthSigmaM`, `manualFixSigma` of the run's
-    ///   config, 30–104 m on the replay set);
+    /// - a manual fix: its frozen truth σ (`truthSigmaM`,
+    ///   `manualFixTruthSigmaM`, independent of the run's config; 30–104 m on
+    ///   the replay set);
     /// - a truth point or `end`: its `sigmaM` from the truth file.
     /// 0 when the truth gives none: that checkpoint scores as without it.
     public static func truthSigmaPerAxisM(kind: ReplayResult.Checkpoint.Kind, truthSigmaM: Double?) -> Double {

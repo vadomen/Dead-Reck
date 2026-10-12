@@ -503,6 +503,11 @@ Since the double tap, a pin can be placed at any speed. Its row records `obdSpee
 **2. As ground truth (replay):**
 - Each pin is classed `stationary` (≤ 1 km/h from `obd` or `gps`), `moving` or `unknown`,
   and scored with the σ above.
+  - **Constraint (R19.1-1):** the pin's *truth* σ for the consistency with the truth's σ is
+    frozen in replay code (`NavigationReplay.manualFixTruthSigmaM`, max(30 m, mapSpanM / 12)),
+    not the engine's σ_pin, so the engine change above cannot widen its own truth. A
+    speed-dependent truth σ would be a change to the metric: decide it separately, as frozen
+    constants in replay code, and re-baseline before it gates anything.
 - Gated criteria use only stationary pins and truth-file points. Moving and unknown pins are
   reported, like manual-3 today.
 - The class goes into `metrics.json` and the pin table.
