@@ -21,6 +21,9 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
     public var finalHeadingStdDeg: Double?
     /// Optional so metrics.json files written before it still decode.
     public var consistency: EllipseConsistency?
+    /// With the truth's own σ added (Q3, gated since N3.0). Optional so
+    /// metrics.json files written before it still decode.
+    public var consistencyWithTruthSigma: EllipseConsistency?
     public var steps: Int
     public var msPerStep: Double
     public var maxIngestMs: Double
@@ -53,6 +56,7 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
         convergedDistanceM = result.convergedDistanceM
         finalHeadingStdDeg = result.finalHeadingStdDeg
         consistency = result.consistency
+        consistencyWithTruthSigma = result.consistencyWithTruthSigma
         steps = result.steps
         msPerStep = result.msPerStep
         maxIngestMs = result.maxIngestMs
@@ -72,7 +76,7 @@ extension ReplayMetrics {
     enum CodingKeys: String, CodingKey, CaseIterable {
         case logName, mode, config, motionStartT, startT, endT, distanceM, checkpoints
         case maxErrorM, maxErrorPercent, endErrorM, endErrorPercent, endIsTruth
-        case convergedT, convergedDistanceM, finalHeadingStdDeg, consistency
+        case convergedT, convergedDistanceM, finalHeadingStdDeg, consistency, consistencyWithTruthSigma
         case steps, msPerStep, maxIngestMs, counters, fixesUsed, fixesWithheld, pins, pinScoring
     }
 
@@ -87,7 +91,8 @@ extension ReplayMetrics {
     /// Decodes a row written by any earlier build (R11.2-4, R12.1-1).
     /// - The original keys (`originalKeys`) are required.
     /// - Every key added later is optional and nil when absent:
-    ///   `motionStartT`, `consistency`, `pins`, `pinScoring` (and any key a
+    ///   `motionStartT`, `consistency`, `consistencyWithTruthSigma`, `pins`,
+    ///   `pinScoring` (and any key a
     ///   later build adds, which must be optional or take a default here).
     /// - `config` and `counters` decode tolerantly themselves: a config key
     ///   or counter added later takes its default (0 for a counter).
@@ -112,6 +117,7 @@ extension ReplayMetrics {
         convergedDistanceM = try c.decodeIfPresent(Double.self, forKey: .convergedDistanceM)
         finalHeadingStdDeg = try c.decodeIfPresent(Double.self, forKey: .finalHeadingStdDeg)
         consistency = try c.decodeIfPresent(EllipseConsistency.self, forKey: .consistency)
+        consistencyWithTruthSigma = try c.decodeIfPresent(EllipseConsistency.self, forKey: .consistencyWithTruthSigma)
         steps = try c.decode(Int.self, forKey: .steps)
         msPerStep = try c.decode(Double.self, forKey: .msPerStep)
         maxIngestMs = try c.decode(Double.self, forKey: .maxIngestMs)
@@ -208,8 +214,9 @@ public enum ReplayReport {
                 let name = kind.rawValue.padding(toLength: 13, withPad: " ", startingAt: 0)
                 let sigma = cp.headingStdDeg.map { String(format: "%.1f", $0) } ?? "n/a"
                 let inside = cp.inside95.map { $0 ? "yes" : "no" } ?? "n/a"
+                let insideTruth = cp.inside95WithTruthSigma.map { $0 ? "yes" : "no" } ?? "n/a"
                 lines.append(name + String(format: " t %.1f s, at %.0f m: ", cp.t, cp.distanceM)
-                    + "error \(m(cp.errorM)) m (\(pct(cp.errorPercent))), σhead \(sigma)°, inside 95 %: \(inside)"
+                    + "error \(m(cp.errorM)) m (\(pct(cp.errorPercent))), σhead \(sigma)°, inside 95 %: \(inside) (+ truth σ: \(insideTruth))"
                     + ", truth σ \(m(cp.truthSigmaM)) m, 95 % ellipse \(ellipse(cp))"
                     + (cp.notScored.map { " [\($0.text)]" } ?? ""))
             }
@@ -226,7 +233,8 @@ public enum ReplayReport {
         if result.pinScoring.manualFixes > 0 || !result.pinScoring.unmatchedExclusionsT.isEmpty {
             lines.append("Pins scored   " + result.pinScoring.text)
         }
-        lines.append("Consistency   " + consistencyText(result.consistency))
+        lines.append("Consistency   " + consistencyText(result.consistency) + " (engine ellipse)")
+        lines.append("  + truth σ   " + consistencyText(result.consistencyWithTruthSigma) + " (engine covariance + truth σ²; gated)")
         lines.append("Max error     \(m(result.maxErrorM)) m (\(pct(result.maxErrorPercent)))")
         lines.append("End error     \(m(result.endErrorM)) m (\(pct(result.endErrorPercent)))\(result.endIsTruth ? "" : " [last scored checkpoint; no truth end]")")
         if let last = result.track.last {
@@ -282,10 +290,10 @@ public enum ReplayReport {
         let runs = runs.sorted { $0.key < $1.key }
         var out = "# replay_nav metrics\n\n"
         out += "Error is the engine's causal estimate against information it did not receive.\n\n"
-        out += "| log | mode | distance m | checkpoints | end err m | end % | max err m | max % | inside 95 % | converged at | ms/step | max ingest ms |\n"
-        out += "|---|---|---:|---:|---:|---:|---:|---:|---|---:|---:|---:|\n"
+        out += "| log | mode | distance m | checkpoints | end err m | end % | max err m | max % | inside 95 % | inside 95 % + truth σ (gated) | converged at | ms/step | max ingest ms |\n"
+        out += "|---|---|---:|---:|---:|---:|---:|---:|---|---|---:|---:|---:|\n"
         for r in runs {
-            out += "| \(r.logName) | \(r.mode) | \(m(r.distanceM)) | \(r.checkpoints.count) | \(m(r.endErrorM))\(r.endIsTruth ? "" : "*") | \(pct(r.endErrorPercent)) | \(m(r.maxErrorM)) | \(pct(r.maxErrorPercent)) | \(consistencyText(r.consistency)) | \(km(r.convergedDistanceM)) | \(String(format: "%.3f", r.msPerStep)) | \(String(format: "%.2f", r.maxIngestMs)) |\n"
+            out += "| \(r.logName) | \(r.mode) | \(m(r.distanceM)) | \(r.checkpoints.count) | \(m(r.endErrorM))\(r.endIsTruth ? "" : "*") | \(pct(r.endErrorPercent)) | \(m(r.maxErrorM)) | \(pct(r.maxErrorPercent)) | \(consistencyText(r.consistency)) | \(consistencyText(r.consistencyWithTruthSigma)) | \(km(r.convergedDistanceM)) | \(String(format: "%.3f", r.msPerStep)) | \(String(format: "%.2f", r.maxIngestMs)) |\n"
         }
         out += "\n\\* no truth `end`: error at the last scored checkpoint.\n"
         for r in runs {
@@ -293,14 +301,14 @@ public enum ReplayReport {
             if let scoring = r.pinScoring, scoring.manualFixes > 0 || !scoring.unmatchedExclusionsT.isEmpty {
                 out += "Pins: \(scoring.text).\n\n"
             }
-            out += "| kind | t s | distance m | error m | % of distance | σ heading ° | inside 95 % | truth σ m | 95 % ellipse |\n|---|---:|---:|---:|---:|---:|---|---:|---|\n"
+            out += "| kind | t s | distance m | error m | % of distance | σ heading ° | inside 95 % | + truth σ | truth σ m | 95 % ellipse |\n|---|---:|---:|---:|---:|---:|---|---|---:|---|\n"
             for cp in r.checkpoints where cp.kind != .cleanFix {
-                out += "| \(cp.kind.rawValue)\(cp.notScored.map { " (\($0.text))" } ?? "") | \(String(format: "%.1f", cp.t)) | \(m(cp.distanceM)) | \(m(cp.errorM)) | \(pct(cp.errorPercent)) | \(cp.headingStdDeg.map { String(format: "%.1f", $0) } ?? "n/a") | \(cp.inside95.map { $0 ? "yes" : "no" } ?? "n/a") | \(m(cp.truthSigmaM)) | \(ellipse(cp)) |\n"
+                out += "| \(cp.kind.rawValue)\(cp.notScored.map { " (\($0.text))" } ?? "") | \(String(format: "%.1f", cp.t)) | \(m(cp.distanceM)) | \(m(cp.errorM)) | \(pct(cp.errorPercent)) | \(cp.headingStdDeg.map { String(format: "%.1f", $0) } ?? "n/a") | \(cp.inside95.map { $0 ? "yes" : "no" } ?? "n/a") | \(cp.inside95WithTruthSigma.map { $0 ? "yes" : "no" } ?? "n/a") | \(m(cp.truthSigmaM)) | \(ellipse(cp)) |\n"
             }
             let clean = r.checkpoints.filter { $0.kind == .cleanFix }
             if !clean.isEmpty {
                 let errors = clean.compactMap(\.errorM).sorted()
-                out += "| cleanFix ×\(clean.count) | | | median \(m(errors.isEmpty ? nil : errors[errors.count / 2])), max \(m(errors.last)) | | | \(cleanFixInside(clean.count, r.consistency ?? EllipseConsistency(r.checkpoints))) | | |\n"
+                out += "| cleanFix ×\(clean.count) | | | median \(m(errors.isEmpty ? nil : errors[errors.count / 2])), max \(m(errors.last)) | | | \(cleanFixInside(clean.count, r.consistency ?? EllipseConsistency(r.checkpoints))) | \(r.consistencyWithTruthSigma.map { cleanFixInside(clean.count, $0) } ?? "n/a") | | |\n"
             }
             if let pins = r.pins, !pins.isEmpty {
                 out += "\nDR estimate at each manual fix (prior):\n\n"

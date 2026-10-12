@@ -146,7 +146,8 @@ struct NavigationMetricsCodingTests {
         let data = try ReplayReport.metricsJSON([Self.metrics()])
         let row = try #require(try JSONSerialization.jsonObject(with: data) as? [[String: Any]])[0]
         let later = Set(ReplayMetrics.CodingKeys.allCases).subtracting(ReplayMetrics.originalKeys)
-        #expect(later.map(\.stringValue).sorted() == ["consistency", "motionStartT", "pinScoring", "pins"])
+        #expect(later.map(\.stringValue).sorted()
+            == ["consistency", "consistencyWithTruthSigma", "motionStartT", "pinScoring", "pins"])
         for key in later {
             var old = row
             old.removeValue(forKey: key.stringValue)
@@ -155,6 +156,7 @@ struct NavigationMetricsCodingTests {
             let decoded = try JSONDecoder().decode([ReplayMetrics].self, from: file)[0]
             switch key {
             case .consistency: #expect(decoded.consistency == nil)
+            case .consistencyWithTruthSigma: #expect(decoded.consistencyWithTruthSigma == nil)
             case .motionStartT: #expect(decoded.motionStartT == nil)
             case .pinScoring: #expect(decoded.pinScoring == nil)
             case .pins: #expect(decoded.pins == nil)
@@ -181,7 +183,9 @@ struct NavigationMetricsCodingTests {
         let metrics = Self.metrics()
         let data = try ReplayReport.metricsJSON([metrics])
         var row = try #require(try JSONSerialization.jsonObject(with: data) as? [[String: Any]])[0]
-        for key in ["consistency", "pins", "pinScoring", "motionStartT"] { row.removeValue(forKey: key) }
+        for key in ["consistency", "consistencyWithTruthSigma", "pins", "pinScoring", "motionStartT"] {
+            row.removeValue(forKey: key)
+        }
         var config = try #require(row["config"] as? [String: Any])
         for key in ["lateManualFixWindowS", "maxCatchUpSteps", "heldFixTimeoutS", "maxForwardJumpS", "staleSpeedDecayS"] {
             config.removeValue(forKey: key)
@@ -190,6 +194,9 @@ struct NavigationMetricsCodingTests {
         var counters = try #require(row["counters"] as? [String: Any])
         for key in ["fixesHeld", "heldFixesUsed", "macroSteps", "lateManualFixes"] { counters.removeValue(forKey: key) }
         row["counters"] = counters
+        var checkpoints = try #require(row["checkpoints"] as? [[String: Any]])
+        for i in checkpoints.indices { checkpoints[i].removeValue(forKey: "inside95WithTruthSigma") }
+        row["checkpoints"] = checkpoints
         row["mode"] = "older-mode"
         let old = try JSONSerialization.data(withJSONObject: [row])
         #expect(ReplayReport.existingMetricsDecodeError(old) == nil)
@@ -198,7 +205,12 @@ struct NavigationMetricsCodingTests {
         let older = try #require(merged.first { $0.mode == "older-mode" })
         #expect(older.config.lateManualFixWindowS == NavigationConfig().lateManualFixWindowS)
         #expect(older.counters.fixesHeld == 0 && older.counters.steps == metrics.counters.steps)
-        #expect(older.checkpoints == metrics.checkpoints)
+        #expect(older.checkpoints.allSatisfy { $0.inside95WithTruthSigma == nil })
+        #expect(older.checkpoints == metrics.checkpoints.map { cp in
+            var cp = cp
+            cp.inside95WithTruthSigma = nil
+            return cp
+        })
     }
 
     // MARK: Undecodable backup (R18.1-2)

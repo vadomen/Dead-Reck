@@ -468,13 +468,25 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   engine's 95 % ellipse at their time, overall and per kind. Shown in the
   summary, `metrics.md` and `metrics.json`. A calibrated filter scores about
   95 %; much lower means the ellipse is overconfident. The truth's own σ (a
-  pin's σ, for example) is not added to the ellipse. One denominator (N3.0,
+  pin's σ, for example) is not added to this ellipse. One denominator (N3.0,
   R13.1-8): a checkpoint counts when it is scored and the engine had an
   estimate at its time. One before initialisation is in neither count, and
   the clean-fix "inside 95 %" figure of the summary and `metrics.md` uses the
   same counts, with "(n before initialisation)" when there are any. On every
   acceptance drive every checkpoint has an estimate, so the numbers do not
   change.
+- **Ellipse consistency with the truth's σ** (N3.0, Q3; `consistencyWithTruthSigma`
+  in `metrics.json`, `inside95WithTruthSigma` per checkpoint, the
+  "+ truth σ" line of the summary and column of `metrics.md`): the same
+  share, counted on the 95 % ellipse of P + σ_truth² I. P is the engine's
+  position covariance, the moment-matched particle mixture (each particle's
+  Gaussian plus the spread of the means), whose 95 % ellipse is the one
+  above. σ_truth per axis is: for a withheld clean fix, its
+  `horizontalAccuracy` / 1.51 (a fixed constant, not the config's
+  `fixSigmaPerAccuracy`); for a pin, its σ as scored; for a truth point or
+  `end`, its `sigmaM` (0 if absent). P + σ² I has P's axes, so each
+  semi-axis a becomes √(a² + 5.991 σ²). Same denominator as above. It is
+  computed in the replay only; the engine and its ellipse are unchanged.
 - Per log: distance, checkpoints, max and end error (end = truth `end`, else the
   last checkpoint), heading-convergence distance (first time `converged` then
   holds for 30 s, inclusive; a shorter run does not count), steps, ms/step

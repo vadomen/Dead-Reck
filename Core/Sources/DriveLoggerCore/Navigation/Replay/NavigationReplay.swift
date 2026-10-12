@@ -346,6 +346,11 @@ public struct ReplayResult: Hashable, Sendable, Codable {
         public var estimateLongitude: Double?
         /// Whether the truth lies inside the engine's 95 % ellipse.
         public var inside95: Bool?
+        /// Whether the truth lies inside the 95 % ellipse of the engine's
+        /// covariance plus the truth's own σ, P + σ_truth² I (Q3, the gated
+        /// consistency since N3.0; `NavigationReplay.truthSigmaPerAxisM`).
+        /// Optional so older metrics.json files decode.
+        public var inside95WithTruthSigma: Bool?
         public var headingStdDeg: Double?
         /// The engine's 95 % ellipse at `t`: semi-axes (m) and bearing of
         /// the major axis (degrees).
@@ -452,6 +457,9 @@ public struct ReplayResult: Hashable, Sendable, Codable {
     /// Ellipse consistency: scored checkpoints (all kinds) whose truth lies
     /// inside the engine's 95 % ellipse at their time.
     public var consistency: EllipseConsistency
+    /// The same with the truth's own σ added to the engine's covariance
+    /// (Q3): the consistency the adoption rule gates on since N3.0.
+    public var consistencyWithTruthSigma: EllipseConsistency
     public var steps: Int
     /// Engine wall time (ingest only, no I/O) per 10 Hz step, ms.
     public var msPerStep: Double
@@ -678,6 +686,9 @@ private struct ReplayRun {
             checkpoint.estimateLatitude = estimate.latitude
             checkpoint.estimateLongitude = estimate.longitude
             checkpoint.inside95 = estimate.ellipse.contains(dEast: dEast, dNorth: dNorth)
+            let truthSigma = NavigationReplay.truthSigmaPerAxisM(kind: item.kind, truthSigmaM: item.sigma)
+            checkpoint.inside95WithTruthSigma = estimate.ellipse.adding(isotropicSigmaM: truthSigma)
+                .contains(dEast: dEast, dNorth: dNorth)
             checkpoint.headingStdDeg = estimate.headingStdDeg
             checkpoint.ellipseSemiMajorM = estimate.ellipse.semiMajorM
             checkpoint.ellipseSemiMinorM = estimate.ellipse.semiMinorM
@@ -755,6 +766,7 @@ private struct ReplayRun {
             convergedDistanceM: convergence?.distanceM,
             finalHeadingStdDeg: track.last?.headingStdDeg,
             consistency: EllipseConsistency(checkpoints),
+            consistencyWithTruthSigma: EllipseConsistency(checkpoints, withTruthSigma: true),
             steps: steps,
             msPerStep: steps > 0 ? Double(engineNs) / 1e6 / Double(steps) : 0,
             maxIngestMs: Double(maxIngestNs) / 1e6,
@@ -770,6 +782,24 @@ private struct ReplayRun {
 }
 
 extension NavigationReplay {
+    /// CoreLocation's `horizontalAccuracy` is a 68 % radius; for a circular
+    /// Gaussian that is 1.51 σ per axis. Fixed here, not taken from the
+    /// config, so a `--set` cannot move the truth.
+    public static let accuracyPerSigma = 1.51
+
+    /// The truth's own σ per axis, metres, for the consistency with the
+    /// truth's σ added (Q3):
+    /// - a withheld clean fix: its `horizontalAccuracy` / `accuracyPerSigma`
+    ///   (3.3 m at 5 m accuracy);
+    /// - a manual fix: its pin σ (`truthSigmaM`, `manualFixSigma` of the run's
+    ///   config, 30–104 m on the replay set);
+    /// - a truth point or `end`: its `sigmaM` from the truth file.
+    /// 0 when the truth gives none: that checkpoint scores as without it.
+    public static func truthSigmaPerAxisM(kind: ReplayResult.Checkpoint.Kind, truthSigmaM: Double?) -> Double {
+        guard let sigma = truthSigmaM, sigma.isFinite, sigma > 0 else { return 0 }
+        return kind == .cleanFix ? sigma / accuracyPerSigma : sigma
+    }
+
     /// Heading convergence: the first track point from which `converged`
     /// holds for at least `holdS` seconds (track times, inclusive), with its
     /// distance. A run of `converged` points shorter than `holdS` does not
@@ -843,11 +873,16 @@ public struct EllipseConsistency: Hashable, Sendable, Codable {
     /// Keyed by `ReplayResult.Checkpoint.Kind` raw value.
     public var byKind: [String: Count]
 
-    public init(_ checkpoints: [ReplayResult.Checkpoint]) {
+    /// `withTruthSigma`: count `inside95WithTruthSigma` (the engine's
+    /// covariance plus the truth's σ, Q3) instead of `inside95`. The
+    /// denominator is the same: both are set exactly when the engine had an
+    /// estimate.
+    public init(_ checkpoints: [ReplayResult.Checkpoint], withTruthSigma: Bool = false) {
         var all = Count(inside: 0, scored: 0)
         var byKind: [String: Count] = [:]
         for checkpoint in checkpoints {
-            guard let inside = checkpoint.inside95, checkpoint.isScored else { continue }
+            guard let inside = withTruthSigma ? checkpoint.inside95WithTruthSigma : checkpoint.inside95,
+                  checkpoint.isScored else { continue }
             all.scored += 1
             byKind[checkpoint.kind.rawValue, default: Count(inside: 0, scored: 0)].scored += 1
             if inside {
@@ -857,5 +892,18 @@ public struct EllipseConsistency: Hashable, Sendable, Codable {
         }
         self.all = all
         self.byKind = byKind
+    }
+}
+
+extension ErrorEllipse {
+    /// The 95 % ellipse of this ellipse's covariance P plus σ² I. P + σ² I
+    /// has P's principal axes and eigenvalues λ + σ², so each semi-axis
+    /// √(χ² λ) becomes √(semi-axis² + χ² σ²) and the orientation is kept.
+    /// Replay scoring only (Q3).
+    func adding(isotropicSigmaM sigma: Double) -> ErrorEllipse {
+        let extra = Self.chiSquare95 * sigma * sigma
+        return ErrorEllipse(semiMajorM: (semiMajorM * semiMajorM + extra).squareRoot(),
+                            semiMinorM: (semiMinorM * semiMinorM + extra).squareRoot(),
+                            orientationDeg: orientationDeg)
     }
 }
