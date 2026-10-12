@@ -27,7 +27,8 @@
 # osm/work/, packs to osm/packs/<name>.roadpack. The osmium version, the
 # source's SHA-256 and replication timestamp, and the builder's git commit go
 # into each pack's META. A pack over 150 MB is not written (build_roads exits
-# with status 3); split the region at admin_level 6.
+# with status 3); split the region at admin_level 6. An empty "packs" list is
+# an error (status 2).
 #
 # Needs osmium-tool (brew install osmium-tool), jq, shasum and the Xcode
 # toolchain (DEVELOPER_DIR is set to Xcode if xcode-select points elsewhere).
@@ -44,7 +45,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --source) SOURCE_OVERRIDE="$2"; shift 2 ;;
         --only) ONLY="$2"; shift 2 ;;
-        -h|--help) sed -n '2,36p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,37p' "$0"; exit 0 ;;
         -*) echo "build_packs: unknown option $1" >&2; exit 2 ;;
         *) CONFIG="$1"; shift ;;
     esac
@@ -54,6 +55,11 @@ for tool in osmium jq shasum; do
     command -v "$tool" >/dev/null || { echo "build_packs: $tool not found" >&2; exit 1; }
 done
 [ -f "$CONFIG" ] || { echo "build_packs: no config at $CONFIG" >&2; exit 2; }
+# Checked before anything is built or written.
+jq -e '.packs | type == "array"' "$CONFIG" >/dev/null \
+    || { echo "build_packs: $CONFIG: \"packs\" must be an array" >&2; exit 2; }
+COUNT="$(jq '.packs | length' "$CONFIG")"
+[ "$COUNT" -gt 0 ] || { echo "build_packs: $CONFIG: \"packs\" is empty, nothing to build" >&2; exit 2; }
 if [ -z "${DEVELOPER_DIR:-}" ] && [ -d /Applications/Xcode.app/Contents/Developer ] \
     && [ "$(xcode-select -p 2>/dev/null)" != /Applications/Xcode.app/Contents/Developer ]; then
     export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
@@ -97,11 +103,10 @@ echo "source $(basename "$SOURCE"): osmTimestamp $OSM_TS, grid box $BBOX, osmium
 swift build -c release --package-path "$ROOT/Core" --product build_roads >/dev/null
 BUILD_ROADS="$(swift build -c release --package-path "$ROOT/Core" --show-bin-path)/build_roads"
 
-COUNT="$(jq '.packs | length' "$CONFIG")"
 selected() { [ -z "$ONLY" ] || [ "$1" = "$ONLY" ]; }
 
 # --- One pass over the source: every class any pack needs -------------------
-ALL_CLASSES="$(for i in $(seq 0 $((COUNT - 1))); do
+ALL_CLASSES="$(for ((i = 0; i < COUNT; i++)); do
     selected "$(jq -r ".packs[$i].name" "$CONFIG")" || continue
     classes_of "$(jq -r ".packs[$i].classes // \"region\"" "$CONFIG")" | tr ',' '\n'
 done | sort -u | paste -sd, -)"
@@ -124,7 +129,7 @@ fi
 # narrowed to the one relation with jq.
 EXTRACTS="$WORK/extracts.json"
 echo '{"directory": "'"$WORK"'", "extracts": []}' > "$EXTRACTS"
-for i in $(seq 0 $((COUNT - 1))); do
+for ((i = 0; i < COUNT; i++)); do
     NAME="$(jq -r ".packs[$i].name" "$CONFIG")"
     selected "$NAME" || continue
     REL="$(jq -r ".packs[$i].relation // empty" "$CONFIG")"
@@ -151,7 +156,7 @@ if [ "$(jq '.extracts | length' "$EXTRACTS")" -gt 0 ]; then
 fi
 
 # --- Per pack: classes, locations, build -------------------------------------
-for i in $(seq 0 $((COUNT - 1))); do
+for ((i = 0; i < COUNT; i++)); do
     NAME="$(jq -r ".packs[$i].name" "$CONFIG")"
     selected "$NAME" || continue
     CLASSES="$(classes_of "$(jq -r ".packs[$i].classes // \"region\"" "$CONFIG")")"
