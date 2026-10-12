@@ -67,6 +67,62 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
     public var key: String { "\(logName) \(mode)" }
 }
 
+extension ReplayMetrics {
+    /// Every stored property (`ReplayMetricsCodingTests` checks the list).
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case logName, mode, config, motionStartT, startT, endT, distanceM, checkpoints
+        case maxErrorM, maxErrorPercent, endErrorM, endErrorPercent, endIsTruth
+        case convergedT, convergedDistanceM, finalHeadingStdDeg, consistency
+        case steps, msPerStep, maxIngestMs, counters, fixesUsed, fixesWithheld, pins, pinScoring
+    }
+
+    /// Keys every `metrics.json` row has had since the first one (N2). A row
+    /// without one of these is not a metrics row, and decoding fails.
+    static let originalKeys: Set<CodingKeys> = [
+        .logName, .mode, .config, .startT, .endT, .distanceM, .checkpoints, .maxErrorM, .maxErrorPercent,
+        .endErrorM, .endErrorPercent, .endIsTruth, .convergedT, .convergedDistanceM, .finalHeadingStdDeg,
+        .steps, .msPerStep, .maxIngestMs, .counters, .fixesUsed, .fixesWithheld,
+    ]
+
+    /// Decodes a row written by any earlier build (R11.2-4, R12.1-1).
+    /// - The original keys (`originalKeys`) are required.
+    /// - Every key added later is optional and nil when absent:
+    ///   `motionStartT`, `consistency`, `pins`, `pinScoring` (and any key a
+    ///   later build adds, which must be optional or take a default here).
+    /// - `config` and `counters` decode tolerantly themselves: a config key
+    ///   or counter added later takes its default (0 for a counter).
+    /// Encoding is synthesized; `metricsJSON` sorts keys, so the bytes do not
+    /// depend on this decoder.
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        logName = try c.decode(String.self, forKey: .logName)
+        mode = try c.decode(String.self, forKey: .mode)
+        config = try c.decode(NavigationConfig.self, forKey: .config)
+        motionStartT = try c.decodeIfPresent(Double.self, forKey: .motionStartT)
+        startT = try c.decode(Double.self, forKey: .startT)
+        endT = try c.decode(Double.self, forKey: .endT)
+        distanceM = try c.decode(Double.self, forKey: .distanceM)
+        checkpoints = try c.decode([ReplayResult.Checkpoint].self, forKey: .checkpoints)
+        maxErrorM = try c.decodeIfPresent(Double.self, forKey: .maxErrorM)
+        maxErrorPercent = try c.decodeIfPresent(Double.self, forKey: .maxErrorPercent)
+        endErrorM = try c.decodeIfPresent(Double.self, forKey: .endErrorM)
+        endErrorPercent = try c.decodeIfPresent(Double.self, forKey: .endErrorPercent)
+        endIsTruth = try c.decode(Bool.self, forKey: .endIsTruth)
+        convergedT = try c.decodeIfPresent(Double.self, forKey: .convergedT)
+        convergedDistanceM = try c.decodeIfPresent(Double.self, forKey: .convergedDistanceM)
+        finalHeadingStdDeg = try c.decodeIfPresent(Double.self, forKey: .finalHeadingStdDeg)
+        consistency = try c.decodeIfPresent(EllipseConsistency.self, forKey: .consistency)
+        steps = try c.decode(Int.self, forKey: .steps)
+        msPerStep = try c.decode(Double.self, forKey: .msPerStep)
+        maxIngestMs = try c.decode(Double.self, forKey: .maxIngestMs)
+        counters = try c.decode(NavigationCounters.self, forKey: .counters)
+        fixesUsed = try c.decode(Int.self, forKey: .fixesUsed)
+        fixesWithheld = try c.decode(Int.self, forKey: .fixesWithheld)
+        pins = try c.decodeIfPresent([NavSidecar.Pin].self, forKey: .pins)
+        pinScoring = try c.decodeIfPresent(ReplayResult.PinScoring.self, forKey: .pinScoring)
+    }
+}
+
 public enum ReplayReport {
     // MARK: Text
 
@@ -219,8 +275,11 @@ public enum ReplayReport {
     /// runs with the same key), so separate invocations build one table.
     ///
     /// An existing document that does not decode contributes no rows; call
-    /// `existingMetricsDecodeError` first to warn and keep a copy, so its rows
-    /// are not lost silently (R11.2-4, its minimal part).
+    /// `existingMetricsDecodeError` first, and keep a copy with
+    /// `keepUndecodableMetrics` before replacing it, so its rows are not lost
+    /// silently (R11.2-4, R18.1-2). Rows from earlier builds decode
+    /// (`ReplayMetrics.init(from:)`), so this is for a damaged file or one
+    /// that is not a metrics document.
     public static func mergedMetrics(existing: Data?, adding runs: [ReplayMetrics]) throws -> [ReplayMetrics] {
         var byKey: [String: ReplayMetrics] = [:]
         if let existing, let old = try? JSONDecoder().decode([ReplayMetrics].self, from: existing) {
@@ -240,6 +299,25 @@ public enum ReplayReport {
         } catch {
             return String(describing: error)
         }
+    }
+
+    /// Writes `data` (an existing `metrics.json` that does not decode) to a
+    /// new file `metrics.undecodable-<stamp>.json` in `directory`, or
+    /// `…-<stamp>-1.json`, `-2`, … if that name is taken, and returns its URL.
+    /// An existing file is never overwritten. Throws if the copy cannot be
+    /// written: the caller must then leave `metrics.json` as it is (R18.1-2).
+    public static func keepUndecodableMetrics(_ data: Data, in directory: URL, stamp: String) throws -> URL {
+        for attempt in 0..<1_000 {
+            let name = "metrics.undecodable-\(stamp)\(attempt == 0 ? "" : "-\(attempt)").json"
+            let url = directory.appendingPathComponent(name)
+            do {
+                try data.write(to: url, options: .withoutOverwriting)
+                return url
+            } catch CocoaError.fileWriteFileExists {
+                continue
+            }
+        }
+        throw CocoaError(.fileWriteFileExists)
     }
 
     public static func metricsJSON(_ runs: [ReplayMetrics]) throws -> Data {

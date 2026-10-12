@@ -458,10 +458,18 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   holds for 30 s), steps, ms/step (engine `ingest` wall time only), seed and
   config.
 - Output in `--out`: `metrics.md` and `metrics.json` (merged across invocations,
-  one row per log and mode; an existing `metrics.json` that no longer decodes
-  is reported with a warning and copied to `metrics.undecodable-<pid>.json`
-  before it is replaced), and `<log>-<mode>.geojson` (1 Hz DR track, 95 %
+  one row per log and mode), and `<log>-<mode>.geojson` (1 Hz DR track, 95 %
   ellipses every 10 s, fixes used and withheld, truth points with error lines).
+  - Rows written by earlier builds still merge (N3.0): a config key, counter
+    or metrics field added after the row was written takes its default (a
+    counter 0, a later metrics field absent). The default is today's, which
+    is not necessarily what that older build ran with.
+  - An existing `metrics.json` that does not decode at all (damaged, or not
+    a metrics file) is reported with a warning and copied to a new
+    `metrics.undecodable-<UTC time>-<pid>.json` (with `-1`, `-2`, … if the
+    name exists; an older copy is never overwritten) before it is replaced.
+    If the copy cannot be written, or the existing file cannot be read,
+    `replay_nav` stops with status 1 and leaves `metrics.json` unchanged.
 
 Truth file (git-ignored `logs/truth.json`, read at runtime), keyed by recording
 file name. The values here are illustrative:

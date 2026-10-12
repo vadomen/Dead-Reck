@@ -283,11 +283,29 @@ for path in paths {
 let jsonURL = outDirectory.appendingPathComponent("metrics.json")
 let markdownURL = outDirectory.appendingPathComponent("metrics.md")
 do {
-    let existing = try? Data(contentsOf: jsonURL)
-    if let reason = ReplayReport.existingMetricsDecodeError(existing) {
+    var existing: Data?
+    if FileManager.default.fileExists(atPath: jsonURL.path) {
+        do {
+            existing = try Data(contentsOf: jsonURL)
+        } catch {
+            fail("cannot read the existing \(jsonURL.path) (\(error)); left unchanged, metrics not written", status: 1)
+        }
+    }
+    if let existing, let reason = ReplayReport.existingMetricsDecodeError(existing) {
         // Keep the old rows instead of replacing them silently (R11.2-4).
-        let backup = outDirectory.appendingPathComponent("metrics.undecodable-\(ProcessInfo.processInfo.processIdentifier).json")
-        try? existing?.write(to: backup)
+        // Claim the copy only once it is written, and never overwrite an
+        // older copy (R18.1-2); without a copy, metrics.json stays as it is.
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        formatter.dateFormat = "yyyyMMdd'T'HHmmss'Z'"
+        let stamp = "\(formatter.string(from: Date()))-\(ProcessInfo.processInfo.processIdentifier)"
+        let backup: URL
+        do {
+            backup = try ReplayReport.keepUndecodableMetrics(existing, in: outDirectory, stamp: stamp)
+        } catch {
+            fail("\(jsonURL.path) does not decode (\(reason)) and no copy could be written (\(error)); left unchanged, metrics not written", status: 1)
+        }
         print("Warning       \(jsonURL.path) does not decode (\(reason)); its rows are dropped from the merge, copy kept at \(backup.path)")
     }
     let merged = try ReplayReport.mergedMetrics(existing: existing, adding: metrics)
