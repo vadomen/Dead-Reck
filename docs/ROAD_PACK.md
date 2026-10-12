@@ -441,6 +441,11 @@ Notes on the table:
 - **Time:** the whole script for both packs takes 20 s. Most of it is the two
   `tags-filter` passes over the country file, about 5 s and 4 s.
 - **Determinism:** a second run gives byte-identical packs.
+- **Builder v2 (zero-length segments, 2026-10-12):** neither pack has a stacked
+  or repeated node: 0 points at a repeated coordinate and 0 node IDs merged, which
+  an independent scan of the OPL confirms. Every count in the table is unchanged;
+  only `META` (`builder.version` 2 and the commit) and so the content hashes
+  changed. A docs-only commit after the rebuild left both packs byte-identical.
 - **De-duplication:** both packs share one grid ID. Loaded together, region-A has
   11 415 segments shadowed by national, which is exactly its motorway/trunk/primary
   segments, counted independently from the OPL. The count is the same in the reverse
