@@ -1144,3 +1144,23 @@ Verified clean: R19.1-1 complete for pin σ (`manualFixSigma(` called only by th
 | R19.2-3 | MINOR | `docs/N3_PLAN.md:502-508` N4MF-1 item 2 says pins are "scored with the σ above" (speed-dependent), contradicting its own frozen-truth sub-bullet. | DEFERRED | BACKLOG |
 
 Tests: Core passes 704 tests in 102 suites. No App change.
+
+### Round 3
+
+Reviewer: fresh `reviewer` agent. Result: 0 BLOCKER / 0 MAJOR / 1 MINOR.
+
+Verified clean: `NavigationReplay.swift:637` is the only place clean-fix truth is chosen and uses `cleanFixTruthAccM`; nothing outside the engine and the config reads `cleanFixAccM`; restoring the old line fails `cleanFixTruthIgnoresConfig` with 12 issues; docs and doc comments say ≤ 15 m inclusive, frozen; R14.2-3 withheld fixes never ingested and `truthEnd` uses the last accepted input; `truthSigmaPerAxisM` divides only clean-fix accuracies by 1.51; old `metrics.md` rows print "n/a" for the missing variant; Core purity; no engine, App, Log or LOG_FORMAT diff; privacy.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R19.3-1 | MINOR | The `EllipseConsistency` type comment (`NavigationReplay.swift:898-899`) still says the truth's σ is not added, although the same type now holds the gated `withTruthSigma` variant (:925-929). | DEFERRED | BACKLOG |
+
+Tests: Core passes 704 tests in 102 suites (a5e76af). No App change.
+
+**Loop stopped: no BLOCKER or MAJOR findings.**
+
+### Run 19 summary
+
+- **Rounds:** 3 run (plus one round 2 attempt cut off by a network error before reporting).
+- **Findings:** 2 MAJOR fixed (R19.1-1 frozen pin truth σ, R19.2-1 frozen clean-fix truth selection), 0 rejected, 7 MINOR deferred (R19.1-2..4, R19.2-2..4, R19.3-1).
+- **Final tests:** `cd Core && swift test`: 704 tests in 102 suites pass. No App change in the range.
