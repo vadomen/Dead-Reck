@@ -153,9 +153,14 @@ updates reweight only by what heading and scale actually predict.
     `heldFixesDroppedTimeout`, `heldFixesReplaced`; every drop also counts
     in `fixesIgnoredStale`. `heldFixTimeoutS` 0 restores the drop on
     arrival.
-  - **Course** is used when valid, GNSS speed ≥ 3 m/s, fresh OBD speed ≥ 3 m/s
-    (GNSS reports a few m/s of noise while parked), and GNSS speed agrees with
-    OBD within max(2 m/s, 15 %). That last gate rejects glitch fixes (the clean
+  - **Course** is used when valid, GNSS speed ≥ 3 m/s, the OBD speed last
+    reported at the fix time ≥ 3 m/s (GNSS reports a few m/s of noise while
+    parked), and GNSS speed agrees with fresh OBD within max(2 m/s, 15 %).
+    The OBD speed is the held one, fresh or stale (R11.1-4): a stale 0 (the
+    link dropped while parked) and no OBD reply at all (parked before the
+    adapter connects, or a pre-session fix that arrives before the first
+    reply) veto the course; a stale moving speed (a dropout while driving)
+    does not. That last gate rejects glitch fixes (the clean
     drive has one reporting 25 m/s at 10 m/s with a "good" course) and slow
     manoeuvres. Wrapped Gaussian with σ = max(courseAccuracy, 2°).
   - **Speed** updates the scale under the same gates, when OBD speed is above

@@ -295,7 +295,8 @@ public struct NavigationEngine: Sendable {
             lastStepStationary = true
             lastMeanSpeed = 0
             for k in max(0, count - history.capacity)..<count {
-                history.append(first + Int64(k) * stepNs, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: nil)
+                history.append(first + Int64(k) * stepNs, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: nil,
+                               held: heldOBDSpeed)
             }
             for k in max(0, count - motionRing.capacity)..<count {
                 recordMotion(at: first + Int64(k) * stepNs)
@@ -404,6 +405,12 @@ public struct NavigationEngine: Sendable {
         }
     }
 
+    /// The last OBD vehicle speed, fresh or stale, in m/s with the
+    /// truncation offset (0 for a 0 reply); nil before the first reply.
+    private var heldOBDSpeed: Double? {
+        obdSpeedKmh.map { $0 > 0 ? ($0 + config.obdSpeedOffsetKmh) / 3.6 : 0 }
+    }
+
     /// Fresh OBD zero at `ns`: the car is known to be stopped.
     private func isStopped(at ns: Int64) -> Bool {
         guard let v = obdSpeedKmh, let t = obdNs else { return false }
@@ -437,7 +444,7 @@ public struct NavigationEngine: Sendable {
             counters.zuptSteps += 1
             lastStepStationary = true
             lastMeanSpeed = 0
-            history.append(ns, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: 0)
+            history.append(ns, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: 0, held: 0)
             recordMotion(at: ns)
             return
         }
@@ -447,7 +454,7 @@ public struct NavigationEngine: Sendable {
             counters.staleParkedSteps += 1
             lastStepStationary = true
             lastMeanSpeed = 0
-            history.append(ns, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: nil)
+            history.append(ns, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: nil, held: heldOBDSpeed)
             recordMotion(at: ns)
             return
         }
@@ -496,7 +503,7 @@ public struct NavigationEngine: Sendable {
         cumulativeYaw += yaw
         lastStepStationary = false
         lastMeanSpeed = meanSpeed
-        history.append(ns, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: fresh ? vObd : nil)
+        history.append(ns, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: fresh ? vObd : nil, held: vObd)
         recordMotion(at: ns, obdDistance: vObd * dt)
         if counters.steps % reanchorCheckSteps == 0 {
             reanchorIfNeeded()
@@ -589,7 +596,7 @@ public struct NavigationEngine: Sendable {
         cumulativeYaw += yaw
         lastStepStationary = false
         lastMeanSpeed = meanSpeed
-        history.append(ns, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: nil)
+        history.append(ns, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: nil, held: heldOBDSpeed)
         recordMotion(at: ns, obdDistance: vObd * dt)
         if counters.steps / reanchorCheckSteps != checkBefore {
             reanchorIfNeeded()
@@ -726,7 +733,7 @@ public struct NavigationEngine: Sendable {
         cumulativeNorth = 0
         cumulativeYaw = 0
         history.removeAll()
-        history.append(lastStepNs ?? ns, 0, 0, 0, speed: nil)
+        history.append(lastStepNs ?? ns, 0, 0, 0, speed: nil, held: heldOBDSpeed)
         motionRing.removeAll(particles: n)
         recordMotion(at: lastStepNs ?? ns)
         lastStepStationary = isStopped(at: ns)
@@ -760,15 +767,20 @@ public struct NavigationEngine: Sendable {
             * (network ? config.networkFixInflation : 1)
             + Self.staleGrowth(fixNs: fixNs, age: age, config: config)
         // Course needs real motion: GNSS reports a few m/s of speed noise
-        // while parked, so a fresh OBD speed under the threshold vetoes it.
+        // while parked, so an OBD speed under the threshold vetoes it. The
+        // speed checked is the one OBD last reported at the fix time, fresh
+        // or stale (R11.1-4): a stale 0 (the link dropped while parked) and
+        // no OBD reply at all (parked before the adapter connects) veto; a
+        // stale moving speed (a dropout while driving) does not.
         let since = shiftSince(fixNs)
         let obdAtFix: Double? = tangentPlane == nil ? (isStopped(at: arrivalNs) ? 0 : nil) : since.obdSpeed
+        let heldAtFix: Double? = tangentPlane == nil ? heldOBDSpeed : since.heldOBDSpeed
         var dopplerConsistent = true
         if sample.speed >= 0, let v = obdAtFix {
             dopplerConsistent = abs(sample.speed - v) <= max(config.gnssSpeedGateMps, config.gnssSpeedGateFraction * v)
         }
         let courseValid = sample.hasValidCourse && sample.speed >= config.courseMinSpeedMps
-            && (obdAtFix ?? .infinity) >= config.courseMinSpeedMps && dopplerConsistent
+            && (heldAtFix ?? 0) >= config.courseMinSpeedMps && dopplerConsistent
         let courseSigma = max(sample.courseAccuracy, config.courseSigmaFloorDeg) * .pi / 180
         let clean = accuracy <= config.cleanFixAccM && courseValid
 
@@ -1248,11 +1260,18 @@ public struct NavigationEngine: Sendable {
 
     /// Mean displacement, yaw and OBD speed since `ns`, from the motion
     /// history. A time older than the history uses its oldest entry.
-    private func shiftSince(_ ns: Int64) -> (east: Double, north: Double, yaw: Double, obdSpeed: Double?) {
+    private func shiftSince(_ ns: Int64)
+        -> (east: Double, north: Double, yaw: Double, obdSpeed: Double?, heldOBDSpeed: Double?) {
         guard let entry = history.entry(atOrBefore: ns) else {
-            return (0, 0, 0, nil)
+            return (0, 0, 0, nil, nil)
         }
-        return (cumulativeEast - entry.east, cumulativeNorth - entry.north, cumulativeYaw - entry.yaw, entry.speed)
+        return (cumulativeEast - entry.east, cumulativeNorth - entry.north, cumulativeYaw - entry.yaw,
+                entry.speed, entry.held)
+    }
+
+    /// The motion-history entry a fix stamped `ns` reads (tests).
+    func motionHistoryEntry(atOrBefore ns: Int64) -> MotionHistory.Entry? {
+        history.entry(atOrBefore: ns)
     }
 
     // MARK: Estimate
@@ -1378,6 +1397,9 @@ struct MotionHistory: Sendable {
         var yaw: Double
         /// OBD speed used at this step when fresh (m/s), nil when stale.
         var speed: Double?
+        /// The OBD speed held at this step, fresh or stale (m/s); nil before
+        /// the first reply (R11.1-4).
+        var held: Double?
     }
 
     private var entries: [Entry] = []
@@ -1401,8 +1423,8 @@ struct MotionHistory: Sendable {
         }
     }
 
-    mutating func append(_ t: Int64, _ east: Double, _ north: Double, _ yaw: Double, speed: Double?) {
-        let entry = Entry(t: t, east: east, north: north, yaw: yaw, speed: speed)
+    mutating func append(_ t: Int64, _ east: Double, _ north: Double, _ yaw: Double, speed: Double?, held: Double?) {
+        let entry = Entry(t: t, east: east, north: north, yaw: yaw, speed: speed, held: held)
         if entries.count < capacity {
             entries.append(entry)
         } else {

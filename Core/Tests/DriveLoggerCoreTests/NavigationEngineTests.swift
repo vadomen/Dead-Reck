@@ -122,7 +122,9 @@ struct NavigationEngineTests {
         ])
         let clean = S.cleanFix()
         let events = drive.events(fixEvery: 4, fix: { t, state, rng in
-            if S.at(t, 0) { return clean(t, state, &rng) }
+            // After the first OBD reply (0.05 s): with no OBD known the
+            // course would be vetoed (R11.1-4).
+            if S.at(t, 0) { return clean(t, state, &rng).map { var f = $0; f.latency = 0.06; return f } }
             // Tower fixes: one correlated offset, small jitter, iOS-style fields.
             return S.Fix(east: state.east + 600 + 50 * rng.nextGaussian(),
                          north: state.north + 50 * rng.nextGaussian(), accuracy: 1414)
