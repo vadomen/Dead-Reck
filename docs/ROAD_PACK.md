@@ -178,6 +178,11 @@ UTF-8 JSON, sorted keys, no build date or host, so the bytes are deterministic:
 }
 ```
 
+`builder.commit` is provenance: the 12-digit hash of the last commit that touched
+the files the pack bytes depend on, with `-dirty` if any of them has an uncommitted
+or untracked change (see Hash). `build_roads --commit` writes it as given and omits
+it when absent.
+
 `coverage.relationID` and the source file name reveal places. They are written into
 the pack only, which is git-ignored. Optional keys are omitted when unknown, and a
 national pack has no `adminLevel` or `relationID`.
@@ -243,7 +248,19 @@ For example, φ₀ = 45° and h = 2° give 1.037, so R_eff ≈ 52 m for R = 50 m
 the **whole file**, with bytes 16–23 (the hash field itself) read as zero.
 
 - It covers the header, including the grid parameters, which change behaviour, the
-  section table, every section and the padding.
+  section table, every section and the padding. That includes all of `META`, so a
+  pack's identity includes its provenance: `builder.commit`, the source's name,
+  SHA-256 and timestamp, and the osmium version. `META` has no build time or host.
+- **`builder.commit` is scoped to the builder.** `build_packs.sh` takes it from
+  `git log -1 -- <builder paths>`, not from HEAD. The paths are
+  `Core/Sources/DriveLoggerCore/Navigation/Roads`, `NavigationSeed.swift` and
+  `LocalTangentPlane.swift` (FNV and the grid scales), `Log/JSONValue.swift` (META's
+  encoding), `Core/Sources/RoadPackBuild`, `Core/Sources/build_roads`,
+  `Core/Package.swift` and `tools/roads`. It appends `-dirty` when `git status
+  --porcelain` lists any of them, which includes untracked files. So a commit
+  outside those paths, such as a docs-only commit, leaves a rebuilt pack
+  byte-identical; a commit inside them changes the hash even if the lookups are
+  the same. That is deliberate: a pack names the builder that made it.
 - It is an identity hash, not a security measure. The SHA-256 of the *source* extract
   is in `META`.
 - A set of packs is identified by `roadSetHash`: FNV-1a 64 over the packs' content

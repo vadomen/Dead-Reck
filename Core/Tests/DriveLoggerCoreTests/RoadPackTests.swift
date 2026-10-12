@@ -323,6 +323,22 @@ struct RoadPackPropertyTests {
         #expect(RoadPackFormat.roadSetHash([0x0102_0304_0506_0708]) == NavigationSeed.fnv1a64([8, 7, 6, 5, 4, 3, 2, 1]))
     }
 
+    @Test("META's builder.commit is part of the pack identity: the same commit gives the same bytes, another commit another hash")
+    func builderCommitInHash() throws {
+        func build(_ commit: String?) throws -> Data {
+            var parameters = RoadPackBuild.Parameters(classes: RoadGraphBuilder.regionClasses, grid: RoadFixture.grid())
+            parameters.builderCommit = commit
+            return try RoadPackBuild.build(opl: Data(Self.townLines().joined(separator: "\n").utf8), parameters: parameters).data
+        }
+        let a = try build("0123456789ab")
+        #expect(try build("0123456789ab") == a)
+        #expect(RoadPackFormat.contentHash(of: try build("0123456789ab-dirty")) != RoadPackFormat.contentHash(of: a))
+        #expect(RoadPackFormat.contentHash(of: try build(nil)) != RoadPackFormat.contentHash(of: a))
+        let meta = try RoadPack(data: a).meta
+        guard case .object(let builder)? = meta?["builder"] else { Issue.record("no builder object"); return }
+        #expect(builder["commit"] == .string("0123456789ab"))
+    }
+
     // MARK: Networks
 
     @Test("De-duplication across two overlapping packs: each segment key once, the first loaded pack wins")

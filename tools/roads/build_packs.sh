@@ -26,9 +26,12 @@
 # Paths in packs.json are relative to the repository root. Work files go to
 # osm/work/, packs to osm/packs/<name>.roadpack. The osmium version, the
 # source's SHA-256 and replication timestamp, and the builder's git commit go
-# into each pack's META. A pack over 150 MB is not written (build_roads exits
-# with status 3); split the region at admin_level 6. An empty "packs" list is
-# an error (status 2).
+# into each pack's META. The commit is the last one that touched the files the
+# pack bytes depend on (BUILDER_PATHS below), not HEAD, so a docs-only commit
+# leaves a rebuilt pack's contentHash unchanged; "-dirty" is appended when any
+# of them has an uncommitted or untracked change. A pack over 150 MB is not
+# written (build_roads exits with status 3); split the region at admin_level 6.
+# An empty "packs" list is an error (status 2).
 #
 # Needs osmium-tool (brew install osmium-tool), jq, shasum and the Xcode
 # toolchain (DEVELOPER_DIR is set to Xcode if xcode-select points elsewhere).
@@ -45,7 +48,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --source) SOURCE_OVERRIDE="$2"; shift 2 ;;
         --only) ONLY="$2"; shift 2 ;;
-        -h|--help) sed -n '2,37p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
         -*) echo "build_packs: unknown option $1" >&2; exit 2 ;;
         *) CONFIG="$1"; shift ;;
     esac
@@ -95,8 +98,24 @@ OSM_TS="$(osmium fileinfo -g header.option.osmosis_replication_timestamp "$SOURC
 BBOX="$(osmium fileinfo -g header.boxes "$SOURCE" | head -1 | tr -d '() ')"
 [ -n "$BBOX" ] || BBOX="$(osmium fileinfo -e -g data.bbox "$SOURCE" | tr -d '() ')"
 SHA256="$(shasum -a 256 "$SOURCE" | awk '{print $1}')"
-COMMIT="$(git -C "$ROOT" rev-parse --short=12 HEAD)"
-git -C "$ROOT" diff --quiet HEAD -- Core || COMMIT="$COMMIT-dirty"
+# Everything the pack bytes depend on: the road code, the builder and its
+# CLI, the shared helpers they call (FNV hash, WGS-84 radii, META's JSON
+# encoding) and this pipeline.
+BUILDER_PATHS=(
+    Core/Sources/DriveLoggerCore/Navigation/Roads
+    Core/Sources/DriveLoggerCore/Navigation/NavigationSeed.swift
+    Core/Sources/DriveLoggerCore/Navigation/LocalTangentPlane.swift
+    Core/Sources/DriveLoggerCore/Log/JSONValue.swift
+    Core/Sources/RoadPackBuild
+    Core/Sources/build_roads
+    Core/Package.swift
+    tools/roads
+)
+COMMIT="$(git -C "$ROOT" log -1 --format=%H -- "${BUILDER_PATHS[@]}")"
+[ -n "$COMMIT" ] || { echo "build_packs: no commit touches the builder paths" >&2; exit 1; }
+COMMIT="$(git -C "$ROOT" rev-parse --short=12 "$COMMIT")"
+# --porcelain also lists untracked files (git diff does not).
+[ -z "$(git -C "$ROOT" status --porcelain -- "${BUILDER_PATHS[@]}")" ] || COMMIT="$COMMIT-dirty"
 echo "source $(basename "$SOURCE"): osmTimestamp $OSM_TS, grid box $BBOX, osmium $OSMIUM_VERSION, builder $COMMIT"
 
 # --- build_roads ------------------------------------------------------------
