@@ -264,7 +264,7 @@ for path in paths {
             sidecar: contents, replay: lines, replayConfig: NavigationEngine(config: options.config).config,
             encodingFailures: NavigationReplay.encodingFailures(in: events).count
         )
-        print("Sidecar       \(URL(fileURLWithPath: comparePath).lastPathComponent): \(contents.estimates.count) estimates, \(contents.pins.count) pins, app build \(contents.header.appBuild)\(asLive ? "" : fileOrder ? " (--file-order, not --as-live)" : " (not --as-live: arrival order)")")
+        print("Sidecar       \(URL(fileURLWithPath: comparePath).lastPathComponent): \(contents.estimates.count) estimates, \(contents.pins.count) pins, app build \(contents.header.appBuild) (\(contents.header.buildConfiguration ?? "build configuration not recorded"))\(asLive ? "" : fileOrder ? " (--file-order, not --as-live)" : " (not --as-live: arrival order)")")
         print(comparison.report(tolerance: tolerance))
         if !comparison.passes(tolerance) { compareFailed = true }
     }

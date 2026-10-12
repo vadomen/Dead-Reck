@@ -76,8 +76,19 @@ actor NavigationService {
         end(feed.generation)
     }
 
+    /// This build's configuration, for the sidecar header next to
+    /// `appBuild`: `msPerStep` is only meaningful in Release.
+    static let buildConfiguration: String = {
+        #if DEBUG
+        NavSidecar.Header.debugBuild
+        #else
+        NavSidecar.Header.releaseBuild
+        #endif
+    }()
+
     private func begin(_ feed: RecordingNavigationFeed) {
-        let live = LiveNavigationRun(header: feed.header, appBuild: feed.header.app.build)
+        let live = LiveNavigationRun(header: feed.header, appBuild: feed.header.app.build,
+                                     buildConfiguration: Self.buildConfiguration)
         var writer: NavSidecarWriter?
         var openFailure: String?
         do {

@@ -39,6 +39,16 @@ struct NavigationServiceTests {
         [SimulatedMotionSource(rateHz: 100), SimulatedLocationSource(interval: .milliseconds(200)), FakeSource()]
     }
 
+    /// The build configuration this test build was compiled in; the
+    /// service must write the same into the sidecar header.
+    static let expectedBuildConfiguration: String = {
+        #if DEBUG
+        "debug"
+        #else
+        "release"
+        #endif
+    }()
+
     /// What `replay_nav --as-live --compare` does with a recording and its
     /// sidecar: the Core loop over the file's inputs in file order, with
     /// the header's seed and the default config.
@@ -86,6 +96,7 @@ struct NavigationServiceTests {
             #expect(contents.header.sessionID == feed.header.sessionID)
             #expect(contents.header.configHash == NavigationConfig(seed: contents.header.seed).hashHex)
             #expect(contents.header.appBuild == feed.header.app.build)
+            #expect(contents.header.buildConfiguration == Self.expectedBuildConfiguration)
             #expect(contents.estimates.count >= 1, "recording \(index)")
             // A carried-over engine would not reproduce a fresh one's output.
             #expect(comparison.exact, "recording \(index): \(comparison.report(tolerance: .default))")

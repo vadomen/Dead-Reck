@@ -236,6 +236,54 @@ struct NavigationLiveTests {
         #expect(try NavSidecar.read(future).unrecognizedLines == 1)
     }
 
+    @Test("Sidecar header buildConfiguration: round trips through a file, is omitted when nil, keeps an unknown value")
+    func sidecarBuildConfigurationRoundTrip() throws {
+        let scratch = try ScratchDirectory()
+        defer { scratch.remove() }
+        let config = NavigationConfig(seed: 7)
+        for value in [NavSidecar.Header.releaseBuild, NavSidecar.Header.debugBuild, "profile"] {
+            let header = NavSidecar.Header(sessionID: LogFixtures.sessionID, config: config, appBuild: "42",
+                                           buildConfiguration: value)
+            let writer = try NavSidecarWriter(url: scratch.file("\(value).nav.jsonl"))
+            writer.append(.header(header))
+            writer.append(.estimate(Self.estimate(1)))
+            writer.close()
+            let data = try Data(contentsOf: writer.url)
+            #expect(String(decoding: data, as: UTF8.self).contains("\"buildConfiguration\":\"\(value)\""))
+            let contents = try NavSidecar.read(data)
+            #expect(contents.header == header)
+            #expect(contents.header.buildConfiguration == value)
+            #expect(contents.header.sidecarVersion == 1, "an optional field added within v1, no version bump")
+        }
+        // nil (replay_nav, or a writer that does not know it): the key is absent.
+        let plain = NavSidecar.Header(sessionID: LogFixtures.sessionID, config: config, appBuild: "42")
+        #expect(plain.buildConfiguration == nil)
+        let line = try NavSidecar.encode(.header(plain), with: NavSidecar.makeEncoder())
+        #expect(!String(decoding: line, as: UTF8.self).contains("buildConfiguration"))
+        #expect(LiveNavigationRun(sessionID: LogFixtures.sessionID, config: config, appBuild: "t",
+                                  buildConfiguration: "release").header.buildConfiguration == "release")
+    }
+
+    @Test("A v1 sidecar header written before buildConfiguration existed decodes, with the field nil")
+    func sidecarHeaderWithoutBuildConfiguration() throws {
+        // Hand-written in the shape the app wrote before the field (frozen; do not add the key).
+        let old = """
+            {"appBuild":"1","configHash":"0123456789abcdef","configJSON":"{}","kind":"header",\
+            "seed":18446744073709551615,"sessionID":"3F2504E0-4F89-41D3-9A0C-0305E82C3301","sidecarVersion":1}
+            {"converged":true,"droppedInputs":0,"headingDeg":90,"headingStdDeg":2,"kind":"estimate",\
+            "latitude":0.001,"longitude":0.002,"maxStepMs":4.5,"msPerStep":2.8,"orientationDeg":10,\
+            "semiMajorM":12,"semiMinorM":6,"speedScale":1,"t":1000000000}
+
+            """
+        let contents = try NavSidecar.read(Data(old.utf8))
+        #expect(contents.header.buildConfiguration == nil)
+        #expect(contents.header.appBuild == "1")
+        #expect(contents.header.sidecarVersion == 1)
+        #expect(contents.header.seed == UInt64.max)
+        #expect(contents.estimates.count == 1 && contents.estimates[0].msPerStep == 2.8)
+        #expect(!contents.truncatedLastLine && contents.unrecognizedLines == 0)
+    }
+
     // MARK: The live loop
 
     @Test("The live loop: estimates on whole seconds from initialisation on, each what estimate(at:) gave then; the pin is the prior")
