@@ -14,10 +14,26 @@ Run a review-fix loop on the range above. Keep a ledger in `docs/REVIEW_LOG.md`.
 
 Each round (max 4 rounds):
 
-1. Spawn a FRESH `reviewer` subagent (never reuse the previous one). Give it the range, the ledger, and this instruction: tag every finding BLOCKER / MAJOR / MINOR; do not re-raise anything the ledger marks REJECTED or DEFERRED unless you have new evidence.
+1. Spawn a FRESH `reviewer` subagent (never reuse the previous one).
+   - **Pass it:**
+     - the range;
+     - this range's rows from `docs/REVIEW_LOG.md`, nothing else from it;
+     - the DEFERRED/REJECTED IDs from `docs/BACKLOG.md` whose text names a file in the diff, with their one-line findings. Never pass either file whole;
+     - the current HEAD's `cd Core && swift test` result (totals and any failures), and the simulator/app results if `App/` changed. Run them yourself first;
+     - for navigation changes, the acceptance drive paths (from memory) for its "bit-identical" re-run.
+   - **Instruction:** tag every finding BLOCKER / MAJOR / MINOR; do not re-raise anything marked REJECTED or DEFERRED unless you have new evidence.
+   - **Model:** use `sonnet` for docs/config-only ranges, or under 200 changed lines with no new logic. Use `opus` for anything touching Core or App logic.
+   - **Scale:** for a range over ~1500 changed lines, spawn 2–3 fresh reviewers in parallel on disjoint file sets you name (e.g. engine / replay / app), each told its set. Merge their findings into one ledger round.
+   - **Resume:** if a reviewer stops early (API limit, network), spawn a fresh one for the same round. It resumes from `.claude/review-scratch/<range>.md`. A cut-off attempt is not counted as a round.
 2. For each BLOCKER/MAJOR finding, verify it yourself against the code before acting: mark it CONFIRMED or REJECTED (with a one-line reason) in the ledger. Do not fix unconfirmed findings.
-3. Fix CONFIRMED findings with the owning agent (`elm-ble-engineer` for ELM327/OBD/BLE, `sensors-logging-engineer` for clock/log/sensors, `ios-ui-engineer` for UI). Every real bug gets a regression test that fails before the fix and passes after.
-4. Run `cd Core && swift test`, and the simulator build if `App/` changed (see the `ios-build-test` skill for commands and the `DEVELOPER_DIR` note). Both must be green. Commit the round as "review round N: <summary>".
+3. Fix CONFIRMED findings with the owning agent:
+   - `elm-ble-engineer` for ELM327/OBD/BLE;
+   - `sensors-logging-engineer` for clock/log/sensors;
+   - `ios-ui-engineer` for UI;
+   - `navigation-engineer` for Core/Navigation, Replay, replay_nav and road packs (Roads/, RoadPackBuild, build_roads, tools/roads).
+
+   Every real bug gets a regression test that fails before the fix and passes after.
+4. Run `cd Core && swift test`, and the simulator build if `App/` changed (see the `ios-build-test` skill for commands and the `DEVELOPER_DIR` note). Both must be green. Commit the round as "review round N: <summary>". Once the round is in the ledger, delete its scratch file(s) in `.claude/review-scratch/`.
 5. Append MINOR findings to `docs/BACKLOG.md` as DEFERRED; do not fix them in the loop.
 
 Stop when a fresh reviewer reports no BLOCKER or MAJOR findings, then print: rounds run, findings fixed/rejected/deferred, final test results.
