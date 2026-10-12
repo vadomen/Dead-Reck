@@ -185,4 +185,54 @@ struct NavigationN30EngineTests {
         // before the fix, and the posterior followed most of it.
         #expect(abs(offGrid - onGrid) < 0.3, "along-track bias off-grid \(offGrid) m, on-grid \(onGrid) m")
     }
+
+    // MARK: R11.2-3 (remainder) an initialising fix's age × speed
+
+    /// Driving north at 20 m/s with OBD; the engine's first fix is stamped
+    /// 10 s and arrives `age` s later (a relaunch mid-drive: the first fix
+    /// delivered is a few seconds old).
+    static func initialisingFix(age: Double, gnssSpeed: Double = 20, obd: Bool = true)
+        -> (drive: S, engine: NavigationEngine) {
+        let drive = S(initialHeadingDeg: 0, initialSpeed: 20, [.straight(seconds: 20, speed: 20)])
+        let truth = drive.truth(at: 10)
+        let p = S.plane.geodetic(east: truth.east, north: truth.north)
+        let fix = LocationSample(latitude: p.latitude, longitude: p.longitude, altitude: 0,
+                                 horizontalAccuracy: 5, verticalAccuracy: -1, speed: gnssSpeed, speedAccuracy: 0.5,
+                                 course: 0, courseAccuracy: 2, receivedT: S.ms(10 + age), ageS: age)
+        let events = drive.events(obdSpeed: obd ? nil : { _, _ in nil }, extra: [.location(fix, at: S.ms(10))])
+        var engine = NavigationEngine(config: S.config(particles: 400))
+        for input in S.inputs(events) where input.arrival <= S.ms(10 + age + 0.001) { engine.ingest(input) }
+        return (drive, engine)
+    }
+
+    @Test("R11.2-3: a 4 s old fix initialising at 20 m/s: the ellipse covers the 80 m the car moved since")
+    func initialisingFixAgeCovered() throws {
+        let (drive, engine) = Self.initialisingFix(age: 4)
+        let t = 14.001
+        let estimate = try #require(engine.estimate(at: S.ms(t)))
+        let offset = drive.offset(estimate, at: t)
+        #expect(drive.error(estimate, at: t) > 70, "the start is at the fix, 80 m behind")
+        #expect(estimate.ellipse.contains(dEast: offset.dEast, dNorth: offset.dNorth),
+                "truth \(drive.error(estimate, at: t)) m away, semi-major \(estimate.ellipse.semiMajorM) m")
+        // σ² = 5² + (20.5 × 1.0 × 4)² with OBD 72 km/h + 0.5: about 82 m, not hundreds.
+        #expect(estimate.ellipse.semiMajorM < 3 * 82, "semi-major \(estimate.ellipse.semiMajorM) m")
+    }
+
+    @Test("R11.2-3: with no OBD yet, the fix's own Doppler speed sizes the allowance")
+    func initialisingFixAgeNoOBD() throws {
+        let (drive, engine) = Self.initialisingFix(age: 4, obd: false)
+        let t = 14.001
+        let estimate = try #require(engine.estimate(at: S.ms(t)))
+        let offset = drive.offset(estimate, at: t)
+        #expect(estimate.ellipse.contains(dEast: offset.dEast, dNorth: offset.dNorth),
+                "truth \(drive.error(estimate, at: t)) m away, semi-major \(estimate.ellipse.semiMajorM) m")
+    }
+
+    @Test("R11.2-3: a prompt initialising fix (0.05 s) keeps about its own σ")
+    func promptInitialisingFixUnchanged() throws {
+        let (_, engine) = Self.initialisingFix(age: 0.05)
+        let estimate = try #require(engine.estimate(at: S.ms(10.051)))
+        // σ² = 5² + (20.5 × 0.05)²: 5.1 m, semi-major ≈ 12.5 m.
+        #expect(estimate.ellipse.semiMajorM < 13.5, "semi-major \(estimate.ellipse.semiMajorM) m")
+    }
 }

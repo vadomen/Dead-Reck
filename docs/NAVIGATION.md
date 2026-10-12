@@ -270,6 +270,15 @@ usable course gives position ± σ and heading ~ N(course, σ_course). Otherwise
 uniformly over 360°. Stratification cut the seed-to-seed spread on the jammed
 drives noticeably compared with independent draws.
 
+An initialising fix starts the cloud at the fix, but the car has moved for
+the fix's age (arrival − `t`) since, and no motion history exists yet to
+shift it (R11.2-3). Its σ grows in quadrature: σ² = σ_fix² + (v · age)², with
+v the fresh OBD speed at arrival (truncation offset added; 0 when stopped),
+else the fix's own Doppler speed when valid, else 0. A 4 s old fix at
+20 m/s starts at σ ≈ 82 m instead of 5 m, so the truth 80 m ahead is inside
+the ellipse. A prompt fix (0.05 s) is within 1 % of its own σ. A fix older
+than `staleFixAgeS` also has the stale growth (1 m/s × age) in σ_fix.
+
 ### Estimate
 
 `estimate(at:)` returns nil before initialisation. Otherwise it returns the

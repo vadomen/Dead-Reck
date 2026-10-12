@@ -803,8 +803,14 @@ public struct NavigationEngine: Sendable {
         let clean = accuracy <= config.cleanFixAccM && courseValid
 
         guard let plane = tangentPlane else {
+            // The cloud starts at the fix, but the car has moved for the
+            // fix's age since (R11.2-3): no motion history exists yet to
+            // shift it. Its σ grows by that distance, in quadrature.
+            let travelled = Self.initialisationSpeed(fresh: isFresh(at: arrivalNs) ? heldOBDSpeed : nil,
+                                                     sample: sample) * age
             initialize(
-                latitude: sample.latitude, longitude: sample.longitude, sigma: sigma,
+                latitude: sample.latitude, longitude: sample.longitude,
+                sigma: (sigma * sigma + travelled * travelled).squareRoot(),
                 heading: clean ? (sample.course * .pi / 180, courseSigma) : nil, at: fixNs
             )
             counters.fixesUsed += 1
@@ -923,6 +929,15 @@ public struct NavigationEngine: Sendable {
     static func staleGrowth(fixNs: Int64, age: Double, config: NavigationConfig) -> Double {
         guard age > config.staleFixAgeS else { return 0 }
         return max(0, config.staleFixSigmaGrowthMps) * age
+    }
+
+    /// Speed for the age allowance of a fix that initialises the engine,
+    /// m/s: the fresh OBD speed at its arrival (`fresh`, with the truncation
+    /// offset; 0 when stopped), else the fix's own Doppler speed when
+    /// valid, else 0.
+    static func initialisationSpeed(fresh: Double?, sample: LocationSample) -> Double {
+        if let fresh { return fresh }
+        return sample.hasValidSpeed && sample.speed.isFinite ? sample.speed : 0
     }
 
     /// Likelihood exponent for a network fix `sinceLastS` seconds after the
