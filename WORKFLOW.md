@@ -22,13 +22,13 @@ Each of M2–M5 is self-contained: start it with **"Run Mx as in WORKFLOW.md"**.
 
 - `CLAUDE.md`: invariants, conventions, commands. It wins on any conflict.
 - `docs/PLAN.md`:
-  - the status block and decisions at the top;
-  - §2, the milestone's deliverables and folder ownership;
+  - the decisions at the top;
+  - §2, the open milestone's deliverables (completed milestones, the old status block and §1 are in `docs/archive/PLAN-done.md`);
   - the §4 contracts the milestone implements. **The code is authoritative over the §4 sketches.**
   - §6, the hardware checks.
 - `docs/SPEC_V1.md`: what v1 must do.
 - `docs/BENCH_TEST_2026-10-07.md`: real replies from the test car (VW Touareg 2025, Vgate iCar Pro BLE 4.0 advertising as `IOS-Vlink`).
-- `docs/BACKLOG.md`: deferred items tagged with the milestone you're running. Close them, or say why not.
+- `docs/BACKLOG.md`: open (DEFERRED) items tagged with the milestone you're running. Close them, or say why not. Closed rows live in `docs/archive/BACKLOG-closed.md`.
 - `docs/LOG_FORMAT.md` whenever anything touches the log.
 
 ---
@@ -291,6 +291,7 @@ Every engine change is judged on the replay set first and goes through `/review-
 
 ## Rules for the orchestrator
 - **Model.** The main session runs on Sonnet by default. Switch to Opus (`/model`) only to verify review findings (CONFIRMED / REJECTED) or to judge an adoption-rule verdict yourself (docs/NAVIGATION.md), then switch back. Engineer agents and the reviewer stay on Opus with effort high (their frontmatter); `ios-ui-engineer`, `drive-analyst` and `docs-editor` run on Sonnet.
+- **Archive.** `docs/archive/` is history: read it only on demand, never as default context for an agent. When a backlog row closes (DONE, FIXED, SUPERSEDED, OBSOLETE), move it to `docs/archive/BACKLOG-closed.md` unchanged; superseded NAVIGATION result tables go to `docs/archive/NAVIGATION-history.md`.
 - **Docs-only work goes to `docs-editor`**, not `navigation-engineer` or another engineer: wording fixes, ledger/backlog row moves, plan text. It has no shell, so you run tests and commit.
 - **One agent at a time in the main working tree.** Parallel sessions each get their own git worktree: `git worktree add ../dead-reck-<task> -b <task>`.
   - Merge them one at a time.

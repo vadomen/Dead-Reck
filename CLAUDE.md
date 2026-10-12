@@ -239,6 +239,10 @@ multi-hundred-megabyte drive.
 
 ## Conventions
 
+- `docs/archive/` holds history moved out of the working docs (review runs 1–16,
+  closed backlog rows, superseded navigation results, completed milestones).
+  Text there is moved, never rewritten. Read it only when a task needs a
+  specific old item; it is not part of any task's default reading.
 - Swift Testing (`@Suite`/`@Test`/`#expect`), not XCTest, in both test targets.
 - `LogCodec` is deliberately not `Sendable` — it owns a `JSONEncoder`/`JSONDecoder`
   pair. Keep one per reader or writer, inside whatever actor owns the file handle.

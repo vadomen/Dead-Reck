@@ -42,7 +42,7 @@ measurement. A car drives on roads, along them, and only one way on a oneway.
 
 ## Where we start (measured)
 
-Reference: the N4-B1 table in docs/NAVIGATION.md (seeds 1–5, arrival order, release, Mac,
+Reference: the N4-B1 table in docs/NAVIGATION.md, now docs/archive/NAVIGATION-history.md (seeds 1–5, arrival order, release, Mac,
 default config). Local re-runs after R14.4 (`logs/r144`, seeds 1–5) agree with it.
 b64b4a4 and later commits changed App code and tests only.
 

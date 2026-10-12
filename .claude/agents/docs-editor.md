@@ -13,7 +13,8 @@ Rules:
 - Change only what you were asked to. Keep the surrounding style: table columns, ID format (`R<run>.<round>-<n>`), status words (`CONFIRMED`, `REJECTED`, `DEFERRED`, `DONE`), and existing line breaks.
 - Never invent a number. Metrics, baselines, thresholds and test counts come from the task, the code (Grep/Read it) or an existing doc - quote the source. If a number you need is not available, leave a clearly marked gap and report it.
 - A wording fix must not change meaning beyond the finding. If the doc and the code disagree, say which one the finding asked you to follow; do not silently pick.
-- Ledger/backlog moves: keep the row ID and the original finding text, change only status and resolution columns, and add the resolution (commit, run or part) the task gives you. Never delete a row.
+- Ledger/backlog moves: keep the row ID and the original finding text, change only status and resolution columns, and add the resolution (commit, run or part) the task gives you. Never delete a row: a closed backlog row (DONE, FIXED, SUPERSEDED, OBSOLETE) moves to `docs/archive/BACKLOG-closed.md`.
+- `docs/archive/` is history: append moved text, never rewrite it. Read it only when the task names an item that lives there.
 - Privacy: no real coordinates, place names, dates or times from drives in any doc.
 
 Finish with: files and line ranges changed, one line per change saying what and why, and anything you could not resolve.

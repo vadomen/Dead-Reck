@@ -10,7 +10,7 @@ Range: **$ARGUMENTS**
 
 If no range was given, stop and ask for one. Don't guess.
 
-Run a review-fix loop on the range above. Keep a ledger in `docs/REVIEW_LOG.md`.
+Run a review-fix loop on the range above. Keep a ledger in `docs/REVIEW_LOG.md` (runs 17+). Runs 1–16 and closed backlog rows are in `docs/archive/`: read them only on demand (e.g. a finding cites an old ID), never pass them whole.
 
 Each round (max 4 rounds):
 
@@ -35,7 +35,7 @@ Each round (max 4 rounds):
 
    Every real bug gets a regression test that fails before the fix and passes after.
 4. Run `cd Core && swift test`, and the simulator build if `App/` changed (see the `ios-build-test` skill for commands and the `DEVELOPER_DIR` note). Both must be green. Commit the round as "review round N: <summary>". Once the round is in the ledger, delete its scratch file(s) in `.claude/review-scratch/`.
-5. Append MINOR findings to `docs/BACKLOG.md` as DEFERRED; do not fix them in the loop. Ledger and backlog row edits go to `docs-editor` when you delegate them.
+5. Append MINOR findings to `docs/BACKLOG.md` as DEFERRED; do not fix them in the loop. A backlog row the range closes moves, unchanged apart from its status, to `docs/archive/BACKLOG-closed.md`. Ledger and backlog row edits go to `docs-editor` when you delegate them.
 
 Stop when a fresh reviewer reports no BLOCKER or MAJOR findings, then print: rounds run, findings fixed/rejected/deferred, final test results.
 

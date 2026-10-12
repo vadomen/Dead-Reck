@@ -38,7 +38,7 @@ These change engine results, so they land before anything else and set a new bas
 - **R13.1-5:** cap the `estimate(at:)` extrapolation horizon, then hold or grow the covariance. The first UI frame after a resume must not jump.
 - **R13.2-4:** doc drift (stale speed "random-walks", `stationary`, plane-relative `east`/`north`).
 - Each fix has a regression test that fails before it.
-- Acceptance: seeds 1–5 on the six drives under the mean-based adoption rule, recorded as an "N4-B0" table in NAVIGATION.md. This is the baseline the rest of N4 must reproduce bit for bit.
+- Acceptance: seeds 1–5 on the six drives under the mean-based adoption rule, recorded as an "N4-B0" table in NAVIGATION.md (now docs/archive/NAVIGATION-history.md). This is the baseline the rest of N4 must reproduce bit for bit.
 
 ### A. Sample tap and sidecar file lifecycle (sensors-logging-engineer)
 - **Tap at the single chokepoint, `LogSink.record`** (`Core/.../Log/LogFile.swift:89`).
