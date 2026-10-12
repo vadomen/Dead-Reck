@@ -242,6 +242,13 @@ updates reweight only by what heading and scale actually predict.
       was chosen over inflating σ by `vObd` × age, because with heading unknown
       the motion is a ring of radius v × age, not a disc, and the forward
       prediction reproduces exactly that.
+      The motion record is backfilled over the same steps (R14.4-1): the
+      per-particle ring, `motionEast/North`, the mean history and the
+      cumulative motion start at the tap's grid step and advance step by
+      step. Before, they started at the initialisation, so a second late pin
+      tapped between the first tap and the late initialisation (two pins
+      1.5 s apart, no GPS) lost that motion: 7.5 / 20.6 m off arrival order
+      at 15 / 25 m/s, its ellipse 10–21 % smaller. Now within 1.5 m and 5 %.
     - `lateManualFixWindowS` 0 disables all of this (every pin gets the mean
       shift, as before). Counters: `lateManualFixes`,
       `lateManualFixesMeanShift`. Memory: two rings of

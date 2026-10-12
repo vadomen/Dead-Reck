@@ -235,4 +235,32 @@ struct NavigationN30EngineTests {
         // σ² = 5² + (20.5 × 0.05)²: 5.1 m, semi-major ≈ 12.5 m.
         #expect(estimate.ellipse.semiMajorM < 13.5, "semi-major \(estimate.ellipse.semiMajorM) m")
     }
+
+    // MARK: R14.4-1 a late initialising pin backfills the motion record
+
+    /// Two pins 1.5 s apart (20 s and 21.5 s), at the truth, no GPS. Live,
+    /// each is written when its 3 s undo window closes, so the first
+    /// initialises the engine late, and the second is late too, with a
+    /// tap before that initialisation.
+    @Test("R14.4-1: a second late pin tapped before the late initialisation lands where it lands in arrival order",
+          arguments: [8.0, 15.0, 25.0])
+    func secondLatePinAfterLateInitialisation(speed: Double) throws {
+        typealias L = NavigationLatePinTests
+        let drive = S(initialHeadingDeg: 70, initialSpeed: speed, [.straight(seconds: 40, speed: speed)])
+        let a = drive.truth(at: 20), b = drive.truth(at: 21.5)
+        let inputs = S.inputs(drive.events(gyroNoise: 0.002, extra: [
+            L.pin(at: 20, east: a.east, north: a.north), L.pin(at: 21.5, east: b.east, north: b.north),
+        ]))
+        let late = L.delayingPin(L.delayingPin(inputs, at: 20, by: 3), at: 21.5, by: 3)
+        let config = S.config(particles: 2000, seed: 1)
+        let inOrder = L.estimate(inputs, config: config, at: 26), delayed = L.estimate(late, config: config, at: 26)
+        let x = try #require(inOrder.estimate), y = try #require(delayed.estimate)
+        #expect(delayed.engine.counters.lateManualFixes == 2)
+        #expect(delayed.engine.counters.lateManualFixesMeanShift == 0,
+                "counted as a mean shift (\(delayed.engine.counters.lateManualFixesMeanShift)) at \(speed) m/s")
+        let gap = L.distance(x, y)
+        #expect(gap < 1.5, "\(gap) m from arrival order at \(speed) m/s")
+        #expect(abs(y.ellipse.semiMajorM / x.ellipse.semiMajorM - 1) < 0.05,
+                "semi-major late \(y.ellipse.semiMajorM) m vs in order \(x.ellipse.semiMajorM) m")
+    }
 }

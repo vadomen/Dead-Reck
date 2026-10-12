@@ -1113,23 +1113,49 @@ public struct NavigationEngine: Sendable {
         let staleVariance = staleS > 0
             ? Self.ouIntegralVariance(dt: staleS, sigma: config.staleSpeedNoiseMpsPerSqrtS, tau: config.staleSpeedDecayS)
             : 0
-        for i in 0..<east.count {
-            var h = heading[i]
-            for r in records where r.kind != .frozen {
+        // The motion record starts at the tap's grid step, as if the pin had
+        // initialised there (R14.4-1): the ring, the mean history and the
+        // cumulative motion are backfilled step by step below, so a second
+        // late pin tapped in this stretch finds each particle's own motion
+        // since its tap, and a fix stamped in it finds its latency shift.
+        history.removeAll()
+        history.append(start, 0, 0, 0, speed: records.first?.historySpeed, held: records.first?.held)
+        motionRing.removeAll(particles: east.count)
+        recordMotion(at: start)
+        var h = heading
+        for r in records {
+            let covered = Double(r.toNs - max(r.fromNs, start)) / 1e9
+            var meanDEast = 0.0, meanDNorth = 0.0
+            var dYaw = 0.0
+            if r.kind != .frozen {
                 let fraction = r.toNs > r.fromNs ? Double(r.toNs - max(r.fromNs, start)) / Double(r.toNs - r.fromNs) : 1
-                let dYaw = r.yaw * fraction
-                let distance = r.speed * scale[i] * Double(r.toNs - max(r.fromNs, start)) / 1e9
-                let mid = h + 0.5 * dYaw
-                let s = sin(mid), c = cos(mid)
-                east[i] += distance * s
-                north[i] += distance * c
-                let qAlong = alongPerM * abs(distance), qCross = crossPerM * abs(distance)
-                covEE[i] += qAlong * s * s + qCross * c * c
-                covNN[i] += qAlong * c * c + qCross * s * s
-                covEN[i] += (qAlong - qCross) * s * c
-                h += dYaw
+                dYaw = r.yaw * fraction
+                for i in 0..<east.count {
+                    let distance = r.speed * scale[i] * covered
+                    let mid = h[i] + 0.5 * dYaw
+                    let s = sin(mid), c = cos(mid)
+                    let dEast = distance * s, dNorth = distance * c
+                    east[i] += dEast
+                    north[i] += dNorth
+                    motionEast[i] += dEast
+                    motionNorth[i] += dNorth
+                    meanDEast += weight[i] * dEast
+                    meanDNorth += weight[i] * dNorth
+                    let qAlong = alongPerM * abs(distance), qCross = crossPerM * abs(distance)
+                    covEE[i] += qAlong * s * s + qCross * c * c
+                    covNN[i] += qAlong * c * c + qCross * s * s
+                    covEN[i] += (qAlong - qCross) * s * c
+                    h[i] += dYaw
+                }
             }
-            heading[i] = Self.wrap2Pi(h)
+            cumulativeEast += meanDEast
+            cumulativeNorth += meanDNorth
+            cumulativeYaw += dYaw
+            history.append(r.toNs, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: r.historySpeed, held: r.held)
+            recordMotion(at: r.toNs, obdDistance: r.kind == .frozen ? 0 : r.speed * covered)
+        }
+        for i in 0..<east.count {
+            heading[i] = Self.wrap2Pi(h[i])
             if staleVariance > 0 {
                 let s = sin(heading[i]), c = cos(heading[i])
                 covEE[i] += staleVariance * s * s
@@ -1173,7 +1199,10 @@ public struct NavigationEngine: Sendable {
         }
         let kind: PreInitSteps.Kind = (fresh && v == 0) || (!fresh && parkedSinceZero) ? .frozen : fresh ? .known : .stale
         let from = ns - Int64((dt * 1e9).rounded())
-        preInitSteps.append(.init(fromNs: from, toNs: ns, yaw: yaw, speed: kind == .frozen ? 0 : v, kind: kind))
+        // The history entry `step` would have written: the fresh speed
+        // (0 for a ZUPT), nil when stale or parked.
+        preInitSteps.append(.init(fromNs: from, toNs: ns, yaw: yaw, speed: kind == .frozen ? 0 : v, kind: kind,
+                                  historySpeed: fresh ? v : nil, held: heldOBDSpeed))
     }
 
     /// Snapshots every particle's own cumulative motion at grid step `ns`,
@@ -1718,6 +1747,10 @@ struct PreInitSteps: Sendable {
         /// OBD speed with the truncation offset, m/s (0 when frozen).
         var speed: Double
         var kind: Kind
+        /// The motion-history speeds `step` would have recorded: fresh OBD
+        /// speed (nil when stale) and the held one (nil before any reply).
+        var historySpeed: Double?
+        var held: Double?
     }
 
     let capacity: Int
