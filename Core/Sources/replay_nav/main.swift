@@ -7,8 +7,13 @@ import Foundation
 //       [--hold-out-acc <m>] [--truth logs/truth.json] [--seed N|header] [--particles N]
 //       [--set <configKey>=<number>]... [--out logs/out]
 //       [--as-live | --file-order] [--compare <log.nav.jsonl> [--tolerance <m>] [--heading-tolerance <deg>]]
-//       [--write-sidecar <out.nav.jsonl>] [--pin-pair-window <s>]
+//       [--write-sidecar <out.nav.jsonl>] [--pin-pair-window <s>] [--strict]
 //
+// Each log's read report (members, truncated tail, damaged members, skipped
+// lines) is printed; a damaged read is a warning, and with --strict the
+// recording is read with `LogRecovery.strict` and any damage (a truncated
+// tail included) stops replay_nav with status 3: metrics.json and metrics.md
+// are not updated (GeoJSON of logs before it in the same call is already written).
 // --pin-pair-window s (default 3, 0 disables): a manual fix at most s seconds
 // after the previous one is a refinement of it and is not scored (it is still
 // ingested); see `NavigationReplay.pinScoring`. Truth-file `excludePins` mark
@@ -36,7 +41,7 @@ import Foundation
 // The analysis lives in DriveLoggerCore (`NavigationReplay`, `ReplayReport`)
 // so it is covered by `swift test`; this file only parses arguments, reads
 // and writes files, and prints. Exit status: 0 ok, 1 unreadable input, 2 usage,
-// 4 --compare failed.
+// 3 damaged input under --strict, 4 --compare failed.
 
 func fail(_ message: String, status: Int32) -> Never {
     FileHandle.standardError.write(Data("replay_nav: \(message)\n".utf8))
@@ -47,7 +52,7 @@ let usage = """
     usage: replay_nav <log.jsonl.gz>... [--gps use|mask-after <s>|mask-after-motion <s>|none] [--hold-out-acc <m>]
            [--truth <truth.json>] [--seed N|header] [--particles N] [--set <configKey>=<number>]... [--out <dir>]
            [--as-live | --file-order] [--compare <sidecar.nav.jsonl> [--tolerance <m>] [--heading-tolerance <deg>]]
-           [--write-sidecar <out.nav.jsonl>] [--pin-pair-window <s>]
+           [--write-sidecar <out.nav.jsonl>] [--pin-pair-window <s>] [--strict]
     """
 
 var arguments = Array(CommandLine.arguments.dropFirst())
@@ -67,6 +72,7 @@ var comparePath: String?
 var writeSidecarPath: String?
 var tolerance = SidecarComparison.Tolerance.default
 var pinPairWindow = NavigationReplay.defaultPinPairWindowS
+var strict = false
 
 func number(_ text: String, _ flag: String) -> Double {
     guard let value = Double(text), value.isFinite else { fail("\(flag) needs a number, got \(text)\n\(usage)", status: 2) }
@@ -128,6 +134,8 @@ while !arguments.isEmpty {
         overrides.append((pair[0], number(pair[1], "--set \(pair[0])")))
     case "--out":
         outPath = value()
+    case "--strict":
+        strict = true
     case "-h", "--help":
         print(usage)
         exit(EXIT_SUCCESS)
@@ -203,12 +211,25 @@ for path in paths {
     let inputs: [NavigationInput]
     let header: LogHeader
     let events: [LogEvent]
+    let readReport: LogReadReport
     do {
-        let reader = try LogFileReader(url: url)
+        let reader = try LogFileReader(url: url, recovery: strict ? .strict : .skipMalformedLines)
         events = Array(reader)
         header = reader.header
+        readReport = reader.report
     } catch {
         fail("cannot read \(path): \(error)", status: 1)
+    }
+    // R11.1-8: never replay a shortened or holed drive silently.
+    print("Read          \(name): \(ReplayReport.readText(readReport))")
+    let readProblems = ReplayReport.readProblems(readReport)
+    if !readProblems.isEmpty {
+        if strict {
+            fail("\(path) is damaged (\(readProblems.joined(separator: "; "))); --strict refuses it; metrics.json and metrics.md are not updated", status: 3)
+        }
+        for problem in readProblems {
+            print("Warning       \(name): \(problem); distance and the truth end are scored on what was read")
+        }
     }
     inputs = baseOptions.fileOrder ? NavigationReplay.fileOrderInputs(from: events) : NavigationReplay.inputs(from: events)
     if let writeSidecarPath {

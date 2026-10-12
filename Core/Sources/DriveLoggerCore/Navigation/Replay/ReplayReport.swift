@@ -227,6 +227,45 @@ public enum ReplayReport {
         return lines.joined(separator: "\n") + "\n"
     }
 
+    // MARK: Reading the recording (R11.1-8)
+
+    /// What `LogFileReader` reported, as one line for the summary: "490 gzip
+    /// members; truncated tail: no; damaged members: none; skipped lines:
+    /// none" (the `inspect_log` "Integrity" wording).
+    public static func readText(_ report: LogReadReport) -> String {
+        let members = report.members == 0 ? "plain .jsonl" : "\(report.members) gzip members"
+        return "\(members); truncated tail: \(report.truncatedTail ? "yes" : "no"); damaged members: "
+            + (report.damagedMemberIndices.isEmpty ? "none" : "\(report.damagedMemberIndices)")
+            + "; skipped lines: \(report.skippedLineIndices.isEmpty ? "none" : "\(report.skippedLineIndices.count)")"
+            + (report.failure.map { "; stopped early: \($0)" } ?? "")
+            + (report.readError.map { "; read error: \($0)" } ?? "")
+    }
+
+    /// Why the replay may not have seen the whole recording, one entry per
+    /// problem; empty for a clean read. Any of these shortens the drive or
+    /// leaves a hole in it, so the truth `end` (scored at the last input
+    /// read) and the distance can be wrong: `replay_nav` warns, and
+    /// `--strict` refuses the log.
+    public static func readProblems(_ report: LogReadReport) -> [String] {
+        var problems: [String] = []
+        if report.truncatedTail {
+            problems.append("truncated or damaged tail: the end of the recording is missing")
+        }
+        if !report.damagedMemberIndices.isEmpty {
+            problems.append("\(report.damagedMemberIndices.count) damaged gzip member(s) skipped: \(report.damagedMemberIndices)")
+        }
+        if !report.skippedLineIndices.isEmpty {
+            problems.append("\(report.skippedLineIndices.count) malformed line(s) skipped")
+        }
+        if let failure = report.failure {
+            problems.append("reading stopped early: \(failure)")
+        }
+        if let readError = report.readError {
+            problems.append("reading stopped at a read error, the rest was not read: \(readError)")
+        }
+        return problems
+    }
+
     // MARK: Markdown
 
     /// `metrics.md`: one row per run, then each run's checkpoints and config.

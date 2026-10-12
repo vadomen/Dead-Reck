@@ -372,12 +372,20 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   [--hold-out-acc <m>] [--truth ../logs/truth.json] [--seed N|header] [--particles N] \
   [--set <configKey>=<number>] [--out ../logs/out] \
   [--as-live | --file-order] [--compare <log.nav.jsonl> [--tolerance <m>] [--heading-tolerance <deg>]] \
-  [--write-sidecar <out.nav.jsonl>] [--pin-pair-window <s>]
+  [--write-sidecar <out.nav.jsonl>] [--pin-pair-window <s>] [--strict]
 ```
 
 - Inputs: motion, OBD, location and manualFix from any v1–v3 recording, fed in
   arrival order: by `t`, a location fix by `max(receivedT, t)`, ties in file
   order.
+- **Read report** (N3.0, R11.1-8): each log's `Read` line gives what the
+  reader found (gzip members, truncated tail, damaged members, skipped
+  lines, `inspect_log`'s "Integrity" wording). A damaged read, which shortens
+  the drive or leaves a hole in it (so the distance and the truth `end` are
+  scored on what was read), is a `Warning`. `--strict` reads with
+  `LogRecovery.strict` and stops with status 3 on any damage, a truncated
+  tail included, before `metrics.json` and `metrics.md` are updated. Every
+  acceptance drive reads clean.
 - `--seed header`: each log's seed is derived from its header's `sessionID`
   (`NavigationSeed`), the seed the live app used.
 - `--as-live`: replay as the app ran live: file order, `--seed header` and the
