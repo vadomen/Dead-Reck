@@ -357,7 +357,7 @@ struct NavigationRoadTests {
         #expect(b.engine.estimate(at: S.ms(30))?.onRoadShare == nil)
     }
 
-    // MARK: 3. A road missing from OSM: NavigationRoadOffRoadTests (open)
+    // MARK: 3. A road missing from OSM: NavigationRoadOffRoadTests (known issue)
 
     // MARK: 4. A 15° fork
 
