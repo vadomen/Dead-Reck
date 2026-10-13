@@ -268,6 +268,11 @@ struct NavigationReplayRoadTests {
         #expect(m.truth == ["noRoad": 110] && m.scored == 0 && m.wrongShare == nil)
         #expect(m.fixes.allSatisfy { abs(($0.nearestEdgeM ?? 0) - 40) < 0.5 })
         #expect(m.unmappedWithEstimate == 110 && m.unmappedCaptured == 91)
+        // R23.1-1: far fixes with a usable course (truth noRoad) take the
+        // distance reason, and so does their captured split.
+        #expect(m.unmappedNoRoadWithin15 == 110 && m.unmappedNoCompatibleRoadWithin15 == 0)
+        #expect(m.unmappedCapturedNoRoadWithin15 == 91 && m.unmappedCapturedNoCompatibleRoadWithin15 == 0)
+        #expect(m.fixes.allSatisfy { $0.unmapped && $0.unmappedReason == .noRoadWithin15 })
         for fix in m.fixes {
             if fix.t < 26.5 {
                 #expect(fix.onRoadShare == 0 && fix.matchedEdge == nil && fix.captured == false, "t \(fix.t)")
@@ -524,6 +529,51 @@ struct NavigationReplayRoadTests {
         let unmapped = m.fixes.filter(\.unmapped)
         #expect(m.unmapped == unmapped.count && m.unmapped >= ahead.count && m.unmapped < m.withheldCleanFixes - south.count + 1)
         #expect(m.unmappedNoRoadWithin15 == 0 && m.unmappedNoCompatibleRoadWithin15 == m.unmapped)
+    }
+
+    /// R23.1-1: a non-zero captured split. The engine is on the street
+    /// along x = 0 (long ellipse along it, narrow across, as R22.1-3).
+    /// Three withheld clean fixes, all with the car's course (north) and
+    /// all far outside the ellipse, so all three are captured: at t 30 and
+    /// t 35, 200 m east, 5 m from a southbound oneway at x = 205 (no
+    /// heading-compatible road within 15 m); at t 40, 400 m east, no edge
+    /// within the search radius (> 15 m from every edge). Split 1 + 2, so a
+    /// swap of the two counters shows.
+    @Test("Item 2 (R23.1-1): captured follows the widened set, split by reason: 1 far + 2 incompatible")
+    func capturedSplitByReason() throws {
+        typealias N = RoadFixture.Node
+        let net = try RoadNetwork(packs: [RoadFixture.build([
+            R.street(1, from: (0, -3000), to: (0, 3000)),
+            RoadFixture.way(2, ["highway": "residential", "oneway": "yes"],
+                            [N(id: 20, east: 205, north: 3000), N(id: 21, east: 205, north: -3000)]),
+        ])])
+        let drive = R.northDrive(seconds: 60)
+        let clean = S.cleanFix(positionNoise: 0)
+        let inputs = R.shifted(drive, by: (0, -500), fix: { t, state, rng in
+            guard var f = clean(t, state, &rng) else { return nil }
+            if t <= 10 { return f }
+            if S.at(t, 30) || S.at(t, 35) { f.east += 200; return f }
+            if S.at(t, 40) { f.east += 400; return f }
+            return nil
+        })
+        var options = Self.options(roads: net)
+        options.config.alongTrackNoisePerSqrtM = 6
+        let result = NavigationReplay.run(logName: "synthetic", inputs: inputs, options: options)
+        let m = try #require(result.roadMetrics)
+        try #require(m.fixes.count == 3)
+        #expect(m.fixes.map(\.truth) == [.noRoad, .noRoad, .noRoad])
+        #expect(m.fixes.map(\.unmappedReason) == [.noCompatibleRoadWithin15, .noCompatibleRoadWithin15, .noRoadWithin15])
+        #expect(abs((m.fixes[0].nearestEdgeM ?? 0) - 5) < 0.5 && abs((m.fixes[1].nearestEdgeM ?? 0) - 5) < 0.5)
+        #expect(m.fixes[2].nearestEdgeM == nil)
+        for fix in m.fixes {
+            #expect((fix.onRoadShare ?? 0) >= 0.5 && fix.matchedEdge?.osmWayID == 1, "t \(fix.t)")
+            #expect((fix.crossTrackSemiAxisM ?? .infinity) < 25 && fix.inside95 == false, "t \(fix.t)")
+            #expect(fix.captured == true, "t \(fix.t)")
+        }
+        #expect(m.unmapped == 3 && m.unmappedNoRoadWithin15 == 1 && m.unmappedNoCompatibleRoadWithin15 == 2)
+        #expect(m.unmappedCaptured > 0 && m.unmappedCaptured == 3)
+        #expect(m.unmappedCapturedNoRoadWithin15 == 1 && m.unmappedCapturedNoCompatibleRoadWithin15 == 2)
+        #expect(ReplayReport.summary(result).contains("captured 3 (1 + 2)"))
     }
 
     /// The southbound oneway 10 m east again. Withheld fixes with a usable
