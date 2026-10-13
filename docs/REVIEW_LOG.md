@@ -231,3 +231,20 @@ Verified clean: Steps 0–5 against the plan (update timing, Δs, split, L_off, 
 | R21.3-6 | MINOR | `invalidReason`'s doc (`NavigationConfig.swift:472-476`) says a replay reports invalid keys first, but `replay_nav` never checks it: `--set roadAlongTrackCoupling=2` traps at engine init. | DEFERRED | BACKLOG |
 
 Tests: Core passes 762 tests in 106 suites, 39 known issues (all test 3). No App change. Tests only this round (plus two test comments and one display name); replay outputs equal round 1's.
+
+### Round 4
+
+Reviewers: two fresh `reviewer` agents (opus): engine sources and docs; matcher and tests. Result: 0 BLOCKER / 1 MAJOR / 3 MINOR. Mutations: 6 run. Engine: split eigenvector angle mirrored, minor axis never split, `cloudSemiMajorM` without the spread of means: all survived. Matcher: signed dot for two-way roads in the heading likelihood and two-way heading gate removed: killed (by `twoPacks` and `levelForgetting`, not by targeted tests); Step 2 radius guard removed: survived.
+
+Verified clean: the round-3 tests catch their mutations (read against the code); engine, config and estimate against the plan; road state through reseed, reset and resample; validation; Swift 6 (no `@unchecked`, no `Date()`); Core imports; privacy; no-roads replay of jammed seed 4 byte-identical to N3.0.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R21.4-1 | MAJOR | The Step 1 split's geometry (`NavigationEngine.swift:1415-1436`) is untested: every numeric road test sets `roadSplitSigmaM` 1000, and tests 4, 7, 12 check only outcomes; a mirrored eigenvector angle and a never-split minor axis both pass every test, and either would corrupt the mixture on every road update of a correlated cloud. | CONFIRMED | Verified (no test checks split moments or P). Code correct by inspection. Round 4 is the last round: loop stopped, user asked. |
+| R21.4-2 | MINOR | `cloudSemiMajorM`'s spread-of-means term untested. | DEFERRED | BACKLOG |
+| R21.4-3 | MINOR | Step 2 radius guard untested (matters only with `roadSplitSigmaM` above about 15). | DEFERRED | BACKLOG |
+| R21.4-4 | MINOR | NAVIGATION.md configuration table lacks the road keys. | DEFERRED | BACKLOG |
+
+Tests: Core passes 762 tests in 106 suites, 39 known issues (all test 3). No App change.
+
+**Loop stopped after round 4 with one MAJOR (R21.4-1, a missing test of correct code): the user decides.**
