@@ -291,9 +291,14 @@ Every engine change is judged on the replay set first and goes through `/review-
 
 ## Rules for the orchestrator
 - **Model.** The main session runs on Sonnet by default. Switch to Opus (`/model`) only to verify review findings (CONFIRMED / REJECTED) or to judge an adoption-rule verdict yourself (docs/NAVIGATION.md), then switch back. Engineer agents and the reviewer stay on Opus with effort high (their frontmatter); `ios-ui-engineer`, `drive-analyst` and `docs-editor` run on Sonnet.
+- **Delegate by default.** Code and analysis work goes to the owning agent: `navigation-engineer` (Core/Navigation, Replay, replay_nav, Roads, RoadPackBuild, tools/roads), `sensors-logging-engineer` (clock, log, sensors, RecordingSession), `elm-ble-engineer` (ELM327/OBD/BLE), `ios-ui-engineer` (App UI), `drive-analyst` (recordings), `docs-editor` (docs).
+  - Give the agent a self-contained brief: files to read, goal, exit criteria, memory limits.
+  - Take back a short result: what changed, commits, test counts, numbers, open decisions.
+- **The main session itself only** plans the step, asks me decisions, runs the final test/build check, verifies review findings, commits and merges. It does not read large source files or run replay grids itself; it reads the agent's summary.
+- **API limit.** If an agent stops on an API limit, start a fresh one with a brief that says "resume from the last commit on <branch>".
 - **Archive.** `docs/archive/` is history: read it only on demand, never as default context for an agent. When a backlog row closes (DONE, FIXED, SUPERSEDED, OBSOLETE), move it to `docs/archive/BACKLOG-closed.md` unchanged; superseded NAVIGATION result tables go to `docs/archive/NAVIGATION-history.md`.
 - **Docs-only work goes to `docs-editor`**, not `navigation-engineer` or another engineer: wording fixes, ledger/backlog row moves, plan text. It has no shell, so you run tests and commit.
-- **One agent at a time in the main working tree.** Parallel sessions each get their own git worktree: `git worktree add ../dead-reck-<task> -b <task>`.
+- **One engineer agent at a time in the main working tree.** Parallel sessions each get their own git worktree: `git worktree add ../dead-reck-<task> -b <task>`.
   - Merge them one at a time.
   - Run `cd Core && swift test` after each merge, plus the simulator build if `App/` changed.
   - Remove the worktree and branch once merged.
