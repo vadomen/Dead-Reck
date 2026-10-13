@@ -34,6 +34,17 @@ struct AppInfo: Hashable, Sendable {
         "\(version) (\(build))"
     }
 
+    /// "Debug" or "Release", for the Settings diagnostics.
+    static func configurationName(isDebug: Bool) -> String { isDebug ? "Debug" : "Release" }
+
+    static var configuration: String {
+        #if DEBUG
+        configurationName(isDebug: true)
+        #else
+        configurationName(isDebug: false)
+        #endif
+    }
+
     var identity: AppIdentity {
         AppIdentity(name: name, version: version, build: build)
     }
