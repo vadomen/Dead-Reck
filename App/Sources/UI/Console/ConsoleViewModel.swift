@@ -186,6 +186,13 @@ final class ConsoleViewModel {
 
     func confirmPendingChange() {
         guard let change = pendingChange else { return }
+        confirm(change)
+    }
+
+    /// Performs `change`, which the dialog captured when it was presented, so
+    /// it works whether SwiftUI clears `isLinkChangeConfirmationPresented`
+    /// (and with it `pendingChange`) before or after the button action runs.
+    func confirm(_ change: LinkChange) {
         pendingChange = nil
         switch change {
         case .disconnect: link.disconnect()

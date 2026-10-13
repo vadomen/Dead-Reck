@@ -401,6 +401,18 @@ struct ConsoleGatingTests {
         }
     }
 
+    @Test("The dialog's captured change is performed even after SwiftUI cleared the pending state first (R25.1-1)")
+    func confirmCapturedChange() {
+        let (model, link) = make(.recording)
+        model.disconnect()
+        let captured = model.pendingChange
+        #expect(captured == .disconnect)
+        model.isLinkChangeConfirmationPresented = false   // the setter runs before the button action
+        #expect(model.pendingChange == nil)
+        model.confirm(.disconnect)
+        #expect(link.disconnectCalls == 1)
+    }
+
     @Test("While recording, connecting to a different adapter needs confirmation; the targeted one is harmless")
     func connectWhileRecording() {
         let (model, link) = make(.recording)

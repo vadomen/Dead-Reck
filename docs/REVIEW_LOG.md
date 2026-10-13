@@ -408,3 +408,41 @@ Tests: Core passes 799 tests in 109 suites, 39 known issues (all test 3). App: 2
 - **Rounds:** 1; no BLOCKER or MAJOR, loop stopped.
 - **Findings:** 0 fixed, 0 rejected, 2 MINOR deferred (R25.1-1, R25.1-2), both scheduled with UX-6.
 - **Final tests:** Core 799 / 109 pass, 39 known issues; App 262 / 41 pass.
+
+## Run 26: UX-6 speed-dependent zoom, R24.1-1, R25.1-1..2 (main..ux-map, 7f3066b..09a505a), started 2026-10-13
+
+R24.1-1 (4e297ba): GPS speed freshness 3 s, OBD 2 s (user decision). R25.1-1/R25.1-2 (173ecac): map Stop and Console Drop OBD dialogs independent of dismiss order; PLAN §6 wording. UX-6 (e522e97, 09a505a): `AutoZoom` (table 250/500/900/1500 m, 3 s log-distance low-pass, zoom-in after 6 s with a 3 % deadband, hold without speed, pitch 0) wired into `FollowZoom` and the map loop. App/ and AppTests/ only. Branch: `ux-map`.
+
+### Round 1
+
+Reviewer: one fresh `reviewer` (opus). Result: 0 BLOCKER / 1 MAJOR / 2 MINOR. No mutations (no Core logic); the reviewer compiled the real `FollowZoom`, `FollowSpan`, `AutoZoom` and `MapFraming` sources into a Mac harness.
+
+Verified clean: no auto-zoom fight with the driver (every gesture pauses Following, every resume path recentres); north-up GPS-only writes do not loop; region frames disable zoom writes until the next follow write; `FollowSpan` only widens; AutoZoom smoothing and dwell independent of step size, dt 0/NaN no-ops, NaN or negative speed → 250 m, edges at 20 and 110 km/h, monotonic `ContinuousClock`; the 8 s auto-resume limit on a pinch is described accurately in BACKLOG_UX and PLAN §6; map Stop safe in any dismiss order; Console's captured `LinkChange` harmless after the recording ends; R24.1-1 changes only GPS freshness; pbxproj adds only file refs; PLAN §6 UX-6 marked not verified; privacy.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R26.1-1 | MAJOR | `FollowZoom.autoWantsWrite` (`MapNavigation.swift:322-325`) compares `auto.distance` with the ellipse-widened `writtenDistance` (`:341`): in heading-up with an ellipse wider than the auto distance, a camera write with a 0.25 s animation fires every 100 ms (harness: 100/100 ticks), bypassing the 4 Hz `NavWriteGate`, for as long as the ellipse is grown. | FIXED | Verified against `MapNavigation.swift:322-341` and `MapView.swift:645-668`. `autoWantsWrite(headingUp:semiMajorM:)` compares the widened auto distance with `writtenDistance`; test "A constant widened write is not drift…" in `FollowZoomPrecedenceTests` fails on the old comparison (100 issues, one per tick) and passes after; a growing ellipse still writes. |
+| R26.1-2 | MINOR | Docs say the auto zoom passes a 300 m span from about 80 km/h; it is about 55 km/h, and the 6 s dwell keeps it after slowing. | DEFERRED | BACKLOG |
+| R26.1-3 | MINOR | BACKLOG_UX UX-5 row still says the chip goes grey after 2 s; it is 3 s. | DEFERRED | BACKLOG |
+
+Tests: Core passes 799 tests in 109 suites, 39 known issues (all test 3). App: 276 tests in 43 suites pass on the iPhone 15 Pro simulator.
+
+### Round 2
+
+Reviewer: one fresh `reviewer` (opus). Result: 0 BLOCKER / 0 MAJOR / 3 MINOR. No mutations (no Core logic); a Mac harness built from the real `FollowSpan`, `FollowZoom`, `AutoZoom` and `MapFraming` sources measured write rates per mode.
+
+Verified clean: the R26.1-1 fix is complete (`cameraReported`, `writtenDistance` and `recentWrites` all hold the widened distance; north-up unwidened on both sides; a shrinking ellipse, heading-up off and a lost estimate still write; NaN semi-major falls back to the speed distance); steady-state zoom writes are 0 in every mode, so the steady rate is bounded by the published writes (≤ 4/s); R24.1-1 and R25.1-1/2 unchanged; privacy.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R26.2-1 | MINOR | Zoom-only writes skip the 4 Hz `NavWriteGate` while the zoom ramps (up to 9–10/s for ~3 s), contradicting PLAN §6 N4 check 1. | DEFERRED | BACKLOG |
+| R26.2-2 | MINOR | No test expects `autoWantsWrite` true when the wanted distance falls; dropping `abs` survives. | DEFERRED | BACKLOG |
+| R26.2-3 | MINOR | `FollowZoom.followDistance` is unused by the app but still tested; PLAN §6 N4 item 3 describes its old behaviour. | DEFERRED | BACKLOG |
+
+Tests: Core passes 799 tests in 109 suites, 39 known issues (all test 3). App: 276 tests in 43 suites pass on the iPhone 15 Pro simulator.
+
+### Run 26 summary
+
+- **Rounds:** 2. Round 2 found no BLOCKER or MAJOR; loop stopped.
+- **Findings:** 1 MAJOR fixed with a regression test (R26.1-1: 10 Hz camera writes in heading-up with a wide ellipse); 0 rejected; 5 MINOR deferred (R26.1-2..3, R26.2-1..3).
+- **Final tests:** Core 799 / 109 pass, 39 known issues; App 276 / 43 pass.

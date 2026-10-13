@@ -45,11 +45,17 @@ struct MapSpeedRuleTests {
         #expect(MapSpeedRule.resolve(obdKmh: .nan, obdAgeS: 0, fix: nil, fixAgeS: nil).source == .none)
     }
 
-    @Test("GPS: same 2 s freshness, boundary included; stale fix gives none")
+    @Test("GPS: 3 s freshness (OBD stays 2 s), boundary included; stale fix gives none")
     func gpsFreshness() {
-        #expect(MapSpeedRule.resolve(obdKmh: nil, obdAgeS: nil, fix: fix(), fixAgeS: 2.0).source == .gps)
-        let stale = MapSpeedRule.resolve(obdKmh: nil, obdAgeS: nil, fix: fix(), fixAgeS: 2.001)
+        #expect(MapSpeedRule.resolve(obdKmh: nil, obdAgeS: nil, fix: fix(), fixAgeS: 2.5).source == .gps)
+        #expect(MapSpeedRule.resolve(obdKmh: nil, obdAgeS: nil, fix: fix(), fixAgeS: 3.0).source == .gps)
+        let stale = MapSpeedRule.resolve(obdKmh: nil, obdAgeS: nil, fix: fix(), fixAgeS: 3.5)
         #expect(stale == .none)
+        #expect(MapSpeedRule.maxOBDAgeS == 2)
+        #expect(MapSpeedRule.maxGPSAgeS == 3)
+        // A fix older than OBD's 2 s but within 3 s still colours the chip.
+        let mid = MapSpeedRule.resolve(obdKmh: 54, obdAgeS: 0, fix: fix(accuracy: 8), fixAgeS: 2.5)
+        #expect(mid.quality == .good)
         #expect(MapSpeedRule.resolve(obdKmh: nil, obdAgeS: nil, fix: fix(), fixAgeS: nil) == .none)
     }
 
@@ -117,7 +123,7 @@ struct MapSpeedRuleTests {
         #expect(good.quality == .good)
         let jammed = MapSpeedRule.resolve(obdKmh: 54, obdAgeS: 0, fix: fix(accuracy: 400), fixAgeS: 0.5)
         #expect(jammed.quality == .unknown)
-        let stale = MapSpeedRule.resolve(obdKmh: 54, obdAgeS: 0, fix: fix(accuracy: 8), fixAgeS: 3)
+        let stale = MapSpeedRule.resolve(obdKmh: 54, obdAgeS: 0, fix: fix(accuracy: 8), fixAgeS: 3.5)
         #expect(stale.quality == .unknown)
         let none = MapSpeedRule.resolve(obdKmh: 54, obdAgeS: 0, fix: nil, fixAgeS: nil)
         #expect(none.quality == .unknown)

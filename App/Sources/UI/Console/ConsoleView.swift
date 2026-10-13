@@ -20,13 +20,14 @@ struct ConsoleScreen: View {
             commandText: $model.commandText,
             isForgetConfirmationPresented: $model.isForgetConfirmationPresented,
             isLinkChangeConfirmationPresented: $model.isLinkChangeConfirmationPresented,
+            pendingLinkChange: model.pendingChange,
             actions: .init(
                 scan: model.scan,
                 stopScan: model.stopScan,
                 connect: model.connect,
                 disconnect: model.disconnect,
                 forget: model.forget,
-                confirmLinkChange: model.confirmPendingChange,
+                confirmLinkChange: model.confirm,
                 reinitialise: model.reinitialise,
                 send: { model.send($0) }
             )
@@ -40,7 +41,7 @@ struct ConsoleActions {
     var connect: (UUID) -> Void = { _ in }
     var disconnect: () -> Void = {}
     var forget: () -> Void = {}
-    var confirmLinkChange: () -> Void = {}
+    var confirmLinkChange: (LinkChange) -> Void = { _ in }
     var reinitialise: () -> Void = {}
     /// nil sends the text field's content.
     var send: (String?) -> Void = { _ in }
@@ -62,6 +63,8 @@ struct ConsoleContent: View {
     @Binding var commandText: String
     @Binding var isForgetConfirmationPresented: Bool
     @Binding var isLinkChangeConfirmationPresented: Bool
+    /// What the dialog confirms, captured when it is presented.
+    var pendingLinkChange: LinkChange?
     var actions = ConsoleActions()
 
     /// Pushed inside Settings' navigation stack (UX-4), which owns the title bar.
@@ -83,10 +86,10 @@ struct ConsoleContent: View {
                 ? "The app will stop reconnecting to it. \(ConsoleText.recordingWarning)"
                 : "The app will stop reconnecting to it. You can pick it again from a scan.")
         }
-        .confirmationDialog("Drop the OBD connection?", isPresented: $isLinkChangeConfirmationPresented, titleVisibility: .visible) {
-            Button("Drop OBD", role: .destructive, action: actions.confirmLinkChange)
+        .confirmationDialog("Drop the OBD connection?", isPresented: $isLinkChangeConfirmationPresented, titleVisibility: .visible, presenting: pendingLinkChange) { change in
+            Button("Drop OBD", role: .destructive) { actions.confirmLinkChange(change) }
             Button("Keep connection", role: .cancel) {}
-        } message: {
+        } message: { _ in
             Text(ConsoleText.recordingWarning)
         }
     }
