@@ -290,7 +290,8 @@ OSM way ID), from the last road update. Both are nil without roads.
 - Every replay result records:
   - the seed and config;
   - **`roads`**: per pack, `contentHash`, `formatVersion`, OSM timestamp and grid ID;
-  - `roadSetHash`: FNV-1a 64 over the packs' content hashes in load order.
+  - `roadSetHash`: FNV-1a 64 over the packs' content hashes in ascending order (N3.2c
+    item 7: the set, not the order given).
 
   These go into `metrics.json` (optional field, so older files decode), `metrics.md`, the
   summary and the GeoJSON properties. The mode label gets `-roads-<first 8 hex of
@@ -405,7 +406,7 @@ UInt64, length UInt64. Entries are sorted by offset, non-overlapping and inside 
     - It is harder to memory-map and to keep bit-stable across builder versions.
 - **Duplicates across packs:** each segment's key is (osmWayID, wayPointOffset + k). It
   is the same in every pack because extracts use `--strategy complete_ways`. The first
-  loaded pack wins.
+  pack in canonical order (ascending content hash; N3.2c item 7) wins.
 - **Versioning:**
   - A reader refuses a newer `formatVersion`.
   - Unknown section tags are skipped, so an optional section needs no version bump.
@@ -548,9 +549,17 @@ Since the double tap, a pin can be placed at any speed. Its row records `obdSpee
   Reported per drive as a share of scored fixes (≈ time at 1 Hz) and of OBD distance (each
   scored fix weighs the OBD distance since the previous fix with a usable course).
   It checks capture onto a wrong *mapped* road only (R21.1-11).
-- **Unmapped / captured (R21.1-11):** an "unmapped" truth fix is a withheld clean fix
-  more than 15 m from every edge of the loaded packs (any heading). Per drive: how many,
-  and for each whether the estimate was **captured**: on a mapped edge (`onRoadShare` ≥ 0.5
+- **Unmapped / captured (R21.1-11, widened in N3.2c item 2):** an "unmapped" truth fix
+  is a withheld clean fix with no heading-compatible edge of the loaded packs within
+  15 m. Two disjoint cases, reported separately so the R21.1-11 figure stays visible:
+  - `noRoadWithin15`: more than 15 m from every edge, any heading (the R21.1-11 rule);
+  - `noCompatibleRoadWithin15`: an edge lies within 15 m, but with a usable course none
+    within 15 m passes the road truth's course gate (road truth "no road"). This is the
+    car-park and service-road case.
+
+  A fix with no usable course keeps the distance-only rule, so the widening never drops
+  a fix. Per drive: how many, and for each whether the estimate was **captured**
+  (same widened set, same split): on a mapped edge (`onRoadShare` ≥ 0.5
   with a `matchedEdge`) with the 95 % ellipse's half-width across that edge < 25 m, and the
   truth outside the 95 % ellipse (engine ellipse).
 - **Road residuals:** the cross-track distance of clean fixes to their truth edge, p50 and
@@ -729,6 +738,13 @@ stay bit-identical):
     NavigationRoadPerfTests` on a synthetic 100 m street grid over 10 km² with 2000
     particles. It asserts the Mac proxies: road-update step ≤ 0.5 ms mean, ≤ 1.5 ms max. A
     debug run checks only `roadCandidateTests` per particle ≤ 64.
+    - As built (N3.2c item 6): 32 × 32 blocks (10.24 km², 100 m segments, shared crossing
+      nodes); 600 s round a 1 km square at 12 m/s, clean fixes for 20 s only; each
+      `ingest` that carries a full road update is timed. Release, 3 runs: 600 road
+      updates, 6.9 candidate tests per particle, mean 0.366–0.369 ms, max 0.650–0.765 ms.
+      Debug: 40 s, 9.5 per particle, under 1 s. The grid is lighter than the real drives
+      (15–33 candidates per particle), so it guards against regressions; it does not
+      replace the replay-set ms/step proxy.
 
 **Experiments** (seeds 1–5, pre-declared grids, never tuned toward manual-3):
 - `roadSigmaM` from the measured residuals, then {5, 7, 10};
@@ -741,6 +757,10 @@ stay bit-identical):
 - fix gate on and off.
 
 Each is reported as a table against N3.0.
+Measured in N3.2d (2026-10-13; docs/NAVIGATION.md, "N3.2d: pre-declared grids"). No config was
+chosen and the choice is open for the user. No single value passes clean and clean-long against N3.0. drive-7's
+consistency fails against N3.0 for every value. The residual-derived `roadSigmaM` is 3.0 m (RMS; the
+fix-error subtraction gave none).
 
 **Exit:**
 - Without `--roads`, the 30 acceptance runs are bit-identical to N3.0: every `metrics.json`

@@ -23,9 +23,10 @@ import RoadPackBuild
 //
 // --info prints the header, counts, sections, META, the hash check and the
 // cell statistics; --bench adds seeded lookup statistics (candidates per
-// lookup, ns per lookup). --network loads the packs together in the given
-// order (same grid ID required) and prints roadSetHash and how many of each
-// later pack's segments the earlier packs shadow (de-duplication). Packs
+// lookup, ns per lookup). --network loads the packs together (same grid ID
+// required; any order: the network sorts them by content hash) and prints
+// roadSetHash and, in that canonical order, how many of each later pack's
+// segments the earlier packs shadow (de-duplication). Packs
 // and their META can reveal where someone
 // drives: keep them in the git-ignored osm/.
 //
@@ -156,8 +157,13 @@ if let path = options["--info"] {
 if flags.contains("--network") {
     guard !positional.isEmpty, options.isEmpty else { fail(usage, status: 2) }
     let network: RoadNetwork
+    // The network's packs are in content-hash order, not the order given:
+    // each is named by its own file.
+    var fileName: [UInt64: String] = [:]
     do {
-        network = try RoadNetwork(packs: positional.map { try RoadPack(contentsOf: URL(fileURLWithPath: $0)) })
+        let packs = try positional.map { try RoadPack(contentsOf: URL(fileURLWithPath: $0)) }
+        for (pack, path) in zip(packs, positional) { fileName[pack.contentHash] = URL(fileURLWithPath: path).lastPathComponent }
+        network = try RoadNetwork(packs: packs)
     } catch {
         fail("\(error)", status: 4)
     }
@@ -174,7 +180,7 @@ if flags.contains("--network") {
                 }
             }
         }
-        print("  [\(p)] \(URL(fileURLWithPath: positional[p]).lastPathComponent): contentHash \(NavigationSeed.hex(pack.contentHash)), segments \(pack.segmentCount), shadowed by earlier packs \(shadowed)")
+        print("  [\(p)] \(fileName[pack.contentHash] ?? "?"): contentHash \(NavigationSeed.hex(pack.contentHash)), segments \(pack.segmentCount), shadowed by earlier packs \(shadowed)")
     }
     exit(0)
 }

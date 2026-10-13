@@ -22,7 +22,7 @@ import Foundation
 /// Data: © OpenStreetMap contributors, ODbL 1.0.
 struct RoadMatcher: Sendable {
     let network: RoadNetwork
-    /// First global edge index of each pack (load order), and the total.
+    /// First global edge index of each pack (canonical order), and the total.
     let edgeBase: [Int]
     let cacheCapacity: Int
 

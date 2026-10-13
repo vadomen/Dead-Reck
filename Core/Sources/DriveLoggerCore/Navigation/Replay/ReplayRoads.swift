@@ -5,9 +5,10 @@ import Foundation
 //
 // Data: © OpenStreetMap contributors, ODbL 1.0.
 
-/// The road network a replay gives its engine (`replay_nav --roads`, in
-/// load order). Two road sets are equal when their packs' content hashes
-/// are, in the same order: the identity a result records.
+/// The road network a replay gives its engine (`replay_nav --roads`).
+/// Two road sets are equal when they hold the same packs (content hashes),
+/// in whatever order they were passed: the network keeps them in canonical
+/// order (ascending content hash), the identity a result records.
 public struct ReplayRoadSet: Hashable, Sendable {
     public let network: RoadNetwork
 
@@ -23,10 +24,12 @@ public struct ReplayRoadSet: Hashable, Sendable {
         hasher.combine(network.roadSetHash)
     }
 
-    /// Per pack, in load order: what a result records.
+    /// Per pack, in canonical order (ascending content hash): what a
+    /// result records.
     public var packs: [ReplayRoadPack] { network.packs.map(ReplayRoadPack.init) }
 
-    /// FNV-1a 64 over the packs' content hashes in load order, 16 hex digits.
+    /// FNV-1a 64 over the packs' content hashes in ascending order, 16 hex
+    /// digits.
     public var roadSetHashHex: String { network.roadSetHashHex }
 
     /// The mode label's suffix: `roads-` and the first 8 hex digits of
@@ -103,8 +106,11 @@ extension NavigationReplay {
         public static let viterbiAmbiguousShare = 0.2
         /// The engine is "off" road below this `onRoadShare`.
         public static let onRoadShare = 0.5
-        /// A withheld clean fix farther than this from every edge (any
-        /// heading) is "unmapped" (R21.1-11).
+        /// A withheld clean fix is "unmapped" (`UnmappedReason`) when no
+        /// edge of any heading lies within this many metres (R21.1-11), or,
+        /// with a usable course, when none within it is heading-compatible
+        /// (N3.2c item 2). A fix with no usable course keeps the distance
+        /// rule alone, so the widening never drops a fix.
         public static let unmappedDistanceM = 15.0
         /// The truth is on a road only within this many metres of its
         /// best heading-compatible edge (the same 15 m): a fix 40 m beside
@@ -138,6 +144,28 @@ public enum RoadTruthStatus: String, Hashable, Sendable, Codable {
     case noRoad
     /// No usable course (invalid, or under `RoadTruth.courseMinSpeedMps`).
     case noCourse
+}
+
+/// Why a withheld clean fix is unmapped (`RoadTruth.unmappedDistanceM`).
+/// The two are disjoint; their sum is `ReplayRoadMetrics.unmapped`.
+public enum UnmappedReason: String, Hashable, Sendable, Codable {
+    /// Farther than 15 m from every edge, any heading (R21.1-11). The only
+    /// rule for a fix with no usable course.
+    case noRoadWithin15
+    /// An edge lies within 15 m, but with a usable course none within 15 m
+    /// is heading-compatible (road truth `noRoad`; N3.2c item 2): a car
+    /// park or service road beside a mapped edge of another heading.
+    case noCompatibleRoadWithin15
+
+    /// The reason for a fix, from its road truth and its nearest edge of
+    /// any heading; nil when the fix is not unmapped.
+    public static func of(truth: RoadTruthStatus, nearestEdgeM: Double?) -> UnmappedReason? {
+        typealias T = NavigationReplay.RoadTruth
+        if (nearestEdgeM ?? .infinity) > T.unmappedDistanceM { return .noRoadWithin15 }
+        // `noRoad`: a usable course and no heading-compatible edge within
+        // `onRoadMaxM` (the same 15 m). `noCourse` never gets here.
+        return truth == .noRoad ? .noCompatibleRoadWithin15 : nil
+    }
 }
 
 /// The engine against the road truth at one withheld clean fix.
@@ -180,8 +208,13 @@ public struct ReplayRoadFix: Hashable, Sendable, Codable {
     public var matchedEdgeDistanceM: Double?
     /// Set when the truth is `matched` and the engine had an estimate.
     public var verdict: WrongRoadVerdict?
-    /// Farther than `RoadTruth.unmappedDistanceM` from every edge (R21.1-11).
+    /// `unmappedReason != nil`: no edge within `RoadTruth.unmappedDistanceM`
+    /// (R21.1-11), or no heading-compatible one with a usable course (N3.2c
+    /// item 2). Files written before item 2 have the first rule only.
     public var unmapped = false
+    /// Which rule made the fix unmapped; nil (absent) when it is not, and in
+    /// files written before N3.2c item 2.
+    public var unmappedReason: UnmappedReason?
     /// The 95 % ellipse's half-width across `matchedEdge` at the estimate.
     public var crossTrackSemiAxisM: Double?
     /// The truth inside the engine's 95 % ellipse.
@@ -241,11 +274,19 @@ public struct ReplayRoadMetrics: Hashable, Sendable, Codable {
     public var wrongShareByDistance: Double?
     public var offShare: Double?
     public var offShareByDistance: Double?
-    /// R21.1-11: withheld clean fixes farther than 15 m from every edge, how
-    /// many of those had an estimate, and how many of those were captured.
+    /// Unmapped withheld clean fixes (`UnmappedReason`), how many of those
+    /// had an estimate, and how many of those were captured. Before N3.2c
+    /// item 2 these counted fixes > 15 m from every edge only.
     public var unmapped = 0
     public var unmappedWithEstimate = 0
     public var unmappedCaptured = 0
+    /// N3.2c item 2: `unmapped` and `unmappedCaptured` by reason, so the
+    /// R21.1-11 figure (`noRoadWithin15`) stays visible. nil (absent) in
+    /// files written before item 2.
+    public var unmappedNoRoadWithin15: Int?
+    public var unmappedNoCompatibleRoadWithin15: Int?
+    public var unmappedCapturedNoRoadWithin15: Int?
+    public var unmappedCapturedNoCompatibleRoadWithin15: Int?
     /// Offline: cross-track distance of every clean fix (used or withheld,
     /// usable course, matched truth) to its truth edge, per highway class
     /// and over all. Censored at `RoadTruth.onRoadMaxM` (15 m).

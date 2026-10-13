@@ -46,7 +46,7 @@ struct NavigationReplayRoadTests {
         #expect(options.label == "use-holdout-100-as-live")
     }
 
-    @Test("ReplayRoadSet: equal by the packs' content hashes in load order; records hash, version, OSM time and grid per pack")
+    @Test("ReplayRoadSet: equal by the set of the packs' content hashes, in any order; records hash, version, OSM time and grid per pack")
     func roadSetIdentity() throws {
         let aData = try RoadFixture.buildData([R.street(1, from: (0, -300), to: (0, 300))])
         let a = try RoadPack(data: aData)
@@ -55,10 +55,13 @@ struct NavigationReplayRoadTests {
         let ab2 = ReplayRoadSet(try RoadNetwork(packs: [try RoadPack(data: aData), b]))
         let ba = ReplayRoadSet(try RoadNetwork(packs: [b, a]))
         #expect(ab == ab2 && ab.hashValue == ab2.hashValue)
-        #expect(ab != ba && ab.roadSetHashHex != ba.roadSetHashHex)
-        #expect(ab.packs.map(\.contentHash) == [NavigationSeed.hex(a.contentHash), NavigationSeed.hex(b.contentHash)])
+        // N3.2c item 7: the order given is not part of the identity.
+        #expect(ab == ba && ab.hashValue == ba.hashValue && ab.roadSetHashHex == ba.roadSetHashHex)
+        #expect(ab.labelSuffix == ba.labelSuffix && ab.packs == ba.packs)
+        #expect(ab.packs.map(\.contentHash) == [a.contentHash, b.contentHash].sorted().map(NavigationSeed.hex))
+        #expect(ab != ReplayRoadSet(try RoadNetwork(packs: [a])))
         #expect(ab.packs.allSatisfy { $0.formatVersion == 1 && $0.gridID == NavigationSeed.hex(a.gridID) })
-        #expect(ab.packs[0].osmTimestamp == a.osmTimestamp)
+        #expect(ab.packs.allSatisfy { $0.osmTimestamp == a.osmTimestamp })
         #expect(ab.roadSetHashHex == NavigationSeed.hex(RoadPackFormat.roadSetHash([a.contentHash, b.contentHash])))
     }
 
@@ -265,6 +268,11 @@ struct NavigationReplayRoadTests {
         #expect(m.truth == ["noRoad": 110] && m.scored == 0 && m.wrongShare == nil)
         #expect(m.fixes.allSatisfy { abs(($0.nearestEdgeM ?? 0) - 40) < 0.5 })
         #expect(m.unmappedWithEstimate == 110 && m.unmappedCaptured == 91)
+        // R23.1-1: far fixes with a usable course (truth noRoad) take the
+        // distance reason, and so does their captured split.
+        #expect(m.unmappedNoRoadWithin15 == 110 && m.unmappedNoCompatibleRoadWithin15 == 0)
+        #expect(m.unmappedCapturedNoRoadWithin15 == 91 && m.unmappedCapturedNoCompatibleRoadWithin15 == 0)
+        #expect(m.fixes.allSatisfy { $0.unmapped && $0.unmappedReason == .noRoadWithin15 })
         for fix in m.fixes {
             if fix.t < 26.5 {
                 #expect(fix.onRoadShare == 0 && fix.matchedEdge == nil && fix.captured == false, "t \(fix.t)")
@@ -443,6 +451,155 @@ struct NavigationReplayRoadTests {
         #expect(wide.fixes.allSatisfy { ($0.crossTrackSemiAxisM ?? 0) > 28 && ($0.crossTrackSemiAxisM ?? 0) < 35 },
                 "\(wide.fixes.map(\.crossTrackSemiAxisM))")
         #expect(wide.fixes.allSatisfy { $0.captured == false } && wide.unmappedCaptured == 0)
+    }
+
+    // MARK: N3.2c item 2: unmapped also when no heading-compatible road lies within 15 m
+
+    /// A southbound oneway 10 m east of the car (x = 10), the only road; the
+    /// car drives north on x = 0. Every withheld clean fix has an edge
+    /// 10 m away, but against the oneway's direction: no heading-compatible
+    /// road within 15 m (truth noRoad), so unmapped.
+    static func southboundOneway(at x: Double = 10) throws -> RoadNetwork {
+        try RoadNetwork(packs: [RoadFixture.build([
+            RoadFixture.way(2, ["highway": "residential", "oneway": "yes"], [
+                RoadFixture.Node(id: 20, east: x, north: 3000), RoadFixture.Node(id: 21, east: x, north: -3000),
+            ]),
+        ])])
+    }
+
+    @Test("Item 2: a fix 10 m from an edge whose heading is incompatible (a oneway the other way) is unmapped")
+    func unmappedIncompatibleHeading() throws {
+        let result = Self.run(Self.splitInputs(usedEast: 0), roads: try Self.southboundOneway())
+        let m = try #require(result.roadMetrics)
+        #expect(m.withheldCleanFixes == 50 && m.truth == ["noRoad": 50])
+        #expect(m.fixes.allSatisfy { abs(($0.nearestEdgeM ?? 0) - 10) < 0.5 })
+        #expect(m.fixes.allSatisfy { $0.unmapped && $0.verdict == nil })
+        #expect(m.unmapped == 50 && m.unmappedWithEstimate == 50)
+        #expect(m.fixes.allSatisfy { $0.unmappedReason == .noCompatibleRoadWithin15 })
+        #expect(m.unmappedNoRoadWithin15 == 0 && m.unmappedNoCompatibleRoadWithin15 == 50)
+        // Captured follows the widened set; the split adds up.
+        #expect(m.unmappedCaptured == m.fixes.filter { $0.captured == true }.count)
+        #expect((m.unmappedCapturedNoRoadWithin15 ?? -1) + (m.unmappedCapturedNoCompatibleRoadWithin15 ?? -1) == m.unmappedCaptured)
+        #expect(m.unmappedCapturedNoRoadWithin15 == 0)
+        // Both sub-counts in the summary, metrics.md and metrics.json.
+        #expect(ReplayReport.summary(result).contains("Unmapped      50 withheld clean fixes with no heading-compatible road within 15 m"
+            + " (> 15 m from every edge 0 + only incompatible edges within 15 m 50; no usable course: distance only)"),
+                "\(ReplayReport.summary(result))")
+        #expect(ReplayReport.markdown([ReplayMetrics(result)]).contains(" | 50 (0 + 50) / \(m.unmappedCaptured) (0 + \(m.unmappedCaptured)) | "))
+        let row = try #require(try JSONSerialization.jsonObject(
+            with: ReplayReport.metricsJSON([ReplayMetrics(result)])) as? [[String: Any]])[0]
+        let road = try #require(row["roadMetrics"] as? [String: Any])
+        #expect(road["unmapped"] as? Int == 50 && road["unmappedNoRoadWithin15"] as? Int == 0
+            && road["unmappedNoCompatibleRoadWithin15"] as? Int == 50)
+        #expect(road["unmappedCapturedNoRoadWithin15"] as? Int == 0
+            && road["unmappedCapturedNoCompatibleRoadWithin15"] as? Int == m.unmappedCaptured)
+        #expect((road["fixes"] as? [[String: Any]])?.first?["unmappedReason"] as? String == "noCompatibleRoadWithin15")
+        // A row written before item 2 (no split, no reason) still decodes.
+        var old = road
+        for key in ["unmappedNoRoadWithin15", "unmappedNoCompatibleRoadWithin15", "unmappedCapturedNoRoadWithin15",
+                    "unmappedCapturedNoCompatibleRoadWithin15"] { old[key] = nil }
+        old["fixes"] = (road["fixes"] as? [[String: Any]])?.map { var f = $0; f["unmappedReason"] = nil; return f }
+        let decoded = try JSONDecoder().decode(ReplayRoadMetrics.self, from: JSONSerialization.data(withJSONObject: old))
+        #expect(decoded.unmapped == 50 && decoded.unmappedNoRoadWithin15 == nil && decoded.fixes.allSatisfy { $0.unmappedReason == nil })
+        #expect(ReplayReport.unmappedSplit(decoded.unmappedNoRoadWithin15, decoded.unmappedNoCompatibleRoadWithin15, " (%d + %d)") == "")
+    }
+
+    /// One drive past both cases: the road at x = 10 is two-way south of
+    /// north 0 (heading-compatible: the truth is matched, not unmapped) and
+    /// a southbound oneway north of it (incompatible: unmapped).
+    @Test("Item 2: along one drive, a compatible edge within 15 m is not unmapped and an incompatible one is")
+    func unmappedCompatibleVersusIncompatible() throws {
+        typealias N = RoadFixture.Node
+        let net = try RoadNetwork(packs: [RoadFixture.build([
+            RoadFixture.way(3, ["highway": "residential"], [N(id: 30, east: 10, north: -3000), N(id: 31, east: 10, north: 0)]),
+            RoadFixture.way(2, ["highway": "residential", "oneway": "yes"], [N(id: 20, east: 10, north: 3000), N(id: 31, east: 10, north: 0)]),
+        ])])
+        let m = try #require(Self.run(Self.splitInputs(usedEast: 0), roads: net).roadMetrics)
+        let north = { (fix: ReplayRoadFix) in -500 + 12 * fix.t }
+        let south = m.fixes.filter { north($0) < -20 }, ahead = m.fixes.filter { north($0) > 20 }
+        #expect(south.count >= 25 && ahead.count >= 15, "\(south.count) \(ahead.count)")
+        for fix in south {
+            #expect(fix.truth == .matched && fix.truthEdge?.osmWayID == 3, "t \(fix.t)")
+            #expect(!fix.unmapped && fix.unmappedReason == nil && fix.captured == nil, "t \(fix.t)")
+        }
+        for fix in ahead {
+            #expect(fix.truth == .noRoad && abs((fix.nearestEdgeM ?? 0) - 10) < 0.5, "t \(fix.t)")
+            #expect(fix.unmapped && fix.unmappedReason == .noCompatibleRoadWithin15 && fix.captured != nil, "t \(fix.t)")
+        }
+        let unmapped = m.fixes.filter(\.unmapped)
+        #expect(m.unmapped == unmapped.count && m.unmapped >= ahead.count && m.unmapped < m.withheldCleanFixes - south.count + 1)
+        #expect(m.unmappedNoRoadWithin15 == 0 && m.unmappedNoCompatibleRoadWithin15 == m.unmapped)
+    }
+
+    /// R23.1-1: a non-zero captured split. The engine is on the street
+    /// along x = 0 (long ellipse along it, narrow across, as R22.1-3).
+    /// Three withheld clean fixes, all with the car's course (north) and
+    /// all far outside the ellipse, so all three are captured: at t 30 and
+    /// t 35, 200 m east, 5 m from a southbound oneway at x = 205 (no
+    /// heading-compatible road within 15 m); at t 40, 400 m east, no edge
+    /// within the search radius (> 15 m from every edge). Split 1 + 2, so a
+    /// swap of the two counters shows.
+    @Test("Item 2 (R23.1-1): captured follows the widened set, split by reason: 1 far + 2 incompatible")
+    func capturedSplitByReason() throws {
+        typealias N = RoadFixture.Node
+        let net = try RoadNetwork(packs: [RoadFixture.build([
+            R.street(1, from: (0, -3000), to: (0, 3000)),
+            RoadFixture.way(2, ["highway": "residential", "oneway": "yes"],
+                            [N(id: 20, east: 205, north: 3000), N(id: 21, east: 205, north: -3000)]),
+        ])])
+        let drive = R.northDrive(seconds: 60)
+        let clean = S.cleanFix(positionNoise: 0)
+        let inputs = R.shifted(drive, by: (0, -500), fix: { t, state, rng in
+            guard var f = clean(t, state, &rng) else { return nil }
+            if t <= 10 { return f }
+            if S.at(t, 30) || S.at(t, 35) { f.east += 200; return f }
+            if S.at(t, 40) { f.east += 400; return f }
+            return nil
+        })
+        var options = Self.options(roads: net)
+        options.config.alongTrackNoisePerSqrtM = 6
+        let result = NavigationReplay.run(logName: "synthetic", inputs: inputs, options: options)
+        let m = try #require(result.roadMetrics)
+        try #require(m.fixes.count == 3)
+        #expect(m.fixes.map(\.truth) == [.noRoad, .noRoad, .noRoad])
+        #expect(m.fixes.map(\.unmappedReason) == [.noCompatibleRoadWithin15, .noCompatibleRoadWithin15, .noRoadWithin15])
+        #expect(abs((m.fixes[0].nearestEdgeM ?? 0) - 5) < 0.5 && abs((m.fixes[1].nearestEdgeM ?? 0) - 5) < 0.5)
+        #expect(m.fixes[2].nearestEdgeM == nil)
+        for fix in m.fixes {
+            #expect((fix.onRoadShare ?? 0) >= 0.5 && fix.matchedEdge?.osmWayID == 1, "t \(fix.t)")
+            #expect((fix.crossTrackSemiAxisM ?? .infinity) < 25 && fix.inside95 == false, "t \(fix.t)")
+            #expect(fix.captured == true, "t \(fix.t)")
+        }
+        #expect(m.unmapped == 3 && m.unmappedNoRoadWithin15 == 1 && m.unmappedNoCompatibleRoadWithin15 == 2)
+        #expect(m.unmappedCaptured > 0 && m.unmappedCaptured == 3)
+        #expect(m.unmappedCapturedNoRoadWithin15 == 1 && m.unmappedCapturedNoCompatibleRoadWithin15 == 2)
+        #expect(ReplayReport.summary(result).contains("captured 3 (1 + 2)"))
+    }
+
+    /// The southbound oneway 10 m east again. Withheld fixes with a usable
+    /// course are unmapped (incompatible); those without one (course −1,
+    /// or creeping at 2 m/s) keep the distance-only rule: 10 m from an
+    /// edge, so not unmapped. A no-course fix 200 m east of the car is
+    /// > 15 m from every edge: unmapped by distance.
+    @Test("Item 2: a fix with no usable course keeps the distance-only rule (never dropped, never added by heading)")
+    func unmappedNoCourseDistanceOnly() throws {
+        let drive = R.northDrive(seconds: 50)
+        let clean = S.cleanFix(positionNoise: 0)
+        let inputs = R.shifted(drive, by: (0, -500), fix: { t, state, rng in
+            guard var f = clean(t, state, &rng) else { return nil }
+            if t <= 10 || S.at(t, 20) || S.at(t, 30) { return f }
+            if S.at(t, 25) { f.course = -1; f.courseAccuracy = -1; return f }
+            if S.at(t, 27) { f.speed = 2; return f }
+            if S.at(t, 40) { f.east += 200; f.course = -1; f.courseAccuracy = -1; return f }
+            return nil
+        })
+        let m = try #require(Self.run(inputs, roads: try Self.southboundOneway()).roadMetrics)
+        try #require(m.fixes.count == 5)
+        #expect(m.fixes.map(\.truth) == [.noRoad, .noCourse, .noCourse, .noRoad, .noCourse])
+        #expect(m.fixes.map(\.unmapped) == [true, false, false, true, true])
+        #expect(m.fixes.map(\.unmappedReason) == [.noCompatibleRoadWithin15, nil, nil, .noCompatibleRoadWithin15, .noRoadWithin15])
+        #expect(m.fixes[4].nearestEdgeM == nil)
+        #expect(m.unmapped == 3 && m.unmappedNoRoadWithin15 == 1 && m.unmappedNoCompatibleRoadWithin15 == 2)
     }
 
     /// R22.2-3: withheld clean fixes on the street at t 20 and t 30 (with a

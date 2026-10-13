@@ -3,18 +3,28 @@ import Foundation
 /// One or more road packs used together (docs/ROAD_PACK.md, "Duplicates
 /// across packs").
 ///
+/// **Canonical order (N3.2c item 7).** The network depends on the SET of
+/// packs, never on the order a caller passed them: `init` sorts the packs
+/// by ascending `contentHash`, and every pack index below (`packs`,
+/// `SegmentRef.pack`, the matcher's global edge numbering, a result's
+/// `MatchedRoadEdge.pack`) is an index into that canonical order. The same
+/// pack twice (equal content hash) is refused, wherever it appears.
+///
 /// Every pack must have the same grid ID, so a cell is the same area in
 /// each. A segment present in several packs (overlapping extracts) has the
 /// same key (osmWayID, way point index) in each, because extracts use
-/// `--strategy complete_ways`; the first loaded pack that contains the key
-/// wins and later copies are dropped from every query. The road set's
-/// identity is `roadSetHash`, FNV-1a 64 over the content hashes in load
-/// order.
+/// `--strategy complete_ways`; the canonically first pack that contains the
+/// key (lowest content hash) wins and the other copies are dropped from
+/// every query. Which copy wins matters: it decides the edge a particle is
+/// on, so the level rule's adjacency (within one pack only) and the matched
+/// edge. The road set's identity is `roadSetHash`, FNV-1a 64 over the
+/// content hashes in ascending order.
 ///
 /// Data: © OpenStreetMap contributors, ODbL 1.0.
 public final class RoadNetwork: @unchecked Sendable {
     // @unchecked: immutable after init; `RoadPack` is read-only.
 
+    /// The packs in canonical order: ascending `contentHash`.
     public let packs: [RoadPack]
     public let grid: RoadGrid
     public let gridID: UInt64
@@ -26,8 +36,8 @@ public final class RoadNetwork: @unchecked Sendable {
 
     public static let attribution = RoadPackFormat.attribution
 
-    /// A segment in the network: the pack it comes from (load order) and
-    /// its start point in that pack.
+    /// A segment in the network: the pack it comes from (canonical order)
+    /// and its start point in that pack.
     public struct SegmentRef: Hashable, Comparable, Sendable {
         public var pack: Int
         public var startPoint: Int
@@ -42,14 +52,19 @@ public final class RoadNetwork: @unchecked Sendable {
         }
     }
 
-    public init(packs: [RoadPack]) throws {
-        guard let first = packs.first else { throw RoadPackError.noPacks }
-        for (i, pack) in packs.enumerated() {
+    /// Throws for no packs, packs on different grids, or the same pack
+    /// (content hash) given more than once. Errors are judged in the order
+    /// given; the network itself is built in canonical order.
+    public init(packs given: [RoadPack]) throws {
+        guard let first = given.first else { throw RoadPackError.noPacks }
+        for (i, pack) in given.enumerated() {
             guard pack.gridID == first.gridID else { throw RoadPackError.gridMismatch(first.gridID, pack.gridID) }
-            if packs[..<i].contains(where: { $0.contentHash == pack.contentHash }) {
+            if given[..<i].contains(where: { $0.contentHash == pack.contentHash }) {
                 throw RoadPackError.duplicatePack(pack.contentHash)
             }
         }
+        // Content hashes are distinct here, so this is a strict total order.
+        let packs = given.sorted { $0.contentHash < $1.contentHash }
         self.packs = packs
         grid = first.grid
         gridID = first.gridID
@@ -60,7 +75,7 @@ public final class RoadNetwork: @unchecked Sendable {
 
     public var roadSetHashHex: String { NavigationSeed.hex(roadSetHash) }
 
-    /// The packs' summaries in load order.
+    /// The packs' summaries in canonical order.
     public var infos: [RoadPackInfo] { packs.map(\.info) }
 
     /// The segment's data.
@@ -68,14 +83,14 @@ public final class RoadNetwork: @unchecked Sendable {
         packs[ref.pack].segment(startingAt: ref.startPoint)
     }
 
-    /// Whether `key` is in a pack loaded before `pack`.
+    /// Whether `key` is in a pack before `pack` in canonical order.
     public func isShadowed(_ key: RoadSegmentKey, inPack pack: Int) -> Bool {
         for earlier in 0..<pack where packs[earlier].segment(withKey: key) != nil { return true }
         return false
     }
 
     /// Calls `body` with every de-duplicated segment listed in the cell:
-    /// pack by pack in load order, each pack's segments ascending. These
+    /// pack by pack in canonical order, each pack's segments ascending. These
     /// include every segment within `grid.searchRadiusM` true metres of any
     /// point in the cell.
     public func forEachSegment(inCellX cx: Int32, y cy: Int32, _ body: (SegmentRef) -> Void) {

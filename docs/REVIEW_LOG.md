@@ -324,3 +324,40 @@ Tests: Core passes 789 tests in 107 suites, 39 known issues (all test 3). No App
 - **Rounds:** 4 run, plus a follow-up review of the round-4 tests.
 - **Findings:** 1 MAJOR docs fix (R22.1-1: clean's road truth over the Viterbi trigger, wrong-road share provisional); 11 MAJOR missing tests added (R22.1-2..4, R22.2-1..3, R22.3-1..2, R22.4-1..3), none exposed a bug; 1 MINOR fixed (R22.1-5); 0 rejected; 3 MINOR deferred (R22.1-6, R22.3-3, R22.3-4).
 - **Final tests:** `cd Core && swift test`: 789 tests in 107 suites pass, 39 known issues (all test 3, the decided known FAIL). No App change. `Core/Sources` unchanged since 5efbb20, so the N3.2b measurement in `logs/n32b/roads` stands; without roads the acceptance runs are byte-identical to N3.0.
+
+## Run 23: N3.2c items 7, 2, 6 and the N3.2d grids (main..n3.2c, a1055f2..740d3b9), started 2026-10-13
+
+The range makes results independent of pack order (76ad76e), splits the unmapped count into far and incompatible-course fixes (af7a406), adds `NavigationRoadPerfTests` (511c28a), and records the pre-declared N3.2d road grids as docs only, with no config chosen (740d3b9). Branch: `n3.2c`.
+
+### Round 1
+
+Reviewer: one fresh `reviewer` (opus). An earlier attempt was stopped by the user before it produced findings and is not counted. Result: 0 BLOCKER / 1 MAJOR / 3 MINOR. Mutations: 3 run. M1 (sort removed in `RoadNetwork.init`) was killed. M2 (far/incompatible swapped in the captured split) and M3 (`noRoad` checked before the distance rule in `UnmappedReason.of`) survived.
+
+Verified clean: every pack index after the sort (matcher `edgeBase`, `matchedEdge`, the level rule, `isShadowed`/`forEachSegment`, `covers`, road-truth `nearby`, GeoJSON `pack`, `ReplayRoadSet` ==/hash, `build_roads --network` naming); duplicate refusal (`replay_nav` exit 2); old metrics.json rows decode; no default config changed; privacy; clean seed 1 with packs reversed byte-identical to `logs/n32b/roads`; `roadFixGateSigma=0` disables the gate (35 GeoJSON byte-identical); N3.2d tables match `judge-vs-n30`/`judge-vs-n32b` (16 values × 6 drives) and `residuals.txt`; the perf test re-run (mean 0.365 ms, max 0.647 ms).
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R23.1-1 | MAJOR | The unmapped split's far branch for a fix with a usable course, and any non-zero captured split, are untested (`NavigationReplay.swift:845,850`, `ReplayRoads.swift:164`). M2 and M3 survive. Under M3, clean's 83 (83 + 0) would read 62 + 21. Under M2, drive-7's captured 10 (0 + 10) would read 10 + 0. These are figures in docs/NAVIGATION.md. | FIXED | Verified. Tests in this round's commit: `unmapped` asserts the far split (110 + 0, captured 91 + 0, every reason `.noRoadWithin15`); new `capturedSplitByReason` (unmapped 3 (1 + 2), captured 3 (1 + 2)). M2 killed (3 issues), M3 killed (7 issues). |
+| R23.1-2 | MINOR | docs/NAVIGATION.md N3.2d "nearest miss" bullet says jammed-A +0.005 pp; `logs/n32d/corr100/judge-vs-n32b.txt` and the doc's trade-off table give +0.006. | DEFERRED | BACKLOG |
+| R23.1-3 | MINOR | `build_roads --network` exits 4 on every failure (duplicate pack, grid mismatch, unreadable pack) (`Core/Sources/build_roads/main.swift:35-36,168`), but the header documents 4 only as "--info verification failed". | DEFERRED | BACKLOG |
+| R23.1-4 | MINOR | The metrics.md Roads header (`ReplayReport.swift:372-375`) describes the widened unmapped rule for every row. A merged row written before N3.2c item 2 (distance-only) appears under it unmarked; only the missing "(a + b)" split hints at it. | DEFERRED | BACKLOG |
+
+Tests: Core passes 799 tests in 109 suites, 39 known issues (all test 3). No App change.
+
+### Round 2
+
+Reviewer: one fresh `reviewer` (opus). Result: 0 BLOCKER / 0 MAJOR / 1 MINOR. Mutations: 3 run, 3 killed (sort removed in `RoadNetwork.init`, now killed by `engineIndependentOfOrder` alone; round 1's M2 and M3, now killed by `unmapped` and `capturedSplitByReason`).
+
+Verified clean: the R23.1-1 tests; `RoadPackOrderTests` against partial fixes (hash-only or reversed sort fail `networkIsCanonical`); the `NavigationRoadTests.twoPacks` rewrite and the `RoadPackTests` edits; `build_roads --network` naming; comment-only edits in `RoadMatcher`, `NavigationEstimate`, `RoadNetwork`; item 2's definitions in NAVIGATION.md and N3_PLAN.md against `UnmappedReason.of`, and its table against `logs/n32c/unmapped`; the N3.2d anomaly and trade-off bullets against `logs/n32d`; no unrelated code edits; drive-7 seed 1 with packs reversed byte-identical to `logs/n32b/roads` and `logs/n32c/unmapped`.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R23.2-1 | MINOR | `ReplayReport.swift:429-438`: `unmappedSplit` was inserted inside `roadsText`'s doc comment, so both Quick Help texts are wrong. | DEFERRED | BACKLOG |
+
+Tests: Core passes 799 tests in 109 suites, 39 known issues (all test 3). No App change.
+
+### Run 23 summary
+
+- **Rounds:** 2. Round 2 found no BLOCKER or MAJOR; loop stopped.
+- **Findings:** 1 MAJOR missing test added (R23.1-1), no bug exposed; 0 rejected; 4 MINOR deferred (R23.1-2..4, R23.2-1).
+- **Final tests:** `cd Core && swift test`: 799 tests in 109 suites pass, 39 known issues (all test 3, the decided known FAIL). No App change. The review rounds changed only tests and docs, so the N3.2d measurement in `logs/n32d` stands.

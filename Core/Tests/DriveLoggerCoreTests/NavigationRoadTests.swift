@@ -842,46 +842,56 @@ struct NavigationRoadTests {
         #expect(known.roadEdge.allSatisfy { $0 == crossing })
     }
 
-    /// R21.2-4: two packs on one grid. Pack 0: seven separate streets far
-    /// east (7 edges); pack 1: the stacked bridge (6 edges), so pack 1's
-    /// global edges start at 7. Particles are matched in either pack; the
+    /// R21.2-4: two packs on one grid. The streets pack: seven separate
+    /// streets far east (7 edges); the bridge pack: the stacked bridge (6
+    /// edges). The network orders them by content hash (N3.2c item 7), so
+    /// the global edges of the second start at the first's edge count, in
+    /// either order given. Particles are matched in either pack; the
     /// estimate's edge names the pack, the local edge and the way. The
-    /// level rule finds adjacency within a pack only: the pack-0 edge with
-    /// the ramp's local index does not admit the bridge, the ramp does.
+    /// level rule finds adjacency within a pack only: the streets-pack edge
+    /// with the ramp's local index does not admit the bridge, the ramp does.
     @Test("Two packs: global edges offset by edgeBase; matchedEdge names pack, local edge and way; no level adjacency across packs")
     func twoPacks() throws {
         let streets = (1...7).map { k in
             Self.street(Int64(k), from: (900 + 100 * Double(k), -500), to: (900 + 100 * Double(k), 500))
         }
-        let pack0 = try RoadFixture.build(streets)
-        let pack1 = try RoadFixture.build(RoadGraphTests.bridgeLines(idOffset: 1000))
-        let net = try RoadNetwork(packs: [pack0, pack1])
-        #expect(pack0.edgeCount == 7 && pack1.edgeCount == 6)
+        let streetPack = try RoadFixture.build(streets)
+        let bridgePack = try RoadFixture.build(RoadGraphTests.bridgeLines(idOffset: 1000))
+        #expect(streetPack.edgeCount == 7 && bridgePack.edgeCount == 6)
+        let net = try RoadNetwork(packs: [streetPack, bridgePack])
+        let reversed = try RoadNetwork(packs: [bridgePack, streetPack])
+        #expect(reversed.packs.map(\.contentHash) == net.packs.map(\.contentHash))
+        let sp = try #require(net.packs.firstIndex { $0 === streetPack })
+        let bp = try #require(net.packs.firstIndex { $0 === bridgePack })
+        #expect(net.packs[0].contentHash < net.packs[1].contentHash && sp + bp == 1)
         let matcher = RoadMatcher(network: net)
-        #expect(matcher.edgeBase == [0, 7, 13])
-        try #require(matcher.pack(ofEdge: 0) == 0)
-        try #require(matcher.pack(ofEdge: 6) == 0)
-        try #require(matcher.pack(ofEdge: 7) == 1)
-        try #require(matcher.pack(ofEdge: 12) == 1)
-        let bridgeLocal = try #require(RoadFixture.edgeIndices(of: pack1, way: 1101).first)
-        let rampLocal = try #require(RoadFixture.edgeIndices(of: pack1, way: 1102).first)
-        let sideLocal = try #require(RoadFixture.edgeIndices(of: pack1, way: 1103).first)
-        let street1 = try #require(RoadFixture.edgeIndices(of: pack0, way: 1).first)
-        let bridge = UInt32(7 + bridgeLocal), ramp = UInt32(7 + rampLocal)
-        #expect(matcher.matchedEdge(bridge) == MatchedRoadEdge(pack: 1, edge: bridgeLocal, osmWayID: 1101))
-        #expect(matcher.matchedEdge(UInt32(street1)) == MatchedRoadEdge(pack: 0, edge: street1, osmWayID: 1))
+        #expect(matcher.edgeBase == [0, net.packs[0].edgeCount, 13])
+        #expect(RoadMatcher(network: reversed).edgeBase == matcher.edgeBase)
+        let sBase = matcher.edgeBase[sp], bBase = matcher.edgeBase[bp]
+        for local in 0..<7 { try #require(matcher.pack(ofEdge: UInt32(sBase + local)) == sp) }
+        for local in 0..<6 { try #require(matcher.pack(ofEdge: UInt32(bBase + local)) == bp) }
+        let bridgeLocal = try #require(RoadFixture.edgeIndices(of: bridgePack, way: 1101).first)
+        let rampLocal = try #require(RoadFixture.edgeIndices(of: bridgePack, way: 1102).first)
+        let sideLocal = try #require(RoadFixture.edgeIndices(of: bridgePack, way: 1103).first)
+        let street1 = try #require(RoadFixture.edgeIndices(of: streetPack, way: 1).first)
+        let bridge = UInt32(bBase + bridgeLocal), ramp = UInt32(bBase + rampLocal)
+        let streetRamp = UInt32(sBase + rampLocal)  // the streets pack's edge with the ramp's local index
+        #expect(matcher.matchedEdge(bridge) == MatchedRoadEdge(pack: bp, edge: bridgeLocal, osmWayID: 1101))
+        #expect(matcher.matchedEdge(UInt32(sBase + street1)) == MatchedRoadEdge(pack: sp, edge: street1, osmWayID: 1))
         // A pack-blind lookup would admit the bridge from local edge
-        // `rampLocal` of pack 0: in pack 1 that index is the ramp, one hop.
-        #expect(pack1.isEdge(bridgeLocal, withinHops: 2, of: rampLocal))
-        #expect(pack0.edge(rampLocal).level == 0 && pack1.edge(bridgeLocal).level == 1)
+        // `rampLocal` of the streets pack: in the bridge pack that index is
+        // the ramp, one hop.
+        #expect(bridgePack.isEdge(bridgeLocal, withinHops: 2, of: rampLocal))
+        #expect(streetPack.edge(rampLocal).level == 0 && bridgePack.edge(bridgeLocal).level == 1)
         #expect(matcher.isEdge(bridge, withinHops: 2, of: ramp))
-        #expect(!matcher.isEdge(bridge, withinHops: 2, of: UInt32(rampLocal)))
+        #expect(!matcher.isEdge(bridge, withinHops: 2, of: streetRamp))
 
         // Level: on the bridge's line heading north, all on level 0; even
-        // particles on the ramp (pack 1), odd on pack 0's edge `rampLocal`.
+        // particles on the ramp (bridge pack), odd on the streets pack's
+        // edge `rampLocal`.
         var engine = Self.directEngine(net)
         Self.place(&engine, at: (2, 100), heading: 0, level: 0)
-        for i in engine.roadEdge.indices { engine.roadEdge[i] = i % 2 == 0 ? ramp : UInt32(rampLocal) }
+        for i in engine.roadEdge.indices { engine.roadEdge[i] = i % 2 == 0 ? ramp : streetRamp }
         var level = engine
         level.roadUpdate(evidenceDistanceM: 30)
         #expect(level.counters.roadUpdates == 1 && level.counters.roadLevelBlocked == 50)
@@ -889,15 +899,16 @@ struct NavigationRoadTests {
             if i % 2 == 0 {
                 #expect(level.roadEdge[i] == bridge && level.roadLevel[i] == 1, "ramp particle \(i)")
             } else {
-                #expect(level.roadEdge[i] == UInt32(rampLocal) && level.roadLevel[i] == 0, "pack-0 particle \(i)")
+                #expect(level.roadEdge[i] == streetRamp && level.roadLevel[i] == 0, "streets-pack particle \(i)")
             }
         }
-        #expect(level.estimate(at: S.ms(0.05))?.matchedEdge == MatchedRoadEdge(pack: 1, edge: bridgeLocal, osmWayID: 1101))
+        #expect(level.estimate(at: S.ms(0.05))?.matchedEdge == MatchedRoadEdge(pack: bp, edge: bridgeLocal, osmWayID: 1101))
 
-        // Matched in pack 1 (the side street, x = 60) and in pack 0 (x = 1000).
+        // Matched in the bridge pack (the side street, x = 60) and in the
+        // streets pack (x = 1000).
         for (p, global, expected) in [
-            ((62.0, -100.0), UInt32(7 + sideLocal), MatchedRoadEdge(pack: 1, edge: sideLocal, osmWayID: 1103)),
-            ((1002.0, 0.0), UInt32(street1), MatchedRoadEdge(pack: 0, edge: street1, osmWayID: 1)),
+            ((62.0, -100.0), UInt32(bBase + sideLocal), MatchedRoadEdge(pack: bp, edge: sideLocal, osmWayID: 1103)),
+            ((1002.0, 0.0), UInt32(sBase + street1), MatchedRoadEdge(pack: sp, edge: street1, osmWayID: 1)),
         ] {
             var e = engine
             Self.place(&e, at: p, heading: 0)

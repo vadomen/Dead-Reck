@@ -37,8 +37,9 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
     /// exclusions); N3.0. Optional so metrics.json files written before it
     /// still decode (nil there: every pin was scored).
     public var pinScoring: ReplayResult.PinScoring?
-    /// The road set (N3.2): per pack in load order, and its hash. nil
-    /// (absent) for a run without roads and in files written before N3.2.
+    /// The road set (N3.2): per pack in canonical order (ascending content
+    /// hash), and its hash. nil (absent) for a run without roads and in
+    /// files written before N3.2.
     public var roads: [ReplayRoadPack]?
     public var roadSetHash: String?
     /// The road metrics; nil (absent) without roads.
@@ -290,8 +291,12 @@ public enum ReplayReport {
             + "scored \(m.scored): wrong \(v(.wrong).fixes) (\(share(m.wrongShare)); by distance \(share(m.wrongShareByDistance))), "
             + "right \(v(.right).fixes), off \(v(.off).fixes) (\(share(m.offShare)); by distance \(share(m.offShareByDistance))), "
             + "not engaged \(v(.notEngaged).fixes)")
-        lines.append("Unmapped      \(m.unmapped) withheld clean fixes > \(GPSMode.format(NavigationReplay.RoadTruth.unmappedDistanceM)) m from every edge"
+        let r15 = GPSMode.format(NavigationReplay.RoadTruth.unmappedDistanceM)
+        lines.append("Unmapped      \(m.unmapped) withheld clean fixes with no heading-compatible road within \(r15) m"
+            + Self.unmappedSplit(m.unmappedNoRoadWithin15, m.unmappedNoCompatibleRoadWithin15,
+                                 " (> \(r15) m from every edge %d + only incompatible edges within \(r15) m %d; no usable course: distance only)")
             + " (\(m.unmappedWithEstimate) with an estimate): captured \(m.unmappedCaptured)"
+            + Self.unmappedSplit(m.unmappedCapturedNoRoadWithin15, m.unmappedCapturedNoCompatibleRoadWithin15, " (%d + %d)")
             + " (on a mapped edge, < \(GPSMode.format(NavigationReplay.RoadTruth.capturedCrossTrackM)) m across, truth outside the 95 % ellipse)")
         if let all = m.residualsAll {
             let classes = m.residuals.keys.sorted().map { key -> String in
@@ -364,8 +369,10 @@ public enum ReplayReport {
         if !roadRuns.isEmpty {
             out += "\n## Roads\n\n"
             out += "Road data © OpenStreetMap contributors (ODbL 1.0). Wrong road checks capture onto a wrong *mapped* road only; "
-                + "capture while the car is on an unmapped road is the unmapped/captured column. Road truth is offline.\n\n"
-            out += "| log | mode | roadSetHash | road updates | on road (1 Hz) | truth matched / ambiguous | scored | wrong (fixes) | wrong (distance) | off (fixes) | not engaged | unmapped / captured | rejected fixes |\n"
+                + "capture while the car is on an unmapped road is the unmapped/captured column: no heading-compatible road "
+                + "within 15 m, split as (> 15 m from every edge + only incompatible edges within 15 m); a fix with no usable "
+                + "course counts by distance only. Road truth is offline.\n\n"
+            out += "| log | mode | roadSetHash | road updates | on road (1 Hz) | truth matched / ambiguous | scored | wrong (fixes) | wrong (distance) | off (fixes) | not engaged | unmapped (far + incompatible) / captured | rejected fixes |\n"
             out += "|---|---|---|---:|---:|---|---:|---:|---:|---:|---:|---|---:|\n"
             for r in roadRuns {
                 let m = r.roadMetrics!
@@ -374,7 +381,9 @@ public enum ReplayReport {
                     + " | \(m.truth[RoadTruthStatus.matched.rawValue] ?? 0) / \(m.truth[RoadTruthStatus.ambiguous.rawValue] ?? 0)"
                     + " | \(m.scored) | \(m.count(.wrong).fixes) (\(share(m.wrongShare))) | \(share(m.wrongShareByDistance))"
                     + " | \(m.count(.off).fixes) (\(share(m.offShare))) | \(m.count(.notEngaged).fixes)"
-                    + " | \(m.unmapped) / \(m.unmappedCaptured) | \(m.rejectedFixes.count) |\n"
+                    + " | \(m.unmapped)\(Self.unmappedSplit(m.unmappedNoRoadWithin15, m.unmappedNoCompatibleRoadWithin15, " (%d + %d)"))"
+                    + " / \(m.unmappedCaptured)\(Self.unmappedSplit(m.unmappedCapturedNoRoadWithin15, m.unmappedCapturedNoCompatibleRoadWithin15, " (%d + %d)"))"
+                    + " | \(m.rejectedFixes.count) |\n"
             }
         }
         for r in runs {
@@ -418,6 +427,14 @@ public enum ReplayReport {
     }
 
     /// The road set of a run, one line per pack, with the attribution:
+    /// The unmapped split (N3.2c item 2) in `format` (two `%d`: > 15 m from
+    /// every edge, then only incompatible edges within 15 m); empty for a
+    /// row written before item 2.
+    static func unmappedSplit(_ far: Int?, _ incompatible: Int?, _ format: String) -> String {
+        guard let far, let incompatible else { return "" }
+        return String(format: format, far, incompatible)
+    }
+
     /// "Roads         2 packs, roadSetHash …, © OpenStreetMap contributors (ODbL 1.0)".
     public static func roadsText(_ packs: [ReplayRoadPack], roadSetHash: String) -> String {
         var lines = ["Roads         \(packs.count) pack\(packs.count == 1 ? "" : "s"), roadSetHash \(roadSetHash), "
