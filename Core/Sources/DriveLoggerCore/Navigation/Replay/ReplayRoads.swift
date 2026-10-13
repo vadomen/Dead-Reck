@@ -5,9 +5,10 @@ import Foundation
 //
 // Data: © OpenStreetMap contributors, ODbL 1.0.
 
-/// The road network a replay gives its engine (`replay_nav --roads`, in
-/// load order). Two road sets are equal when their packs' content hashes
-/// are, in the same order: the identity a result records.
+/// The road network a replay gives its engine (`replay_nav --roads`).
+/// Two road sets are equal when they hold the same packs (content hashes),
+/// in whatever order they were passed: the network keeps them in canonical
+/// order (ascending content hash), the identity a result records.
 public struct ReplayRoadSet: Hashable, Sendable {
     public let network: RoadNetwork
 
@@ -23,10 +24,12 @@ public struct ReplayRoadSet: Hashable, Sendable {
         hasher.combine(network.roadSetHash)
     }
 
-    /// Per pack, in load order: what a result records.
+    /// Per pack, in canonical order (ascending content hash): what a
+    /// result records.
     public var packs: [ReplayRoadPack] { network.packs.map(ReplayRoadPack.init) }
 
-    /// FNV-1a 64 over the packs' content hashes in load order, 16 hex digits.
+    /// FNV-1a 64 over the packs' content hashes in ascending order, 16 hex
+    /// digits.
     public var roadSetHashHex: String { network.roadSetHashHex }
 
     /// The mode label's suffix: `roads-` and the first 8 hex digits of

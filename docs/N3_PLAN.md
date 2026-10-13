@@ -290,7 +290,8 @@ OSM way ID), from the last road update. Both are nil without roads.
 - Every replay result records:
   - the seed and config;
   - **`roads`**: per pack, `contentHash`, `formatVersion`, OSM timestamp and grid ID;
-  - `roadSetHash`: FNV-1a 64 over the packs' content hashes in load order.
+  - `roadSetHash`: FNV-1a 64 over the packs' content hashes in ascending order (N3.2c
+    item 7: the set, not the order given).
 
   These go into `metrics.json` (optional field, so older files decode), `metrics.md`, the
   summary and the GeoJSON properties. The mode label gets `-roads-<first 8 hex of
@@ -405,7 +406,7 @@ UInt64, length UInt64. Entries are sorted by offset, non-overlapping and inside 
     - It is harder to memory-map and to keep bit-stable across builder versions.
 - **Duplicates across packs:** each segment's key is (osmWayID, wayPointOffset + k). It
   is the same in every pack because extracts use `--strategy complete_ways`. The first
-  loaded pack wins.
+  pack in canonical order (ascending content hash; N3.2c item 7) wins.
 - **Versioning:**
   - A reader refuses a newer `formatVersion`.
   - Unknown section tags are skipped, so an optional section needs no version bump.

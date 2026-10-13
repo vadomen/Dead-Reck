@@ -99,11 +99,12 @@ public enum RoadPackFormat {
     }
 
     /// FNV-1a 64 over the packs' content hashes, each as 8 little-endian
-    /// bytes, in load order: the identity of a set of packs in a replay.
+    /// bytes, in ascending order: the identity of a SET of packs in a
+    /// replay, whatever order they were given in (N3.2c item 7).
     public static func roadSetHash(_ contentHashes: [UInt64]) -> UInt64 {
         var bytes: [UInt8] = []
         bytes.reserveCapacity(contentHashes.count * 8)
-        for hash in contentHashes {
+        for hash in contentHashes.sorted() {
             for shift in stride(from: 0, to: 64, by: 8) {
                 bytes.append(UInt8(truncatingIfNeeded: hash >> UInt64(shift)))
             }

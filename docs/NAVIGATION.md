@@ -452,8 +452,13 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   tail included, before `metrics.json` and `metrics.md` are updated. Every
   acceptance drive reads clean.
 - **Roads** (N3.2b; replay only, refused with `--compare` and
-  `--write-sidecar`): `--roads` (repeatable, load order, each pack fully
-  verified) gives the engine `NavigationEngine(config:roads:)`. The mode label
+  `--write-sidecar`): `--roads` (repeatable, each pack fully verified) gives
+  the engine `NavigationEngine(config:roads:)`. **Pack order does not matter**
+  (N3.2c item 7): `RoadNetwork` sorts the packs by ascending content hash, so
+  the same set in any order gives bit-identical results, one `roadSetHash`
+  (FNV-1a 64 over the sorted content hashes), one label and one `roads` list.
+  Pack indices in outputs (`matchedEdge.pack`) are into that order. The same
+  pack twice is refused (status 2). The mode label
   gets `-roads-<first 8 hex of roadSetHash>`. `roads` (per pack: content
   hash, format, OSM timestamp, grid) and `roadSetHash` are in the summary,
   `metrics.json`, `metrics.md` and the GeoJSON track, with "© OpenStreetMap
@@ -1027,6 +1032,29 @@ above. A measurement, not an adoption: no config or engine change was made.
   single `ingest` 1.1–4.5 ms with roads (0.24–0.46 without).
 - **Without `--roads`:** 42/42 GeoJSON byte-identical and every
   `metrics.json` field equal to the N3.0 exit runs (compare.py).
+
+### N3.2c item 7: results independent of pack order (2026-10-13)
+
+- **Root cause:** a segment in both packs was kept from the pack loaded
+  first, so the order decided which pack's edge a particle sat on. The
+  level rule finds adjacency within one pack only. With national first, a
+  particle could not pass between a region-A-only road and national's
+  copy of a connected road on another level (a bridge or an underpass), in
+  either direction. That changed particles, not only the edge reported. Clean, seed 1, before the fix: national
+  first 21.75 m max, level blocked 23 818, wrong road 2.8 %; region-A
+  first 15.6 m, level blocked 0, wrong road 0 %.
+- **Fix:** `RoadNetwork` sorts its packs by ascending content hash, and
+  `roadSetHash` hashes the sorted content hashes. National has the lower
+  hash, so the canonical order is the one N3.2b used. Every N3.2b figure
+  above stands.
+- **Check** (`logs/n32c/order/`, seed 1, every acceptance drive): region-A
+  then national gives GeoJSON byte-identical and `metrics.json` equal
+  (timing fields aside) to the N3.2b runs, label `-roads-fecadb9b`. Without
+  roads, every output is unchanged.
+- **Open:** which copy wins is now canonical but arbitrary. A rebuilt pack
+  gets a new hash and can flip the order. Clean shows the choice is worth
+  about 6 m. Adjacency across packs (shared OSM node IDs) or a deliberate
+  precedence rule would be an engine change under the adoption rule.
 
 ## Known limitations and options
 

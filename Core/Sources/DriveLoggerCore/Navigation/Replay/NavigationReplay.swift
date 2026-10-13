@@ -513,8 +513,9 @@ public struct ReplayResult: Hashable, Sendable, Codable {
     /// How the manual fixes were scored (pairs, truth exclusions).
     public var pinScoring = PinScoring(pairWindowS: 0)
 
-    /// The road set the engine used (N3.2): per pack in load order, and
-    /// FNV-1a 64 over their content hashes. nil without roads.
+    /// The road set the engine used (N3.2): per pack in canonical order
+    /// (ascending content hash), and FNV-1a 64 over their content hashes.
+    /// nil without roads.
     public var roads: [ReplayRoadPack]? = nil
     public var roadSetHash: String? = nil
     /// The road metrics (docs/N3_PLAN.md, "Metrics added to replay_nav");

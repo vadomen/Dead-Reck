@@ -310,7 +310,7 @@ struct RoadPackPropertyTests {
         #expect(NavigationSeed.hex(pack.gridID) == NavigationSeed.hex(RoadFixture.grid().gridID))
     }
 
-    @Test("contentHash is FNV-1a 64 of the file with bytes 16–23 as zero; roadSetHash depends on load order")
+    @Test("contentHash is FNV-1a 64 of the file with bytes 16–23 as zero; roadSetHash is over the hashes in ascending order")
     func hashDefinition() throws {
         let data = try RoadFixture.buildData(Self.townLines())
         var zeroed = [UInt8](data)
@@ -318,7 +318,9 @@ struct RoadPackPropertyTests {
         #expect(NavigationSeed.fnv1a64(zeroed) == RoadPackFormat.contentHash(of: data))
         let stored = data.withUnsafeBytes { UInt64(littleEndian: $0.loadUnaligned(fromByteOffset: 16, as: UInt64.self)) }
         #expect(stored == NavigationSeed.fnv1a64(zeroed))
-        #expect(RoadPackFormat.roadSetHash([1, 2]) != RoadPackFormat.roadSetHash([2, 1]))
+        // N3.2c item 7: a set's identity, not the order given.
+        #expect(RoadPackFormat.roadSetHash([1, 2]) == RoadPackFormat.roadSetHash([2, 1]))
+        #expect(RoadPackFormat.roadSetHash([2, 1]) == NavigationSeed.fnv1a64([1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0]))
         #expect(RoadPackFormat.roadSetHash([]) == NavigationSeed.fnv1a64([UInt8]()))
         #expect(RoadPackFormat.roadSetHash([0x0102_0304_0506_0708]) == NavigationSeed.fnv1a64([8, 7, 6, 5, 4, 3, 2, 1]))
     }
@@ -341,7 +343,7 @@ struct RoadPackPropertyTests {
 
     // MARK: Networks
 
-    @Test("De-duplication across two overlapping packs: each segment key once, the first loaded pack wins")
+    @Test("De-duplication across two overlapping packs: each segment key once, the pack with the lower content hash wins in either order")
     func deduplication() throws {
         let lines = Self.townLines()
         // Pack A: the street grid and the trunk; pack B: the trunk again
@@ -351,8 +353,12 @@ struct RoadPackPropertyTests {
         #expect(a.gridID == b.gridID)
         let ab = try RoadNetwork(packs: [a, b])
         let ba = try RoadNetwork(packs: [b, a])
-        #expect(ab.roadSetHash != ba.roadSetHash)
+        // N3.2c item 7: one network whatever the order given.
+        #expect(ab.roadSetHash == ba.roadSetHash)
         #expect(ab.roadSetHash == RoadPackFormat.roadSetHash([a.contentHash, b.contentHash]))
+        let canonical = [a, b].sorted { $0.contentHash < $1.contentHash }
+        #expect(ab.packs.map(\.contentHash) == canonical.map(\.contentHash))
+        #expect(ba.packs.map(\.contentHash) == canonical.map(\.contentHash))
         let full = try RoadFixture.build(lines)
 
         var rng = NavigationRandom(seed: 5)
@@ -368,14 +374,17 @@ struct RoadPackPropertyTests {
                 #expect(Set(keys) == reference)
                 for (ref, key) in zip(refs, keys) where key.osmWayID == 50 {
                     sawShared = true
-                    #expect(ref.pack == 0)  // the trunk is in both: first loaded wins
+                    #expect(ref.pack == 0)  // the trunk is in both: the lower content hash wins
                     _ = key
                 }
                 #expect(refs == refs.sorted())
             }
+            #expect(ab.segments(nearLatitude: p.latitude, longitude: p.longitude)
+                == ba.segments(nearLatitude: p.latitude, longitude: p.longitude))
         }
         #expect(sawShared)
-        #expect(ab.infos.map(\.contentHash) == [NavigationSeed.hex(a.contentHash), NavigationSeed.hex(b.contentHash)])
+        #expect(ab.infos.map(\.contentHash) == canonical.map { NavigationSeed.hex($0.contentHash) })
+        #expect(ba.infos == ab.infos)
     }
 
     @Test("A network refuses packs with different grids, the same pack twice, and no packs")

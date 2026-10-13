@@ -45,8 +45,8 @@ public struct NavigationEstimate: Hashable, Sendable {
     public var matchedEdge: MatchedRoadEdge? = nil
 }
 
-/// An edge of a `RoadNetwork`: the pack (load order), the edge index in it
-/// and its OSM way.
+/// An edge of a `RoadNetwork`: the pack (canonical order, ascending
+/// content hash), the edge index in it and its OSM way.
 public struct MatchedRoadEdge: Hashable, Sendable, Codable {
     public var pack: Int
     public var edge: Int

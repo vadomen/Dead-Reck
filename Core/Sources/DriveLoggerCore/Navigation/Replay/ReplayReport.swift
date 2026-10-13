@@ -37,8 +37,9 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
     /// exclusions); N3.0. Optional so metrics.json files written before it
     /// still decode (nil there: every pin was scored).
     public var pinScoring: ReplayResult.PinScoring?
-    /// The road set (N3.2): per pack in load order, and its hash. nil
-    /// (absent) for a run without roads and in files written before N3.2.
+    /// The road set (N3.2): per pack in canonical order (ascending content
+    /// hash), and its hash. nil (absent) for a run without roads and in
+    /// files written before N3.2.
     public var roads: [ReplayRoadPack]?
     public var roadSetHash: String?
     /// The road metrics; nil (absent) without roads.

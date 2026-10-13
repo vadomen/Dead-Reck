@@ -46,7 +46,7 @@ struct NavigationReplayRoadTests {
         #expect(options.label == "use-holdout-100-as-live")
     }
 
-    @Test("ReplayRoadSet: equal by the packs' content hashes in load order; records hash, version, OSM time and grid per pack")
+    @Test("ReplayRoadSet: equal by the set of the packs' content hashes, in any order; records hash, version, OSM time and grid per pack")
     func roadSetIdentity() throws {
         let aData = try RoadFixture.buildData([R.street(1, from: (0, -300), to: (0, 300))])
         let a = try RoadPack(data: aData)
@@ -55,10 +55,13 @@ struct NavigationReplayRoadTests {
         let ab2 = ReplayRoadSet(try RoadNetwork(packs: [try RoadPack(data: aData), b]))
         let ba = ReplayRoadSet(try RoadNetwork(packs: [b, a]))
         #expect(ab == ab2 && ab.hashValue == ab2.hashValue)
-        #expect(ab != ba && ab.roadSetHashHex != ba.roadSetHashHex)
-        #expect(ab.packs.map(\.contentHash) == [NavigationSeed.hex(a.contentHash), NavigationSeed.hex(b.contentHash)])
+        // N3.2c item 7: the order given is not part of the identity.
+        #expect(ab == ba && ab.hashValue == ba.hashValue && ab.roadSetHashHex == ba.roadSetHashHex)
+        #expect(ab.labelSuffix == ba.labelSuffix && ab.packs == ba.packs)
+        #expect(ab.packs.map(\.contentHash) == [a.contentHash, b.contentHash].sorted().map(NavigationSeed.hex))
+        #expect(ab != ReplayRoadSet(try RoadNetwork(packs: [a])))
         #expect(ab.packs.allSatisfy { $0.formatVersion == 1 && $0.gridID == NavigationSeed.hex(a.gridID) })
-        #expect(ab.packs[0].osmTimestamp == a.osmTimestamp)
+        #expect(ab.packs.allSatisfy { $0.osmTimestamp == a.osmTimestamp })
         #expect(ab.roadSetHashHex == NavigationSeed.hex(RoadPackFormat.roadSetHash([a.contentHash, b.contentHash])))
     }
 

@@ -10,8 +10,9 @@ import Foundation
 //       [--write-sidecar <out.nav.jsonl>] [--pin-pair-window <s>] [--strict]
 //       [--roads <pack.roadpack>]... [--wrong-road-tolerance <m>]
 //
-// --roads (repeatable, N3.2): road packs in load order; the engine runs its
-// road update against them, the run is scored with the road metrics and its
+// --roads (repeatable, N3.2): road packs, in any order (the network sorts
+// them by content hash, so the order given changes nothing; the same pack
+// twice is refused); the engine runs its road update against them, the run is scored with the road metrics and its
 // mode label gets -roads-<first 8 hex of roadSetHash>. Each pack is fully
 // verified on load. Not with --compare or --write-sidecar: the app's live
 // loop has no roads until N3.3. --wrong-road-tolerance m (default 20): a
@@ -179,7 +180,8 @@ if wrongRoadTolerance != nil && roadPaths.isEmpty {
     print("note: --wrong-road-tolerance has no effect without --roads")
 }
 
-// --roads: every pack fully verified (content hash and structure), in load order.
+// --roads: every pack fully verified (content hash and structure). The order
+// given does not matter: RoadNetwork keeps them in content-hash order.
 var roads: ReplayRoadSet?
 if !roadPaths.isEmpty {
     var packs: [RoadPack] = []

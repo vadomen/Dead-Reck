@@ -130,8 +130,9 @@ n = nodes, m = edges, p = shape points, c = non-empty cells.
   depends only on the way's own node IDs and locations, never on other ways or on
   which pack is being built, so every pack built from the same OSM data gives a
   segment the same key, because extracts use `--strategy complete_ways`.
-  `RoadNetwork` uses the key to de-duplicate overlapping packs: the first loaded pack
-  that has a key wins.
+  `RoadNetwork` uses the key to de-duplicate overlapping packs. It sorts its packs by
+  ascending content hash first (N3.2c item 7), and the first pack in that order that
+  has a key wins, whatever order the packs were given in.
 - **Edge order:** edges are sorted strictly by (`osmWayID`, `wayPointOffset`), so a key
   is found by binary search.
 - **Node order:** nodes are numbered by first appearance in edge order, `from` before
@@ -264,7 +265,10 @@ the **whole file**, with bytes 16–23 (the hash field itself) read as zero.
 - It is an identity hash, not a security measure. The SHA-256 of the *source* extract
   is in `META`.
 - A set of packs is identified by `roadSetHash`: FNV-1a 64 over the packs' content
-  hashes, each as 8 little-endian bytes, in load order.
+  hashes, each as 8 little-endian bytes, in ascending order. It names the set, not the
+  order the packs were given in (N3.2c item 7). The same pack twice (equal content
+  hash) is refused, not de-duplicated: a repeated path is more likely a mistake than
+  intent.
 
 ## Checks
 
@@ -448,8 +452,9 @@ Notes on the table:
   changed. A docs-only commit after the rebuild left both packs byte-identical.
 - **De-duplication:** both packs share one grid ID. Loaded together, region-A has
   11 415 segments shadowed by national, which is exactly its motorway/trunk/primary
-  segments, counted independently from the OPL. The count is the same in the reverse
-  order.
+  segments, counted independently from the OPL. National has the lower content hash,
+  so it is first in the canonical order, and `--network` reports the same in either
+  order given.
 - **Size:** both packs are well under 150 MB.
 
 **Lookup bench:** `--bench 200000`, seed 1. Each query is a random point within 50 m
