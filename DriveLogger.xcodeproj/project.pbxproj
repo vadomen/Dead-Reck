@@ -51,6 +51,7 @@
 		97A4F0F34EB88DF1A78508EA /* MapBearing.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0D5DA754403F93233D134A3 /* MapBearing.swift */; };
 		9D68BF8B1CC07439C59B8590 /* OBDLinkServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4757331FF2FA81D7AC0192A2 /* OBDLinkServiceTests.swift */; };
 		9FA3198C111CA9BCE762F2B4 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5487E70F68E5078A7332C59 /* RootView.swift */; };
+		A0312A05B1A04F8F5D7E5818 /* MapSpeed.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70C5CA1309C63AA365F5F859 /* MapSpeed.swift */; };
 		A3454D74A222F4E38D629D46 /* RecordingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5C0DEF85C7492AD06A4497D /* RecordingView.swift */; };
 		ABF23677C8A5547DF21AB88A /* OBDLinkServicing.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE394D78D64D4538558929AB /* OBDLinkServicing.swift */; };
 		AFA018AAF84C69E379155858 /* CachedLocationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01370C4D8D9BD4CE0A34454F /* CachedLocationTests.swift */; };
@@ -66,6 +67,7 @@
 		D635E988DAD0AF2AA509EA4D /* OBDLinkService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFEAEF116B2672D8E2E88275 /* OBDLinkService.swift */; };
 		D8B3767F4C9463E941E14A3A /* LinkPlanReuseTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B37347FFA3D8D050EAC3981 /* LinkPlanReuseTests.swift */; };
 		DB397B3DFC6D0ECD860B9ED0 /* SessionsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51E41306C0E8CC802CFDBB09 /* SessionsViewModel.swift */; };
+		E2D706B12EA35B46C0814BC5 /* MapSpeedTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81484511F34B0A4E437C7239 /* MapSpeedTests.swift */; };
 		E3A034DD4E4F285512F443AD /* NavigationServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C06C7BF25C0632C6C10B1222 /* NavigationServiceTests.swift */; };
 		EB54AA0B95B0D269E74ADD6A /* SessionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEC07B5D8472C3B9B0953238 /* SessionsView.swift */; };
 		EB69D658A35BEC3DCD84D1EB /* RecordingTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B03770A2F4197C0EC3E1CACE /* RecordingTestSupport.swift */; };
@@ -110,9 +112,11 @@
 		51E41306C0E8CC802CFDBB09 /* SessionsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsViewModel.swift; sourceTree = "<group>"; };
 		53A5A2CA16E92EC7B59DF9B2 /* Tone.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tone.swift; sourceTree = "<group>"; };
 		7085FAEE943E57E7A189FF74 /* AppInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppInfo.swift; sourceTree = "<group>"; };
+		70C5CA1309C63AA365F5F859 /* MapSpeed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapSpeed.swift; sourceTree = "<group>"; };
 		76540D48788C021E6D218414 /* AdapterStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdapterStatus.swift; sourceTree = "<group>"; };
 		79BD174ED6261D2946AA43BC /* MapViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapViewModel.swift; sourceTree = "<group>"; };
 		7CEF883B97D59B155B858636 /* NavigationFeed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NavigationFeed.swift; sourceTree = "<group>"; };
+		81484511F34B0A4E437C7239 /* MapSpeedTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapSpeedTests.swift; sourceTree = "<group>"; };
 		854C803C3B72C76C94BDE3BF /* SimulatedSensors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimulatedSensors.swift; sourceTree = "<group>"; };
 		90AC7FA4AD498307B3C7D5C3 /* AppInfoTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppInfoTests.swift; sourceTree = "<group>"; };
 		91D3719D9A3A53C5D01BA7E8 /* CachedLocation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CachedLocation.swift; sourceTree = "<group>"; };
@@ -177,6 +181,7 @@
 				2E34817EF83A3A8882C060FA /* MapCameraLogicTests.swift */,
 				BA06D45DE18CCC614D3D7A5A /* MapFollowTests.swift */,
 				229AAE76CEDA63ACAC049FA6 /* MapNavigationTests.swift */,
+				81484511F34B0A4E437C7239 /* MapSpeedTests.swift */,
 				E10D65817793B02936D47090 /* MapTrackTests.swift */,
 				405DDC15D444E14982ABE749 /* NavigationFeedTests.swift */,
 				C06C7BF25C0632C6C10B1222 /* NavigationServiceTests.swift */,
@@ -224,6 +229,7 @@
 				CDF21332A165EE4A986319E5 /* MapFollow.swift */,
 				C6066E5826F4262CB1D02A92 /* MapFraming.swift */,
 				C940A0982D6C1029FF16340A /* MapNavigation.swift */,
+				70C5CA1309C63AA365F5F859 /* MapSpeed.swift */,
 				EF0EB1CAD11D010AD8056BBD /* MapView.swift */,
 				79BD174ED6261D2946AA43BC /* MapViewModel.swift */,
 				7CEF883B97D59B155B858636 /* NavigationFeed.swift */,
@@ -481,6 +487,7 @@
 				5E52034F56D6FA728B5E7E90 /* MapCameraLogicTests.swift in Sources */,
 				B8189DC89B9E6AD73AF65254 /* MapFollowTests.swift in Sources */,
 				5E7C04AF083961A3C7FA3B47 /* MapNavigationTests.swift in Sources */,
+				E2D706B12EA35B46C0814BC5 /* MapSpeedTests.swift in Sources */,
 				FC673B69DBDB4E4311B6B23C /* MapTrackTests.swift in Sources */,
 				5EC1979BE339D4AFC4791413 /* NavigationFeedTests.swift in Sources */,
 				E3A034DD4E4F285512F443AD /* NavigationServiceTests.swift in Sources */,
@@ -518,6 +525,7 @@
 				C0D308ED2C7D266BE36FC103 /* MapFollow.swift in Sources */,
 				6240D543D41EDAFEAD56D66B /* MapFraming.swift in Sources */,
 				CB188C622936937BAC5F2899 /* MapNavigation.swift in Sources */,
+				A0312A05B1A04F8F5D7E5818 /* MapSpeed.swift in Sources */,
 				0D1EA0DD6A68CA29A25C8D1A /* MapView.swift in Sources */,
 				1B778626CF8504BCD4128FC4 /* MapViewModel.swift in Sources */,
 				877A22BD2347363272765DC5 /* MotionSources.swift in Sources */,
