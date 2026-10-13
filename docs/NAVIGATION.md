@@ -470,9 +470,14 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   - wrong-road share by fixes and by OBD distance (right / wrong / off /
     not engaged, `--wrong-road-tolerance`, default 20 m). It checks capture
     onto a wrong *mapped* road only;
-  - unmapped / captured (R21.1-11): withheld clean fixes > 15 m from every
-    edge, and how many of those had the estimate on a mapped edge, < 25 m
-    across, truth outside the 95 % ellipse;
+  - unmapped / captured (R21.1-11, widened in N3.2c item 2): withheld clean
+    fixes with no heading-compatible road within 15 m, as the sum of two
+    reported parts: > 15 m from every edge (`noRoadWithin15`, the R21.1-11
+    figure) + an edge within 15 m but none heading-compatible with a usable
+    course (`noCompatibleRoadWithin15`; road truth "no road"). A fix with no
+    usable course keeps the distance-only rule. Captured, with the same
+    split: the estimate on a mapped edge, < 25 m across, truth outside the
+    95 % ellipse;
   - residuals per highway class (p50/p95, censored at 15 m), on-road share at
     1 Hz, candidate tests per road update and particle, rejected fixes.
 
@@ -1025,6 +1030,7 @@ above. A measurement, not an adoption: no config or engine change was made.
   mapped edge of another heading lies within 15 m. So the capture risk R2
   (test 3) shows on real data at car parks and service roads, where the
   unmapped metric does not count it; the consistency drop is its measure.
+  N3.2c item 2 widens the metric to count them (below).
 - **ms/step** (seed 1, sequential, release): 0.064–0.072 without roads,
   0.090–0.114 with, so mean ≤ 0.15 passes. Road cost by differencing:
   0.35–0.51 ms per road update (manual 0.51, just over the 0.5 ms Mac
@@ -1051,10 +1057,31 @@ above. A measurement, not an adoption: no config or engine change was made.
   then national gives GeoJSON byte-identical and `metrics.json` equal
   (timing fields aside) to the N3.2b runs, label `-roads-fecadb9b`. Without
   roads, every output is unchanged.
-- **Open:** which copy wins is now canonical but arbitrary. A rebuilt pack
+- **Open (item 7):** which copy wins is now canonical but arbitrary. A rebuilt pack
   gets a new hash and can flip the order. Clean shows the choice is worth
   about 6 m. Adjacency across packs (shared OSM node IDs) or a deliberate
   precedence rule would be an engine change under the adoption rule.
+
+### N3.2c item 2: unmapped counts fixes with no heading-compatible road within 15 m (2026-10-13)
+
+Metric only: the engine, every other metric and the GeoJSON are unchanged
+(seed 1, every acceptance drive, against `logs/n32b/roads/seed1`; outputs
+and `compare.py` in `logs/n32c/unmapped/`). Unmapped = (> 15 m from every
+edge) + (only incompatible edges within 15 m); a fix with no usable course
+counts by distance only.
+
+| alias | withheld clean fixes | N3.2b unmapped / captured | N3.2c unmapped (far + incompatible) / captured (far + incompatible) |
+|---|---:|---|---|
+| clean | 216 | 83 / 0 | 83 (83 + 0) / 0 (0 + 0) |
+| clean-long | 277 | 0 / 0 | 0 (0 + 0) / 0 (0 + 0) |
+| drive-7 | 266 | 0 / 0 | 44 (0 + 44) / 10 (0 + 10) |
+| manual, manual-3, jammed-A/B | 0 | n/a | n/a (no clean GNSS) |
+
+- drive-7: the 44 are one stretch at 2027–2076 s, the service-road end of
+  the drive (nearest edge of another heading, median 3.9 m). 10 are
+  captured, all at 2058–2068 s.
+- clean: its 21 "no road" fixes are all > 15 m from every edge, so they
+  were already counted.
 
 ## Known limitations and options
 

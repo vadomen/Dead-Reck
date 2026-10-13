@@ -549,9 +549,17 @@ Since the double tap, a pin can be placed at any speed. Its row records `obdSpee
   Reported per drive as a share of scored fixes (≈ time at 1 Hz) and of OBD distance (each
   scored fix weighs the OBD distance since the previous fix with a usable course).
   It checks capture onto a wrong *mapped* road only (R21.1-11).
-- **Unmapped / captured (R21.1-11):** an "unmapped" truth fix is a withheld clean fix
-  more than 15 m from every edge of the loaded packs (any heading). Per drive: how many,
-  and for each whether the estimate was **captured**: on a mapped edge (`onRoadShare` ≥ 0.5
+- **Unmapped / captured (R21.1-11, widened in N3.2c item 2):** an "unmapped" truth fix
+  is a withheld clean fix with no heading-compatible edge of the loaded packs within
+  15 m. Two disjoint cases, reported separately so the R21.1-11 figure stays visible:
+  - `noRoadWithin15`: more than 15 m from every edge, any heading (the R21.1-11 rule);
+  - `noCompatibleRoadWithin15`: an edge lies within 15 m, but with a usable course none
+    within 15 m passes the road truth's course gate (road truth "no road"). This is the
+    car-park and service-road case.
+
+  A fix with no usable course keeps the distance-only rule, so the widening never drops
+  a fix. Per drive: how many, and for each whether the estimate was **captured**
+  (same widened set, same split): on a mapped edge (`onRoadShare` ≥ 0.5
   with a `matchedEdge`) with the 95 % ellipse's half-width across that edge < 25 m, and the
   truth outside the 95 % ellipse (engine ellipse).
 - **Road residuals:** the cross-track distance of clean fixes to their truth edge, p50 and

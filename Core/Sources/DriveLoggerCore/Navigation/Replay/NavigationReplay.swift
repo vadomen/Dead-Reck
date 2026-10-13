@@ -778,7 +778,8 @@ private struct ReplayRun {
         var fix = ReplayRoadFix(t: checkpoint.t, distanceM: checkpoint.distanceM, accuracyM: sample.horizontalAccuracy,
                                 truth: match.status)
         fix.nearestEdgeM = match.nearestM
-        fix.unmapped = (match.nearestM ?? .infinity) > T.unmappedDistanceM
+        fix.unmappedReason = UnmappedReason.of(truth: match.status, nearestEdgeM: match.nearestM)
+        fix.unmapped = fix.unmappedReason != nil
         if let edge = match.edge {
             fix.truthEdge = edge
             fix.truthClass = matcher.roadClass(of: edge)
@@ -828,6 +829,10 @@ private struct ReplayRun {
             previous = m.fixes[i].distanceM
         }
         m.withheldCleanFixes = m.fixes.count
+        m.unmappedNoRoadWithin15 = 0
+        m.unmappedNoCompatibleRoadWithin15 = 0
+        m.unmappedCapturedNoRoadWithin15 = 0
+        m.unmappedCapturedNoCompatibleRoadWithin15 = 0
         for fix in m.fixes {
             m.truth[fix.truth.rawValue, default: 0] += 1
             if let verdict = fix.verdict {
@@ -836,9 +841,14 @@ private struct ReplayRun {
             }
             if fix.unmapped {
                 m.unmapped += 1
+                let far = fix.unmappedReason == .noRoadWithin15
+                if far { m.unmappedNoRoadWithin15! += 1 } else { m.unmappedNoCompatibleRoadWithin15! += 1 }
                 if let captured = fix.captured {
                     m.unmappedWithEstimate += 1
-                    if captured { m.unmappedCaptured += 1 }
+                    if captured {
+                        m.unmappedCaptured += 1
+                        if far { m.unmappedCapturedNoRoadWithin15! += 1 } else { m.unmappedCapturedNoCompatibleRoadWithin15! += 1 }
+                    }
                 }
             }
         }
