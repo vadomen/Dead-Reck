@@ -240,11 +240,17 @@ Verified clean: the round-3 tests catch their mutations (read against the code);
 
 | ID | Tag | Finding | Status | Note |
 |---|---|---|---|---|
-| R21.4-1 | MAJOR | The Step 1 split's geometry (`NavigationEngine.swift:1415-1436`) is untested: every numeric road test sets `roadSplitSigmaM` 1000, and tests 4, 7, 12 check only outcomes; a mirrored eigenvector angle and a never-split minor axis both pass every test, and either would corrupt the mixture on every road update of a correlated cloud. | CONFIRMED | Verified (no test checks split moments or P). Code correct by inspection. Round 4 is the last round: loop stopped, user asked. |
+| R21.4-1 | MAJOR | The Step 1 split's geometry (`NavigationEngine.swift:1415-1436`) is untested: every numeric road test sets `roadSplitSigmaM` 1000, and tests 4, 7, 12 check only outcomes; a mirrored eigenvector angle and a never-split minor axis both pass every test, and either would corrupt the mixture on every road update of a correlated cloud. | FIXED | Verified (no test checks split moments or P). Round 4 was the last round: loop stopped, user chose "add the test, then merge". New test `NavigationRoadTests/splitGeometry` (4ec83a3): rotated anisotropic P at +30° and −60°, major-only / both / no split; mean shift v·√(λ − σs²)·z from the engine's own RNG stream, σs² along each split eigenvector, one pair drawn per split. Code unchanged. A fresh `reviewer` (sonnet) on 7a42014..4ec83a3 found nothing; both mutations and a z₂ → z₁ swap are killed. |
 | R21.4-2 | MINOR | `cloudSemiMajorM`'s spread-of-means term untested. | DEFERRED | BACKLOG |
 | R21.4-3 | MINOR | Step 2 radius guard untested (matters only with `roadSplitSigmaM` above about 15). | DEFERRED | BACKLOG |
 | R21.4-4 | MINOR | NAVIGATION.md configuration table lacks the road keys. | DEFERRED | BACKLOG |
 
 Tests: Core passes 762 tests in 106 suites, 39 known issues (all test 3). No App change.
 
-**Loop stopped after round 4 with one MAJOR (R21.4-1, a missing test of correct code): the user decides.**
+**Loop stopped after round 4 with one MAJOR (R21.4-1, a missing test of correct code). The user chose to add the test and merge; a fresh review of the test found nothing.**
+
+### Run 21 summary
+
+- **Rounds:** 4 run, plus a follow-up review of the R21.4-1 test.
+- **Findings:** 1 MAJOR bug fixed (R21.1-1 pin anchor counted the road twice); 15 MAJOR missing tests added (R21.1-2..6, R21.2-1..4, R21.3-1..5, R21.4-1), none exposed a bug; 0 rejected; 9 MINOR deferred (R21.1-7..11, R21.3-6, R21.4-2..4).
+- **Final tests:** `cd Core && swift test`: 763 tests in 106 suites pass, 39 known issues (all test 3, the decided known FAIL). No App change. Without roads, the 42 acceptance runs are byte-identical to N3.0.
