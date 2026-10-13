@@ -229,8 +229,8 @@ public struct NavigationConfig: Hashable, Sendable, Codable {
     // MARK: Roads (N3.2, docs/N3_PLAN.md "Road model in the filter")
 
     /// Grid time between road updates, s, at the end of a moving step. 0
-    /// disables road updates even with a pack loaded. Clamped to 0 or at
-    /// least one grid step.
+    /// disables road updates even with a pack loaded. Clamped to 0 or
+    /// into one grid step…`maxRoadUpdateIntervalS`.
     public var roadUpdateIntervalS = 1.0
     /// Cross-track σ of the car about the OSM centreline, metres: lane
     /// offset plus OSM error.
@@ -411,6 +411,10 @@ extension NavigationConfig {
     /// Largest `lateManualFixWindowS`, s: the ring's memory grows with it
     /// (60 s at 10 Hz and 2000 particles is about 29 MB).
     public static let maxLateManualFixWindowS = 60.0
+    /// Largest `roadUpdateIntervalS`, s (R21.1-7). A larger value (an
+    /// absurd `--set`) would overflow the nanosecond interval the engine
+    /// keeps; an hour is far beyond any sensible interval.
+    public static let maxRoadUpdateIntervalS = 3_600.0
 
     /// This configuration with values the engine cannot use safely clamped
     /// (B0-1). `NavigationEngine.init` applies it, so `engine.config` is the
@@ -440,18 +444,20 @@ extension NavigationConfig {
         return config
     }
 
-    /// The road keys (N3.2): `roadUpdateIntervalS` to 0 or at least one
-    /// grid step; probabilities into (0, 1); σ, gates and radii that are
-    /// not finite and positive become the default (as `maxForwardJumpS`);
-    /// the "0 disables" keys and the other limits to ≥ 0, a non-finite one
-    /// to the default; `roadSearchRadiusM` to the packs' guaranteed radius.
-    /// `roadAlongTrackCoupling` is not clamped: see `invalidReason`.
+    /// The road keys (N3.2): `roadUpdateIntervalS` to 0 or into one grid
+    /// step…`maxRoadUpdateIntervalS` (R21.1-7); probabilities into (0, 1);
+    /// σ, gates and radii that are not finite and positive become the
+    /// default (as `maxForwardJumpS`); the "0 disables" keys and the other
+    /// limits to ≥ 0, a non-finite one to the default; `roadSearchRadiusM`
+    /// to the packs' guaranteed radius. `roadAlongTrackCoupling` is not
+    /// clamped: see `invalidReason`.
     private mutating func validateRoads(defaults: NavigationConfig, roads: RoadNetwork?) {
         if !roadUpdateIntervalS.isFinite { roadUpdateIntervalS = defaults.roadUpdateIntervalS }
         if roadUpdateIntervalS <= 0 {
             roadUpdateIntervalS = 0
-        } else if stepHz > 0 {
-            roadUpdateIntervalS = max(roadUpdateIntervalS, 1 / stepHz)
+        } else {
+            if stepHz > 0 { roadUpdateIntervalS = max(roadUpdateIntervalS, 1 / stepHz) }
+            roadUpdateIntervalS = min(roadUpdateIntervalS, Self.maxRoadUpdateIntervalS)
         }
         let probability = 1e-9
         for key in [\NavigationConfig.roadOffRoadProbability, \.roadFixGateOnRoadShare] {

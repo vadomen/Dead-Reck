@@ -76,6 +76,15 @@ public struct ReplayOptions: Hashable, Sendable {
     /// only: the engine ingests every pin either way. See
     /// `NavigationReplay.pinScoring`.
     public var pinPairWindowS = NavigationReplay.defaultPinPairWindowS
+    /// The road network the engine matches against (`replay_nav --roads`,
+    /// N3.2); nil runs no road code at all, and every output is as before
+    /// roads existed.
+    public var roads: ReplayRoadSet?
+    /// `replay_nav --wrong-road-tolerance`: a matched edge that is not the
+    /// truth's road still counts as right when the truth fix is within this
+    /// many metres of it (parallel geometry of one road, junction stubs).
+    /// Scoring only, used only with `roads`.
+    public var wrongRoadToleranceM = NavigationReplay.defaultWrongRoadToleranceM
 
     public init(gps: GPSMode, holdOutAccuracyM: Double? = nil, config: NavigationConfig = NavigationConfig()) {
         self.gps = gps
@@ -87,6 +96,7 @@ public struct ReplayOptions: Hashable, Sendable {
         var label = gps.label
         if let holdOutAccuracyM { label += "-holdout-\(GPSMode.format(holdOutAccuracyM))" }
         if asLive { label += "-as-live" } else if fileOrder { label += "-file-order" }
+        if let roads { label += "-" + roads.labelSuffix }
         return label
     }
 }
@@ -213,6 +223,10 @@ public enum NavigationReplay {
     /// one pin σ, so a pin that soon after another is not an independent
     /// check of the estimate.
     public static let defaultPinPairWindowS = 3.0
+
+    /// Default `ReplayOptions.wrongRoadToleranceM`, metres (docs/N3_PLAN.md,
+    /// "Metrics added to replay_nav").
+    public static let defaultWrongRoadToleranceM = 20.0
 
     /// Why a manual fix is not scored.
     ///
@@ -428,6 +442,18 @@ public struct ReplayResult: Hashable, Sendable, Codable {
         public var ring: [[Double]]
     }
 
+    /// The engine's matched road edge at an ellipse sample (every
+    /// `ellipseIntervalS`), with roads only (N3.2b; GeoJSON `matchedEdge`).
+    public struct MatchedEdgeSample: Hashable, Sendable, Codable {
+        public var t: Double
+        public var onRoadShare: Double?
+        public var edge: MatchedRoadEdge
+        /// OSM `highway` value, `_link` appended for a link.
+        public var roadClass: String
+        /// The edge's shape, (latitude, longitude) pairs in order.
+        public var points: [[Double]]
+    }
+
     public struct Fix: Hashable, Sendable, Codable {
         public var t: Double
         public var arrivalT: Double
@@ -436,6 +462,9 @@ public struct ReplayResult: Hashable, Sendable, Codable {
         public var accuracyM: Double
         /// nil: given to the engine.
         public var withheld: WithholdReason?
+        /// Given to the engine and ignored as off-road (the road fix gate,
+        /// `fixesRejectedOffRoad`); nil otherwise.
+        public var rejectedOffRoad: Bool? = nil
     }
 
     public var logName: String
@@ -483,6 +512,17 @@ public struct ReplayResult: Hashable, Sendable, Codable {
 
     /// How the manual fixes were scored (pairs, truth exclusions).
     public var pinScoring = PinScoring(pairWindowS: 0)
+
+    /// The road set the engine used (N3.2): per pack in load order, and
+    /// FNV-1a 64 over their content hashes. nil without roads.
+    public var roads: [ReplayRoadPack]? = nil
+    public var roadSetHash: String? = nil
+    /// The road metrics (docs/N3_PLAN.md, "Metrics added to replay_nav");
+    /// nil without roads.
+    public var roadMetrics: ReplayRoadMetrics? = nil
+    /// The matched edge every `ellipseIntervalS` (GeoJSON only); empty
+    /// without roads.
+    public var matchedEdges: [MatchedEdgeSample] = []
 
     public var heldOutFixes: [Fix] { fixes.filter { $0.withheld == .heldOut } }
 }
@@ -532,13 +572,22 @@ private struct ReplayRun {
 
     var pinScoring = ReplayResult.PinScoring(pairWindowS: 0)
 
+    /// Roads (N3.2): the offline truth matcher and what the run collects
+    /// for the road metrics. nil / empty without roads.
+    let roadTruth: RoadTruthMatcher?
+    var roadMetrics: ReplayRoadMetrics?
+    var onRoadShareSum = 0.0
+    var matchedEdges: [ReplayResult.MatchedEdgeSample] = []
+
     init(logName: String, inputs: [NavigationInput], options: ReplayOptions, truth: TruthFile.Entry?) {
         self.logName = logName
         self.inputs = inputs
         self.options = options
         self.truth = truth
-        engine = NavigationEngine(config: options.config)
+        engine = NavigationEngine(config: options.config, roads: options.roads?.network)
         motionStart = NavigationReplay.motionStart(inputs)
+        roadTruth = options.roads.map { RoadTruthMatcher(network: $0.network) }
+        roadMetrics = options.roads.map { _ in ReplayRoadMetrics(wrongRoadToleranceM: options.wrongRoadToleranceM) }
     }
 
     mutating func execute() -> ReplayResult {
@@ -606,9 +655,13 @@ private struct ReplayRun {
                 distance.observe(sample, at: t.nanoseconds, maxAgeS: options.config.obdMaxAgeS,
                                  offsetKmh: options.config.obdSpeedOffsetKmh)
             }
+            let rejectedBefore = engine.counters.fixesRejectedOffRoad
             let start = clock.now
             engine.ingest(input)
             let elapsed = clock.now - start
+            if engine.counters.fixesRejectedOffRoad != rejectedBefore, case .location = input {
+                fixes[fixes.count - 1].rejectedOffRoad = true
+            }
             let ns = elapsed.components.seconds * 1_000_000_000 + elapsed.components.attoseconds / 1_000_000_000
             engineNs += ns
             maxIngestNs = max(maxIngestNs, ns)
@@ -683,7 +736,8 @@ private struct ReplayRun {
             truthSigmaM: item.sigma, distanceM: travelled
         )
         checkpoint.notScored = item.notScored
-        if let estimate = engine.estimate(at: t), let plane = engine.tangentPlane {
+        let estimate = engine.estimate(at: t)
+        if let estimate, let plane = engine.tangentPlane {
             let truth = plane.enu(latitude: item.latitude, longitude: item.longitude)
             let dEast = truth.east - estimate.east
             let dNorth = truth.north - estimate.north
@@ -701,7 +755,132 @@ private struct ReplayRun {
             checkpoint.ellipseSemiMinorM = estimate.ellipse.semiMinorM
             checkpoint.ellipseOrientationDeg = estimate.ellipse.orientationDeg
         }
+        if roadTruth != nil, item.kind == .cleanFix, let index = item.inputIndex,
+           case .location(let sample, _) = inputs[index] {
+            scoreRoad(sample, checkpoint: checkpoint, estimate: estimate)
+        }
         checkpoints.append(checkpoint)
+    }
+
+    // MARK: Roads (N3.2b)
+
+    /// The road side of a withheld clean fix: its offline truth edge, the
+    /// engine's last road update at its time, the verdict, and whether it
+    /// is unmapped (and captured).
+    mutating func scoreRoad(_ sample: LocationSample, checkpoint: ReplayResult.Checkpoint,
+                            estimate: NavigationEstimate?) {
+        guard let matcher = roadTruth else { return }
+        typealias T = NavigationReplay.RoadTruth
+        let match = matcher.match(latitude: sample.latitude, longitude: sample.longitude,
+                                  accuracyM: sample.horizontalAccuracy, courseDeg: NavigationReplay.RoadTruth.course(of: sample),
+                                  courseAccuracyDeg: sample.courseAccuracy)
+        var fix = ReplayRoadFix(t: checkpoint.t, distanceM: checkpoint.distanceM, accuracyM: sample.horizontalAccuracy,
+                                truth: match.status)
+        fix.nearestEdgeM = match.nearestM
+        fix.unmapped = (match.nearestM ?? .infinity) > T.unmappedDistanceM
+        if let edge = match.edge {
+            fix.truthEdge = edge
+            fix.truthClass = matcher.roadClass(of: edge)
+            fix.crossTrackM = match.crossTrackM
+            fix.logLikelihoodRatio = match.logLikelihoodRatio
+        }
+        if let estimate {
+            fix.onRoadShare = estimate.onRoadShare
+            fix.matchedEdge = estimate.matchedEdge
+            fix.inside95 = checkpoint.inside95
+            if let matched = estimate.matchedEdge {
+                fix.matchedEdgeDistanceM = matcher.nearestSegment(latitude: sample.latitude, longitude: sample.longitude,
+                                                                  of: matched).distance
+                fix.crossTrackSemiAxisM = matcher.semiAxisAcross(estimate.ellipse, latitude: estimate.latitude,
+                                                                 longitude: estimate.longitude, edge: matched)
+            }
+            if match.status == .matched, let truthEdge = match.edge {
+                if let share = estimate.onRoadShare {
+                    if share < T.onRoadShare {
+                        fix.verdict = .off
+                    } else if let matched = estimate.matchedEdge, matched.osmWayID == truthEdge.osmWayID
+                                || (fix.matchedEdgeDistanceM ?? .infinity) <= options.wrongRoadToleranceM {
+                        fix.verdict = .right
+                    } else {
+                        fix.verdict = .wrong
+                    }
+                } else {
+                    fix.verdict = .notEngaged
+                }
+            }
+            if fix.unmapped {
+                let onEdge = (estimate.onRoadShare ?? 0) >= T.onRoadShare && estimate.matchedEdge != nil
+                fix.captured = onEdge && (fix.crossTrackSemiAxisM ?? .infinity) < T.capturedCrossTrackM
+                    && checkpoint.inside95 == false
+            }
+        }
+        roadMetrics?.fixes.append(fix)
+    }
+
+    /// The road metrics' totals, once the run is over.
+    func finishRoadMetrics() -> ReplayRoadMetrics? {
+        guard var m = roadMetrics, let matcher = roadTruth else { return nil }
+        // Weights: OBD distance since the previous fix with a usable course.
+        var previous: Double?
+        for i in m.fixes.indices where m.fixes[i].truth != .noCourse {
+            m.fixes[i].weightM = previous.map { max(0, m.fixes[i].distanceM - $0) } ?? 0
+            previous = m.fixes[i].distanceM
+        }
+        m.withheldCleanFixes = m.fixes.count
+        for fix in m.fixes {
+            m.truth[fix.truth.rawValue, default: 0] += 1
+            if let verdict = fix.verdict {
+                m.verdicts[verdict.rawValue, default: ReplayRoadMetrics.Count()].fixes += 1
+                m.verdicts[verdict.rawValue, default: ReplayRoadMetrics.Count()].distanceM += fix.weightM
+            }
+            if fix.unmapped {
+                m.unmapped += 1
+                if let captured = fix.captured {
+                    m.unmappedWithEstimate += 1
+                    if captured { m.unmappedCaptured += 1 }
+                }
+            }
+        }
+        let matched = m.truth[RoadTruthStatus.matched.rawValue] ?? 0
+        let ambiguous = m.truth[RoadTruthStatus.ambiguous.rawValue] ?? 0
+        m.ambiguousShare = matched + ambiguous > 0 ? Double(ambiguous) / Double(matched + ambiguous) : nil
+        let scored = m.scored
+        let scoredDistance = WrongRoadVerdict.allCases.reduce(0.0) { $0 + m.count($1).distanceM }
+        if scored > 0 {
+            m.wrongShare = Double(m.count(.wrong).fixes) / Double(scored)
+            m.offShare = Double(m.count(.off).fixes) / Double(scored)
+        }
+        if scoredDistance > 0 {
+            m.wrongShareByDistance = m.count(.wrong).distanceM / scoredDistance
+            m.offShareByDistance = m.count(.off).distanceM / scoredDistance
+        }
+        m.meanOnRoadShare = m.trackEngaged > 0 ? onRoadShareSum / Double(m.trackEngaged) : nil
+        let c = engine.counters
+        if c.roadUpdates > 0 {
+            m.candidateTestsPerUpdate = Double(c.roadCandidateTests) / Double(c.roadUpdates)
+            m.candidateTestsPerParticle = Double(c.roadCandidateTests) / Double(c.roadUpdates)
+                / Double(max(1, options.config.particleCount))
+        }
+        m.rejectedFixes = fixes.filter { $0.rejectedOffRoad == true }.map { [$0.t, $0.accuracyM] }
+        // Offline residuals: every clean fix of the recording on the
+        // replay's timeline, used or withheld, with a usable course and a
+        // matched truth edge.
+        var byClass: [String: [Double]] = [:]
+        var all: [Double] = []
+        for (index, input) in inputs.enumerated() where !skippedInputs.contains(index) {
+            guard case .location(let sample, _) = input, sample.horizontalAccuracy >= 0,
+                  sample.horizontalAccuracy <= NavigationReplay.cleanFixTruthAccM,
+                  let course = NavigationReplay.RoadTruth.course(of: sample) else { continue }
+            let match = matcher.match(latitude: sample.latitude, longitude: sample.longitude,
+                                      accuracyM: sample.horizontalAccuracy, courseDeg: course,
+                                      courseAccuracyDeg: sample.courseAccuracy)
+            guard match.status == .matched, let edge = match.edge, let d = match.crossTrackM else { continue }
+            byClass[matcher.roadClass(of: edge), default: []].append(d)
+            all.append(d)
+        }
+        m.residuals = byClass.compactMapValues { DistanceStats($0) }
+        m.residualsAll = DistanceStats(all)
+        return m
     }
 
     /// The prior at a manual fix, as the live app's sidecar records it.
@@ -740,7 +919,21 @@ private struct ReplayRun {
             converged: estimate.converged, distanceM: distance.distance(at: ns),
             speedScale: estimate.speedScaleMean
         ))
+        if roadMetrics != nil {
+            roadMetrics!.trackSamples += 1
+            if let share = estimate.onRoadShare {
+                roadMetrics!.trackEngaged += 1
+                onRoadShareSum += share
+                if share >= NavigationReplay.RoadTruth.onRoadShare { roadMetrics!.trackOnRoad += 1 }
+            }
+        }
         guard withEllipse else { return }
+        if let matcher = roadTruth, let edge = estimate.matchedEdge {
+            matchedEdges.append(ReplayResult.MatchedEdgeSample(
+                t: t.seconds, onRoadShare: estimate.onRoadShare, edge: edge, roadClass: matcher.roadClass(of: edge),
+                points: matcher.points(of: edge).map { [$0.latitude, $0.longitude] }
+            ))
+        }
         let e = estimate.ellipse
         let ring = Self.ring(estimate, plane: plane)
         ellipses.append(ReplayResult.EllipseSample(
@@ -755,7 +948,7 @@ private struct ReplayRun {
         let endCheckpoint = checkpoints.last { $0.kind == .truthEnd } ?? scored.last
         let convergence = NavigationReplay.convergence(track, holdS: options.convergenceHoldS)
         let steps = engine.counters.steps
-        return ReplayResult(
+        var result = ReplayResult(
             logName: logName,
             mode: options.label,
             config: options.config,
@@ -784,6 +977,13 @@ private struct ReplayRun {
             pins: pins,
             pinScoring: pinScoring
         )
+        if let roads = options.roads {
+            result.roads = roads.packs
+            result.roadSetHash = roads.roadSetHashHex
+            result.roadMetrics = finishRoadMetrics()
+            result.matchedEdges = matchedEdges
+        }
+        return result
     }
 
 }

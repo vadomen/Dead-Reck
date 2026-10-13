@@ -37,6 +37,12 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
     /// exclusions); N3.0. Optional so metrics.json files written before it
     /// still decode (nil there: every pin was scored).
     public var pinScoring: ReplayResult.PinScoring?
+    /// The road set (N3.2): per pack in load order, and its hash. nil
+    /// (absent) for a run without roads and in files written before N3.2.
+    public var roads: [ReplayRoadPack]?
+    public var roadSetHash: String?
+    /// The road metrics; nil (absent) without roads.
+    public var roadMetrics: ReplayRoadMetrics?
 
     public init(_ result: ReplayResult) {
         logName = result.logName
@@ -65,6 +71,9 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
         fixesWithheld = result.fixes.count - fixesUsed
         pins = result.pins.map(\.pin)
         pinScoring = result.pinScoring
+        roads = result.roads
+        roadSetHash = result.roadSetHash
+        roadMetrics = result.roadMetrics
     }
 
     /// `metrics.json` key: one row per log and mode.
@@ -78,6 +87,7 @@ extension ReplayMetrics {
         case maxErrorM, maxErrorPercent, endErrorM, endErrorPercent, endIsTruth
         case convergedT, convergedDistanceM, finalHeadingStdDeg, consistency, consistencyWithTruthSigma
         case steps, msPerStep, maxIngestMs, counters, fixesUsed, fixesWithheld, pins, pinScoring
+        case roads, roadSetHash, roadMetrics
     }
 
     /// Keys every `metrics.json` row has had since the first one (N2). A row
@@ -92,7 +102,7 @@ extension ReplayMetrics {
     /// - The original keys (`originalKeys`) are required.
     /// - Every key added later is optional and nil when absent:
     ///   `motionStartT`, `consistency`, `consistencyWithTruthSigma`, `pins`,
-    ///   `pinScoring` (and any key a
+    ///   `pinScoring`, `roads`, `roadSetHash`, `roadMetrics` (and any key a
     ///   later build adds, which must be optional or take a default here).
     /// - `config` and `counters` decode tolerantly themselves: a config key
     ///   or counter added later takes its default (0 for a counter).
@@ -126,6 +136,9 @@ extension ReplayMetrics {
         fixesWithheld = try c.decode(Int.self, forKey: .fixesWithheld)
         pins = try c.decodeIfPresent([NavSidecar.Pin].self, forKey: .pins)
         pinScoring = try c.decodeIfPresent(ReplayResult.PinScoring.self, forKey: .pinScoring)
+        roads = try c.decodeIfPresent([ReplayRoadPack].self, forKey: .roads)
+        roadSetHash = try c.decodeIfPresent(String.self, forKey: .roadSetHash)
+        roadMetrics = try c.decodeIfPresent(ReplayRoadMetrics.self, forKey: .roadMetrics)
     }
 }
 
@@ -241,7 +254,58 @@ public enum ReplayReport {
             lines.append(String(format: "Final         speed scale %.4f, σhead %.1f°", last.speedScale, last.headingStdDeg))
         }
         lines.append("Converged     \(km(result.convergedDistanceM))\(result.convergedT.map { String(format: " (t %.1f s)", $0) } ?? ""), final σhead \(result.finalHeadingStdDeg.map { String(format: "%.1f°", $0) } ?? "n/a")")
+        if let packs = result.roads, let hash = result.roadSetHash {
+            lines.append(roadsText(packs, roadSetHash: hash))
+            lines.append(contentsOf: roadLines(result.roadMetrics, counters: result.counters))
+        }
         return lines.joined(separator: "\n") + "\n"
+    }
+
+    static func share(_ value: Double?) -> String {
+        guard let value else { return "n/a" }
+        return String(format: "%.1f %%", 100 * value)
+    }
+
+    /// The road lines of the summary (N3.2b).
+    public static func roadLines(_ metrics: ReplayRoadMetrics?, counters c: NavigationCounters) -> [String] {
+        var lines: [String] = []
+        lines.append("Road updates  \(c.roadUpdates) (no road near \(c.roadUpdatesNoRoad), pin anchors \(c.roadPinAnchors)), "
+            + "splits \(c.roadSplits), candidate tests \(c.roadCandidateTests)"
+            + (metrics?.candidateTestsPerUpdate.map { String(format: " (%.0f per update", $0) } ?? "")
+            + (metrics?.candidateTestsPerParticle.map { String(format: ", %.1f per particle)", $0) } ?? "")
+            + ", level blocked \(c.roadLevelBlocked), fixes rejected off-road \(c.fixesRejectedOffRoad)")
+        guard let m = metrics else { return lines }
+        lines.append("On road       1 Hz samples \(m.trackSamples): engaged \(m.trackEngaged), onRoadShare ≥ 0.5 \(m.trackOnRoad)"
+            + (m.trackSamples > 0 ? String(format: " (%.1f %%)", 100 * Double(m.trackOnRoad) / Double(m.trackSamples)) : "")
+            + ", mean share \(m.meanOnRoadShare.map { String(format: "%.3f", $0) } ?? "n/a")")
+        let truth = { (s: RoadTruthStatus) in m.truth[s.rawValue] ?? 0 }
+        lines.append("Road truth    (offline) \(m.withheldCleanFixes) withheld clean fixes: matched \(truth(.matched)), "
+            + "ambiguous \(truth(.ambiguous)) (\(share(m.ambiguousShare)) of matched + ambiguous), "
+            + "no heading-compatible road within \(GPSMode.format(NavigationReplay.RoadTruth.onRoadMaxM)) m \(truth(.noRoad)), "
+            + "no usable course \(truth(.noCourse))"
+            + ((m.ambiguousShare ?? 0) > NavigationReplay.RoadTruth.viterbiAmbiguousShare
+                ? "; WARNING: over 20 % ambiguous, the plan calls for a Viterbi match (not implemented)" : ""))
+        let v = { (verdict: WrongRoadVerdict) in m.count(verdict) }
+        lines.append("Wrong road    (capture onto a wrong mapped road only; tolerance \(GPSMode.format(m.wrongRoadToleranceM)) m) "
+            + "scored \(m.scored): wrong \(v(.wrong).fixes) (\(share(m.wrongShare)); by distance \(share(m.wrongShareByDistance))), "
+            + "right \(v(.right).fixes), off \(v(.off).fixes) (\(share(m.offShare)); by distance \(share(m.offShareByDistance))), "
+            + "not engaged \(v(.notEngaged).fixes)")
+        lines.append("Unmapped      \(m.unmapped) withheld clean fixes > \(GPSMode.format(NavigationReplay.RoadTruth.unmappedDistanceM)) m from every edge"
+            + " (\(m.unmappedWithEstimate) with an estimate): captured \(m.unmappedCaptured)"
+            + " (on a mapped edge, < \(GPSMode.format(NavigationReplay.RoadTruth.capturedCrossTrackM)) m across, truth outside the 95 % ellipse)")
+        if let all = m.residualsAll {
+            let classes = m.residuals.keys.sorted().map { key -> String in
+                let r = m.residuals[key]!
+                return String(format: "%@ %.1f/%.1f (%d)", key, r.p50M, r.p95M, r.count)
+            }
+            lines.append(String(format: "Residuals     (offline) clean fixes to their truth edge, p50/p95 m (n): all %.1f/%.1f (%d); ",
+                                all.p50M, all.p95M, all.count) + classes.joined(separator: ", "))
+        }
+        if !m.rejectedFixes.isEmpty {
+            lines.append("Rejected      off-road fixes (t s, acc m): "
+                + m.rejectedFixes.map { String(format: "%.1f/%.0f", $0[0], $0[1]) }.joined(separator: ", "))
+        }
+        return lines
     }
 
     // MARK: Reading the recording (R11.1-8)
@@ -296,6 +360,23 @@ public enum ReplayReport {
             out += "| \(r.logName) | \(r.mode) | \(m(r.distanceM)) | \(r.checkpoints.count) | \(m(r.endErrorM))\(r.endIsTruth ? "" : "*") | \(pct(r.endErrorPercent)) | \(m(r.maxErrorM)) | \(pct(r.maxErrorPercent)) | \(consistencyText(r.consistency)) | \(consistencyText(r.consistencyWithTruthSigma)) | \(km(r.convergedDistanceM)) | \(String(format: "%.3f", r.msPerStep)) | \(String(format: "%.2f", r.maxIngestMs)) |\n"
         }
         out += "\n\\* no truth `end`: error at the last scored checkpoint.\n"
+        let roadRuns = runs.filter { $0.roadMetrics != nil }
+        if !roadRuns.isEmpty {
+            out += "\n## Roads\n\n"
+            out += "Road data © OpenStreetMap contributors (ODbL 1.0). Wrong road checks capture onto a wrong *mapped* road only; "
+                + "capture while the car is on an unmapped road is the unmapped/captured column. Road truth is offline.\n\n"
+            out += "| log | mode | roadSetHash | road updates | on road (1 Hz) | truth matched / ambiguous | scored | wrong (fixes) | wrong (distance) | off (fixes) | not engaged | unmapped / captured | rejected fixes |\n"
+            out += "|---|---|---|---:|---:|---|---:|---:|---:|---:|---:|---|---:|\n"
+            for r in roadRuns {
+                let m = r.roadMetrics!
+                out += "| \(r.logName) | \(r.mode) | \(r.roadSetHash ?? "n/a") | \(r.counters.roadUpdates) | "
+                    + (m.trackSamples > 0 ? String(format: "%.1f %%", 100 * Double(m.trackOnRoad) / Double(m.trackSamples)) : "n/a")
+                    + " | \(m.truth[RoadTruthStatus.matched.rawValue] ?? 0) / \(m.truth[RoadTruthStatus.ambiguous.rawValue] ?? 0)"
+                    + " | \(m.scored) | \(m.count(.wrong).fixes) (\(share(m.wrongShare))) | \(share(m.wrongShareByDistance))"
+                    + " | \(m.count(.off).fixes) (\(share(m.offShare))) | \(m.count(.notEngaged).fixes)"
+                    + " | \(m.unmapped) / \(m.unmappedCaptured) | \(m.rejectedFixes.count) |\n"
+            }
+        }
         for r in runs {
             out += "\n## \(r.logName) — \(r.mode)\n\n"
             if let scoring = r.pinScoring, scoring.manualFixes > 0 || !scoring.unmatchedExclusionsT.isEmpty {
@@ -314,9 +395,37 @@ public enum ReplayReport {
                 out += "\nDR estimate at each manual fix (prior):\n\n"
                 for pin in pins { out += "- " + pinText(pin) + notScoredSuffix(pin, r.checkpoints) + "\n" }
             }
+            if let packs = r.roads, let hash = r.roadSetHash {
+                out += "\n```\n" + roadsText(packs, roadSetHash: hash) + "\n"
+                    + roadLines(r.roadMetrics, counters: r.counters).joined(separator: "\n") + "\n```\n"
+            }
             out += "\nSeed \(r.config.seed), \(r.config.particleCount) particles. Config:\n\n```json\n\(configJSON(r.config))\n```\n"
         }
         return out
+    }
+
+    /// Every config key whose value differs between `old` and `new`, as
+    /// "key old → new", sorted by key: what `validated()` clamped (R21.3-6).
+    public static func configChanges(from old: NavigationConfig, to new: NavigationConfig) -> [String] {
+        func object(_ config: NavigationConfig) -> [String: Any] {
+            (try? JSONSerialization.jsonObject(with: config.canonicalJSON())) as? [String: Any] ?? [:]
+        }
+        let a = object(old), b = object(new)
+        return Set(a.keys).union(b.keys).sorted().compactMap { key in
+            let x = a[key].map { "\($0)" } ?? "absent", y = b[key].map { "\($0)" } ?? "absent"
+            return x == y ? nil : "\(key) \(x) → \(y)"
+        }
+    }
+
+    /// The road set of a run, one line per pack, with the attribution:
+    /// "Roads         2 packs, roadSetHash …, © OpenStreetMap contributors (ODbL 1.0)".
+    public static func roadsText(_ packs: [ReplayRoadPack], roadSetHash: String) -> String {
+        var lines = ["Roads         \(packs.count) pack\(packs.count == 1 ? "" : "s"), roadSetHash \(roadSetHash), "
+            + "\(RoadNetwork.attribution) (\(RoadPackFormat.license))"]
+        for (i, pack) in packs.enumerated() {
+            lines.append("  pack \(i)      " + pack.text)
+        }
+        return lines.joined(separator: "\n")
     }
 
     public static func configJSON(_ config: NavigationConfig) -> String {
@@ -384,17 +493,38 @@ public enum ReplayReport {
 
     // MARK: GeoJSON
 
+    /// The track feature's properties; with roads also the road set (N3.2),
+    /// so a GeoJSON file names the exact packs it was matched against.
+    static func trackProperties(_ result: ReplayResult) -> [String: Any] {
+        var properties: [String: Any] = [
+            "kind": "track", "log": result.logName, "mode": result.mode,
+            "t": result.track.map(\.t), "headingDeg": result.track.map(\.headingDeg),
+            "headingStdDeg": result.track.map(\.headingStdDeg),
+        ]
+        if let packs = result.roads, let hash = result.roadSetHash {
+            properties["roadSetHash"] = hash
+            properties["roads"] = packs.map {
+                ["contentHash": $0.contentHash, "formatVersion": $0.formatVersion, "osmTimestamp": $0.osmTimestamp,
+                 "gridID": $0.gridID] as [String: Any]
+            }
+            properties["attribution"] = "\(RoadNetwork.attribution) (\(RoadPackFormat.license))"
+        }
+        return properties
+    }
+
     /// The run as a GeoJSON FeatureCollection: DR track (LineString),
     /// 95 % ellipses (Polygons), fixes used and withheld, checkpoints with
-    /// their truth (Points). Coordinates are [longitude, latitude].
+    /// their truth (Points). Coordinates are [longitude, latitude]. With
+    /// roads (N3.2b) also: the road set on the track feature, off-road
+    /// rejected fixes (`fixRejectedOffRoad`) and the matched edge every
+    /// `ellipseIntervalS` (`matchedEdge`). Without roads the bytes are
+    /// those of N3.0.
     public static func geoJSON(_ result: ReplayResult) throws -> Data {
         var features: [[String: Any]] = []
         features.append([
             "type": "Feature",
             "geometry": ["type": "LineString", "coordinates": result.track.map { [$0.longitude, $0.latitude] }],
-            "properties": ["kind": "track", "log": result.logName, "mode": result.mode,
-                           "t": result.track.map(\.t), "headingDeg": result.track.map(\.headingDeg),
-                           "headingStdDeg": result.track.map(\.headingStdDeg)],
+            "properties": trackProperties(result),
         ])
         for e in result.ellipses {
             features.append([
@@ -405,12 +535,20 @@ public enum ReplayReport {
             ])
         }
         for fix in result.fixes {
+            var properties: [String: Any] = [
+                "kind": fix.withheld == nil ? "fixUsed" : "fixWithheld",
+                "withheld": fix.withheld?.rawValue ?? "", "t": fix.t,
+                "arrivalT": fix.arrivalT, "accuracyM": fix.accuracyM,
+            ]
+            // Roads only (N3.2b): a fix the engine ignored as off-road.
+            if fix.rejectedOffRoad == true {
+                properties["kind"] = "fixRejectedOffRoad"
+                properties["rejectedOffRoad"] = true
+            }
             features.append([
                 "type": "Feature",
                 "geometry": ["type": "Point", "coordinates": [fix.longitude, fix.latitude]],
-                "properties": ["kind": fix.withheld == nil ? "fixUsed" : "fixWithheld",
-                               "withheld": fix.withheld?.rawValue ?? "", "t": fix.t,
-                               "arrivalT": fix.arrivalT, "accuracyM": fix.accuracyM],
+                "properties": properties,
             ])
         }
         for cp in result.checkpoints {
@@ -454,6 +592,21 @@ public enum ReplayReport {
                     "properties": ellipse,
                 ])
             }
+        }
+        // Roads only (N3.2b), after every earlier feature: the engine's
+        // matched OSM edge every `ellipseIntervalS`. © OpenStreetMap
+        // contributors (the track feature carries the attribution).
+        for sample in result.matchedEdges {
+            var properties: [String: Any] = [
+                "kind": "matchedEdge", "t": sample.t, "pack": sample.edge.pack, "edge": sample.edge.edge,
+                "osmWayID": sample.edge.osmWayID, "highway": sample.roadClass,
+            ]
+            if let share = sample.onRoadShare { properties["onRoadShare"] = share }
+            features.append([
+                "type": "Feature",
+                "geometry": ["type": "LineString", "coordinates": sample.points.map { [$0[1], $0[0]] }],
+                "properties": properties,
+            ])
         }
         let collection: [String: Any] = ["type": "FeatureCollection", "features": features]
         return try JSONSerialization.data(withJSONObject: collection, options: [.sortedKeys])

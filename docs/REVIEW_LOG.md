@@ -254,3 +254,73 @@ Tests: Core passes 762 tests in 106 suites, 39 known issues (all test 3). No App
 - **Rounds:** 4 run, plus a follow-up review of the R21.4-1 test.
 - **Findings:** 1 MAJOR bug fixed (R21.1-1 pin anchor counted the road twice); 15 MAJOR missing tests added (R21.1-2..6, R21.2-1..4, R21.3-1..5, R21.4-1), none exposed a bug; 0 rejected; 9 MINOR deferred (R21.1-7..11, R21.3-6, R21.4-2..4).
 - **Final tests:** `cd Core && swift test`: 763 tests in 106 suites pass, 39 known issues (all test 3, the decided known FAIL). No App change. Without roads, the 42 acceptance runs are byte-identical to N3.0.
+
+## Run 22: N3.2b replay_nav roads and first road measurement (main..n3.2b, 10b2551..5efbb20), started 2026-10-13
+
+The range adds `replay_nav --roads` (repeatable) and `--wrong-road-tolerance`, the offline road truth and road metrics, `roads`/`roadSetHash` in every output and the `-roads-<hash>` label, GeoJSON matched edges and rejected fixes, the unmapped/captured metric (R21.1-11), R21 MINOR fixes, and the first measurement with roads (no tuning). About 1380 changed lines, one reviewer. Branch: `n3.2b`.
+
+### Round 1
+
+Reviewer: one fresh `reviewer` (opus). Result: 0 BLOCKER / 4 MAJOR / 2 MINOR. Mutations: 3 run, 3 survived (off verdict `share < 0`; captured without the inside-95 clause; truth heading gate ignoring oneway).
+
+Verified clean: verdict/tolerance/ambiguity/15 m truth-edge/course/captured rules against the spec; ellipse-across-edge maths; rejectedOffRoad attribution in the normal path; Codable back-compat; ReplayRoadSet hash; label; GeoJSON; CLI; Core imports; privacy; doc numbers against logs/n32b/roads seeds 1–5; no-roads clean seed 1 byte-identical to N3.0 and the roads run reproduced exactly.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R22.1-1 | MAJOR | `docs/NAVIGATION.md:991-995`: clean's road truth is 20.3 % ambiguous on every seed, over the plan's 20 % Viterbi trigger (`N3_PLAN.md:536`), yet the doc attached the trigger only to drive-7 and reported clean's wrong-road share (a gated N3 criterion) as passing. | FIXED | Verified. Docs state both clean and drive-7 are over the trigger and clean's wrong-road figure is provisional; Viterbi match is the user's decision. |
+| R22.1-2 | MAJOR | The `off` verdict (`NavigationReplay.swift:799`) is untested: `share < T.onRoadShare` → `share < 0` survives; every test has offShare 0. | FIXED | Verified. Test added in cf732b3; mutation killed. |
+| R22.1-3 | MAJOR | Captured's "truth outside the 95 % ellipse" clause (`NavigationReplay.swift:812-814`) is untested: dropping it survives; the unmapped test re-derives the count from the fixes' own fields and never yields captured. | FIXED | Verified. Test added in cf732b3; mutation killed. |
+| R22.1-4 | MAJOR | The offline road truth's oneway rule (`ReplayRoads.swift:350`) is untested: ignoring oneway survives; on a dual carriageway the opposite way could compete or win, inflating ambiguity and mis-scoring wrong road. | FIXED | Verified. Test added in cf732b3; mutation killed. |
+| R22.1-5 | MINOR | `docs/NAVIGATION.md:997-998`: "drive-7 29 of 273" withheld clean fixes; withheldCleanFixes is 266 (273 includes pins). | FIXED | One-word docs fix, made in the round. |
+| R22.1-6 | MINOR | `NavigationReplay.swift:658-663`: `rejectedOffRoad` is marked only when the counter moves during a `.location` ingest; a held stale fix applied inside an OBD ingest and rejected by the gate is counted in `fixesRejectedOffRoad` but missing from `rejectedFixes` and the GeoJSON. Reachable only with `--set roadFixGateMinKmh=0`. | DEFERRED | BACKLOG |
+
+Tests: Core passes 782 tests in 107 suites, 39 known issues (all test 3). No App change. Each new test kills its mutation (25, 2, 4 issues).
+
+### Round 2
+
+Reviewer: one fresh `reviewer` (opus). Result: 0 BLOCKER / 3 MAJOR / 0 MINOR. Mutations: 3 run, 3 survived (off threshold `share <= 0`; captured without the cross-track clause; distance weights from any previous fix).
+
+Verified clean: the four round-1 tests test real behaviour; summary, markdown and GeoJSON road output (matched edge with the ellipses every 10 s plus one at the end); `configChanges` and the R21.1-7 clamp; `ReplayRoadSet` `==`/`hash`, label and `roadSetHash` change with pack order; ms/step and road-counter figures against `logs/n32b/timing-*`; moved backlog rows unchanged apart from status; privacy; jammed-A/B seed 1 without roads byte-identical to N3.0, clean seed 1 with roads reproduced. Noted, not a finding: pack order changes engine results (clean seed 1 reversed: 15.6 m vs 21.75 m max), an N3.2a engine property; the runs get different labels.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R22.2-1 | MAJOR | The off verdict's 0.5 threshold (`NavigationReplay.swift:799`) is untested: `offVerdict` only produces share exactly 0, so `share <= 0` survives, though real off fixes on clean-long and drive-7 have 0 < share < 0.5. A narrower follow-up to R22.1-2, not the same finding. | FIXED | Verified. Test `offThreshold` in 6192f6d (share 0.36–0.44 → off, 0.55–0.61 → right); mutation killed (51 issues). |
+| R22.2-2 | MAJOR | Captured's cross-track clause (`NavigationReplay.swift:813`) is untested: `unmapped()` re-derived the formula and both round-1 fixes were already < 25 m across. | FIXED | Verified. Test `capturedNeedsNarrowCrossTrack` (≈ 12 m across: captured; ≈ 31 m: not) in 6192f6d; `unmapped()` rewritten with literals; mutation killed. |
+| R22.2-3 | MAJOR | The distance-weight rule (`NavigationReplay.swift:825`, since the previous fix with a usable course) is untested; dropping the `where` moves drive-7 seed 1 wrong-by-distance 3.54 % → 2.14 %. | FIXED | Verified. Test `weightsSkipNoCourseFixes` in 6192f6d; mutation killed (3 issues). |
+
+Tests: Core passes 785 tests in 107 suites, 39 known issues (all test 3). No App change.
+
+### Round 3
+
+Reviewer: one fresh `reviewer` (opus). Result: 0 BLOCKER / 2 MAJOR / 2 MINOR. Mutations: 3 run, 3 survived (margin threshold `log(1.01)`; heading term dropped from the truth likelihood; margin competitors from within 15 m only).
+
+Verified clean: all of `ReplayRoads.swift` (match/margin/ambiguity, 15 m vs 50 m radii, nearby/nearestSegment, semiAxisAcross/support against `ErrorEllipse`'s bearing convention, `ReplayRoadSet` ==/hash/`roadSetHash`, `DistanceStats` nearest rank exact for n ≤ 5000); `scoreRoad`/`finishRoadMetrics`; `ReplayReport`; CLI checks for `--roads`/`--wrong-road-tolerance`; the round-2 tests are not tautological; doc figures against `logs/n32b/roads` seeds 1–5; drive-7 and manual seed 1 without roads byte-identical to N3.0; privacy.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R22.3-1 | MAJOR | The matched/ambiguous margin threshold (`ReplayRoads.swift:365`, `marginRatio` 2 at :100) is untested: only a tie and ln ratio > 1 are exercised, so `log(1.01)` survives; on clean seed 1 it moves ambiguity 20.3 % → 2.3 %, under the Viterbi trigger, silently removing the premise of R22.1-1. | FIXED | Verified. Test `truthMarginThreshold` in d1c4114 (ln ratio 0.675 → ambiguous, 0.713 → matched); `log(1.01)` and `log(4)` killed. |
+| R22.3-2 | MAJOR | The truth likelihood's heading term (`ReplayRoads.swift:353`) is untested: every test road is N–S, so dropping it survives; on clean seed 1 ambiguity goes 20.3 % → 31.6 %. | FIXED | Verified. Test `truthHeadingTerm` in d1c4114 (way along the course vs a nearer way at 30°; course accuracy 2°, 60°, 90°); the drop and a σ_course-floor-only mutation killed. |
+| R22.3-3 | MINOR | The margin's competitor set (every heading-compatible edge within 50 m, not only within 15 m; `ReplayRoads.swift:363`) is untested; on real data no threshold moves (drive-7 33.2 % → 32.6 %). | DEFERRED | BACKLOG |
+| R22.3-4 | MINOR | `docs/N3_PLAN.md:527, 534-535` as-built text: σ_fix = accuracy / 2.45, but the code divides by `NavigationReplay.accuracyPerSigma` 1.51; the margin is over the best edge of any other *way*, not "the second-best edge". | DEFERRED | BACKLOG |
+
+Tests: Core passes 787 tests in 107 suites, 39 known issues (all test 3). No App change.
+
+### Round 4
+
+Reviewer: one fresh `reviewer` (opus). Result: 0 BLOCKER / 3 MAJOR / 0 MINOR, all untested code whose mutation moves a published figure; no bug found. Mutations: 3 run, 3 survived (`ambiguousShare` over all withheld clean fixes; `candidateTestsPerParticle` without `/ particleCount`; truth heading gate 45° → 89°). Verified: the round-3 tests cover R22.3-1/2 with expected values matching `RoadTruthMatcher.match`; `Core/Sources` unchanged since 5efbb20, so `logs/n32b/roads` still describes the code.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R22.4-1 | MAJOR | `ambiguousShare` (`NavigationReplay.swift:846`, over matched + ambiguous) is tested only at 0 and 1, never with mixed statuses: over all withheld clean fixes it survives and moves clean 20.3 % → 12.5 % (under the Viterbi trigger, flipping the summary line and R22.1-1) and drive-7 33.2 % → 24.1 %. | FIXED | Verified. User chose "add the tests, then merge". Test in aa35d7b; mutation killed. |
+| R22.4-2 | MAJOR | `candidateTestsPerParticle` (`NavigationReplay.swift:861-862`) is untested (only `candidateTestsPerUpdate != nil`): dropping `/ particleCount` survives, turning the published 15–33 (≤ 64) into ~22 800. | FIXED | Verified. User chose "add the tests, then merge". Test in aa35d7b; mutation killed. |
+| R22.4-3 | MAJOR | The truth's 45° heading gate (`ReplayRoads.swift:91`, used at :350) is untested for a two-way way outside it (tests cover 30° and a reverse oneway only): 89° survives; drive-7 seed 1 off share 0.8 % → ~4.5 %, noRoad 44 → 35, matched 129 → 134. | FIXED | Verified. User chose "add the tests, then merge". Test in aa35d7b; mutation killed. |
+
+**Loop stopped after round 4 with three MAJORs (missing tests of correct code). The user chose to add the tests and merge.** Tests in aa35d7b: `ambiguousShareMixed` (1/7 and 1/4, both sides of the Viterbi line), `rightRoad` (300 candidate tests per update, 1.0 per particle), `truthHeadingGate` (60° alone noRoad, 60° beside an aligned way not a competitor, 40° matched). A fresh `reviewer` (sonnet) on 55c19ff..aa35d7b found nothing; denominator, `/ particleCount`, gate 45 → 89 and 45 → 30 mutations all killed.
+
+Tests: Core passes 789 tests in 107 suites, 39 known issues (all test 3). No App change.
+
+### Run 22 summary
+
+- **Rounds:** 4 run, plus a follow-up review of the round-4 tests.
+- **Findings:** 1 MAJOR docs fix (R22.1-1: clean's road truth over the Viterbi trigger, wrong-road share provisional); 11 MAJOR missing tests added (R22.1-2..4, R22.2-1..3, R22.3-1..2, R22.4-1..3), none exposed a bug; 1 MINOR fixed (R22.1-5); 0 rejected; 3 MINOR deferred (R22.1-6, R22.3-3, R22.3-4).
+- **Final tests:** `cd Core && swift test`: 789 tests in 107 suites pass, 39 known issues (all test 3, the decided known FAIL). No App change. `Core/Sources` unchanged since 5efbb20, so the N3.2b measurement in `logs/n32b/roads` stands; without roads the acceptance runs are byte-identical to N3.0.

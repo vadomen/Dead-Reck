@@ -27,7 +27,20 @@ struct NavigationMetricsCodingTests {
 
     static func metrics() -> ReplayMetrics {
         let (events, truth) = NavigationPinScoringTests.scenario(pinTimes: [40, 41.5])
-        return ReplayMetrics(NavigationPinScoringTests.run(events, truth: truth, window: 3))
+        var metrics = ReplayMetrics(NavigationPinScoringTests.run(events, truth: truth, window: 3))
+        // The road keys (N3.2b) filled, so the round trip covers them.
+        metrics.roads = [ReplayRoadPack(contentHash: "0123456789abcdef", formatVersion: 1, osmTimestamp: 1,
+                                        gridID: "fedcba9876543210")]
+        metrics.roadSetHash = "00112233445566ff"
+        var road = ReplayRoadMetrics(wrongRoadToleranceM: 20)
+        road.truth = ["matched": 2, "noCourse": 1]
+        road.verdicts = ["right": ReplayRoadMetrics.Count()]
+        road.wrongShare = 0
+        road.residualsAll = DistanceStats([1, 2, 3])
+        road.rejectedFixes = [[12.5, 8]]
+        road.fixes = [ReplayRoadFix(t: 1, distanceM: 2, accuracyM: 5, truth: .matched)]
+        metrics.roadMetrics = road
+        return metrics
     }
 
     // MARK: NavigationConfig
@@ -147,7 +160,8 @@ struct NavigationMetricsCodingTests {
         let row = try #require(try JSONSerialization.jsonObject(with: data) as? [[String: Any]])[0]
         let later = Set(ReplayMetrics.CodingKeys.allCases).subtracting(ReplayMetrics.originalKeys)
         #expect(later.map(\.stringValue).sorted()
-            == ["consistency", "consistencyWithTruthSigma", "motionStartT", "pinScoring", "pins"])
+            == ["consistency", "consistencyWithTruthSigma", "motionStartT", "pinScoring", "pins",
+                "roadMetrics", "roadSetHash", "roads"])
         for key in later {
             var old = row
             old.removeValue(forKey: key.stringValue)
@@ -160,6 +174,9 @@ struct NavigationMetricsCodingTests {
             case .motionStartT: #expect(decoded.motionStartT == nil)
             case .pinScoring: #expect(decoded.pinScoring == nil)
             case .pins: #expect(decoded.pins == nil)
+            case .roads: #expect(decoded.roads == nil)
+            case .roadSetHash: #expect(decoded.roadSetHash == nil)
+            case .roadMetrics: #expect(decoded.roadMetrics == nil)
             default: Issue.record("unexpected later key \(key)")
             }
         }

@@ -8,6 +8,15 @@ import Foundation
 //       [--set <configKey>=<number>]... [--out logs/out]
 //       [--as-live | --file-order] [--compare <log.nav.jsonl> [--tolerance <m>] [--heading-tolerance <deg>]]
 //       [--write-sidecar <out.nav.jsonl>] [--pin-pair-window <s>] [--strict]
+//       [--roads <pack.roadpack>]... [--wrong-road-tolerance <m>]
+//
+// --roads (repeatable, N3.2): road packs in load order; the engine runs its
+// road update against them, the run is scored with the road metrics and its
+// mode label gets -roads-<first 8 hex of roadSetHash>. Each pack is fully
+// verified on load. Not with --compare or --write-sidecar: the app's live
+// loop has no roads until N3.3. --wrong-road-tolerance m (default 20): a
+// matched edge that is not the truth's road still counts as right within m
+// metres of the truth fix. Data: © OpenStreetMap contributors, ODbL 1.0.
 //
 // Each log's read report (members, truncated tail, damaged members, skipped
 // lines) is printed; a damaged read is a warning, and with --strict the
@@ -53,6 +62,7 @@ let usage = """
            [--truth <truth.json>] [--seed N|header] [--particles N] [--set <configKey>=<number>]... [--out <dir>]
            [--as-live | --file-order] [--compare <sidecar.nav.jsonl> [--tolerance <m>] [--heading-tolerance <deg>]]
            [--write-sidecar <out.nav.jsonl>] [--pin-pair-window <s>] [--strict]
+           [--roads <pack.roadpack>]... [--wrong-road-tolerance <m>]
     """
 
 var arguments = Array(CommandLine.arguments.dropFirst())
@@ -73,6 +83,8 @@ var writeSidecarPath: String?
 var tolerance = SidecarComparison.Tolerance.default
 var pinPairWindow = NavigationReplay.defaultPinPairWindowS
 var strict = false
+var roadPaths: [String] = []
+var wrongRoadTolerance: Double?
 
 func number(_ text: String, _ flag: String) -> Double {
     guard let value = Double(text), value.isFinite else { fail("\(flag) needs a number, got \(text)\n\(usage)", status: 2) }
@@ -136,6 +148,12 @@ while !arguments.isEmpty {
         outPath = value()
     case "--strict":
         strict = true
+    case "--roads":
+        roadPaths.append(value())
+    case "--wrong-road-tolerance":
+        let metres = number(value(), argument)
+        guard metres >= 0 else { fail("--wrong-road-tolerance must be >= 0\n\(usage)", status: 2) }
+        wrongRoadTolerance = metres
     case "-h", "--help":
         print(usage)
         exit(EXIT_SUCCESS)
@@ -153,6 +171,30 @@ if asLive {
 }
 if (comparePath != nil || writeSidecarPath != nil) && paths.count != 1 {
     fail("--compare and --write-sidecar take exactly one log\n\(usage)", status: 2)
+}
+if !roadPaths.isEmpty && (comparePath != nil || writeSidecarPath != nil) {
+    fail("--roads cannot be combined with --compare or --write-sidecar: the app's live loop has no roads (N3.3)\n\(usage)", status: 2)
+}
+if wrongRoadTolerance != nil && roadPaths.isEmpty {
+    print("note: --wrong-road-tolerance has no effect without --roads")
+}
+
+// --roads: every pack fully verified (content hash and structure), in load order.
+var roads: ReplayRoadSet?
+if !roadPaths.isEmpty {
+    var packs: [RoadPack] = []
+    for path in roadPaths {
+        do {
+            packs.append(try RoadPack(contentsOf: URL(fileURLWithPath: path), verify: true))
+        } catch {
+            fail("cannot read road pack \(path): \(error)", status: 1)
+        }
+    }
+    do {
+        roads = ReplayRoadSet(try RoadNetwork(packs: packs))
+    } catch {
+        fail("cannot use these road packs together: \(error)", status: 2)
+    }
 }
 
 // --set: patch numeric config fields through the config's JSON form, so
@@ -182,10 +224,18 @@ if let truthPath {
     }
 }
 
-if config.validated() != config {
-    print("note: config validation clamps extrapolationHorizonS / maxForwardJumpS / lateManualFixWindowS; the engine runs with the clamped values")
+// R21.3-6: a value the engine refuses stops the replay before it starts;
+// a value it clamps is listed, key by key.
+let validated = config.validated(roads: roads?.network)
+if let reason = validated.invalidReason {
+    fail("invalid config: \(reason)", status: 2)
+}
+for change in ReplayReport.configChanges(from: config, to: validated) {
+    print("note: config validation clamps \(change); the engine runs with the clamped value")
 }
 var baseOptions = ReplayOptions(gps: gps, holdOutAccuracyM: holdOut, config: config)
+baseOptions.roads = roads
+if let wrongRoadTolerance { baseOptions.wrongRoadToleranceM = wrongRoadTolerance }
 baseOptions.asLive = asLive
 baseOptions.fileOrder = asLive || fileOrder
 baseOptions.pinPairWindowS = pinPairWindow
@@ -202,6 +252,10 @@ do {
 print("Config (\(seedFromHeader ? "seed from each log's header" : "seed \(config.seed)"), \(config.particleCount) particles\(asLive ? ", as live: file order" : fileOrder ? ", file order" : "")):")
 print(ReplayReport.configJSON(config))
 print("")
+if let roads {
+    print(ReplayReport.roadsText(roads.packs, roadSetHash: roads.roadSetHashHex))
+    print("")
+}
 var compareFailed = false
 
 var metrics: [ReplayMetrics] = []

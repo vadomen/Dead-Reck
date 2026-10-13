@@ -526,6 +526,13 @@ Since the double tap, a pin can be placed at any speed. Its row records `obdSpee
     heading-compatible edge (oneway respected) in the same road set. It counts only with a
     likelihood margin ≥ 2:1 over the second-best edge. Otherwise the fix is "ambiguous" and
     excluded, and the excluded share is reported.
+  - As built (N3.2b, `NavigationReplay.RoadTruth`): "valid course" means a valid course
+    and GNSS speed ≥ 3 m/s (`courseMinSpeedMps`); a stopped or creeping car has none
+    ("no usable course", reported). The truth edge must lie within 15 m of the fix; a fix
+    with no heading-compatible edge that close is "no road" (unmapped road, car park), not
+    on the nearest mapped road. Every heading-compatible edge within 50 m competes for the
+    margin. Likelihood: N(d; σ_fix² + 7²) · N(Δψ; σ_course² + 10°²), σ_fix = accuracy /
+    2.45, σ_course = max(courseAccuracy, 2°).
   - If more than 20 % are ambiguous, upgrade to a Viterbi match over route distance.
   - It runs only when `--roads` is given and needs clean GNSS that the engine did not
     receive. So it is defined for clean (`mask-after 230`), clean-long (`mask-after 380`)
@@ -538,10 +545,18 @@ Since the double tap, a pin can be placed at any speed. Its row records `obdSpee
     tolerance means parallel geometry of one road and junction stubs are not penalised.
   - **off** when `onRoadShare` < 0.5 while the truth is on a road.
 
-  Reported per drive as a share of scored fixes (≈ time at 1 Hz) and of OBD distance.
+  Reported per drive as a share of scored fixes (≈ time at 1 Hz) and of OBD distance (each
+  scored fix weighs the OBD distance since the previous fix with a usable course).
+  It checks capture onto a wrong *mapped* road only (R21.1-11).
+- **Unmapped / captured (R21.1-11):** an "unmapped" truth fix is a withheld clean fix
+  more than 15 m from every edge of the loaded packs (any heading). Per drive: how many,
+  and for each whether the estimate was **captured**: on a mapped edge (`onRoadShare` ≥ 0.5
+  with a `matchedEdge`) with the 95 % ellipse's half-width across that edge < 25 m, and the
+  truth outside the 95 % ellipse (engine ellipse).
 - **Road residuals:** the cross-track distance of clean fixes to their truth edge, p50 and
   p95 per highway class. This is the measured basis for `roadSigmaM` (it includes about
-  3–5 m of GNSS error).
+  3–5 m of GNSS error). As built: every clean fix of the recording (used or withheld) with a
+  matched truth edge, so censored at the truth's 15 m.
 - **Ellipse consistency** as today, plus a variant with the truth's own σ added (Pᵢ-mixture
   + σ_truth² I). Roads shrink the ellipse across the road to a few metres, while pins have
   σ 30–104 m and clean fixes their own 3–5 m error. The current metric would then count
@@ -786,6 +801,14 @@ gating, attribution visibility (pure logic, in the `MapCameraLogicTests` pattern
 
 ## N3 criteria (judged in N3.2 and re-checked as live in N3.3)
 
+First measurement against them (N3.2b, default road config, no tuning, 2026-10-13):
+docs/NAVIGATION.md, "N3.2b: first measurement with roads". Every per-seed criterion passes,
+manual converges at 1.52 km; the adoption rule fails on clean, clean-long (max error) and
+on clean-long and drive-7 (consistency). Open for the user's decision; the criteria are
+unchanged. Clean's road truth is 20.3 % ambiguous (drive-7 33.2 %), over the 20 % Viterbi
+trigger, and the Viterbi match is not implemented, so clean's wrong-road share is provisional
+until the user decides.
+
 | criterion | drive / run | today (N4-B1, seeds 1–5) | N3 target |
 |---|---|---|---|
 | heading converged | manual, use, hold-out 100 | 7.27–7.68 km, known FAIL | ≤ 2 km on every seed |
@@ -825,9 +848,11 @@ off the road the filter matched.
      model that passes test 3 and keeps tests 1, 4, 7 and 8. Decided: keep this model, test
      3 stays a known FAIL. Details and the unmeasured next candidate:
      docs/N3_ROAD_OFFROAD.md.
-   - **Real-data check:** N3.2b reports the wrong-road share on clean and clean-long as
-     the check for capture on real roads, with every N3.2 replay result carrying this
-     caveat.
+   - **Real-data check (partial, R21.1-11):** the wrong-road share on clean and
+     clean-long checks capture onto a wrong *mapped* road only: it scores fixes whose truth
+     is on a mapped edge, so capture while the car is on an unmapped road is invisible to
+     it. N3.2b adds the unmapped/captured count for that case (Metrics added to
+     replay_nav), and every N3.2 replay result carries this caveat.
 3. **Splitting gives up part of the Rao-Blackwellisation.**
    - N2 saw sampled positions collapse heading with no heading information.
    - Here splitting happens only when roads are engaged, and road evidence is genuinely

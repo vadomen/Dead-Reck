@@ -497,6 +497,23 @@ struct NavigationRoadTests {
         #expect(c.validated().roadUpdateIntervalS == 0)
     }
 
+    /// R21.1-7: `--set roadUpdateIntervalS=1e10` used to trap in the
+    /// engine's `Int64` nanosecond interval. Clamped to an hour now, and an
+    /// engine with roads accepts it.
+    @Test("roadUpdateIntervalS is clamped above to maxRoadUpdateIntervalS; an engine with 1e10 s starts")
+    func intervalUpperClamp() throws {
+        var c = NavigationConfig()
+        c.roadUpdateIntervalS = NavigationConfig.maxRoadUpdateIntervalS
+        #expect(c.validated().roadUpdateIntervalS == NavigationConfig.maxRoadUpdateIntervalS)
+        for huge in [1e10, 1e300, Double.greatestFiniteMagnitude] {
+            c.roadUpdateIntervalS = huge
+            #expect(c.validated().roadUpdateIntervalS == NavigationConfig.maxRoadUpdateIntervalS, "\(huge)")
+        }
+        let net = try Self.network([Self.street(1, from: (0, -3000), to: (0, 3000))])
+        let engine = NavigationEngine(config: Self.config(particles: 10) { $0.roadUpdateIntervalS = 1e10 }, roads: net)
+        #expect(engine.config.roadUpdateIntervalS == NavigationConfig.maxRoadUpdateIntervalS)
+    }
+
     @Test("roadSearchRadiusM is clamped to the pack's guaranteed radius")
     func radiusClampedToPack() throws {
         let net = try Self.network([Self.street(1, from: (0, 0), to: (0, 100))])
@@ -1123,6 +1140,88 @@ struct NavigationRoadTests {
             engine.covEE[i] = 0.01; engine.covEN[i] = 0; engine.covNN[i] = 0.01
         }
         try Self.expectNextRoadUpdateUsesCarriedDistance(engine, at: t)
+    }
+
+    /// R21.4-2: the engagement gate counts the spread of the particle
+    /// means, not only each particle's own P. 100 particles with P = 1 m²
+    /// on a ring of radius 750 m: the mixture's 95 % semi-major axis is
+    /// √(5.991 · (750² / 2 + 1)) ≈ 1298 m > 1000 m, so no update engages,
+    /// although every particle's own ellipse is 2.4 m. A first update on a
+    /// tight cloud makes `onRoadShare` non-nil, so nil afterwards is the
+    /// gate's doing. Control: the same ring at radius 500 m (≈ 865 m) engages.
+    @Test("R21.4-2: means on a 1.5 km ring with P = 1 m² do not engage roads (spread of means counts); a 1 km ring does")
+    func engagementCountsSpreadOfMeans() throws {
+        let net = try Self.network([Self.street(1, from: (0, -3000), to: (0, 3000)),
+                                    Self.street(2, from: (-3000, 0), to: (3000, 0))])
+        let t = S.ms(0.05)
+        for (radius, engages) in [(750.0, false), (500.0, true)] {
+            var engine = Self.directEngine(net)
+            Self.place(&engine, at: (0, 0), heading: 0)
+            engine.roadUpdate(evidenceDistanceM: 30)
+            #expect(engine.counters.roadUpdates == 1 && engine.estimate(at: t)?.onRoadShare != nil)
+            let n = engine.east.count
+            for i in 0..<n {
+                let a = 2 * Double.pi * Double(i) / Double(n)
+                engine.east[i] = radius * sin(a)
+                engine.north[i] = radius * cos(a)
+                engine.covEE[i] = 1; engine.covEN[i] = 0; engine.covNN[i] = 1
+                engine.weight[i] = 1 / Double(n)
+                engine.logWeight[i] = 0
+            }
+            engine.roadUpdate(evidenceDistanceM: 30)
+            if engages {
+                #expect(engine.counters.roadUpdates == 2, "radius \(radius)")
+                #expect(engine.estimate(at: t)?.onRoadShare != nil, "radius \(radius)")
+            } else {
+                #expect(engine.counters.roadUpdates == 1, "radius \(radius): engaged")
+                #expect(engine.estimate(at: t)?.onRoadShare == nil, "radius \(radius)")
+                #expect(engine.estimate(at: t)?.matchedEdge == nil, "radius \(radius)")
+            }
+        }
+    }
+
+    /// R21.4-3: Step 2's radius guard. With `roadSplitSigmaM` 25 a particle
+    /// with P = 625·I is not split, and its χ² gate admits d up to
+    /// √(9 · (625 + 49)) ≈ 77.9 m: past R = 50 m. A north–south street
+    /// 60–74 m east of it, listed in the particle's cell (the cell lists
+    /// every segment within R of any point in it), must still not be a
+    /// candidate, since L_off assumes a ±R strip. An east–west street 40 m
+    /// north (outside the heading gate) passes Step 0. Control: the same
+    /// street 45 m off is a candidate.
+    @Test("R21.4-3: a segment beyond roadSearchRadiusM but inside the χ² gate and listed in the cell is not a candidate")
+    func radiusGuardBeyondSearchRadius() throws {
+        let streetX = 10.0
+        let net = try Self.network([Self.street(1, from: (streetX, -3000), to: (streetX, 3000)),
+                                    Self.street(2, from: (-3000, 40), to: (3000, 40))])
+        // A particle position whose cell lists the north–south street, 60–74 m from it.
+        let listed = stride(from: streetX - 74, through: streetX - 60, by: 1.0).first { x in
+            let p = S.plane.geodetic(east: x, north: 0)
+            return net.segments(nearLatitude: p.latitude, longitude: p.longitude).contains {
+                net.segment($0).key.osmWayID == 1
+            }
+        }
+        let x = try #require(listed, "no position 60–74 m off whose cell lists the street")
+        let t = S.ms(0.05)
+        for (px, candidate) in [(x, false), (streetX - 45, true)] {
+            var engine = Self.directEngine(net) { $0.roadSplitSigmaM = 25 }
+            Self.place(&engine, at: (px, 0), heading: 0)
+            for i in engine.east.indices { engine.covEE[i] = 625; engine.covNN[i] = 625 }
+            let d = streetX - px
+            let s0 = 625 + engine.config.roadSigmaM * engine.config.roadSigmaM
+            #expect(d * d <= engine.config.roadInnovationGateChi2 * s0, "inside the χ² gate at \(d) m")
+            engine.roadUpdate(evidenceDistanceM: 30)
+            #expect(engine.counters.roadUpdates == 1 && engine.counters.roadSplits == 0, "\(d) m")
+            let share = try #require(engine.estimate(at: t)?.onRoadShare)
+            if candidate {
+                #expect(share > 0.5, "\(d) m: share \(share)")
+                #expect(engine.roadEdge.allSatisfy { $0 != RoadMatcher.noEdge }, "\(d) m")
+            } else {
+                #expect(d > engine.config.roadSearchRadiusM)
+                #expect(share == 0, "\(d) m: share \(share)")
+                #expect(engine.roadEdge.allSatisfy { $0 == RoadMatcher.noEdge }, "\(d) m")
+                #expect(engine.counters.roadCandidateTests > 0, "\(d) m: the cell's segments were tested")
+            }
+        }
     }
 
     // MARK: 6. Opposite oneways
