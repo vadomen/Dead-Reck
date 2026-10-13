@@ -738,6 +738,13 @@ stay bit-identical):
     NavigationRoadPerfTests` on a synthetic 100 m street grid over 10 km² with 2000
     particles. It asserts the Mac proxies: road-update step ≤ 0.5 ms mean, ≤ 1.5 ms max. A
     debug run checks only `roadCandidateTests` per particle ≤ 64.
+    - As built (N3.2c item 6): 32 × 32 blocks (10.24 km², 100 m segments, shared crossing
+      nodes); 600 s round a 1 km square at 12 m/s, clean fixes for 20 s only; each
+      `ingest` that carries a full road update is timed. Release, 3 runs: 600 road
+      updates, 6.9 candidate tests per particle, mean 0.366–0.369 ms, max 0.650–0.765 ms.
+      Debug: 40 s, 9.5 per particle, under 1 s. The grid is lighter than the real drives
+      (15–33 candidates per particle), so it guards against regressions; it does not
+      replace the replay-set ms/step proxy.
 
 **Experiments** (seeds 1–5, pre-declared grids, never tuned toward manual-3):
 - `roadSigmaM` from the measured residuals, then {5, 7, 10};
