@@ -275,3 +275,17 @@ Verified clean: verdict/tolerance/ambiguity/15 m truth-edge/course/captured rule
 | R22.1-6 | MINOR | `NavigationReplay.swift:658-663`: `rejectedOffRoad` is marked only when the counter moves during a `.location` ingest; a held stale fix applied inside an OBD ingest and rejected by the gate is counted in `fixesRejectedOffRoad` but missing from `rejectedFixes` and the GeoJSON. Reachable only with `--set roadFixGateMinKmh=0`. | DEFERRED | BACKLOG |
 
 Tests: Core passes 782 tests in 107 suites, 39 known issues (all test 3). No App change. Each new test kills its mutation (25, 2, 4 issues).
+
+### Round 2
+
+Reviewer: one fresh `reviewer` (opus). Result: 0 BLOCKER / 3 MAJOR / 0 MINOR. Mutations: 3 run, 3 survived (off threshold `share <= 0`; captured without the cross-track clause; distance weights from any previous fix).
+
+Verified clean: the four round-1 tests test real behaviour; summary, markdown and GeoJSON road output (matched edge with the ellipses every 10 s plus one at the end); `configChanges` and the R21.1-7 clamp; `ReplayRoadSet` `==`/`hash`, label and `roadSetHash` change with pack order; ms/step and road-counter figures against `logs/n32b/timing-*`; moved backlog rows unchanged apart from status; privacy; jammed-A/B seed 1 without roads byte-identical to N3.0, clean seed 1 with roads reproduced. Noted, not a finding: pack order changes engine results (clean seed 1 reversed: 15.6 m vs 21.75 m max), an N3.2a engine property; the runs get different labels.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R22.2-1 | MAJOR | The off verdict's 0.5 threshold (`NavigationReplay.swift:799`) is untested: `offVerdict` only produces share exactly 0, so `share <= 0` survives, though real off fixes on clean-long and drive-7 have 0 < share < 0.5. A narrower follow-up to R22.1-2, not the same finding. | FIXED | Verified. Test `offThreshold` in 6192f6d (share 0.36–0.44 → off, 0.55–0.61 → right); mutation killed (51 issues). |
+| R22.2-2 | MAJOR | Captured's cross-track clause (`NavigationReplay.swift:813`) is untested: `unmapped()` re-derived the formula and both round-1 fixes were already < 25 m across. | FIXED | Verified. Test `capturedNeedsNarrowCrossTrack` (≈ 12 m across: captured; ≈ 31 m: not) in 6192f6d; `unmapped()` rewritten with literals; mutation killed. |
+| R22.2-3 | MAJOR | The distance-weight rule (`NavigationReplay.swift:825`, since the previous fix with a usable course) is untested; dropping the `where` moves drive-7 seed 1 wrong-by-distance 3.54 % → 2.14 %. | FIXED | Verified. Test `weightsSkipNoCourseFixes` in 6192f6d; mutation killed (3 issues). |
+
+Tests: Core passes 785 tests in 107 suites, 39 known issues (all test 3). No App change.
