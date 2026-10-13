@@ -274,7 +274,9 @@ public struct NavigationConfig: Hashable, Sendable, Codable {
     /// …and while the last road update's on-road share is at least this.
     public var roadFixGateOnRoadShare = 0.8
     /// A pin at or above this `gateSpeedKmh` triggers an immediate road
-    /// update (the car was on a road); 0 disables.
+    /// update (the car was on a road); 0 disables. Weight 1 when the pin
+    /// initialised the engine or reset it; otherwise tempered by the
+    /// distance since the last road update, as a regular one.
     public var roadPinAnchorMinKmh = 3.0
 
     // MARK: Reporting

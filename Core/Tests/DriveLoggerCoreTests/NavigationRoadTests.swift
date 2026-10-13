@@ -280,6 +280,119 @@ struct NavigationRoadTests {
         }
     }
 
+    /// Step 4's mixture with the off-road branch, against the closed form
+    /// computed here: r = (1 − ε) L_road / ((1 − ε) L_road + ε / (2R · 2π)),
+    /// the exact Kalman update (coupling 1) across a north–south road on
+    /// the plane's meridian (road frame: along = north, across = east), then
+    /// μ ← μ + r Δμ and P ← r P_upd + (1 − r) P + r (1 − r) Δμ Δμᵀ. ε 0.5
+    /// and d 34 m put r near 0.5, so the spread term is ~130 m² on P_cc.
+    @Test("Step 4: the road/off-road mixture is moment-matched, P = r·P_upd + (1 − r)·P + r(1 − r)·ΔμΔμᵀ")
+    func momentMatching() throws {
+        let net = try Self.network([Self.street(1, from: (0, -3000), to: (0, 3000))])
+        let config = Self.config(particles: 10) {
+            $0.roadSplitSigmaM = 1000; $0.resampleESSFraction = 0; $0.roadOffRoadProbability = 0.5; $0.roadAlongTrackCoupling = 1
+        }
+        var engine = NavigationEngine(config: config, roads: net)
+        let p = S.plane.geodetic(east: 0, north: 0)
+        engine.ingest(.manualFix(ManualFixSample(latitude: p.latitude, longitude: p.longitude, pressedT: S.ms(0.05),
+                                                 mapSpanM: 360, speedSource: "unknown"), at: S.ms(0.05)))
+        let (d, pee, pen, pnn, psi) = (34.0, 100.0, 60.0, 400.0, 0.1)
+        for i in engine.east.indices {
+            engine.east[i] = d
+            engine.north[i] = 0
+            engine.covEE[i] = pee; engine.covEN[i] = pen; engine.covNN[i] = pnn
+            engine.heading[i] = psi
+            engine.roadEdge[i] = RoadMatcher.noEdge
+            engine.roadLevel[i] = RoadGeometry.unknownLevel
+        }
+        var after = engine
+        after.roadUpdate(evidenceDistanceM: 30)
+        #expect(after.counters.roadUpdates == 1 && after.counters.roadSplits == 0)
+
+        let c = engine.config
+        let sr2 = c.roadSigmaM * c.roadSigmaM, sigmaPsi = c.roadHeadingSigmaDeg * .pi / 180
+        let (paa, pac, pcc) = (pnn, pen, pee)
+        let s0 = pcc + sr2
+        let logL = -0.5 * d * d / s0 - 0.5 * log(s0) - 0.5 * (psi / sigmaPsi) * (psi / sigmaPsi) - log(2 * .pi * sigmaPsi)
+        let eps = c.roadOffRoadProbability
+        let on = (1 - eps) * exp(logL), off = eps / (2 * c.roadSearchRadiusM * 2 * .pi)
+        let r = on / (on + off)
+        #expect(r > 0.3 && r < 0.7, "r \(r)")
+        // Kalman, w = 1: innovation −d across the road.
+        let sw = pcc + sr2
+        let da = -d * pac / sw, dc = -d * pcc / sw
+        let uAA = paa - pac * pac / sw, uAC = pac - pac * pcc / sw, uCC = pcc - pcc * pcc / sw
+        let mix = r * (1 - r)
+        let expected = (east: d + r * dc, north: r * da,
+                        ee: r * uCC + (1 - r) * pcc + mix * dc * dc,
+                        en: r * uAC + (1 - r) * pac + mix * da * dc,
+                        nn: r * uAA + (1 - r) * paa + mix * da * da)
+        func close(_ a: Double, _ b: Double) -> Bool { abs(a - b) <= 1e-6 * max(1, abs(b)) }
+        for i in after.east.indices {
+            #expect(close(after.east[i], expected.east) && close(after.north[i], expected.north),
+                    "μ (\(after.east[i]), \(after.north[i])), expected (\(expected.east), \(expected.north))")
+            #expect(close(after.covEE[i], expected.ee) && close(after.covEN[i], expected.en) && close(after.covNN[i], expected.nn),
+                    "P (\(after.covEE[i]), \(after.covEN[i]), \(after.covNN[i])), expected \(expected)")
+        }
+    }
+
+    /// `RoadMatcher.nearest` on a 10 m segment from a = (2, 3) along
+    /// u = (0.6, 0.8); n = (−0.8, 0.6) is its left normal. h points from
+    /// the nearest point towards p: ±n inside, (p − Q)/d at an end vertex
+    /// — along the axis for a point on it, not the normal — and a normal
+    /// when p is on the segment or exactly on a vertex.
+    @Test("Step 2 geometry: nearest point and h, inside on both sides, before the start, past the end, on a vertex")
+    func nearestPointAndDirection() {
+        let (ax, ay, ux, uy, length) = (2.0, 3.0, 0.6, 0.8, 10.0)
+        let (nx, ny) = (-uy, ux)
+        func at(_ s: Double, _ c: Double) -> (Double, Double) { (ax + s * ux + c * nx, ay + s * uy + c * ny) }
+        func check(_ p: (Double, Double), d2: Double, h: (Double, Double), _ label: String) {
+            let r = RoadMatcher.nearest(px: p.0, py: p.1, ax: ax, ay: ay, ux: ux, uy: uy, length: length)
+            #expect(abs(r.distanceSquared - d2) < 1e-9, "\(label): d² \(r.distanceSquared), expected \(d2)")
+            #expect(abs(r.hx - h.0) < 1e-9 && abs(r.hy - h.1) < 1e-9, "\(label): h (\(r.hx), \(r.hy)), expected \(h)")
+        }
+        check(at(4, 3), d2: 9, h: (nx, ny), "inside, left")
+        check(at(4, -3), d2: 9, h: (-nx, -ny), "inside, right")
+        // On the segment (to rounding): either normal (d = 0, no innovation).
+        let on = RoadMatcher.nearest(px: at(4, 0).0, py: at(4, 0).1, ax: ax, ay: ay, ux: ux, uy: uy, length: length)
+        #expect(on.distanceSquared < 1e-18 && abs(abs(on.hx * nx + on.hy * ny) - 1) < 1e-12)
+        check(at(-5, 0), d2: 25, h: (-ux, -uy), "before the start, on the axis")
+        check(at(-3, 4), d2: 25, h: ((-3 * ux + 4 * nx) / 5, (-3 * uy + 4 * ny) / 5), "before the start, off the axis")
+        check(at(15, 0), d2: 25, h: (ux, uy), "past the end, on the axis")
+        check(at(13, -4), d2: 25, h: ((3 * ux - 4 * nx) / 5, (3 * uy - 4 * ny) / 5), "past the end, off the axis")
+        check(at(0, 0), d2: 0, h: (nx, ny), "on the start vertex")
+        check((ax + length * ux, ay + length * uy), d2: 0, h: (nx, ny), "on the end vertex")
+    }
+
+    /// The end-vertex h in a road update: particles 10 m past a dead end,
+    /// on the road's axis, are pulled back along the axis (north) to the
+    /// end; east is untouched. With h the segment normal they would move
+    /// sideways.
+    @Test("Step 4 past a dead end: the cross-track update pulls along the road's axis, not sideways")
+    func deadEndPullsAlongAxis() throws {
+        // Ends at (0, 0), on the plane's meridian: the axis is exactly east = 0.
+        let net = try Self.network([Self.street(1, from: (0, -3000), to: (0, 0))])
+        let config = Self.config(particles: 50) { $0.roadSplitSigmaM = 1000; $0.resampleESSFraction = 0 }
+        var engine = NavigationEngine(config: config, roads: net)
+        let p = S.plane.geodetic(east: 0, north: 0)
+        engine.ingest(.manualFix(ManualFixSample(latitude: p.latitude, longitude: p.longitude, pressedT: S.ms(0.05),
+                                                 mapSpanM: 360, speedSource: "unknown"), at: S.ms(0.05)))
+        for i in engine.east.indices {
+            engine.east[i] = 0
+            engine.north[i] = 10
+            engine.covEE[i] = 25; engine.covEN[i] = 0; engine.covNN[i] = 25
+            engine.heading[i] = 0
+        }
+        var after = engine
+        after.roadUpdate(evidenceDistanceM: 30)
+        #expect(after.counters.roadUpdates == 1)
+        for i in after.east.indices {
+            #expect(after.east[i] == 0, "particle \(i) moved sideways by \(after.east[i]) m")
+            #expect(after.north[i] < 10 - 1, "particle \(i) not pulled back: north \(after.north[i])")
+            #expect(after.covEE[i] == 25 && after.covNN[i] < 25)
+        }
+    }
+
     @Test("roadAlongTrackCoupling outside 0…1 is invalid, not clamped; the other road keys are clamped")
     func couplingValidation() {
         for bad in [-0.1, 1.5, Double.nan, .infinity] {
@@ -503,19 +616,26 @@ struct NavigationRoadTests {
         }
     }
 
-    @Test("4. Step 5: a particle takes e* only with responsibility ≥ 0.5; otherwise it keeps its edge and adds Δs off-road")
+    /// Step 5's threshold on r itself, not on "a candidate exists": the odd
+    /// particles have a candidate (20 m off, P_cc 4: d² = 400 ≤ χ² · S₀ =
+    /// 9 · 53) but ε 0.9 makes L_off = ε / (2R · 2π) ≈ 1.4e-3 larger than
+    /// (1 − ε) L_road ≈ 2.9e-4 there, so 0 < r ≈ 0.17 < 0.5; at 1 m,
+    /// r ≈ 0.9. Each particle's r is read back from its cross-track move,
+    /// r · g · d with g = P_cc / (P_cc + σr²) (no split, coupling 0).
+    @Test("4. Step 5: a particle takes e* only with responsibility ≥ 0.5; with a candidate but r < 0.5 it keeps its edge and adds Δs off-road")
     func bookkeepingThreshold() throws {
         let net = try Self.network([Self.street(1, from: (0, -3000), to: (0, 3000))])
         let edge = UInt32(0)
-        let config = Self.config(particles: 100) { $0.roadSplitSigmaM = 1000; $0.resampleESSFraction = 0 }
+        let config = Self.config(particles: 100) {
+            $0.roadSplitSigmaM = 1000; $0.resampleESSFraction = 0; $0.roadOffRoadProbability = 0.9
+        }
         var engine = NavigationEngine(config: config, roads: net)
         let p = S.plane.geodetic(east: 0, north: 0)
         engine.ingest(.manualFix(ManualFixSample(latitude: p.latitude, longitude: p.longitude, pressedT: S.ms(0.05),
                                                  mapSpanM: 360, speedSource: "unknown"), at: S.ms(0.05)))
-        // Even particles on the road, odd ones 25 m off it (inside the
-        // gate but r < 0.5: on-road density there is below ε · L_off).
+        let (near, far) = (1.0, 20.0)
         for i in engine.east.indices {
-            engine.east[i] = i % 2 == 0 ? 1 : 25
+            engine.east[i] = i % 2 == 0 ? near : far
             engine.north[i] = 0
             engine.covEE[i] = 4; engine.covEN[i] = 0; engine.covNN[i] = 4
             engine.heading[i] = 0
@@ -524,13 +644,21 @@ struct NavigationRoadTests {
         }
         var after = engine
         after.roadUpdate(evidenceDistanceM: 30)
+        #expect(after.counters.roadUpdates == 1 && after.counters.roadSplits == 0)
+        let gain = 4 / (4 + engine.config.roadSigmaM * engine.config.roadSigmaM)
         for i in after.east.indices {
+            let d = i % 2 == 0 ? near : far
+            let r = (engine.east[i] - after.east[i]) / (gain * d)
             if i % 2 == 0 {
+                #expect(r >= 0.5 && r < 1, "particle \(i): r \(r)")
                 #expect(after.roadEdge[i] == edge && after.offRoadM[i] == 0)
             } else {
+                // A candidate existed (the mean moved towards the road), with r < 0.5.
+                #expect(r > 0.05 && r < 0.5, "particle \(i): r \(r)")
                 #expect(after.roadEdge[i] == RoadMatcher.noEdge && after.offRoadM[i] == 40)
             }
         }
+        #expect((after.estimate(at: S.ms(0.05))?.onRoadShare ?? 0) > 0)
     }
 
     @Test("Never a road update inside a catch-up: its distance counts towards the next one")
@@ -736,6 +864,46 @@ struct NavigationRoadTests {
         #expect(rejected(speed: 15, fixEast: 200, accuracy: 120) == 0)  // G = 3σ ≈ 238 m reaches the road
     }
 
+    /// The gate judges heading compatibility with the fix's own course. The
+    /// car drives north on x = 0 and is at (0, 100) at 40 s; the fix there
+    /// is moved 200 m east (150 m beyond the 50 m gate from x = 0), next to
+    /// a road that is the only one within the gate radius.
+    @Test("8. Fix gate heading: a fix 20 m from a cross street is rejected when its course runs across it, or against a oneway")
+    func fixGateHeading() throws {
+        let v = 15.0
+        let drive = Self.northDrive(seconds: 50, speed: v)
+        let clean = S.cleanFix()
+        func rejected(_ road: String, course: Double?) throws -> Int {
+            let net = try Self.network([Self.street(1, from: (0, -3000), to: (0, 3000)), road])
+            let inputs = Self.shifted(drive, by: (0, -500), fix: { t, s, r in
+                if t < 10 { return clean(t, s, &r) }
+                if S.at(t, 40) {
+                    var f = clean(t, s, &r)!
+                    f.east += 200
+                    if let course { f.course = course }
+                    return f
+                }
+                return nil
+            })
+            var engine = NavigationEngine(config: Self.config(particles: 300), roads: net)
+            for input in inputs { engine.ingest(input) }
+            #expect(engine.counters.courseUpdates > 0)
+            return engine.counters.fixesRejectedOffRoad
+        }
+        // An east–west street 20 m south of the fix (x 100…400, y 80).
+        let cross = Self.street(2, from: (100, 80), to: (400, 80))
+        #expect(try rejected(cross, course: nil) == 1, "course north (the car's) across the street")
+        #expect(try rejected(cross, course: 90) == 0, "course east, along the street")
+        #expect(try rejected(cross, course: 270) == 0, "course west: a two-way street")
+        // A southbound oneway 20 m east of the fix (x = 220).
+        let oneway = RoadFixture.way(3, ["highway": "residential", "oneway": "yes"],
+                                     [N(id: 30, east: 220, north: 3000), N(id: 31, east: 220, north: -3000)])
+        #expect(try rejected(oneway, course: nil) == 1, "course north, against the oneway")
+        #expect(try rejected(oneway, course: 180) == 0, "course south, with the oneway")
+        #expect(try rejected(Self.street(3, from: (220, 3000), to: (220, -3000)), course: nil) == 0,
+                "course north on the same line, two-way")
+    }
+
     // MARK: 9. Pin anchors
 
     @Test("9. A moving pin anchors a road update; a stationary pin does not")
@@ -778,6 +946,65 @@ struct NavigationRoadTests {
         var aligned = 0.0
         for i in engine.heading.indices where abs(sin(engine.heading[i])) < sin(45 * .pi / 180) { aligned += engine.weight[i] }
         #expect(aligned > 0.9, "weight on road-aligned headings \(aligned)")
+    }
+
+    /// R21.1-1: a moving pin compatible with the cloud (no initialisation,
+    /// no manual reset) keeps the road information already used, so its
+    /// anchor is an ordinary, early road update tempered by the distance
+    /// driven since the last one: 0.03 s after a road update (Δs = 0) it
+    /// does nothing; 0.53 s after it, it equals `roadUpdate(Δs)`. A full
+    /// weight there would count the same road twice and add
+    /// `roadCorrelationM` off-road for ~0 m driven. A pin 2 km ahead
+    /// resets the cloud (earlier road information discarded): full weight.
+    @Test("9. A compatible moving pin right after a road update anchors with the tempered weight, not a second full one")
+    func compatiblePinAnchorIsTempered() throws {
+        let net = try Self.network([Self.street(1, from: (0, -3000), to: (0, 3000))])
+        let drive = Self.northDrive(seconds: 20, speed: 8)
+        let clean = S.cleanFix()
+        let inputs = Self.shifted(drive, by: (0, -500), fix: { t, s, r in t < 5 ? clean(t, s, &r) : nil })
+        for (delay, ahead) in [(0.03, 0.0), (0.53, 0), (0.03, 2000)] {
+            let reset = ahead > 0
+            // Identical but for roadPinAnchorMinKmh, read only at a pin
+            // (0 turns the anchor off).
+            var anchored = NavigationEngine(config: Self.config(particles: 300), roads: net)
+            var plain = NavigationEngine(config: Self.config(particles: 300) { $0.roadPinAnchorMinKmh = 0 }, roads: net)
+            var pinT: Double?
+            for input in inputs {
+                if let t = pinT, input.arrival.seconds >= t { break }
+                let before = anchored.counters.roadUpdates
+                anchored.ingest(input)
+                plain.ingest(input)
+                if pinT == nil, input.arrival.seconds > 10, anchored.counters.roadUpdates > before {
+                    pinT = input.arrival.seconds + delay
+                }
+            }
+            let t = try #require(pinT)
+            #expect(Self.state(anchored) == Self.state(plain))
+            let updatesBefore = anchored.counters.roadUpdates
+            let pin = try #require(NavigationInput(Self.pin(at: t, east: 0, north: drive.truth(at: t).north - 500 + ahead,
+                                                            kmh: 30)))
+            anchored.ingest(pin)
+            plain.ingest(pin)
+            #expect(anchored.counters.roadPinAnchors == 1 && plain.counters.roadPinAnchors == 0)
+            #expect(anchored.counters.manualResets == (reset ? 1 : 0) && anchored.counters.manualFixes == 1)
+            // Compatible: the anchor = a regular road update with Δs since
+            // the last one. Reset: weight 1.
+            var expected = plain
+            expected.roadUpdate(evidenceDistanceM: reset ? max(plain.roadDistanceM, 30) : plain.roadDistanceM)
+            #expect(Self.state(anchored) == Self.state(expected), "\(delay) s, \(ahead) m")
+            #expect(anchored.offRoadM == expected.offRoadM && anchored.roadEdge == expected.roadEdge, "\(delay) s")
+            if reset {
+                #expect(anchored.counters.roadUpdates == updatesBefore + 1)
+                #expect(Self.state(anchored) != Self.state(plain))
+            } else if delay < 0.1 {
+                #expect(plain.roadDistanceM == 0)
+                #expect(anchored.counters.roadUpdates == updatesBefore, "a second road update at Δs = 0")
+                #expect(Self.state(anchored) == Self.state(plain))
+            } else {
+                #expect(plain.roadDistanceM > 1 && plain.roadDistanceM < 10)
+                #expect(anchored.counters.roadUpdates == updatesBefore + 1)
+            }
+        }
     }
 
     // MARK: 10. Late pin with roads
@@ -951,18 +1178,41 @@ struct NavigationRoadTests {
             #expect(e.roadEdge[i] == UInt32(k) && e.roadLevel[i] == Int8(k % 11 - 5) && e.offRoadM[i] == Double(k))
         }
 
-        // Reseed: a clean fix while heading is unknown reseeds half the
-        // cloud; those particles are on no road, unknown level, 0 m.
-        var r = engine
-        for i in r.heading.indices { r.heading[i] = Double(i) / Double(r.heading.count) * 2 * .pi }
-        for i in r.offRoadM.indices { r.offRoadM[i] = 77 }
+        // Reseed, directly: resampling off (it would also clear road state
+        // by copying), every particle on a distinct, non-default road
+        // state and heading east (≈ 90°–101°), so a clean fix with course
+        // north has no support and reseeds half the cloud. A reseeded
+        // particle is the one now heading north (σ 2°); it is on no road,
+        // unknown level, 0 m; every other keeps exactly its state.
+        var r = NavigationEngine(config: Self.config(particles: 200) { $0.resampleESSFraction = 0 }, roads: net)
+        for input in inputs { r.ingest(input) }
+        let n = r.heading.count
+        for i in 0..<n {
+            r.heading[i] = .pi / 2 + Double(i) / Double(n) * 0.2
+            r.roadEdge[i] = 0
+            r.roadLevel[i] = Int8(i % 7 - 3)
+            r.offRoadM[i] = 1 + Double(i)
+        }
+        let tagged = r
         let p = S.plane.geodetic(east: 0, north: drive.truth(at: 30).north - 500)
         r.ingest(.location(LocationSample(latitude: p.latitude, longitude: p.longitude, altitude: 0, horizontalAccuracy: 5,
                                           verticalAccuracy: -1, speed: 12, speedAccuracy: 0.3, course: 0, courseAccuracy: 2,
                                           receivedT: S.ms(30.05), ageS: 0.05), at: S.ms(30)))
-        #expect(r.counters.reseeds == engine.counters.reseeds + 1)
-        let cleared = r.offRoadM.indices.filter { r.offRoadM[$0] == 0 }
-        #expect(cleared.count > 50 || r.counters.resamples > engine.counters.resamples)
+        #expect(r.counters.reseeds == tagged.counters.reseeds + 1)
+        #expect(r.counters.resamples == tagged.counters.resamples && r.counters.roadUpdates == tagged.counters.roadUpdates)
+        let reseeded = (0..<n).filter { abs(sin(r.heading[$0])) < sin(20 * Double.pi / 180) && cos(r.heading[$0]) > 0 }
+        // 100 draws with replacement out of 200: ~79 distinct particles.
+        #expect(reseeded.count > 50 && reseeded.count <= 100, "\(reseeded.count) reseeded")
+        for i in 0..<n {
+            if reseeded.contains(i) {
+                #expect(r.roadEdge[i] == RoadMatcher.noEdge && r.roadLevel[i] == RoadGeometry.unknownLevel && r.offRoadM[i] == 0,
+                        "reseeded particle \(i)")
+            } else {
+                #expect(r.heading[i] == tagged.heading[i])
+                #expect(r.roadEdge[i] == 0 && r.roadLevel[i] == tagged.roadLevel[i] && r.offRoadM[i] == tagged.offRoadM[i],
+                        "kept particle \(i)")
+            }
+        }
 
         // Manual reset: a pin 2 km away resets every particle's road state.
         var m = engine

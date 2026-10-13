@@ -172,7 +172,7 @@ public struct NavigationEngine: Sendable {
     // Roads (N3.2). nil without a road network.
     private(set) var roads: RoadMatcher?
     /// Mean distance driven since the last road update (Δs), metres.
-    private var roadDistanceM = 0.0
+    private(set) var roadDistanceM = 0.0
     /// Grid time of the last road update attempt (skips included).
     private var lastRoadAttemptNs: Int64?
     private let roadIntervalNs: Int64
@@ -1078,7 +1078,7 @@ public struct NavigationEngine: Sendable {
                 counters.lateManualFixes += 1
                 predictLateInitialisation(fromStep: tapStepNs)
             }
-            anchorToRoad(sample)
+            anchorToRoad(sample, restarted: true)
             return
         }
         let pin = plane.enu(latitude: sample.latitude, longitude: sample.longitude)
@@ -1115,7 +1115,8 @@ public struct NavigationEngine: Sendable {
         // pin. A low ESS with a compatible particle is the pin being most
         // informative (a ring-shaped cloud after km of unknown heading): keep
         // that posterior and resample (R13.1-1).
-        if nearest > config.manualFixResetChi2 {
+        let reset = nearest > config.manualFixResetChi2
+        if reset {
             // The prior has practically no support at the pin: the driver's
             // "I'm here" wins. Positions restart at it (a late pin: at it
             // plus each particle's own motion since); heading and scale
@@ -1134,7 +1135,7 @@ public struct NavigationEngine: Sendable {
             normalizeWeights()
         }
         resampleIfNeeded()
-        anchorToRoad(sample)
+        anchorToRoad(sample, restarted: reset)
     }
 
     /// Each particle's own motion since `ns`, for a late manual fix
@@ -1336,15 +1337,20 @@ public struct NavigationEngine: Sendable {
     /// A pin with `gateSpeedKmh` ≥ `roadPinAnchorMinKmh` was taken while
     /// moving, so on a road: a road update right after it, whatever the
     /// interval. The pin gives the position along the road, the road the
-    /// position across it. Its evidence distance is at least
-    /// `roadCorrelationM` (weight 1): the pin restarts the along-track
-    /// picture, so the road under it counts in full (decided for N3.2a).
-    private mutating func anchorToRoad(_ sample: ManualFixSample) {
+    /// position across it. `restarted`: the pin initialised the engine or
+    /// caused a manual reset, so every earlier road update's information
+    /// is gone and the road under the pin counts in full (evidence
+    /// distance at least `roadCorrelationM`, weight 1). A pin compatible
+    /// with the cloud keeps that information: the anchor is an early
+    /// regular update, tempered by the distance driven since the last one
+    /// (R21.1-1; weight 1 there would count the same road twice and add
+    /// `roadCorrelationM` off-road for ~0 m driven).
+    private mutating func anchorToRoad(_ sample: ManualFixSample, restarted: Bool) {
         guard roadsActive, config.roadPinAnchorMinKmh > 0, let kmh = sample.gateSpeedKmh, kmh.isFinite,
               kmh >= config.roadPinAnchorMinKmh else { return }
         counters.roadPinAnchors += 1
         lastRoadAttemptNs = lastStepNs
-        roadUpdate(evidenceDistanceM: max(roadDistanceM, config.roadCorrelationM))
+        roadUpdate(evidenceDistanceM: restarted ? max(roadDistanceM, config.roadCorrelationM) : roadDistanceM)
     }
 
     /// The cloud's 95 % semi-major axis, metres (the mixture of every

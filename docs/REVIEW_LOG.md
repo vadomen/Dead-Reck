@@ -173,3 +173,29 @@ Tests: Core passes 722 tests in 104 suites (5a3e69a). No App change.
 - **Rounds:** 2 run.
 - **Findings:** 2 MAJOR fixed (R20.1-1 learned stale offsets erased after resampling, R20.1-2 missing macro-step tests), 1 MINOR fixed in the round (R20.1-3), 0 rejected, 1 MINOR deferred (R20.2-1).
 - **Final tests:** `cd Core && swift test`: 722 tests in 104 suites pass. No App change.
+
+## Run 21: N3.2a road model in the engine (main..n3.2a, 027cedb..fec31dd), started 2026-10-13
+
+The range adds the road config keys, counters and estimate fields, `RoadMatcher` and the road update in `NavigationEngine(config:roads:)` with tests 1–2 and 4–13, test 3 (unmapped road next to a mapped parallel one) as a known issue (`withKnownIssue`), and `docs/N3_ROAD_OFFROAD.md` with two prototype rounds and the decision to keep the plan's model (test 3 a known FAIL). About 2200 changed lines, so three reviewers in parallel on disjoint sets: engine (NavigationEngine/Config/Estimate), matcher and tests (RoadMatcher, NavigationRoadTests, NavigationRoadOffRoadTests), docs (N3_ROAD_OFFROAD, N3_PLAN, NAVIGATION). Branch: `n3.2a`.
+
+### Round 1
+
+Reviewers: three fresh `reviewer` agents (opus for engine and matcher/tests, sonnet for docs). Result: 0 BLOCKER / 7 MAJOR (6 distinct; the reseed-clear finding was raised by both code reviewers and is one row) / 5 MINOR. Mutations: 6 run, 6 survived (Step 5 `r >= 0.5` → `r > 0`; end-vertex h as the segment normal; reseed `clearRoadState` removed; moment-matching `mix = 0`; fix gate `course: nil`).
+
+Verified clean: matcher Step 2 eligibility and the Step 4 algebra (coupling 0, 1, Joseph); cell cache and store lookup-only; `withKnownIssue` wraps only the capture checks; round-2 tables match the raw results; no-roads replay of clean seed 1 byte-identical to N3.0; privacy.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R21.1-1 | MAJOR | `anchorToRoad` (`NavigationEngine.swift:1342-1348`) used evidence max(roadDistanceM, roadCorrelationM), so a moving pin compatible with the cloud (no reset) applied the road again at weight 1 right after a regular road update: the same cross-track measurement counted twice (P_cc too small by about R/(P+R)), and Step 5 added 30 m off-road for ~0 m driven. | FIXED | Verified. Fix: weight 1 only when the pin initialised the engine or caused a manual reset; otherwise tempered by roadDistanceM. Regression test `NavigationRoadTests/compatiblePinAnchorIsTempered` fails at fec31dd (4 issues) and passes; `initialisingPinAnchors` kills the init-path mutation. |
+| R21.1-2 | MAJOR | `bookkeepingThreshold` (`NavigationRoadTests.swift:505-531`) never produced 0 < r < 0.5: its odd particles failed the χ² gate (625 > 9·53), so `r >= 0.5` → `r > 0` survived. | FIXED | Rewritten with ε 0.9 and odd particles inside the gate (0.05 < r < 0.5, read back from the cross-track move); the mutation fails. |
+| R21.1-3 | MAJOR | The Step 2 end-vertex case of `RoadMatcher.nearest` (`RoadMatcher.swift:185-201`) was untested: h as the segment normal survived. | FIXED | New tests `nearestPointAndDirection` (interior both sides, before start, past end on and off the axis, on each vertex) and `deadEndPullsAlongAxis`; the mutation fails both. |
+| R21.1-4 | MAJOR | Test 13's reseed check (`NavigationRoadTests.swift:956-965`, `cleared.count > 50 \|\| resamples increased`) passed with the reseed's `clearRoadState` removed; reseeded particles' edge and level were never checked. Raised by both code reviewers. | FIXED | Rewritten with resampling off, non-default road state on every particle, reseeded particles identified by heading: they are cleared, the rest keep theirs. Mutation fails (80 issues). |
+| R21.1-5 | MAJOR | Step 4 moment matching's r(1−r)ΔμΔμᵀ term (`NavigationEngine.swift:1481`) untested: `mix = 0` passed every test. | FIXED | New test `momentMatching` (r ≈ 0.5, μ and P checked against the formula, 1e-6); the mutation fails. |
+| R21.1-6 | MAJOR | The fix gate's heading check was untested: passing `course: nil` to the gate survived. | FIXED | New test `fixGateHeading`: perpendicular cross street and a oneway against the course (rejected), matching courses and a two-way street (accepted); `course: nil` and "ignore oneway" mutations fail. |
+| R21.1-7 | MINOR | `roadUpdateIntervalS` has no upper clamp (`NavigationConfig.swift` road validation; `NavigationEngine.swift:216`): `--set roadUpdateIntervalS=1e10` traps in `Int64(...)` at engine init. | DEFERRED | BACKLOG |
+| R21.1-8 | MINOR | `docs/N3_ROAD_OFFROAD.md:3-12`: stale text under the status line ("Test 3 … uncommitted"; "No engine change is made until a candidate is picked. Review and merge happen once, on the revised model."). | DEFERRED | BACKLOG |
+| R21.1-9 | MINOR | `docs/N3_ROAD_OFFROAD.md:156-163`: the round-1 "If you prefer to keep the plan's model… Either way, the decision changes Steps 3–5…" paragraph reads as open after the decision. | DEFERRED | BACKLOG |
+| R21.1-10 | MINOR | `docs/N3_ROAD_OFFROAD.md:245-253`: "no W_max does both" goes beyond the measured grid (0.5–4); "(E) fixes test 3 outright" works by switching straight-road evidence off; the W_max 4 row hides that seed 2 passes (0 failed, worst 50 m). | DEFERRED | BACKLOG |
+| R21.1-11 | MINOR | `docs/N3_PLAN.md:828-830`, `docs/NAVIGATION.md:970-972`: wrong-road share is called the real-data check for capture, but it scores only fixes whose truth is on a mapped edge, so capture while the car is on an unmapped road is invisible to it; it checks capture onto a wrong mapped road only. | DEFERRED | BACKLOG |
+
+Tests: Core passes 753 tests in 106 suites, 39 known issues (all test 3). No App change. No-roads acceptance set (seeds 1–5 + as-live, 7 drives) 42/42 GeoJSON byte-identical and no metrics field differs vs N3.0 (`logs/n32a/r21-1`).
