@@ -248,6 +248,8 @@ struct GPSMapView: View {
         var frozen = false
         var headingUp = false
         var following = false
+        /// Whole km/h from `MapSpeedRule`, nil without a source (UX-6).
+        var speedKmh: Int?
     }
 
     init(
@@ -301,7 +303,7 @@ struct GPSMapView: View {
             }
             .onChange(of: HeadingInputs(
                 fix: latest, bearing: bearing, frozen: isStationary,
-                headingUp: headingUp, following: follow.isFollowing
+                headingUp: headingUp, following: follow.isFollowing, speedKmh: speed.kmh
             ), initial: true) { _, new in
                 inputs = new
             }
@@ -590,7 +592,7 @@ struct GPSMapView: View {
     /// Camera distance for a write: the driver's zoom; in heading-up with an
     /// estimate, widened to fit its ellipse (`FollowZoom`).
     private func followDistance(_ nav: NavDisplay?) -> Double {
-        headingState.zoom.followDistance(headingUp: headingUp, semiMajorM: nav?.semiMajorM)
+        headingState.zoom.autoFollowDistance(headingUp: headingUp, semiMajorM: nav?.semiMajorM)
     }
 
     /// Recentres, keeping the user's current zoom and mode.
@@ -613,6 +615,7 @@ struct GPSMapView: View {
 
     /// Animates back to the car at the current zoom and mode.
     private func moveCameraToCar(duration: Double) {
+        headingState.zoom.recentre()   // back to the speed-based zoom (UX-6)
         reseedHeading()
         guard isLive, let center = followCenter else { return }
         withAnimation(.easeInOut(duration: duration)) { recenter(center: center) }
@@ -638,9 +641,11 @@ struct GPSMapView: View {
             let target = CameraHeading.targetBearing(
                 drHeading: nav?.headingDeg, converged: nav?.converged ?? false, gpsBearing: inputs.bearing
             )
+            headingState.zoom.step(speedKmh: inputs.speedKmh.map(Double.init), dt: dt)
             guard inputs.following else { continue }
             var heading = 0.0
             var write = published
+            let zoomWrite = headingState.zoom.autoWantsWrite
             if inputs.headingUp {
                 if target == nil {
                     headingState.smoother = HeadingSmoother()
@@ -651,8 +656,8 @@ struct GPSMapView: View {
             }
             // Without an estimate the GPS onChange recentres north-up;
             // heading-up still turns around the fix.
-            guard write, let center = FollowTarget.center(dr: nav?.position, gps: inputs.fix?.geo),
-                  nav != nil || (inputs.headingUp && target != nil) else { continue }
+            guard write || zoomWrite, let center = FollowTarget.center(dr: nav?.position, gps: inputs.fix?.geo),
+                  nav != nil || (inputs.headingUp && target != nil) || zoomWrite else { continue }
             let d = followDistance(nav)
             headingState.gate.noteWrite(heading, at: now)
             withAnimation(.linear(duration: 0.25)) {

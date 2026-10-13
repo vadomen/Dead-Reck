@@ -274,6 +274,17 @@ struct FollowZoom: Equatable, Sendable {
 
     private(set) var chosen = Self.initialDistance
     private(set) var writtenDistance = 0.0
+    /// UX-6: true after a driver zoom, until the next re-centre. While true,
+    /// `autoFollowDistance` uses `chosen`; otherwise the speed-based `auto`.
+    private(set) var driverOverride = false
+    /// Speed-dependent distance, advanced by `step`.
+    private(set) var auto = AutoZoom()
+    /// The last few distances we wrote: with a moving automatic distance a
+    /// camera report can lag behind the newest write.
+    private var recentWrites: [Double] = []
+    private static let recentWriteCount = 8
+    /// A region was framed: the next report is that frame, not the driver.
+    private var regionFramePending = false
 
     init() {}
 
@@ -281,6 +292,8 @@ struct FollowZoom: Equatable, Sendable {
     /// it wrote, nil when it wrote a region (the next report then is the
     /// framed distance and becomes `chosen`).
     mutating func frame(distance: Double?) {
+        driverOverride = false
+        regionFramePending = distance == nil
         if let distance {
             chosen = distance
             writtenDistance = distance
@@ -292,9 +305,43 @@ struct FollowZoom: Equatable, Sendable {
     /// A camera report (end of a camera change). Not our own write: the driver zoomed.
     mutating func cameraReported(distance: Double) {
         guard distance.isFinite, distance > 0 else { return }
-        if writtenDistance <= 0 || abs(distance - writtenDistance) / writtenDistance > Self.ownWriteTolerance {
-            chosen = distance
+        let isRegionFrame = regionFramePending
+        let isOwn = writtenDistance > 0 && ([writtenDistance] + recentWrites).contains {
+            abs(distance - $0) / $0 <= Self.ownWriteTolerance
         }
+        if !isOwn {
+            chosen = distance
+            // The frame we asked for is not a driver zoom.
+            if !isRegionFrame { driverOverride = true }
+        }
+        regionFramePending = false
+    }
+
+    /// True when the automatic distance has drifted enough from our last
+    /// write to be worth a camera write (and the driver is not overriding).
+    var autoWantsWrite: Bool {
+        guard !driverOverride, writtenDistance > 0 else { return false }
+        return abs(log(auto.distance / writtenDistance)) > Self.autoWriteThreshold
+    }
+    private static let autoWriteThreshold = 0.02
+
+    /// Re-centre (Follow tap, auto-resume): back to the automatic distance.
+    mutating func recentre() { driverOverride = false }
+
+    /// Advances the automatic distance; call each tick with the time since
+    /// the last one.
+    mutating func step(speedKmh: Double?, dt: Double) { auto.step(speedKmh: speedKmh, dt: dt) }
+
+    /// The distance for a follow write with speed-dependent zoom: the
+    /// driver's zoom while it holds, else `auto`; in heading-up with an
+    /// estimate widened to fit its ellipse. Records it as written.
+    mutating func autoFollowDistance(headingUp: Bool, semiMajorM: Double?) -> Double {
+        let base = driverOverride ? chosen : auto.distance
+        let distance = Self.distance(chosen: base, headingUp: headingUp, semiMajorM: semiMajorM)
+        writtenDistance = distance
+        recentWrites.append(distance)
+        if recentWrites.count > Self.recentWriteCount { recentWrites.removeFirst() }
+        return distance
     }
 
     /// The distance for a follow write: `chosen`, in heading-up with an
