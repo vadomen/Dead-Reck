@@ -1,6 +1,11 @@
 # N3.2a: the off-road model (test 3), measured
 
-**Status: second prototype round running (2026-10-13).** Branch `n3.2a` has the
+**Status: decided (2026-10-13): the plan's model is kept.** Test 3 stays a
+recorded known FAIL (`withKnownIssue` in `NavigationRoadOffRoadTests`; Risks
+R2 in docs/N3_PLAN.md; docs/NAVIGATION.md). Round 2 below: no variant passed
+test 3 and kept tests 1, 4, 7 and 8, so the decision rule kept the plan.
+The real-data check for capture is the wrong-road share on clean and
+clean-long in N3.2b. Branch `n3.2a` has the
 plan's road model as written (docs/N3_PLAN.md, "Road model in the filter")
 and tests 1–2 and 4–13. Test 3 is `NavigationRoadOffRoadTests`, uncommitted.
 No engine change is made until a candidate is picked. Review and merge happen
@@ -128,7 +133,7 @@ The conflict is in the evidence itself: one tempering length cannot both let
 roads decide a ring cloud's heading in 300 m and keep a parallel road 40 m
 away from deciding a confident cloud's position in 50 m.
 
-## Recommendation
+## Recommendation (round 1; measured in round 2 as (A), rejected)
 
 **(a) + (d), with road evidence capped by the prior's support, not by
 distance alone.** Concretely, for a decision, not built:
@@ -198,3 +203,62 @@ update and refunds the budget. Grid: θ₀ ∈ {15°, 45°} × W_max ∈ {0.5, 1
 Expected before running: (E) at small W_max passes test 3 and is slowest on
 test 7's ring (one straight road, no turn); (A) depends on how often the cap
 binds.
+
+## Round 2: results
+
+Prototype: `logs/n32a/offroad/prototype-r2.patch`, harness
+`ZZProto-r2.swift`, raw output `r2-results/`; not committed. The prototype
+reproduces round 1: plan 65, (a)+(d) at 1 per km 53, ring 280–300 m.
+
+### Test 3 (failed checks out of 80)
+
+| variant | failed | worst cross-track error (m), seeds 1–5 |
+|---|---:|---|
+| plan | 65 | 43 / 43 / 43 / 43 / 43 |
+| (A) κ 1 / 2 / 4 | 50 / 53 / 53 | 41–42 in every cell |
+| (E) θ₀ 15° or 45°, W_max 0.5 / 1 / 2 | 0 / 0 / 0 | 0–2 |
+| (E) θ₀ 15° or 45°, W_max 4 | 52 | 50–71 |
+
+θ₀ made no difference: no update in test 3 or test 7 sees a turn.
+
+### Behaviour tests 1, 4, 7, 8 (seeds 1–5)
+
+| variant | behaviour tests failing | ring converged at | fork, 500 m past (right) | test 1 cross-track |
+|---|---|---:|---:|---:|
+| plan | — | 280–300 m | > 0.9 (pass) | 0.0 m |
+| (A) κ 1 / 2 / 4 | 1 (every seed) | 290–320 m | > 0.9 (pass) | 0.0 m |
+| (E) W_max 0.5 | 7 ring (every seed) | never | > 0.9 (pass) | 1.7–1.9 m |
+| (E) W_max 1 | 7 ring (every seed) | never | > 0.9 (pass) | 0.8–1.0 m |
+| (E) W_max 2 | 7 ring (every seed) | never | > 0.9 (pass) | 0.4–0.5 m |
+| (E) W_max 4 | 7 ring (every seed) | never | > 0.9 (pass) | 0.1–0.2 m |
+
+Test 1 fails under (A) on its bit-exact along-track probe (along-track
+and P_aa change by more than 1e-9). Its cross-track criterion passes. The
+symmetric-grid half of test 7 and both test 8 cases pass in every cell.
+
+### Reading
+
+- **(A) does not help.** Even at κ 1 the tail beats the off-mode mean by
+  e^(0.4 κ) per update. Over about 70 updates that overturns a 10⁻³ prior
+  long before 1 km. (The round-1 recommendation's "about e² per 30 m,
+  1.5 · 10³ over 1 km" was an arithmetic slip: e² per 30 m is e⁶⁶ per km.)
+- **(E) fixes test 3 outright** (0 of 80, error ≤ 2 m) at W_max ≤ 2, and it
+  keeps the fork, the gate and test 1. It fails only the ring, which has the
+  same blind spot: one straight exit road, no turn. With W_max 2 the ring's
+  total evidence is 2 tempered updates. Convergence there needs about 9.
+- **The thresholds overlap.** The ring needs a total likelihood ratio of a
+  few hundred to put its heading sector at 99 %. Test 3 needs the parallel
+  road's ratio to stay below about 10³ against a 10⁻³ tail. With cloud-level
+  heading novelty, no W_max does both: 2 passes 3 and fails 7, and 4 fails
+  both.
+
+### Not measured: the next candidate
+
+What sets the ring apart is not the road's geometry but the particles'.
+On the ring, wrong-heading particles move *away* from the road every update,
+so each update is new evidence. In test 3, the tail and the bulk both run
+parallel to the road, so each update repeats the last. A novelty term from
+the change in the particles' distances to the road since the last update
+(for example the weighted spread of Δd) would separate the two cases.
+Heading novelty of the matched edge cannot. This is a follow-up option, not
+part of N3.2a.

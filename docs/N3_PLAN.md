@@ -690,6 +690,9 @@ stay bit-identical):
 2. A car park, or outside the pack: bit-identical to no roads (`roadUpdatesNoRoad`).
 3. A road missing from OSM, 40 m from a mapped parallel road for 1 km: no capture, and the
    truth stays inside the 95 % ellipse.
+   **Known FAIL under this model (measured, 2026-10-13):** every seed is captured onto the
+   mapped road, about 42 m off with a confident ellipse. The test runs inside
+   `withKnownIssue`. Candidates and measurements: docs/N3_ROAD_OFFROAD.md (Risks, R2).
 4. A 15° fork, with the car taking the right branch by gyro yaw: both branches stay
    populated before the turn, the right one wins after 300 m, and no branch is forced.
 5. A stacked bridge: the car below is never matched to the bridge (`roadLevelBlocked` > 0);
@@ -815,6 +818,16 @@ off the road the filter matched.
 2. **Missing, new or closed roads.** These capture the cloud onto a parallel road.
    Mitigation: the χ² gate, ε, moment-matched responsibilities, test 3. Not measurable on
    the replay set unless a drive crosses such a place (unknown).
+   - **Measured (2026-10-13): test 3 fails.** A car on an unmapped road 40 m from a mapped
+     parallel one is captured onto the mapped road on every seed (42 m off, cross-track
+     semi-axis about 12 m). Two prototype rounds (a persistent on/off mode, Student-t,
+     a band off-road density, a likelihood-ratio cap, geometry-novelty tempering) found no
+     model that passes test 3 and keeps tests 1, 4, 7 and 8. Decided: keep this model, test
+     3 stays a known FAIL. Details and the unmeasured next candidate:
+     docs/N3_ROAD_OFFROAD.md.
+   - **Real-data check:** N3.2b reports the wrong-road share on clean and clean-long as
+     the check for capture on real roads, with every N3.2 replay result carrying this
+     caveat.
 3. **Splitting gives up part of the Rao-Blackwellisation.**
    - N2 saw sampled positions collapse heading with no heading information.
    - Here splitting happens only when roads are engaged, and road evidence is genuinely

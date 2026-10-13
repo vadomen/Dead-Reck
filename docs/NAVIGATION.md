@@ -963,6 +963,14 @@ N2.2 experiment and informational runs: moved to [docs/archive/NAVIGATION-histor
   OBD (clean drive before 230 s). The tight per-vehicle prior (± 0.01) holds
   it; a new car needs its prior measured, or a wider std.
 
+- **Capture by a parallel mapped road** (N3.2, roads only; known FAIL,
+  measured 2026-10-13). A car on a road missing from the pack, 40 m from a
+  mapped parallel road, is captured onto the mapped road with a confident
+  ellipse (N3.2 test 3, `NavigationRoadOffRoadTests`, run as a known issue).
+  The candidates measured and the option not yet measured are in
+  [docs/N3_ROAD_OFFROAD.md](N3_ROAD_OFFROAD.md). The real-data check is the
+  wrong-road share on clean and clean-long (N3.2b).
+
 ## To verify on the device (N4)
 
 - drive-7 (2026-10-12) was recorded with a **Debug** build, so its sidecar's
