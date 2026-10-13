@@ -343,3 +343,21 @@ Verified clean: every pack index after the sort (matcher `edgeBase`, `matchedEdg
 | R23.1-4 | MINOR | The metrics.md Roads header (`ReplayReport.swift:372-375`) describes the widened unmapped rule for every row. A merged row written before N3.2c item 2 (distance-only) appears under it unmarked; only the missing "(a + b)" split hints at it. | DEFERRED | BACKLOG |
 
 Tests: Core passes 799 tests in 109 suites, 39 known issues (all test 3). No App change.
+
+### Round 2
+
+Reviewer: one fresh `reviewer` (opus). Result: 0 BLOCKER / 0 MAJOR / 1 MINOR. Mutations: 3 run, 3 killed (sort removed in `RoadNetwork.init`, now killed by `engineIndependentOfOrder` alone; round 1's M2 and M3, now killed by `unmapped` and `capturedSplitByReason`).
+
+Verified clean: the R23.1-1 tests; `RoadPackOrderTests` against partial fixes (hash-only or reversed sort fail `networkIsCanonical`); the `NavigationRoadTests.twoPacks` rewrite and the `RoadPackTests` edits; `build_roads --network` naming; comment-only edits in `RoadMatcher`, `NavigationEstimate`, `RoadNetwork`; item 2's definitions in NAVIGATION.md and N3_PLAN.md against `UnmappedReason.of`, and its table against `logs/n32c/unmapped`; the N3.2d anomaly and trade-off bullets against `logs/n32d`; no unrelated code edits; drive-7 seed 1 with packs reversed byte-identical to `logs/n32b/roads` and `logs/n32c/unmapped`.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R23.2-1 | MINOR | `ReplayReport.swift:429-438`: `unmappedSplit` was inserted inside `roadsText`'s doc comment, so both Quick Help texts are wrong. | DEFERRED | BACKLOG |
+
+Tests: Core passes 799 tests in 109 suites, 39 known issues (all test 3). No App change.
+
+### Run 23 summary
+
+- **Rounds:** 2. Round 2 found no BLOCKER or MAJOR; loop stopped.
+- **Findings:** 1 MAJOR missing test added (R23.1-1), no bug exposed; 0 rejected; 4 MINOR deferred (R23.1-2..4, R23.2-1).
+- **Final tests:** `cd Core && swift test`: 799 tests in 109 suites pass, 39 known issues (all test 3, the decided known FAIL). No App change. The review rounds changed only tests and docs, so the N3.2d measurement in `logs/n32d` stands.
