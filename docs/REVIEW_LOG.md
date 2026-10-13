@@ -199,3 +199,18 @@ Verified clean: matcher Step 2 eligibility and the Step 4 algebra (coupling 0, 1
 | R21.1-11 | MINOR | `docs/N3_PLAN.md:828-830`, `docs/NAVIGATION.md:970-972`: wrong-road share is called the real-data check for capture, but it scores only fixes whose truth is on a mapped edge, so capture while the car is on an unmapped road is invisible to it; it checks capture onto a wrong mapped road only. | DEFERRED | BACKLOG |
 
 Tests: Core passes 753 tests in 106 suites, 39 known issues (all test 3). No App change. No-roads acceptance set (seeds 1–5 + as-live, 7 drives) 42/42 GeoJSON byte-identical and no metrics field differs vs N3.0 (`logs/n32a/r21-1`).
+
+### Round 2
+
+Reviewers: two fresh `reviewer` agents (opus): engine sources and docs; matcher and tests. Result: 0 BLOCKER / 4 MAJOR / 0 new MINOR. Mutations: the 7 round-1 mutations are all killed by the round-1 tests. New: 6 run, 5 survived (macro-step Δs accumulation removed; Δs zeroed in the not-engaged and no-road branches; level forgetting removed; χ² gate removed, only test 3's known issues rose 39 → 45; `pack(ofEdge:)` always 0), 1 killed (S₀ from P_ee instead of hᵀPh).
+
+Verified clean: the R21.1-1 fix on every pin path (initialising, late, reset, compatible; reset clears road state before any resample); Steps 0–5 numerics; fix gate order before reseed; determinism; causality; config validation; R21.1-2..6 tests robust (closed forms at 1e-6, wide margins, fixed seeds); no-roads replay of clean seed 2 byte-identical to N3.0.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R21.2-1 | MAJOR | No test checks that driven distance carries over a road update that did not run: the macro step's `roadDistanceM += meanSpeed * dt` (`NavigationEngine.swift:671`) and the not-engaged and no-road branches (`:1383-1408`). Removing either passes every test; after an OBD dropout or a car park the first road update would be weighted by about one step of distance. | FIXED | Code correct. Extended `noRoadUpdateInMacroStep` and `carParkIsNoOp`, new `notEngagedKeepsDistance`: Δs equals the distance driven (bit-identical to a 1e6 s-interval run), and the next update equals `roadUpdate(evidenceDistanceM: Δs)` bit for bit. All three mutations fail. |
+| R21.2-2 | MAJOR | Level forgetting (`offRoadM > roadLevelForgetM` → unknown level, `NavigationEngine.swift:1513`) untested; removing it passes every test. | FIXED | Code correct. New test `levelForgetting` (bridge fixture: 101 m forgets, exactly 100 m keeps; forgotten particles then take the bridge, the rest stay blocked). Removal and `>` → `>=` both fail. |
+| R21.2-3 | MAJOR | The Step 2 χ² gate (`RoadMatcher.swift:278`) is pinned only inside test 3's known-issue block; deleting it passes every other test. | FIXED | Code correct. New test `innovationGate` (P = 25·I: 24 m inside the gate moves r·g·d, 28 m outside unchanged; closed form shows r ≈ 0.75 without the gate). Deleting the gate fails. |
+| R21.2-4 | MAJOR | Multi-pack edge indexing in `RoadMatcher` (`edgeBase`, `pack(ofEdge:)`, `matchedEdge`, `isEdge` across packs; `:40-46`, `:303-321`) untested: every road test loads one pack. | FIXED | Code correct. New test `twoPacks` (7 + 6 edges, `edgeBase` [0, 7, 13]; matchedEdge per pack; level rule blocked across packs). `pack(ofEdge:)` always 0, dropped `edgeBase` offset and a pack-blind `isEdge` fail; removing only `guard pa == pb` survives because a foreign index is out of the other pack's range (redundant guard, kept). |
+
+Tests: Core passes 757 tests in 106 suites, 39 known issues (all test 3). No App change. No engine code changed this round (tests only), so replay outputs equal round 1's.

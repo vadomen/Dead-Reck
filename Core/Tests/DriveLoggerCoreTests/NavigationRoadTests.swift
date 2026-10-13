@@ -455,6 +455,14 @@ struct NavigationRoadTests {
             #expect(b.engine.counters.roadUpdatesNoRoad > 30, "\(offset)")
             #expect(b.estimates.last?.onRoadShare == 0 && b.estimates.last?.matchedEdge == nil)
             #expect(a.estimates.last?.onRoadShare == nil)
+            // R21.2-1: a no-road attempt keeps Δs counting. Reference: one
+            // attempt only (interval 10⁶ s) sums the same steps in the same
+            // order, so Δs is bit-identical; and close to the OBD distance
+            // (40 s at 14 km/h, 20 s at 28 km/h, each + 0.5).
+            let once = Self.run(inputs, config: Self.config(particles: 300) { $0.roadUpdateIntervalS = 1e6 }, roads: net)
+            #expect(b.engine.roadDistanceM == once.engine.roadDistanceM, "\(offset)")
+            let obd = 40 * 14.5 / 3.6 + 20 * 28.5 / 3.6
+            #expect(abs(b.engine.roadDistanceM - obd) < 0.03 * obd, "\(offset): Δs \(b.engine.roadDistanceM) m, OBD \(obd) m")
         }
     }
 
@@ -616,6 +624,157 @@ struct NavigationRoadTests {
         }
     }
 
+    /// The particles of `engine` (initialised at the plane origin) all at
+    /// plane point `at` with P = 25·I and `heading`, on `edge` at `level`
+    /// (any of them may be overridden per particle afterwards).
+    static func place(_ engine: inout NavigationEngine, at p: (east: Double, north: Double), heading: Double,
+                      edge: UInt32 = RoadMatcher.noEdge, level: Int8 = RoadGeometry.unknownLevel) {
+        for i in engine.east.indices {
+            engine.east[i] = p.east
+            engine.north[i] = p.north
+            engine.covEE[i] = 25; engine.covEN[i] = 0; engine.covNN[i] = 25
+            engine.heading[i] = heading
+            engine.roadEdge[i] = edge
+            engine.roadLevel[i] = level
+            engine.offRoadM[i] = 0
+        }
+    }
+
+    /// An engine with roads, initialised by a pin at the plane origin
+    /// (S.plane), no Step 1 split and no resampling.
+    static func directEngine(_ net: RoadNetwork, particles: Int = 100,
+                             _ edit: (inout NavigationConfig) -> Void = { _ in }) -> NavigationEngine {
+        let config = Self.config(particles: particles) {
+            $0.roadSplitSigmaM = 1000; $0.resampleESSFraction = 0
+            edit(&$0)
+        }
+        var engine = NavigationEngine(config: config, roads: net)
+        let p = S.plane.geodetic(east: 0, north: 0)
+        engine.ingest(.manualFix(ManualFixSample(latitude: p.latitude, longitude: p.longitude, pressedT: S.ms(0.05),
+                                                 mapSpanM: 360, speedSource: "unknown"), at: S.ms(0.05)))
+        return engine
+    }
+
+    /// R21.2-2: level forgetting. Particles on the street under the bridge
+    /// (level 0, 3 hops from it), on the bridge's line 100 m north of the
+    /// street. Heading east, the bridge (north–south) is outside the
+    /// heading gate and nothing else is within R: a road update with no
+    /// candidate, which adds Δs = 30 m off-road. 71 + 30 > 100 forgets the
+    /// level; 70 + 30 = 100 does not (strictly past `roadLevelForgetM`).
+    /// Then heading north: the forgotten particles take the bridge, the
+    /// others are still blocked by the level rule.
+    @Test("5. Level forgetting: past roadLevelForgetM off-road the level is unknown (at exactly it, still known), and the bridge it blocked becomes a candidate")
+    func levelForgetting() throws {
+        let net = try RoadNetwork(packs: [RoadFixture.build(RoadGraphTests.bridgeLines())])
+        let pack = net.packs[0]
+        let bridge = UInt32(try #require(RoadFixture.edgeIndices(of: pack, way: 101).first))
+        let crossing = UInt32(RoadFixture.edgeIndices(of: pack, way: 100)[0])
+        var engine = Self.directEngine(net)
+        #expect(engine.config.roadLevelForgetM == 100 && engine.config.roadLevelHops == 2)
+        #expect(!pack.isEdge(Int(bridge), withinHops: 2, of: Int(crossing)))
+        Self.place(&engine, at: (2, 100), heading: .pi / 2, edge: crossing, level: 0)
+        for i in engine.offRoadM.indices { engine.offRoadM[i] = i % 2 == 0 ? 71 : 70 }
+
+        var off = engine
+        off.roadUpdate(evidenceDistanceM: 30)
+        #expect(off.counters.roadUpdates == 1 && off.counters.roadLevelBlocked == 0)
+        for i in off.east.indices {
+            #expect(off.roadEdge[i] == crossing && off.east[i] == 2, "particle \(i): no candidate")
+            if i % 2 == 0 {
+                #expect(off.offRoadM[i] == 101 && off.roadLevel[i] == RoadGeometry.unknownLevel, "particle \(i) forgets")
+            } else {
+                #expect(off.offRoadM[i] == 100 && off.roadLevel[i] == 0, "particle \(i) keeps its level")
+            }
+        }
+
+        for i in off.heading.indices { off.heading[i] = 0 }
+        var on = off
+        on.roadUpdate(evidenceDistanceM: 30)
+        #expect(on.counters.roadUpdates == 2)
+        #expect(on.counters.roadLevelBlocked == 50)
+        for i in on.east.indices {
+            if i % 2 == 0 {
+                #expect(on.roadEdge[i] == bridge && on.roadLevel[i] == 1 && on.offRoadM[i] == 0, "particle \(i)")
+            } else {
+                // Blocked, so off-road again: 130 m now forgets its level.
+                #expect(on.roadEdge[i] == crossing && on.offRoadM[i] == 130, "particle \(i)")
+                #expect(on.roadLevel[i] == RoadGeometry.unknownLevel, "particle \(i)")
+            }
+        }
+
+        // Control: with the level still known, every particle is blocked.
+        var known = engine
+        for i in known.heading.indices { known.heading[i] = 0 }
+        known.roadUpdate(evidenceDistanceM: 30)
+        #expect(known.counters.roadLevelBlocked == 100)
+        #expect(known.roadEdge.allSatisfy { $0 == crossing })
+    }
+
+    /// R21.2-4: two packs on one grid. Pack 0: seven separate streets far
+    /// east (7 edges); pack 1: the stacked bridge (6 edges), so pack 1's
+    /// global edges start at 7. Particles are matched in either pack; the
+    /// estimate's edge names the pack, the local edge and the way. The
+    /// level rule finds adjacency within a pack only: the pack-0 edge with
+    /// the ramp's local index does not admit the bridge, the ramp does.
+    @Test("Two packs: global edges offset by edgeBase; matchedEdge names pack, local edge and way; no level adjacency across packs")
+    func twoPacks() throws {
+        let streets = (1...7).map { k in
+            Self.street(Int64(k), from: (900 + 100 * Double(k), -500), to: (900 + 100 * Double(k), 500))
+        }
+        let pack0 = try RoadFixture.build(streets)
+        let pack1 = try RoadFixture.build(RoadGraphTests.bridgeLines(idOffset: 1000))
+        let net = try RoadNetwork(packs: [pack0, pack1])
+        #expect(pack0.edgeCount == 7 && pack1.edgeCount == 6)
+        let matcher = RoadMatcher(network: net)
+        #expect(matcher.edgeBase == [0, 7, 13])
+        try #require(matcher.pack(ofEdge: 0) == 0)
+        try #require(matcher.pack(ofEdge: 6) == 0)
+        try #require(matcher.pack(ofEdge: 7) == 1)
+        try #require(matcher.pack(ofEdge: 12) == 1)
+        let bridgeLocal = try #require(RoadFixture.edgeIndices(of: pack1, way: 1101).first)
+        let rampLocal = try #require(RoadFixture.edgeIndices(of: pack1, way: 1102).first)
+        let sideLocal = try #require(RoadFixture.edgeIndices(of: pack1, way: 1103).first)
+        let street1 = try #require(RoadFixture.edgeIndices(of: pack0, way: 1).first)
+        let bridge = UInt32(7 + bridgeLocal), ramp = UInt32(7 + rampLocal)
+        #expect(matcher.matchedEdge(bridge) == MatchedRoadEdge(pack: 1, edge: bridgeLocal, osmWayID: 1101))
+        #expect(matcher.matchedEdge(UInt32(street1)) == MatchedRoadEdge(pack: 0, edge: street1, osmWayID: 1))
+        // A pack-blind lookup would admit the bridge from local edge
+        // `rampLocal` of pack 0: in pack 1 that index is the ramp, one hop.
+        #expect(pack1.isEdge(bridgeLocal, withinHops: 2, of: rampLocal))
+        #expect(pack0.edge(rampLocal).level == 0 && pack1.edge(bridgeLocal).level == 1)
+        #expect(matcher.isEdge(bridge, withinHops: 2, of: ramp))
+        #expect(!matcher.isEdge(bridge, withinHops: 2, of: UInt32(rampLocal)))
+
+        // Level: on the bridge's line heading north, all on level 0; even
+        // particles on the ramp (pack 1), odd on pack 0's edge `rampLocal`.
+        var engine = Self.directEngine(net)
+        Self.place(&engine, at: (2, 100), heading: 0, level: 0)
+        for i in engine.roadEdge.indices { engine.roadEdge[i] = i % 2 == 0 ? ramp : UInt32(rampLocal) }
+        var level = engine
+        level.roadUpdate(evidenceDistanceM: 30)
+        #expect(level.counters.roadUpdates == 1 && level.counters.roadLevelBlocked == 50)
+        for i in level.east.indices {
+            if i % 2 == 0 {
+                #expect(level.roadEdge[i] == bridge && level.roadLevel[i] == 1, "ramp particle \(i)")
+            } else {
+                #expect(level.roadEdge[i] == UInt32(rampLocal) && level.roadLevel[i] == 0, "pack-0 particle \(i)")
+            }
+        }
+        #expect(level.estimate(at: S.ms(0.05))?.matchedEdge == MatchedRoadEdge(pack: 1, edge: bridgeLocal, osmWayID: 1101))
+
+        // Matched in pack 1 (the side street, x = 60) and in pack 0 (x = 1000).
+        for (p, global, expected) in [
+            ((62.0, -100.0), UInt32(7 + sideLocal), MatchedRoadEdge(pack: 1, edge: sideLocal, osmWayID: 1103)),
+            ((1002.0, 0.0), UInt32(street1), MatchedRoadEdge(pack: 0, edge: street1, osmWayID: 1)),
+        ] {
+            var e = engine
+            Self.place(&e, at: p, heading: 0)
+            e.roadUpdate(evidenceDistanceM: 30)
+            #expect(e.roadEdge.allSatisfy { $0 == global }, "\(p)")
+            #expect(e.estimate(at: S.ms(0.05))?.matchedEdge == expected, "\(p)")
+        }
+    }
+
     /// Step 5's threshold on r itself, not on "a candidate exists": the odd
     /// particles have a candidate (20 m off, P_cc 4: d² = 400 ≤ χ² · S₀ =
     /// 9 · 53) but ε 0.9 makes L_off = ε / (2R · 2π) ≈ 1.4e-3 larger than
@@ -661,6 +820,56 @@ struct NavigationRoadTests {
         #expect((after.estimate(at: S.ms(0.05))?.onRoadShare ?? 0) > 0)
     }
 
+    /// R21.2-3: Step 2's χ² innovation gate. P = 25·I, heading along the
+    /// road (x = 0, north), Δs = 30 m (weight 1): S₀ = 25 + σr² = 74, gate
+    /// d² ≤ 9 · 74 = 666, so 24 m (576) is inside and 28 m (784) outside,
+    /// both within R. Closed form, dψ = 0: L_road = exp(−d²/2S₀) / √S₀ /
+    /// (2π σψ), L_off = ε / (2R · 2π), r = (1 − ε) L_road / ((1 − ε) L_road
+    /// + L_off). The 28 m particle would have r ≥ 0.5 without the gate;
+    /// with it, it has no candidate at all.
+    @Test("Step 2 χ² gate: P = 25·I, 24 m off is a candidate and moves r·g·d across; 28 m off is not (r ≥ 0.5 without the gate)")
+    func innovationGate() throws {
+        let net = try Self.network([Self.street(1, from: (0, -3000), to: (0, 3000))])
+        var engine = Self.directEngine(net)
+        let c = engine.config
+        let (inside, outside) = (24.0, 28.0)
+        Self.place(&engine, at: (0, 0), heading: 0)
+        for i in engine.east.indices {
+            engine.east[i] = i % 2 == 0 ? inside : outside
+            engine.offRoadM[i] = 10
+        }
+        let s0 = 25 + c.roadSigmaM * c.roadSigmaM
+        let gate = c.roadInnovationGateChi2 * s0
+        #expect(inside * inside <= gate && outside * outside > gate && outside < c.roadSearchRadiusM)
+        let epsilon = c.roadOffRoadProbability
+        let offRoad = epsilon / (2 * c.roadSearchRadiusM * 2 * .pi)
+        func onRoad(_ d: Double) -> Double {
+            (1 - epsilon) * exp(-0.5 * d * d / s0) / s0.squareRoot() / (2 * .pi * c.roadHeadingSigmaDeg * .pi / 180)
+        }
+        func r(_ d: Double) -> Double { onRoad(d) / (onRoad(d) + offRoad) }
+        #expect(r(outside) >= 0.5, "without the gate, r at \(outside) m = \(r(outside))")
+
+        var after = engine
+        after.roadUpdate(evidenceDistanceM: 30)
+        #expect(after.counters.roadUpdates == 1 && after.counters.roadSplits == 0)
+        let g = 25 / s0
+        for i in after.east.indices {
+            if i % 2 == 0 {
+                let expected = inside - r(inside) * g * inside
+                #expect(abs(after.east[i] - expected) < 1e-9, "particle \(i): \(after.east[i]), expected \(expected)")
+                #expect(after.roadEdge[i] == 0 && after.offRoadM[i] == 0, "particle \(i)")
+            } else {
+                #expect(after.east[i] == outside && after.covEE[i] == 25 && after.covEN[i] == 0 && after.covNN[i] == 25,
+                        "particle \(i)")
+                #expect(after.roadEdge[i] == RoadMatcher.noEdge && after.offRoadM[i] == 40, "particle \(i)")
+            }
+        }
+        // Weights: L = (1 − ε) L_road + L_off inside, L_off outside.
+        let ratio = after.weight[0] / after.weight[1]
+        let expectedRatio = (onRoad(inside) + offRoad) / offRoad
+        #expect(abs(ratio / expectedRatio - 1) < 1e-9, "weight ratio \(ratio), expected \(expectedRatio)")
+    }
+
     @Test("Never a road update inside a catch-up: its distance counts towards the next one")
     func noRoadUpdateInMacroStep() throws {
         let net = try Self.network([Self.street(1, from: (0, -30_000), to: (0, 30_000))])
@@ -681,6 +890,79 @@ struct NavigationRoadTests {
         #expect(engine.counters.macroSteps == 5)
         #expect(engine.counters.roadUpdates == fresh.counters.roadUpdates)
         #expect(engine.counters.roadUpdatesNoRoad == fresh.counters.roadUpdatesNoRoad)
+
+        // R21.2-1: the catch-up's distance is carried, not dropped: Δs after
+        // the gap is what `fresh` had left plus the distance driven in the
+        // macro steps (the mean's move north; no update moves it there).
+        let gap = Self.meanOffset(engine).north - Self.meanOffset(fresh).north
+        #expect(gap > 400, "driven in the catch-up: \(gap) m")
+        #expect(abs(engine.roadDistanceM - (fresh.roadDistanceM + gap)) < 0.01 * gap,
+                "Δs \(engine.roadDistanceM) m, expected \(fresh.roadDistanceM) + \(gap) m")
+        // …and the next road update uses all of it.
+        try Self.expectNextRoadUpdateUsesCarriedDistance(engine, at: S.ms(65))
+    }
+
+    /// A pin at the cloud's mean, arrival `t` (the engine has already
+    /// stepped to it), speed source unknown so its σ does not depend on
+    /// `kmh`; `kmh` ≥ `roadPinAnchorMinKmh` anchors a road update.
+    static func meanPin(_ engine: NavigationEngine, at t: MonotonicTimestamp, kmh: Double) throws -> NavigationInput {
+        let est = try #require(engine.estimate(at: t))
+        return .manualFix(ManualFixSample(latitude: est.latitude, longitude: est.longitude, pressedT: t, mapSpanM: 360,
+                                          speedSource: "unknown", gateSpeedKmh: kmh), at: t)
+    }
+
+    /// The next road update after `engine`'s current state consumes the
+    /// carried Δs: a moving pin's anchor (a regular, tempered road update
+    /// reading `roadDistanceM`) equals, bit for bit, the same pin without
+    /// the anchor followed by `roadUpdate(evidenceDistanceM: Δs)`.
+    static func expectNextRoadUpdateUsesCarriedDistance(_ engine: NavigationEngine, at t: MonotonicTimestamp) throws {
+        let carried = engine.roadDistanceM
+        var anchored = engine
+        anchored.ingest(try meanPin(engine, at: t, kmh: 30))
+        var reference = engine
+        reference.ingest(try meanPin(engine, at: t, kmh: 1))
+        #expect(reference.counters.roadPinAnchors == engine.counters.roadPinAnchors)
+        #expect(reference.counters.manualResets == engine.counters.manualResets)
+        reference.roadUpdate(evidenceDistanceM: carried)
+        #expect(anchored.counters.roadPinAnchors == engine.counters.roadPinAnchors + 1)
+        #expect(anchored.counters.roadUpdates == engine.counters.roadUpdates + 1)
+        #expect(state(anchored) == state(reference))
+        #expect(anchored.roadEdge == reference.roadEdge && anchored.roadLevel == reference.roadLevel
+                && anchored.offRoadM == reference.offRoadM)
+        #expect(anchored.roadDistanceM == 0 && reference.roadDistanceM == 0)
+    }
+
+    /// R21.2-1, the not-engaged branch: with the cloud wider than
+    /// `roadEngageMaxEllipseM` every attempt is an exact no-op and Δs keeps
+    /// counting. Reference: the same drive with one attempt only (the
+    /// first step; interval 10⁶ s) sums the same steps in the same order,
+    /// so Δs is bit-identical; and close to the OBD distance.
+    @Test("Not engaged (cloud wider than roadEngageMaxEllipseM): Δs keeps counting, and the first engaged update uses all of it")
+    func notEngagedKeepsDistance() throws {
+        let net = try Self.network([Self.street(1, from: (0, -3000), to: (0, 3000))])
+        let inputs = Self.shifted(Self.northDrive(seconds: 20), by: (0, 0), fix: S.cleanFix())
+        let narrow = { (c: inout NavigationConfig) in c.roadEngageMaxEllipseM = 0.5 }
+        let a = Self.run(inputs, config: Self.config(particles: 100, narrow), roads: net)
+        let once = Self.run(inputs, config: Self.config(particles: 100) { narrow(&$0); $0.roadUpdateIntervalS = 1e6 },
+                            roads: net)
+        var engine = a.engine
+        let t = try #require(inputs.last?.arrival)
+        #expect(engine.counters.roadUpdates == 0 && engine.counters.roadUpdatesNoRoad == 0)
+        #expect(engine.estimate(at: t)?.onRoadShare == nil)
+        #expect(Self.state(engine) == Self.state(once.engine))
+        #expect(engine.roadDistanceM == once.engine.roadDistanceM)
+        // 20 s at OBD 43 km/h (+ 0.5), from the first fix.
+        let obd = 43.5 / 3.6 * 20
+        #expect(abs(engine.roadDistanceM - obd) < 0.02 * obd, "Δs \(engine.roadDistanceM) m, OBD \(obd) m")
+        // Narrow the cloud to a point at its mean (no particle state other
+        // than position and covariance changes), so the next update engages.
+        let mean = Self.meanOffset(engine)
+        for i in engine.east.indices {
+            engine.east[i] = mean.east
+            engine.north[i] = mean.north
+            engine.covEE[i] = 0.01; engine.covEN[i] = 0; engine.covNN[i] = 0.01
+        }
+        try Self.expectNextRoadUpdateUsesCarriedDistance(engine, at: t)
     }
 
     // MARK: 6. Opposite oneways
