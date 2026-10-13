@@ -76,6 +76,15 @@ public struct ReplayOptions: Hashable, Sendable {
     /// only: the engine ingests every pin either way. See
     /// `NavigationReplay.pinScoring`.
     public var pinPairWindowS = NavigationReplay.defaultPinPairWindowS
+    /// The road network the engine matches against (`replay_nav --roads`,
+    /// N3.2); nil runs no road code at all, and every output is as before
+    /// roads existed.
+    public var roads: ReplayRoadSet?
+    /// `replay_nav --wrong-road-tolerance`: a matched edge that is not the
+    /// truth's road still counts as right when the truth fix is within this
+    /// many metres of it (parallel geometry of one road, junction stubs).
+    /// Scoring only, used only with `roads`.
+    public var wrongRoadToleranceM = NavigationReplay.defaultWrongRoadToleranceM
 
     public init(gps: GPSMode, holdOutAccuracyM: Double? = nil, config: NavigationConfig = NavigationConfig()) {
         self.gps = gps
@@ -87,6 +96,7 @@ public struct ReplayOptions: Hashable, Sendable {
         var label = gps.label
         if let holdOutAccuracyM { label += "-holdout-\(GPSMode.format(holdOutAccuracyM))" }
         if asLive { label += "-as-live" } else if fileOrder { label += "-file-order" }
+        if let roads { label += "-" + roads.labelSuffix }
         return label
     }
 }
@@ -213,6 +223,10 @@ public enum NavigationReplay {
     /// one pin σ, so a pin that soon after another is not an independent
     /// check of the estimate.
     public static let defaultPinPairWindowS = 3.0
+
+    /// Default `ReplayOptions.wrongRoadToleranceM`, metres (docs/N3_PLAN.md,
+    /// "Metrics added to replay_nav").
+    public static let defaultWrongRoadToleranceM = 20.0
 
     /// Why a manual fix is not scored.
     ///
@@ -537,7 +551,7 @@ private struct ReplayRun {
         self.inputs = inputs
         self.options = options
         self.truth = truth
-        engine = NavigationEngine(config: options.config)
+        engine = NavigationEngine(config: options.config, roads: options.roads?.network)
         motionStart = NavigationReplay.motionStart(inputs)
     }
 

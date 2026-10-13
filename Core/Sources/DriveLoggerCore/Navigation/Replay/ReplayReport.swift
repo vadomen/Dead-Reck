@@ -319,6 +319,30 @@ public enum ReplayReport {
         return out
     }
 
+    /// Every config key whose value differs between `old` and `new`, as
+    /// "key old → new", sorted by key: what `validated()` clamped (R21.3-6).
+    public static func configChanges(from old: NavigationConfig, to new: NavigationConfig) -> [String] {
+        func object(_ config: NavigationConfig) -> [String: Any] {
+            (try? JSONSerialization.jsonObject(with: config.canonicalJSON())) as? [String: Any] ?? [:]
+        }
+        let a = object(old), b = object(new)
+        return Set(a.keys).union(b.keys).sorted().compactMap { key in
+            let x = a[key].map { "\($0)" } ?? "absent", y = b[key].map { "\($0)" } ?? "absent"
+            return x == y ? nil : "\(key) \(x) → \(y)"
+        }
+    }
+
+    /// The road set of a run, one line per pack, with the attribution:
+    /// "Roads         2 packs, roadSetHash …, © OpenStreetMap contributors (ODbL 1.0)".
+    public static func roadsText(_ packs: [ReplayRoadPack], roadSetHash: String) -> String {
+        var lines = ["Roads         \(packs.count) pack\(packs.count == 1 ? "" : "s"), roadSetHash \(roadSetHash), "
+            + "\(RoadNetwork.attribution) (\(RoadPackFormat.license))"]
+        for (i, pack) in packs.enumerated() {
+            lines.append("  pack \(i)      " + pack.text)
+        }
+        return lines.joined(separator: "\n")
+    }
+
     public static func configJSON(_ config: NavigationConfig) -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .prettyPrinted]
