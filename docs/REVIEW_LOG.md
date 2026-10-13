@@ -311,8 +311,16 @@ Reviewer: one fresh `reviewer` (opus). Result: 0 BLOCKER / 3 MAJOR / 0 MINOR, al
 
 | ID | Tag | Finding | Status | Note |
 |---|---|---|---|---|
-| R22.4-1 | MAJOR | `ambiguousShare` (`NavigationReplay.swift:846`, over matched + ambiguous) is tested only at 0 and 1, never with mixed statuses: over all withheld clean fixes it survives and moves clean 20.3 % → 12.5 % (under the Viterbi trigger, flipping the summary line and R22.1-1) and drive-7 33.2 % → 24.1 %. | CONFIRMED | Open: round 4 was the last round; loop stopped for the user's decision. |
-| R22.4-2 | MAJOR | `candidateTestsPerParticle` (`NavigationReplay.swift:861-862`) is untested (only `candidateTestsPerUpdate != nil`): dropping `/ particleCount` survives, turning the published 15–33 (≤ 64) into ~22 800. | CONFIRMED | Open, as above. |
-| R22.4-3 | MAJOR | The truth's 45° heading gate (`ReplayRoads.swift:91`, used at :350) is untested for a two-way way outside it (tests cover 30° and a reverse oneway only): 89° survives; drive-7 seed 1 off share 0.8 % → ~4.5 %, noRoad 44 → 35, matched 129 → 134. | CONFIRMED | Open, as above. |
+| R22.4-1 | MAJOR | `ambiguousShare` (`NavigationReplay.swift:846`, over matched + ambiguous) is tested only at 0 and 1, never with mixed statuses: over all withheld clean fixes it survives and moves clean 20.3 % → 12.5 % (under the Viterbi trigger, flipping the summary line and R22.1-1) and drive-7 33.2 % → 24.1 %. | FIXED | Verified. User chose "add the tests, then merge". Test in aa35d7b; mutation killed. |
+| R22.4-2 | MAJOR | `candidateTestsPerParticle` (`NavigationReplay.swift:861-862`) is untested (only `candidateTestsPerUpdate != nil`): dropping `/ particleCount` survives, turning the published 15–33 (≤ 64) into ~22 800. | FIXED | Verified. User chose "add the tests, then merge". Test in aa35d7b; mutation killed. |
+| R22.4-3 | MAJOR | The truth's 45° heading gate (`ReplayRoads.swift:91`, used at :350) is untested for a two-way way outside it (tests cover 30° and a reverse oneway only): 89° survives; drive-7 seed 1 off share 0.8 % → ~4.5 %, noRoad 44 → 35, matched 129 → 134. | FIXED | Verified. User chose "add the tests, then merge". Test in aa35d7b; mutation killed. |
 
-**Loop stopped after round 4 with three MAJORs (missing tests of correct code). Waiting for the user's decision.**
+**Loop stopped after round 4 with three MAJORs (missing tests of correct code). The user chose to add the tests and merge.** Tests in aa35d7b: `ambiguousShareMixed` (1/7 and 1/4, both sides of the Viterbi line), `rightRoad` (300 candidate tests per update, 1.0 per particle), `truthHeadingGate` (60° alone noRoad, 60° beside an aligned way not a competitor, 40° matched). A fresh `reviewer` (sonnet) on 55c19ff..aa35d7b found nothing; denominator, `/ particleCount`, gate 45 → 89 and 45 → 30 mutations all killed.
+
+Tests: Core passes 789 tests in 107 suites, 39 known issues (all test 3). No App change.
+
+### Run 22 summary
+
+- **Rounds:** 4 run, plus a follow-up review of the round-4 tests.
+- **Findings:** 1 MAJOR docs fix (R22.1-1: clean's road truth over the Viterbi trigger, wrong-road share provisional); 11 MAJOR missing tests added (R22.1-2..4, R22.2-1..3, R22.3-1..2, R22.4-1..3), none exposed a bug; 1 MINOR fixed (R22.1-5); 0 rejected; 3 MINOR deferred (R22.1-6, R22.3-3, R22.3-4).
+- **Final tests:** `cd Core && swift test`: 789 tests in 107 suites pass, 39 known issues (all test 3, the decided known FAIL). No App change. `Core/Sources` unchanged since 5efbb20, so the N3.2b measurement in `logs/n32b/roads` stands; without roads the acceptance runs are byte-identical to N3.0.
