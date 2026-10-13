@@ -4,12 +4,12 @@
 recorded known FAIL (`withKnownIssue` in `NavigationRoadOffRoadTests`; Risks
 R2 in docs/N3_PLAN.md; docs/NAVIGATION.md). Round 2 below: no variant passed
 test 3 and kept tests 1, 4, 7 and 8, so the decision rule kept the plan.
-The real-data check for capture is the wrong-road share on clean and
-clean-long in N3.2b. Branch `n3.2a` has the
-plan's road model as written (docs/N3_PLAN.md, "Road model in the filter")
-and tests 1–2 and 4–13. Test 3 is `NavigationRoadOffRoadTests`, uncommitted.
-No engine change is made until a candidate is picked. Review and merge happen
-once, on the revised model.
+On real drives, N3.2b reports the wrong-road share on clean and clean-long,
+which checks capture onto a wrong *mapped* road only, and the
+unmapped/captured count for a car on a road missing from the packs
+(R21.1-11). The plan's road model as written (docs/N3_PLAN.md, "Road model
+in the filter") with tests 1–2 and 4–13 and test 3
+(`NavigationRoadOffRoadTests`) merged in N3.2a.
 
 ## The case
 
@@ -153,7 +153,8 @@ distance alone.** Concretely, for a decision, not built:
      prior of 10⁻³.
    - Whether this passes test 3 together with tests 4, 7 and 8 is unmeasured.
 
-If you prefer to keep the plan's model: test 3 stays a known, measured FAIL,
+*Superseded by the decision in the status line and by round 2 below (R21.1-9);
+kept as written in round 1:* if you prefer to keep the plan's model: test 3 stays a known, measured FAIL,
 recorded under Risks R2, and N3.2's replay results carry that caveat. The
 replay set has no drive known to cross such a place, so N3.2 cannot measure
 it on real data.
@@ -217,7 +218,7 @@ reproduces round 1: plan 65, (a)+(d) at 1 per km 53, ring 280–300 m.
 | plan | 65 | 43 / 43 / 43 / 43 / 43 |
 | (A) κ 1 / 2 / 4 | 50 / 53 / 53 | 41–42 in every cell |
 | (E) θ₀ 15° or 45°, W_max 0.5 / 1 / 2 | 0 / 0 / 0 | 0–2 |
-| (E) θ₀ 15° or 45°, W_max 4 | 52 | 50–71 |
+| (E) θ₀ 15° or 45°, W_max 4 | 52 (seed 2 passes: 0 failed, worst 50 m) | 50–71 |
 
 θ₀ made no difference: no update in test 3 or test 7 sees a turn.
 
@@ -242,14 +243,15 @@ symmetric-grid half of test 7 and both test 8 cases pass in every cell.
   e^(0.4 κ) per update. Over about 70 updates that overturns a 10⁻³ prior
   long before 1 km. (The round-1 recommendation's "about e² per 30 m,
   1.5 · 10³ over 1 km" was an arithmetic slip: e² per 30 m is e⁶⁶ per km.)
-- **(E) fixes test 3 outright** (0 of 80, error ≤ 2 m) at W_max ≤ 2, and it
+- **(E) passes test 3** (0 of 80, error ≤ 2 m) at W_max ≤ 2 by switching
+  straight-road evidence off once the budget is spent, and it
   keeps the fork, the gate and test 1. It fails only the ring, which has the
   same blind spot: one straight exit road, no turn. With W_max 2 the ring's
   total evidence is 2 tempered updates. Convergence there needs about 9.
 - **The thresholds overlap.** The ring needs a total likelihood ratio of a
   few hundred to put its heading sector at 99 %. Test 3 needs the parallel
   road's ratio to stay below about 10³ against a 10⁻³ tail. With cloud-level
-  heading novelty, no W_max does both: 2 passes 3 and fails 7, and 4 fails
+  heading novelty, no W_max in the measured grid (0.5–4) does both: 2 passes 3 and fails 7, and 4 fails
   both.
 
 ### Not measured: the next candidate

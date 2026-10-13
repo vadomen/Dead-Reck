@@ -374,7 +374,9 @@ Tried and rejected (worse on the replay set): moved to [docs/archive/NAVIGATION-
 ## Configuration (defaults)
 
 Every value is in `NavigationConfig`; `replay_nav` prints the full config with
-every result.
+every result. The table lists the keys without roads; the 18 road keys
+(`road…`, used only with `--roads`) and their defaults are in
+[docs/N3_PLAN.md](N3_PLAN.md), "Config keys" (R21.4-4).
 
 | key | default | meaning |
 |---|---:|---|
@@ -968,8 +970,10 @@ N2.2 experiment and informational runs: moved to [docs/archive/NAVIGATION-histor
   mapped parallel road, is captured onto the mapped road with a confident
   ellipse (N3.2 test 3, `NavigationRoadOffRoadTests`, run as a known issue).
   The candidates measured and the option not yet measured are in
-  [docs/N3_ROAD_OFFROAD.md](N3_ROAD_OFFROAD.md). The real-data check is the
-  wrong-road share on clean and clean-long (N3.2b).
+  [docs/N3_ROAD_OFFROAD.md](N3_ROAD_OFFROAD.md). The wrong-road share on
+  clean and clean-long (N3.2b) checks capture onto a wrong *mapped* road
+  only; capture while the car is on an unmapped road is the separate
+  unmapped/captured count (R21.1-11).
 
 ## To verify on the device (N4)
 
