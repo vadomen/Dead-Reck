@@ -426,3 +426,23 @@ Verified clean: no auto-zoom fight with the driver (every gesture pauses Followi
 | R26.1-3 | MINOR | BACKLOG_UX UX-5 row still says the chip goes grey after 2 s; it is 3 s. | DEFERRED | BACKLOG |
 
 Tests: Core passes 799 tests in 109 suites, 39 known issues (all test 3). App: 276 tests in 43 suites pass on the iPhone 15 Pro simulator.
+
+### Round 2
+
+Reviewer: one fresh `reviewer` (opus). Result: 0 BLOCKER / 0 MAJOR / 3 MINOR. No mutations (no Core logic); a Mac harness built from the real `FollowSpan`, `FollowZoom`, `AutoZoom` and `MapFraming` sources measured write rates per mode.
+
+Verified clean: the R26.1-1 fix is complete (`cameraReported`, `writtenDistance` and `recentWrites` all hold the widened distance; north-up unwidened on both sides; a shrinking ellipse, heading-up off and a lost estimate still write; NaN semi-major falls back to the speed distance); steady-state zoom writes are 0 in every mode, so the steady rate is bounded by the published writes (≤ 4/s); R24.1-1 and R25.1-1/2 unchanged; privacy.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R26.2-1 | MINOR | Zoom-only writes skip the 4 Hz `NavWriteGate` while the zoom ramps (up to 9–10/s for ~3 s), contradicting PLAN §6 N4 check 1. | DEFERRED | BACKLOG |
+| R26.2-2 | MINOR | No test expects `autoWantsWrite` true when the wanted distance falls; dropping `abs` survives. | DEFERRED | BACKLOG |
+| R26.2-3 | MINOR | `FollowZoom.followDistance` is unused by the app but still tested; PLAN §6 N4 item 3 describes its old behaviour. | DEFERRED | BACKLOG |
+
+Tests: Core passes 799 tests in 109 suites, 39 known issues (all test 3). App: 276 tests in 43 suites pass on the iPhone 15 Pro simulator.
+
+### Run 26 summary
+
+- **Rounds:** 2. Round 2 found no BLOCKER or MAJOR; loop stopped.
+- **Findings:** 1 MAJOR fixed with a regression test (R26.1-1: 10 Hz camera writes in heading-up with a wide ellipse); 0 rejected; 5 MINOR deferred (R26.1-2..3, R26.2-1..3).
+- **Final tests:** Core 799 / 109 pass, 39 known issues; App 276 / 43 pass.
