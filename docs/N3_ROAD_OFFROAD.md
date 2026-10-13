@@ -1,6 +1,6 @@
 # N3.2a: the off-road model (test 3), measured
 
-**Status: open, waiting for a decision (2026-10-13).** Branch `n3.2a` has the
+**Status: second prototype round running (2026-10-13).** Branch `n3.2a` has the
 plan's road model as written (docs/N3_PLAN.md, "Road model in the filter")
 and tests 1–2 and 4–13. Test 3 is `NavigationRoadOffRoadTests`, uncommitted.
 No engine change is made until a candidate is picked. Review and merge happen
@@ -156,3 +156,45 @@ it on real data.
 Either way, the decision changes Steps 3–5 of docs/N3_PLAN.md. The
 pre-declared N3.2 experiment grids then need the new keys: switch rate,
 σ_off, κ.
+
+## Round 2: the variants and their grids (written before running)
+
+Same measurements as above: test 3 at seeds 1–5 (failed checks out of 80),
+and behaviour tests 1, 4, 7, 8 at seeds 1–5 (the engine's seed forced per
+run). The behaviour tests are judged on the plan's stated numbers: test 1
+cross-track < 6 m; test 4 both branches > 0.1 at the fork and the right one
+> 0.9 at 500 m past; test 7 ring heading converged within 400 m and the
+symmetric grid not collapsed; test 8 as written. Default config,
+`roadCorrelationM` 30, unless a cell says otherwise.
+
+**(A) (a) + (d) + a per-update cap κ.** Mode switch 1 per km, σ_off 25 m,
+as (a)+(d) above. The cap is cloud-level:
+
+  ℓ_ref = log( Σ_off wⱼ L_off,j / Σ_off wⱼ )   (the off-mode particles' weighted mean likelihood)
+  log wᵢ += w · min(ℓᵢ, ℓ_ref + κ)              (every particle, on or off)
+
+So per update no particle gains more than e^(w·κ) over the cloud's typical
+off-mode particle. The literal reading, each on-particle against its own
+off-mode score at the same place, is a no-op: at d ≈ 0 that ratio is
+√((P_cc + σ_off²)/(P_cc + σr²)) ≈ 2.5, below e¹. Grid: κ ∈ {1, 2, 4}.
+
+**(E) Geometry-novelty tempering** on the plan's model (ε mixture, no modes,
+Steps 2–5 unchanged except w). After the candidates, the cloud's matched-road
+direction θ_k is the axial mean (doubled angle) of the matched segments'
+directions, weighted by wᵢ rᵢ. Then:
+
+- Δθ = axial difference (0–90°) between θ_k and the θ of the last road update
+  that had a match; 0 for the first match (meeting a road is not a turn).
+- S, the straight-road evidence spent since the last turn, is refunded by
+  the turn: S ← S · max(0, 1 − Δθ/θ₀).
+- Distance term: w_d = min(Δs / `roadCorrelationM`, max(0, W_max − S)); S += w_d.
+- w = min(1, Δθ/θ₀ + w_d), used for the weight and the shift as the plan's w.
+
+Until W_max is spent this is the plan's model exactly. On a straight road
+the cumulative evidence is at most W_max; a turn of θ₀ or more buys a full
+update and refunds the budget. Grid: θ₀ ∈ {15°, 45°} × W_max ∈ {0.5, 1, 2, 4}
+(8 cells).
+
+Expected before running: (E) at small W_max passes test 3 and is slowest on
+test 7's ring (one straight road, no turn); (A) depends on how often the cap
+binds.
