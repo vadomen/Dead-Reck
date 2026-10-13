@@ -385,3 +385,26 @@ Tests: Core passes 799 tests in 109 suites, 39 known issues (all test 3). App: 2
 - **Rounds:** 1; no BLOCKER or MAJOR, loop stopped.
 - **Findings:** 0 fixed, 0 rejected, 3 MINOR deferred (R24.1-1..3).
 - **Final tests:** Core 799 tests / 109 suites pass, 39 known issues; App 255 tests / 40 suites pass.
+
+## Run 25: UX-3 and UX-4, Settings tab and map recording control (main..ux-map, 5076fc9..d61121c), started 2026-10-13
+
+UX-3 (8d19af1): tabs Map · Sessions · Settings, Settings → Recording / Diagnostics, map recording indicator with confirmed Stop and a Start that opens Settings → Recording. UX-4 (471dd02): Console as a pushed Settings row. bb06883: backlog DONE. d61121c: R24.1-2 test fix. App/ and AppTests/ only. Branch: `ux-map`.
+
+### Round 1
+
+Reviewer: one fresh `reviewer` (opus). Result: 0 BLOCKER / 0 MAJOR / 2 MINOR. No mutations (App logic needs the simulator; d61121c verified by reading the ordered link-event stream).
+
+Verified clean: no lost behaviour (RecordingScreen onAppear and scene-phase refresh on push, DebugAutoRecord independent of tabs, view-model state owned by RootView survives push/pop, Console feed and scroll); navigation state (Start with Console pushed replaces the path, Start hidden while the indicator shows); Stop reachable only via the dialog; elapsed from the session clock; the 16 Hz read limited to the button; ConsoleView title in Settings' stack; `xcodegen generate` byte-identical, no team ID; PLAN §6 entries not verified; privacy. The `LinkPlanReuseTests.swift:76` flake is a pre-existing link-side reconnect race (`OBDLinkService.swift:494-513`), not from this range.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R25.1-1 | MINOR | The map Stop dialog relies on SwiftUI running the button action before resetting `isPresented` (`MapRecordingControl.swift:259-270`); untested wiring. | DEFERRED | BACKLOG; fixed with UX-6 |
+| R25.1-2 | MINOR | PLAN §6 UX-3 item 1 lists a Console tab and `-uiTab 3`; the control's placement is described wrongly in PLAN and BACKLOG_UX. | DEFERRED | BACKLOG; fixed with UX-6 |
+
+Tests: Core passes 799 tests in 109 suites, 39 known issues (all test 3). App: 262 tests in 41 suites pass on the iPhone 15 Pro simulator.
+
+### Run 25 summary
+
+- **Rounds:** 1; no BLOCKER or MAJOR, loop stopped.
+- **Findings:** 0 fixed, 0 rejected, 2 MINOR deferred (R25.1-1, R25.1-2), both scheduled with UX-6.
+- **Final tests:** Core 799 / 109 pass, 39 known issues; App 262 / 41 pass.

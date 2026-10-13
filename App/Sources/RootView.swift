@@ -10,7 +10,7 @@ struct RootView: View {
     @State private var console: ConsoleViewModel
     private let session: RecordingSession
     private let services: AppServices
-    @State private var tab: MainTabView<RecordingScreen, MapScreen, SessionsScreen, ConsoleScreen>.Tab
+    @State private var nav: AppNavigation
 
     init(services: AppServices) {
         _recording = State(initialValue: RecordingViewModel(services: services))
@@ -21,30 +21,33 @@ struct RootView: View {
         _navigation = State(initialValue: NavigationFeed(source: { await service.snapshot() }))
         _sessions = State(initialValue: SessionsViewModel(services: services))
         _console = State(initialValue: ConsoleViewModel(services: services))
-        var initial = MainTabView<RecordingScreen, MapScreen, SessionsScreen, ConsoleScreen>.Tab.map
+        var initial = AppNavigation()
         #if DEBUG
         // `-uiTab N` opens a tab at launch (simulator screenshots), N in tab order:
-        // 0 = Map (default), 1 = Record, 2 = Sessions, 3 = Console.
-        initial = .init(rawValue: UserDefaults.standard.integer(forKey: "uiTab")) ?? .map
+        // 0 = Map (default), 1 = Sessions, 2 = Settings.
+        initial.tab = AppTab(launchValue: UserDefaults.standard.integer(forKey: "uiTab"))
         #endif
-        _tab = State(initialValue: initial)
+        _nav = State(initialValue: initial)
     }
 
     var body: some View {
-        MainTabView(selection: $tab) {
-            RecordingScreen(model: recording)
-        } map: {
+        MainTabView(selection: $nav.tab) {
             MapScreen(
-                model: map, session: session, navigation: navigation, isSelected: tab == .map,
+                model: map, session: session, navigation: navigation, isSelected: nav.tab == .map,
                 cachedLocation: { [services] in
                     services.sensors.sources.lazy
                         .compactMap { $0 as? any CachedLocationProviding }.first?.cachedLocation
-                }
+                },
+                onStart: { nav.openRecordingSettings() }
             )
         } sessions: {
             SessionsScreen(model: sessions)
-        } console: {
-            ConsoleScreen(model: console)
+        } settings: {
+            SettingsScreen(path: $nav.settingsPath) {
+                RecordingScreen(model: recording)
+            } console: {
+                ConsoleScreen(model: console)
+            }
         }
         // Ingest at the root so the track keeps filling on other tabs. The
         // feed is its own view so only it observes the 16 Hz `live` status.

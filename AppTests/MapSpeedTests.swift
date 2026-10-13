@@ -159,7 +159,15 @@ struct MapSpeedFeedTests {
         #expect(model.speed.source == .obd)
         #expect(model.speed.kmh == 50)
 
-        link.send(reading(80, ecu: "7E9"))   // not the engine ECU: ignored
+        // Not the engine ECU: ignored. Link events are handled in order, so
+        // once the later pollRate has landed the 7E9 reading has been handled.
+        link.send(reading(80, ecu: "7E9"))
+        link.send(.session(.pollRate(hz: 21.5, uptime: ProcessInfo.processInfo.systemUptime)))
+        #expect(await eventually(2) { session.live.obdHz == 21.5 })
+        #expect(session.live.obdSpeedKmh == 50)
+        feed(session, into: model)
+        #expect(model.speed.kmh == 50)
+
         link.send(reading(60, ecu: nil))     // headers off: counts
         #expect(await eventually(2) { session.live.obdSpeedKmh == 60 })
         feed(session, into: model)

@@ -47,6 +47,8 @@ struct MapScreen: View {
     var isSelected: Bool
     /// Read once when the tab opens with no fix; the system's last position.
     var cachedLocation: @MainActor () -> CachedLocation?
+    /// Start was tapped: the app opens Settings, Recording.
+    var onStart: () -> Void = {}
     @Environment(\.scenePhase) private var scenePhase
     @State private var thermal = ProcessInfo.processInfo.thermalState
 
@@ -69,7 +71,8 @@ struct MapScreen: View {
             recordingFile: model.currentFile,
             cachedLocation: cachedLocation,
             navigation: navigation,
-            showNavStats: $showNavStats
+            showNavStats: $showNavStats,
+            recordingControl: AnyView(MapRecordingButton(session: session, onStart: onStart))
         )
         .onReceive(NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)) { _ in
             thermal = ProcessInfo.processInfo.thermalState
@@ -211,6 +214,9 @@ struct GPSMapView: View {
     /// Live dead reckoning; nil in previews of the plain reference map.
     var navigation: NavigationFeed?
     @Binding var showNavStats: Bool
+    /// Start button or recording indicator, left of the map controls. A view
+    /// of its own (it reads the recorder), so this view stays plain values.
+    var recordingControl: AnyView?
 
     @State private var position: MapCameraPosition = .automatic
     /// Visible north-south extent, metres, from the camera.
@@ -256,7 +262,8 @@ struct GPSMapView: View {
         cachedLocation: @escaping @MainActor () -> CachedLocation? = { nil },
         initialToast: MapToast? = nil,
         navigation: NavigationFeed? = nil,
-        showNavStats: Binding<Bool> = .constant(false)
+        showNavStats: Binding<Bool> = .constant(false),
+        recordingControl: AnyView? = nil
     ) {
         self.track = track
         self.latest = latest
@@ -276,6 +283,7 @@ struct GPSMapView: View {
         self.cachedLocation = cachedLocation
         self.navigation = navigation
         self._showNavStats = showNavStats
+        self.recordingControl = recordingControl
         self._toast = State(initialValue: initialToast)
     }
 
@@ -720,11 +728,16 @@ struct GPSMapView: View {
     }
 
     private var controls: some View {
-        VStack(alignment: .trailing, spacing: 8) {
-            if follow.resumeDeadline != nil {
-                resumeHint
+        VStack(spacing: 8) {
+            HStack(spacing: 12) {
+                if let recordingControl { recordingControl }
+                Spacer(minLength: 0)
+                if follow.resumeDeadline != nil {
+                    resumeHint
+                }
             }
             HStack(spacing: 12) {
+                Spacer(minLength: 0)
                 headingButton
                 followButton
             }
@@ -1120,6 +1133,17 @@ extension MapPreviewData {
         latest: nil, lastFixInstant: nil, isReceiving: false, thermal: .nominal,
         speed: MapSpeedReadout(source: .obd, kmh: 54, quality: .unknown), isLive: true,
         follow: .constant(FollowController(following: true))
+    )
+}
+
+#Preview("Recording indicator on the map") {
+    GPSMapView(
+        track: MapPreviewData.track,
+        latest: MapPreviewData.fix(59, accuracy: 8, gapAfter: 60),
+        lastFixInstant: .now, isReceiving: true, thermal: .nominal,
+        speed: MapSpeedReadout(source: .obd, kmh: 54, quality: .good), isLive: true,
+        follow: .constant(FollowController(following: true)),
+        recordingControl: AnyView(MapRecordingIndicatorLabel(elapsed: "12:34"))
     )
 }
 
