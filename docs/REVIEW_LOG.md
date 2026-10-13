@@ -289,3 +289,18 @@ Verified clean: the four round-1 tests test real behaviour; summary, markdown an
 | R22.2-3 | MAJOR | The distance-weight rule (`NavigationReplay.swift:825`, since the previous fix with a usable course) is untested; dropping the `where` moves drive-7 seed 1 wrong-by-distance 3.54 % → 2.14 %. | FIXED | Verified. Test `weightsSkipNoCourseFixes` in 6192f6d; mutation killed (3 issues). |
 
 Tests: Core passes 785 tests in 107 suites, 39 known issues (all test 3). No App change.
+
+### Round 3
+
+Reviewer: one fresh `reviewer` (opus). Result: 0 BLOCKER / 2 MAJOR / 2 MINOR. Mutations: 3 run, 3 survived (margin threshold `log(1.01)`; heading term dropped from the truth likelihood; margin competitors from within 15 m only).
+
+Verified clean: all of `ReplayRoads.swift` (match/margin/ambiguity, 15 m vs 50 m radii, nearby/nearestSegment, semiAxisAcross/support against `ErrorEllipse`'s bearing convention, `ReplayRoadSet` ==/hash/`roadSetHash`, `DistanceStats` nearest rank exact for n ≤ 5000); `scoreRoad`/`finishRoadMetrics`; `ReplayReport`; CLI checks for `--roads`/`--wrong-road-tolerance`; the round-2 tests are not tautological; doc figures against `logs/n32b/roads` seeds 1–5; drive-7 and manual seed 1 without roads byte-identical to N3.0; privacy.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R22.3-1 | MAJOR | The matched/ambiguous margin threshold (`ReplayRoads.swift:365`, `marginRatio` 2 at :100) is untested: only a tie and ln ratio > 1 are exercised, so `log(1.01)` survives; on clean seed 1 it moves ambiguity 20.3 % → 2.3 %, under the Viterbi trigger, silently removing the premise of R22.1-1. | FIXED | Verified. Test `truthMarginThreshold` in d1c4114 (ln ratio 0.675 → ambiguous, 0.713 → matched); `log(1.01)` and `log(4)` killed. |
+| R22.3-2 | MAJOR | The truth likelihood's heading term (`ReplayRoads.swift:353`) is untested: every test road is N–S, so dropping it survives; on clean seed 1 ambiguity goes 20.3 % → 31.6 %. | FIXED | Verified. Test `truthHeadingTerm` in d1c4114 (way along the course vs a nearer way at 30°; course accuracy 2°, 60°, 90°); the drop and a σ_course-floor-only mutation killed. |
+| R22.3-3 | MINOR | The margin's competitor set (every heading-compatible edge within 50 m, not only within 15 m; `ReplayRoads.swift:363`) is untested; on real data no threshold moves (drive-7 33.2 % → 32.6 %). | DEFERRED | BACKLOG |
+| R22.3-4 | MINOR | `docs/N3_PLAN.md:527, 534-535` as-built text: σ_fix = accuracy / 2.45, but the code divides by `NavigationReplay.accuracyPerSigma` 1.51; the margin is over the best edge of any other *way*, not "the second-best edge". | DEFERRED | BACKLOG |
+
+Tests: Core passes 787 tests in 107 suites, 39 known issues (all test 3). No App change.
