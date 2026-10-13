@@ -361,3 +361,27 @@ Tests: Core passes 799 tests in 109 suites, 39 known issues (all test 3). No App
 - **Rounds:** 2. Round 2 found no BLOCKER or MAJOR; loop stopped.
 - **Findings:** 1 MAJOR missing test added (R23.1-1), no bug exposed; 0 rejected; 4 MINOR deferred (R23.1-2..4, R23.2-1).
 - **Final tests:** `cd Core && swift test`: 799 tests in 109 suites pass, 39 known issues (all test 3, the decided known FAIL). No App change. The review rounds changed only tests and docs, so the N3.2d measurement in `logs/n32d` stands.
+
+## Run 24: UX-2 and UX-5, map tab first and speed/source block (main..ux-map, f9629f1..b57ff2c), started 2026-10-13
+
+UX-2 (68848a3, 335d2b8): Map first and default tab, `-uiTab` renumbered in tab order. UX-5 (68a0d59, b57ff2c): the map info block shows speed and source only (`MapSpeedRule`, OBD ≤ 2 s, else GPS ≤ 2 s rounded, else none; chip colour by GPS quality). App/ and AppTests/ only. Branch: `ux-map`.
+
+### Round 1
+
+Reviewer: one fresh `reviewer` (opus). Result: 0 BLOCKER / 0 MAJOR / 3 MINOR. No mutations (no Core logic; the reviewer does not run the simulator).
+
+Verified clean: the source rule's edges (exactly 2.0 s fresh in integer ns, negative age fresh, OBD 0 and GPS 0 shown, speed −1 and NaN give `— km/h`); primary-ECU filtering upstream (`RecordingSession.swift:1111`, tested at `RecordingSessionTests.swift:548`); clock bases (uptime − uptime for OBD, ContinuousClock − ContinuousClock for the fix); no stale value after Stop, file change, inactive scene or BLE disconnect; `-uiTab` out of range falls back to Map; no behaviour lost (long-press, thermal under stats, calibrating icon); project.pbxproj adds only the two new files, no team ID; PLAN §6 entries marked not verified; privacy. The flaky `RecordingSessionTests.swift:241` is the pre-existing R5.1-4 (DEFERRED), not from this range.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R24.1-1 | MINOR | The 1 s live-timer relay of `referenceFix` can push a clean 1 Hz fix just past the 2 s freshness (`MapViewModel.swift:107`): 1–2 blinks per 10 min, ≤ 0.1 s, on clean-long's timing. | DEFERRED | BACKLOG; changes a user decision, asked |
+| R24.1-2 | MINOR | `MapSpeedTests.swift:162` does not actually test that 7E9 is ignored. | DEFERRED | BACKLOG |
+| R24.1-3 | MINOR | `docs/PLAN.md:751` `-- km/h` and a garbled sentence; `:745` still says the "Calibrating heading" label. | DEFERRED | BACKLOG |
+
+Tests: Core passes 799 tests in 109 suites, 39 known issues (all test 3). App: 255 tests in 40 suites pass on the iPhone 15 Pro simulator.
+
+### Run 24 summary
+
+- **Rounds:** 1; no BLOCKER or MAJOR, loop stopped.
+- **Findings:** 0 fixed, 0 rejected, 3 MINOR deferred (R24.1-1..3).
+- **Final tests:** Core 799 tests / 109 suites pass, 39 known issues; App 255 tests / 40 suites pass.

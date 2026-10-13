@@ -17,6 +17,10 @@ final class MapViewModel {
     /// OBD speed is exactly 0 km/h: heading-up holds still. Set only when it
     /// flips, so the 16 Hz status does not re-render the map.
     private(set) var isStationary = false
+    /// The speed the info block shows and where it comes from (`MapSpeedRule`).
+    /// Set only when it changes, so the 16 Hz status does not re-render the map.
+    private(set) var speed = MapSpeedReadout.none
+    private var obdInput: (kmh: Double?, ageS: Double?)?
     private let bearingSource: any MapBearingSource
     /// The recording the track belongs to.
     private(set) var currentFile: URL?
@@ -63,6 +67,7 @@ final class MapViewModel {
             manualFixes = []
             bearingSource.reset()
             bearing = nil
+            refreshSpeed()
         }
         guard let fix else {
             isReceiving = false
@@ -77,6 +82,7 @@ final class MapViewModel {
                 age = max(0, elapsed - (received.seconds - (fix.ageS ?? 0)))
             }
             lastFixInstant = .now - .seconds(age)
+            refreshSpeed()
         }
         isReceiving = true
         track.append(fix)
@@ -86,9 +92,27 @@ final class MapViewModel {
     /// reply and the uptime now. Stationary only for a fresh 0 (see
     /// `StationaryRule`); nil or stale is unknown, not stationary. Publishes
     /// only when the stationary state flips.
+    ///
+    /// Also refreshes `speed`. The caller ticks twice a second, which is what
+    /// ages an OBD reply or a fix out after `MapSpeedRule.maxAgeS`.
     func setOBDSpeed(_ kmh: Double?, replyUptime: Double?, now: Double) {
         let stationary = StationaryRule.isStopped(kmh: kmh, replyUptime: replyUptime, now: now)
         if stationary != isStationary { isStationary = stationary }
+        obdInput = (kmh, replyUptime.map { now - $0 })
+        refreshSpeed()
+    }
+
+    /// Applies `MapSpeedRule` to the latest OBD input and fix. The fix's age
+    /// is on the same instant clock the stale-fix display uses.
+    private func refreshSpeed(instantNow: ContinuousClock.Instant = .now) {
+        let fixAge = lastFixInstant.map { instant -> Double in
+            let d = instant.duration(to: instantNow).components
+            return Double(d.seconds) + Double(d.attoseconds) / 1e18
+        }
+        let next = MapSpeedRule.resolve(
+            obdKmh: obdInput?.kmh, obdAgeS: obdInput?.ageS, fix: latest, fixAgeS: fixAge
+        )
+        if next != speed { speed = next }
     }
 
     /// Remembers a fix the recorder staged so the map can show it. `id` is the

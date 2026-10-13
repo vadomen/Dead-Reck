@@ -57,6 +57,7 @@ struct MapScreen: View {
             lastFixInstant: model.lastFixInstant,
             isReceiving: model.isReceiving,
             thermal: thermal,
+            speed: model.speed,
             isLive: isSelected && scenePhase == .active,
             follow: $model.follow,
             headingUp: $headingUp,
@@ -154,21 +155,6 @@ extension MapFeed {
     }
 }
 
-/// "last fix N s ago" / "stopped"; the only part that ticks every second.
-private struct FixAgeText: View {
-    let instant: ContinuousClock.Instant?
-    let isReceiving: Bool
-
-    var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { _ in
-            let age = instant.map { Int((ContinuousClock.now - $0).components.seconds) } ?? 0
-            Text(isReceiving ? "last fix \(max(0, age)) s ago" : "stopped")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-        }
-    }
-}
-
 /// The one toast on the map: a recorded fix (with Undo) or the zoom hint.
 struct MapToast: Hashable {
     enum Kind: Hashable {
@@ -203,6 +189,8 @@ struct GPSMapView: View {
     /// False before the first fix and after Stop.
     var isReceiving: Bool
     var thermal: ProcessInfo.ThermalState
+    /// The one speed shown in the info block and where it comes from.
+    var speed: MapSpeedReadout = .none
     /// Selected tab and active scene. When false no `Map` exists and the
     /// camera is not touched.
     var isLive: Bool
@@ -258,7 +246,8 @@ struct GPSMapView: View {
 
     init(
         track: GPSTrack, latest: LocationSample?, lastFixInstant: ContinuousClock.Instant?,
-        isReceiving: Bool, thermal: ProcessInfo.ThermalState, isLive: Bool,
+        isReceiving: Bool, thermal: ProcessInfo.ThermalState, speed: MapSpeedReadout = .none,
+        isLive: Bool,
         follow: Binding<FollowController>, headingUp: Binding<Bool> = .constant(false),
         bearing: Double? = nil, isStationary: Bool = false, manualFixes: [ConfirmedFix] = [],
         pendingFixIDs: Set<Int> = [],
@@ -274,6 +263,7 @@ struct GPSMapView: View {
         self.lastFixInstant = lastFixInstant
         self.isReceiving = isReceiving
         self.thermal = thermal
+        self.speed = speed
         self.isLive = isLive
         self._follow = follow
         self._headingUp = headingUp
@@ -685,46 +675,48 @@ struct GPSMapView: View {
         }
     }
 
+    /// Speed and its source only. The long-press on the number is the hidden
+    /// switch for the navigation stats (and thermal) lines.
     private func overlay(stale: Bool) -> some View {
         VStack(spacing: 6) {
-            Text("REFERENCE GPS — not used by the recorder")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-                // Hidden debug switch: long-press toggles the navigation stats line.
-                .onLongPressGesture(minimumDuration: 1) { showNavStats.toggle() }
-            if let latest, let band = AccuracyBand(accuracy: latest.horizontalAccuracy) {
-                HStack(spacing: 10) {
-                    Circle().fill(color(band, stale: stale)).frame(width: 16, height: 16)
-                    Text("±\(Int(latest.horizontalAccuracy.rounded())) m · \(DisplayFormat.speed(speedKmh(latest))) km/h")
-                        .font(.title2.weight(.bold).monospacedDigit())
-                    Text(band.label).font(.subheadline).foregroundStyle(.secondary)
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text(speed.valueText)
+                    .font(.system(size: 64, weight: .bold, design: .rounded).monospacedDigit())
+                    .minimumScaleFactor(0.6)
+                    .lineLimit(1)
+                    // Hidden debug switch: long-press toggles the navigation stats lines.
+                    .onLongPressGesture(minimumDuration: 1) { showNavStats.toggle() }
+                Text("km/h")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                if let chip = speed.sourceText {
+                    Text(chip)
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(speed.quality.chipText)
+                        .padding(.horizontal, 12)
+                        .frame(minHeight: 32)
+                        .background(speed.quality.chipFill, in: Capsule())
                 }
-                .opacity(stale ? 0.5 : 1)
-                if stale {
-                    FixAgeText(instant: lastFixInstant, isReceiving: isReceiving)
+                if let navigation {
+                    NavCalibratingIcon(feed: navigation)
                 }
-            } else {
-                Text("No fix yet — reference GPS appears here while recording.")
-                    .font(.headline)
-                    .multilineTextAlignment(.center)
             }
-            if let navigation {
-                NavInfoView(feed: navigation, showStats: showNavStats)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(speed.summary)
+            if showNavStats {
+                if let navigation {
+                    NavStatsView(feed: navigation)
+                }
+                Text("Thermal: \(ThermalText.label(thermal))")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(ThermalText.tone(thermal).color)
             }
-            Text("Thermal: \(ThermalText.label(thermal))")
-                .font(.caption.weight(.medium))
-                .foregroundStyle(ThermalText.tone(thermal).color)
         }
         .padding(12)
         .frame(maxWidth: .infinity)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
         .padding(.horizontal, 12)
         .padding(.top, 8)
-    }
-
-    /// Same rule as the recorder's `gpsSpeedKmh`: negative speed is unavailable.
-    private func speedKmh(_ fix: LocationSample) -> Double? {
-        fix.speed >= 0 ? fix.speed * 3.6 : nil
     }
 
     private var controls: some View {
@@ -869,25 +861,44 @@ private struct NavMarker: View {
     }
 }
 
-/// "Calibrating heading" label and the optional debug stats line. Its own
-/// view: only it re-renders when the estimate or the stats change.
-private struct NavInfoView: View {
+/// Small icon while the heading has not converged. Its own view: only it
+/// re-renders when the estimate changes.
+private struct NavCalibratingIcon: View {
     var feed: NavigationFeed
-    var showStats: Bool
 
     var body: some View {
         if NavLayers.calibrating(feed.display) {
-            Label("Calibrating heading", systemImage: "scope")
-                .font(.subheadline.weight(.semibold))
+            Image(systemName: "scope")
+                .font(.title3.weight(.semibold))
                 .foregroundStyle(.blue)
-        }
-        if showStats {
-            Text(feed.stats?.line ?? "nav: idle")
-                .font(.caption2.monospacedDigit())
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
+                .accessibilityLabel("Calibrating heading")
         }
     }
+}
+
+/// The optional debug stats line.
+private struct NavStatsView: View {
+    var feed: NavigationFeed
+
+    var body: some View {
+        Text(feed.stats?.line ?? "nav: idle")
+            .font(.caption2.monospacedDigit())
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+    }
+}
+
+extension MapSpeedQuality {
+    /// Chip fill: green / amber by GPS accuracy, grey for network or no fix.
+    var chipFill: Color {
+        switch self {
+        case .good: Color(red: 0.12, green: 0.62, blue: 0.25)
+        case .fair: Color(red: 0.95, green: 0.65, blue: 0.0)
+        case .unknown: Color(white: 0.45)
+        }
+    }
+
+    var chipText: Color { self == .fair ? .black : .white }
 }
 
 private extension GeoPoint {
@@ -1078,5 +1089,57 @@ extension MapPreviewData {
         lastFixInstant: .now, isReceiving: true, thermal: .nominal, isLive: true,
         follow: .constant(FollowController(following: true)),
         navigation: NavigationFeed(display: nil), showNavStats: .constant(true)
+    )
+}
+
+// MARK: - Speed block previews
+
+#Preview("Speed: OBD, good GPS (green chip)") {
+    GPSMapView(
+        track: MapPreviewData.track,
+        latest: MapPreviewData.fix(59, accuracy: 8, gapAfter: 60),
+        lastFixInstant: .now, isReceiving: true, thermal: .nominal,
+        speed: MapSpeedReadout(source: .obd, kmh: 54, quality: .good), isLive: true,
+        follow: .constant(FollowController(following: true))
+    )
+}
+
+#Preview("Speed: GPS, fair (amber chip)") {
+    GPSMapView(
+        track: MapPreviewData.track,
+        latest: MapPreviewData.fix(59, accuracy: 60, gapAfter: 60),
+        lastFixInstant: .now, isReceiving: true, thermal: .nominal,
+        speed: MapSpeedReadout(source: .gps, kmh: 54, quality: .fair), isLive: true,
+        follow: .constant(FollowController(following: true))
+    )
+}
+
+#Preview("Speed: OBD, network fix (grey chip)") {
+    GPSMapView(
+        track: MapPreviewData.track,
+        latest: nil, lastFixInstant: nil, isReceiving: false, thermal: .nominal,
+        speed: MapSpeedReadout(source: .obd, kmh: 54, quality: .unknown), isLive: true,
+        follow: .constant(FollowController(following: true))
+    )
+}
+
+#Preview("Speed: none") {
+    GPSMapView(
+        track: GPSTrack(), latest: nil, lastFixInstant: nil, isReceiving: false,
+        thermal: .nominal, isLive: true, follow: .constant(FollowController(following: true))
+    )
+}
+
+#Preview("Speed: stats + thermal, calibrating icon") {
+    GPSMapView(
+        track: MapPreviewData.track,
+        latest: MapPreviewData.fix(59, accuracy: 12, gapAfter: 60),
+        lastFixInstant: .now, isReceiving: true, thermal: .serious,
+        speed: MapSpeedReadout(source: .obd, kmh: 112, quality: .good), isLive: true,
+        follow: .constant(FollowController(following: true)),
+        navigation: NavigationFeed(
+            display: MapPreviewData.nav(converged: false, heading: nil), stats: MapPreviewData.navStats
+        ),
+        showNavStats: .constant(true)
     )
 }
