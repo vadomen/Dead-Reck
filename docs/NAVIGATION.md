@@ -1083,6 +1083,377 @@ counts by distance only.
 - clean: its 21 "no road" fixes are all > 15 m from every edge, so they
   were already counted.
 
+### N3.2d: pre-declared grids (2026-10-13)
+
+The N3.2 experiment grids exactly as pre-declared in docs/N3_PLAN.md
+("Experiments"): nothing added, nothing tuned, never toward manual-3.
+**A measurement, not an adoption: no config was chosen and no default was
+changed. The choice is open for the user.**
+
+- **Setup.** One factor at a time from the default config, each through
+  `replay_nav --set key=value`. Packs national + region-A (`roadSetHash`
+  prefix `fecadb9b`). Release build of the N3.2c engine on the Mac. Seeds
+  1–5 in arrival order, the seven acceptance runs in their acceptance
+  modes. Seed 1 ran alone (the timing run: every ms/step below is from it),
+  then seeds 2 + 3 and 4 + 5, never more than two at a time. Outputs,
+  scripts and the judge.py output per value are in `logs/n32d/`
+  (git-ignored).
+- **Keys.** Every grid key exists in `NavigationConfig`. The fix gate has
+  no on/off key of its own: "off" is `--set roadFixGateSigma=0`, which the
+  engine already treats as disabled (`roadFixGateSigma > 0` guards the
+  gate). No engine, config or plumbing code changed.
+- **Default column** = the N3.2b runs (`logs/n32b/roads`), not rerun. Two
+  small runs with the grid binary, both identical to N3.2b (every
+  `metrics.json` field except timing and the item-2 unmapped fields, and
+  every GeoJSON byte): seed 1 sequential, for ms/step from the same binary
+  and session as the grid; and drive-7 seeds 2–5, for the N3.2c item-2
+  unmapped split, which the N3.2b files predate (seed 1's is in
+  `logs/n32c/unmapped`). Clean and clean-long need no rerun: their road
+  truth is seed-independent and has no "incompatible" fix.
+- **Run time:** 16 values × 30 runs in 25.4 min, plus 52 s for the two
+  default runs.
+
+**roadSigmaM from the residuals.** The rule was written down before any
+number was looked at:
+- Fixes: the withheld clean fixes (≤ 15 m) of clean (mask-after 230) and
+  clean-long (mask-after 380) whose offline road truth is `matched`
+  (usable course, heading-compatible edge within 15 m, margin ≥ 2 over every
+  other way).
+- Residual d: the distance from the fix to that truth edge (`crossTrackM`).
+  The truth rule censors it at 15 m; the largest is 8.75 m, so the
+  censoring does not bite. The truth edge is chosen with the frozen
+  `RoadTruth.roadSigmaM` (7 m), never the run's value. The residuals are
+  seed-independent (seeds 1 and 4 identical).
+- The fix's own error was to be removed:
+  σ_r = √(mean d² − mean σ_fix²), with σ_fix = accuracy / 1.51.
+
+| drives | matched withheld clean fixes | p50 m | p95 m | max m | RMS m | RMS σ_fix m | σ_r = √(mean d² − mean σ_fix²) | p50/0.6745 m | > 10 m |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| clean | 106 | 2.03 | 6.24 | 8.75 | 3.01 | 5.80 | none: -24.5 m² < 0 | 3.01 | 0 |
+| clean-long | 150 | 2.68 | 4.92 | 6.51 | 3.07 | 3.31 | none: -1.5 m² < 0 | 3.97 | 0 |
+| pooled | 256 | 2.49 | 5.56 | 8.75 | 3.05 | 4.51 | none: -11.0 m² < 0 | 3.70 | 0 |
+
+- **The declared rule gives no value.** accuracy / 1.51 (3.3 m for
+  clean-long's 5 m fixes, 3.3–6.6 m for clean's 5–10 m) is larger than the
+  residuals themselves. The reported accuracy overstates these fixes'
+  cross-track error, so the subtraction goes negative.
+- **The value run is RMS(d) pooled: 3.05 → 3.0 m.** It is an upper bound on
+  σ_r, because it still holds the fix's error. The robust half-normal
+  estimate p50 / 0.6745 is 3.7 m. This fallback was chosen after the
+  subtraction failed and before any grid run, not from a replay result.
+
+**Reading the tables.**
+- A cell is the gated criterion's mean (range) over seeds 1–5, followed by
+  the adoption-rule verdict (judge.py: the mean rule, the criterion on every
+  seed, and consistency + truth σ not dropping): **against N3.0 / against
+  the N3.2b default**. P = pass, F = fail.
+- "all gated" covers the six gated aliases. manual-3 is a sanity check and
+  is never gated.
+- drive-7's gated value is the worst withheld clean fix after 1800 s, in %
+  of distance. The second table also gives it in metres (reported, not
+  gated).
+- Consistency is `consistencyWithTruthSigma`, the mean over seeds.
+- Wrong road counts capture onto a wrong *mapped* road only. Clean's
+  figure is provisional: its road truth is 20.3 % ambiguous (N3.2b).
+- Unmapped / captured use the N3.2c item-2 split, far (> 15 m from every
+  edge) + incompatible (only edges of another heading within 15 m).
+  Captured is per seed. clean-long has no unmapped fix, and manual,
+  manual-3 and jammed-A/B have no clean GNSS.
+
+#### roadSigmaM {3.0 (from the residuals), 5, 7, 10}
+
+**roadSigmaM: gated criterion, mean (range) over seeds 1–5; adoption rule (judge.py) vs N3.0 / vs N3.2b default**
+
+| value | clean-long max m | clean max m | manual pt 1 m | jammed-A end % | jammed-B end % | drive-7 worst fix > 1800 s % | manual-3 pins m (sanity) | all gated |
+|---|---|---|---|---|---|---|---|---|
+| N3.0 | 19.42 | 12.98 | 50.50 | 1.137 | 1.068 | 1.128 | 232.0 | |
+| 3.0 (residuals) | 25.88 (25.85–25.91) F/F | 14.17 (13.72–15.67) P/P | 8.52 (8.10–9.33) P/P | 0.152 (0.138–0.160) P/P | 0.411 (0.354–0.454) P/F | 0.712 (0.702–0.717) F/F | 68.8 (67.6–70.4) | FAIL / FAIL |
+| 5 | 23.79 (23.74–23.88) F/F | 17.03 (16.00–19.85) F/P | 8.54 (7.67–10.12) P/P | 0.163 (0.152–0.170) P/P | 0.360 (0.293–0.405) P/P | 0.157 (0.154–0.163) F/P | 68.9 (67.3–70.3) | FAIL / FAIL |
+| 7 (default) | 22.51 (22.48–22.53) F/P | 19.44 (16.21–21.75) F/P | 8.11 (7.20–9.60) P/P | 0.171 (0.166–0.178) P/P | 0.297 (0.251–0.336) P/P | 0.167 (0.162–0.173) F/P | 68.7 (67.4–69.7) | FAIL / PASS |
+| 10 | 21.09 (21.07–21.13) P/P | 25.98 (23.10–28.80) F/F | 7.64 (6.37–9.90) P/P | 0.173 (0.166–0.180) P/P | 0.235 (0.203–0.270) P/P | 0.151 (0.146–0.157) F/P | 68.8 (67.1–70.6) | FAIL / FAIL |
+
+**roadSigmaM: consistency (+ truth σ, gated; mean over seeds, %), roads, convergence, timing**
+
+| value | cons cl / c / m / jA / jB / d7 / m3 | wrong road fixes / distance: clean-long; clean; drive-7 (info) | unmapped (far + incompatible) / captured (far + incompatible), per seed: clean; drive-7 | manual conv km | drive-7 worst fix > 1800 s m (range) | ms/step seed 1 (min–max over drives; max ingest ms) |
+|---|---|---|---|---|---|---|
+| N3.0 | 100.0 / 100.0 / 100.0 / 100.0 / 100.0 / 99.6 / 66.7 | n/a | n/a | 7.59 | 224.0 | 0.065–0.073 (not sequential) |
+| 3.0 (residuals) | 96.0 / 100.0 / 100.0 / 100.0 / 100.0 / 86.3 / 66.7 | 0.0 / 0.0 %; 1.1 / 1.2 % (0.9–2.1); 0.0 / 0.0 % | 83 + 0 / 1+0, 1+0, 1+0, 0+0, 1+0; 0 + 44 / 0+11, 0+10, 0+10, 0+10, 0+10 | 1.52 | 138.9 (137.0–139.8) | 0.088–0.112 (4.4) |
+| 5 | 96.0 / 100.0 / 100.0 / 100.0 / 100.0 / 88.2 / 66.7 | 0.0 / 0.0 %; 1.9 / 1.9 %; 4.7 / 2.0 % | 83 + 0 / 0+0, 0+0, 0+0, 0+0, 0+0; 0 + 44 / 0+13, 0+13, 0+13, 0+13, 0+13 | 1.52–1.69 | 31.0 (30.2–32.2) | 0.089–0.117 (4.7) |
+| 7 (default) | 96.4 / 100.0 / 100.0 / 100.0 / 100.0 / 87.4 / 66.7 | 1.3 / 0.5 %; 2.5 / 2.4 % (1.9–2.8); 5.7 / 3.6 % (3.5–3.7) | 83 + 0 / 0+0, 0+0, 0+0, 0+0, 0+0; 0 + 44 / 0+10, 0+10, 0+10, 0+10, 0+10 | 1.52 | 32.8 (31.9–34.1) | 0.090–0.115 (4.4) |
+| 10 | 100.0 / 99.4 / 100.0 / 100.0 / 100.0 / 89.2 / 66.7 | 1.3 / 0.5 %; 3.4 / 3.4 % (2.8–3.8); 4.8 / 3.2 % (3.1–3.5) | 83 + 0 / 0+0, 0+0, 0+0, 0+0, 0+0; 0 + 44 / 0+7, 0+7, 0+7, 0+7, 0+7 | 1.52 | 29.8 (28.8–30.9) | 0.093–0.117 (4.4) |
+
+#### roadOffRoadProbability {0.02, 0.1, 0.3}
+
+**roadOffRoadProbability: gated criterion, mean (range) over seeds 1–5; adoption rule (judge.py) vs N3.0 / vs N3.2b default**
+
+| value | clean-long max m | clean max m | manual pt 1 m | jammed-A end % | jammed-B end % | drive-7 worst fix > 1800 s % | manual-3 pins m (sanity) | all gated |
+|---|---|---|---|---|---|---|---|---|
+| N3.0 | 19.42 | 12.98 | 50.50 | 1.137 | 1.068 | 1.128 | 232.0 | |
+| 0.02 | 22.63 (22.59–22.65) F/P | 22.27 (19.60–23.33) F/F | 8.24 (7.16–10.34) P/P | 0.170 (0.166–0.175) P/P | 0.301 (0.258–0.350) P/P | 0.194 (0.189–0.197) F/F | 68.9 (67.2–70.3) | FAIL / FAIL |
+| 0.1 (default) | 22.51 (22.48–22.53) F/P | 19.44 (16.21–21.75) F/P | 8.11 (7.20–9.60) P/P | 0.171 (0.166–0.178) P/P | 0.297 (0.251–0.336) P/P | 0.167 (0.162–0.173) F/P | 68.7 (67.4–69.7) | FAIL / PASS |
+| 0.3 | 22.23 (22.13–22.27) F/P | 16.24 (13.09–18.46) F/P | 8.25 (7.23–10.38) P/P | 0.170 (0.162–0.176) P/P | 0.313 (0.272–0.351) P/P | 0.138 (0.136–0.139) F/P | 68.6 (67.1–70.3) | FAIL / PASS |
+
+**roadOffRoadProbability: consistency (+ truth σ, gated; mean over seeds, %), roads, convergence, timing**
+
+| value | cons cl / c / m / jA / jB / d7 / m3 | wrong road fixes / distance: clean-long; clean; drive-7 (info) | unmapped (far + incompatible) / captured (far + incompatible), per seed: clean; drive-7 | manual conv km | drive-7 worst fix > 1800 s m (range) | ms/step seed 1 (min–max over drives; max ingest ms) |
+|---|---|---|---|---|---|---|
+| N3.0 | 100.0 / 100.0 / 100.0 / 100.0 / 100.0 / 99.6 / 66.7 | n/a | n/a | 7.59 | 224.0 | 0.065–0.073 (not sequential) |
+| 0.02 | 96.4 / 99.8 / 100.0 / 100.0 / 100.0 / 80.6 / 66.7 | 1.3 / 0.5 %; 2.5 / 2.4 % (1.9–2.8); 7.9 / 4.2 % (3.9–4.3) | 83 + 0 / 0+0, 0+0, 0+0, 0+0, 0+0; 0 + 44 / 0+10, 0+9, 0+10, 0+9, 0+9 | 1.52 | 38.1 (37.2–38.9) | 0.092–0.114 (4.4) |
+| 0.1 (default) | 96.4 / 100.0 / 100.0 / 100.0 / 100.0 / 87.4 / 66.7 | 1.3 / 0.5 %; 2.5 / 2.4 % (1.9–2.8); 5.7 / 3.6 % (3.5–3.7) | 83 + 0 / 0+0, 0+0, 0+0, 0+0, 0+0; 0 + 44 / 0+10, 0+10, 0+10, 0+10, 0+10 | 1.52 | 32.8 (31.9–34.1) | 0.090–0.115 (4.4) |
+| 0.3 | 96.4 / 100.0 / 100.0 / 100.0 / 100.0 / 89.4 / 66.7 | 1.3 / 0.5 %; 1.9 / 1.9 %; 3.9 / 1.6 % | 83 + 0 / 0+0, 0+0, 0+0, 0+0, 0+0; 0 + 44 / 0+10, 0+10, 0+10, 0+10, 0+10 | 1.52–1.69 | 26.9 (26.7–27.1) | 0.088–0.118 (4.5) |
+
+#### roadUpdateIntervalS {1, 0.5, 0.2, 0.1}
+
+**roadUpdateIntervalS: gated criterion, mean (range) over seeds 1–5; adoption rule (judge.py) vs N3.0 / vs N3.2b default**
+
+| value | clean-long max m | clean max m | manual pt 1 m | jammed-A end % | jammed-B end % | drive-7 worst fix > 1800 s % | manual-3 pins m (sanity) | all gated |
+|---|---|---|---|---|---|---|---|---|
+| N3.0 | 19.42 | 12.98 | 50.50 | 1.137 | 1.068 | 1.128 | 232.0 | |
+| 1 (default) | 22.51 (22.48–22.53) F/P | 19.44 (16.21–21.75) F/P | 8.11 (7.20–9.60) P/P | 0.171 (0.166–0.178) P/P | 0.297 (0.251–0.336) P/P | 0.167 (0.162–0.173) F/P | 68.7 (67.4–69.7) | FAIL / PASS |
+| 0.5 | 22.10 (22.05–22.15) F/P | 20.76 (15.61–26.93) F/F | 9.00 (7.15–12.03) P/P | 0.169 (0.162–0.174) P/P | 0.280 (0.224–0.336) P/P | 0.177 (0.170–0.188) F/P | 67.9 (66.7–69.3) | FAIL / FAIL |
+| 0.2 | 22.00 (21.98–22.05) F/P | 20.29 (17.11–24.06) F/F | 9.95 (7.48–12.92) P/P | 0.168 (0.163–0.171) P/P | 0.272 (0.221–0.334) P/P | 0.186 (0.182–0.191) F/F | 67.9 (67.3–68.9) | FAIL / FAIL |
+| 0.1 | 21.95 (21.87–21.99) F/P | 21.60 (17.33–25.20) F/F | 9.51 (7.31–12.71) P/P | 0.170 (0.169–0.173) P/P | 0.286 (0.250–0.316) P/P | 0.186 (0.183–0.191) F/F | 67.7 (67.1–68.2) | FAIL / FAIL |
+
+**roadUpdateIntervalS: consistency (+ truth σ, gated; mean over seeds, %), roads, convergence, timing**
+
+| value | cons cl / c / m / jA / jB / d7 / m3 | wrong road fixes / distance: clean-long; clean; drive-7 (info) | unmapped (far + incompatible) / captured (far + incompatible), per seed: clean; drive-7 | manual conv km | drive-7 worst fix > 1800 s m (range) | ms/step seed 1 (min–max over drives; max ingest ms) |
+|---|---|---|---|---|---|---|
+| N3.0 | 100.0 / 100.0 / 100.0 / 100.0 / 100.0 / 99.6 / 66.7 | n/a | n/a | 7.59 | 224.0 | 0.065–0.073 (not sequential) |
+| 1 (default) | 96.4 / 100.0 / 100.0 / 100.0 / 100.0 / 87.4 / 66.7 | 1.3 / 0.5 %; 2.5 / 2.4 % (1.9–2.8); 5.7 / 3.6 % (3.5–3.7) | 83 + 0 / 0+0, 0+0, 0+0, 0+0, 0+0; 0 + 44 / 0+10, 0+10, 0+10, 0+10, 0+10 | 1.52 | 32.8 (31.9–34.1) | 0.090–0.115 (4.4) |
+| 0.5 | 96.4 / 99.4 / 100.0 / 100.0 / 100.0 / 87.9 / 66.7 | 1.3 / 0.5 %; 2.6 / 2.6 % (1.9–2.8); 5.4 / 2.2 % | 83 + 0 / 0+0, 0+0, 0+0, 0+0, 0+0; 0 + 44 / 0+10, 0+10, 0+10, 0+10, 0+10 | 1.52 | 34.8 (33.4–37.1) | 0.112–0.156 (4.4) |
+| 0.2 | 96.4 / 99.9 / 100.0 / 100.0 / 100.0 / 86.7 / 66.7 | 1.3 / 0.5 %; 2.5 / 2.4 % (1.9–2.8); 5.4 / 2.2 % | 83 + 0 / 0+0, 0+0, 0+0, 0+0, 0+0; 0 + 44 / 0+9, 0+9, 0+10, 0+9, 0+9 | 1.52–2.00 | 36.6 (35.9–37.6) | 0.186–0.295 (4.5) |
+| 0.1 | 96.4 / 99.3 / 100.0 / 100.0 / 100.0 / 86.7 / 66.7 | 1.3 / 0.5 %; 2.6 / 2.6 % (1.9–2.8); 5.4 / 2.2 % | 83 + 0 / 0+0, 0+0, 0+0, 0+0, 0+0; 0 + 44 / 0+10, 0+9, 0+10, 0+9, 0+10 | 1.52–2.07 | 36.7 (36.1–37.6) | 0.310–0.509 (4.6) |
+
+ms/step per drive (seed 1, sequential, release, Mac) and the cost of the extra road updates, by differencing against the default:
+
+| value | clean-long | clean | manual | jammed-A | jammed-B | manual-3 | drive-7 | mean | max single ingest ms | road updates (all drives) | extra ms per extra road update vs default |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 (default) | 0.096 | 0.090 | 0.110 | 0.114 | 0.113 | 0.111 | 0.115 | 0.107 | 4.43 | 6219 |  |
+| 0.5 | 0.121 | 0.112 | 0.146 | 0.156 | 0.156 | 0.150 | 0.156 | 0.142 | 4.42 | 12324 | 0.436 |
+| 0.2 | 0.198 | 0.186 | 0.249 | 0.283 | 0.295 | 0.267 | 0.283 | 0.252 | 4.45 | 30722 | 0.444 |
+| 0.1 | 0.329 | 0.310 | 0.430 | 0.495 | 0.509 | 0.472 | 0.487 | 0.433 | 4.61 | 61608 | 0.442 |
+
+#### roadCorrelationM {10, 30, 100}
+
+**roadCorrelationM: gated criterion, mean (range) over seeds 1–5; adoption rule (judge.py) vs N3.0 / vs N3.2b default**
+
+| value | clean-long max m | clean max m | manual pt 1 m | jammed-A end % | jammed-B end % | drive-7 worst fix > 1800 s % | manual-3 pins m (sanity) | all gated |
+|---|---|---|---|---|---|---|---|---|
+| N3.0 | 19.42 | 12.98 | 50.50 | 1.137 | 1.068 | 1.128 | 232.0 | |
+| 10 | 24.95 (24.86–25.02) F/F | 72.53 (72.46–72.66) F/F | 8.64 (8.00–9.81) P/P | 0.152 (0.139–0.162) P/P | 0.298 (0.021–0.493) P/P | 0.978 (0.790–1.538) F/F | 68.7 (67.4–69.9) | FAIL / FAIL |
+| 30 (default) | 22.51 (22.48–22.53) F/P | 19.44 (16.21–21.75) F/P | 8.11 (7.20–9.60) P/P | 0.171 (0.166–0.178) P/P | 0.297 (0.251–0.336) P/P | 0.167 (0.162–0.173) F/P | 68.7 (67.4–69.7) | FAIL / PASS |
+| 100 | 19.38 (19.22–19.50) P/P | 15.00 (11.74–19.22) F/P | 7.23 (5.81–10.02) P/P | 0.176 (0.170–0.181) P/P | 0.201 (0.171–0.245) P/P | 0.166 (0.116–0.281) F/P | 68.5 (66.8–70.2) | FAIL / PASS |
+
+**roadCorrelationM: consistency (+ truth σ, gated; mean over seeds, %), roads, convergence, timing**
+
+| value | cons cl / c / m / jA / jB / d7 / m3 | wrong road fixes / distance: clean-long; clean; drive-7 (info) | unmapped (far + incompatible) / captured (far + incompatible), per seed: clean; drive-7 | manual conv km | drive-7 worst fix > 1800 s m (range) | ms/step seed 1 (min–max over drives; max ingest ms) |
+|---|---|---|---|---|---|---|
+| N3.0 | 100.0 / 100.0 / 100.0 / 100.0 / 100.0 / 99.6 / 66.7 | n/a | n/a | 7.59 | 224.0 | 0.065–0.073 (not sequential) |
+| 10 | 94.9 / 63.0 / 100.0 / 100.0 / 100.0 / 65.7 / 66.7 | 0.7 / 0.2 %; 1.9 / 1.9 %; 5.7 / 2.9 % (0.2–4.5) | 83 + 0 / 3+0, 3+0, 3+0, 3+0, 3+0; 0 + 44 / 0+20, 0+21, 0+14, 0+20, 0+12 | 1.52 | 192.6 (154.3–305.4) | 0.095–0.114 (4.5) |
+| 30 (default) | 96.4 / 100.0 / 100.0 / 100.0 / 100.0 / 87.4 / 66.7 | 1.3 / 0.5 %; 2.5 / 2.4 % (1.9–2.8); 5.7 / 3.6 % (3.5–3.7) | 83 + 0 / 0+0, 0+0, 0+0, 0+0, 0+0; 0 + 44 / 0+10, 0+10, 0+10, 0+10, 0+10 | 1.52 | 32.8 (31.9–34.1) | 0.090–0.115 (4.4) |
+| 100 | 100.0 / 100.0 / 100.0 / 100.0 / 100.0 / 92.7 / 66.7 | 1.3 / 0.5 %; 2.8 / 2.9 % (2.8–2.9); 4.8 / 3.4 % (0.5–6.8) | 83 + 0 / 0+0, 0+0, 0+0, 0+0, 0+0; 0 + 44 / 0+2, 0+2, 0+2, 0+1, 0+2 | 1.52–1.58 | 31.8 (22.8–52.8) | 0.093–0.119 (4.5) |
+
+#### roadSplitSigmaM {10, 15, 25}
+
+**roadSplitSigmaM: gated criterion, mean (range) over seeds 1–5; adoption rule (judge.py) vs N3.0 / vs N3.2b default**
+
+| value | clean-long max m | clean max m | manual pt 1 m | jammed-A end % | jammed-B end % | drive-7 worst fix > 1800 s % | manual-3 pins m (sanity) | all gated |
+|---|---|---|---|---|---|---|---|---|
+| N3.0 | 19.42 | 12.98 | 50.50 | 1.137 | 1.068 | 1.128 | 232.0 | |
+| 10 | 22.66 (22.55–22.78) F/F | 21.22 (16.16–23.68) F/F | 8.85 (7.33–10.18) P/P | 0.167 (0.154–0.177) P/P | 0.159 (0.102–0.265) P/P | 0.173 (0.171–0.175) F/F | 68.7 (67.6–70.0) | FAIL / FAIL |
+| 15 (default) | 22.51 (22.48–22.53) F/P | 19.44 (16.21–21.75) F/P | 8.11 (7.20–9.60) P/P | 0.171 (0.166–0.178) P/P | 0.297 (0.251–0.336) P/P | 0.167 (0.162–0.173) F/P | 68.7 (67.4–69.7) | FAIL / PASS |
+| 25 | 22.58 (22.55–22.62) F/P | 21.53 (19.70–22.46) F/F | 8.74 (7.14–11.56) P/P | 0.172 (0.165–0.176) P/P | 0.394 (0.381–0.406) P/P | 0.164 (0.160–0.170) F/P | 69.0 (67.2–70.4) | FAIL / FAIL |
+
+**roadSplitSigmaM: consistency (+ truth σ, gated; mean over seeds, %), roads, convergence, timing**
+
+| value | cons cl / c / m / jA / jB / d7 / m3 | wrong road fixes / distance: clean-long; clean; drive-7 (info) | unmapped (far + incompatible) / captured (far + incompatible), per seed: clean; drive-7 | manual conv km | drive-7 worst fix > 1800 s m (range) | ms/step seed 1 (min–max over drives; max ingest ms) |
+|---|---|---|---|---|---|---|
+| N3.0 | 100.0 / 100.0 / 100.0 / 100.0 / 100.0 / 99.6 / 66.7 | n/a | n/a | 7.59 | 224.0 | 0.065–0.073 (not sequential) |
+| 10 | 96.0 / 99.9 / 100.0 / 100.0 / 100.0 / 86.2 / 66.7 | 0.7 / 0.2 %; 2.6 / 2.6 % (1.9–2.8); 5.4 / 3.5 % | 83 + 0 / 0+0, 0+0, 0+0, 0+0, 0+0; 0 + 44 / 0+10, 0+10, 0+10, 0+11, 0+10 | 1.52 | 34.1 (33.7–34.4) | 0.094–0.117 (4.4) |
+| 15 (default) | 96.4 / 100.0 / 100.0 / 100.0 / 100.0 / 87.4 / 66.7 | 1.3 / 0.5 %; 2.5 / 2.4 % (1.9–2.8); 5.7 / 3.6 % (3.5–3.7) | 83 + 0 / 0+0, 0+0, 0+0, 0+0, 0+0; 0 + 44 / 0+10, 0+10, 0+10, 0+10, 0+10 | 1.52 | 32.8 (31.9–34.1) | 0.090–0.115 (4.4) |
+| 25 | 96.4 / 100.0 / 100.0 / 100.0 / 100.0 / 87.8 / 66.7 | 1.3 / 0.5 %; 2.5 / 2.4 % (1.9–2.8); 5.6 / 3.6 % (3.5–3.7) | 83 + 0 / 0+0, 0+0, 0+0, 0+0, 0+0; 0 + 44 / 0+10, 0+10, 0+10, 0+10, 0+10 | 1.52–1.66 | 32.3 (31.6–33.4) | 0.088–0.111 (4.5) |
+
+#### roadEngageMaxEllipseM {500, 1000, 2000}
+
+**roadEngageMaxEllipseM: gated criterion, mean (range) over seeds 1–5; adoption rule (judge.py) vs N3.0 / vs N3.2b default**
+
+| value | clean-long max m | clean max m | manual pt 1 m | jammed-A end % | jammed-B end % | drive-7 worst fix > 1800 s % | manual-3 pins m (sanity) | all gated |
+|---|---|---|---|---|---|---|---|---|
+| N3.0 | 19.42 | 12.98 | 50.50 | 1.137 | 1.068 | 1.128 | 232.0 | |
+| 500 | 22.51 (22.48–22.53) F/P | 19.44 (16.21–21.75) F/P | 8.49 (8.13–8.83) P/P | 0.171 (0.166–0.178) P/P | 0.297 (0.251–0.336) P/P | 0.167 (0.162–0.173) F/P | 347.3 (67.2–1463.4) | FAIL / PASS |
+| 1000 (default) | 22.51 (22.48–22.53) F/P | 19.44 (16.21–21.75) F/P | 8.11 (7.20–9.60) P/P | 0.171 (0.166–0.178) P/P | 0.297 (0.251–0.336) P/P | 0.167 (0.162–0.173) F/P | 68.7 (67.4–69.7) | FAIL / PASS |
+| 2000 | 22.51 (22.48–22.53) F/P | 19.44 (16.21–21.75) F/P | 4024.39 (8.49–7962.08) F/F | 0.171 (0.166–0.178) P/P | 0.297 (0.251–0.336) P/P | 0.167 (0.162–0.173) F/P | 68.7 (67.4–69.7) | FAIL / FAIL |
+
+**roadEngageMaxEllipseM: consistency (+ truth σ, gated; mean over seeds, %), roads, convergence, timing**
+
+| value | cons cl / c / m / jA / jB / d7 / m3 | wrong road fixes / distance: clean-long; clean; drive-7 (info) | unmapped (far + incompatible) / captured (far + incompatible), per seed: clean; drive-7 | manual conv km | drive-7 worst fix > 1800 s m (range) | ms/step seed 1 (min–max over drives; max ingest ms) |
+|---|---|---|---|---|---|---|
+| N3.0 | 100.0 / 100.0 / 100.0 / 100.0 / 100.0 / 99.6 / 66.7 | n/a | n/a | 7.59 | 224.0 | 0.065–0.073 (not sequential) |
+| 500 | 96.4 / 100.0 / 100.0 / 100.0 / 100.0 / 87.4 / 53.3 | 1.3 / 0.5 %; 2.5 / 2.4 % (1.9–2.8); 5.7 / 3.6 % (3.5–3.7) | 83 + 0 / 0+0, 0+0, 0+0, 0+0, 0+0; 0 + 44 / 0+10, 0+10, 0+10, 0+10, 0+10 | 1.65 | 32.8 (31.9–34.1) | 0.090–0.114 (2.6) |
+| 1000 (default) | 96.4 / 100.0 / 100.0 / 100.0 / 100.0 / 87.4 / 66.7 | 1.3 / 0.5 %; 2.5 / 2.4 % (1.9–2.8); 5.7 / 3.6 % (3.5–3.7) | 83 + 0 / 0+0, 0+0, 0+0, 0+0, 0+0; 0 + 44 / 0+10, 0+10, 0+10, 0+10, 0+10 | 1.52 | 32.8 (31.9–34.1) | 0.090–0.115 (4.4) |
+| 2000 | 96.4 / 100.0 / 26.7 / 100.0 / 100.0 / 87.4 / 66.7 | 1.3 / 0.5 %; 2.5 / 2.4 % (1.9–2.8); 5.7 / 3.6 % (3.5–3.7) | 83 + 0 / 0+0, 0+0, 0+0, 0+0, 0+0; 0 + 44 / 0+10, 0+10, 0+10, 0+10, 0+10 | 1.44–1.68 | 32.8 (31.9–34.1) | 0.090–0.114 (8.0) |
+
+#### roadAlongTrackCoupling {0, 1}
+
+**roadAlongTrackCoupling: gated criterion, mean (range) over seeds 1–5; adoption rule (judge.py) vs N3.0 / vs N3.2b default**
+
+| value | clean-long max m | clean max m | manual pt 1 m | jammed-A end % | jammed-B end % | drive-7 worst fix > 1800 s % | manual-3 pins m (sanity) | all gated |
+|---|---|---|---|---|---|---|---|---|
+| N3.0 | 19.42 | 12.98 | 50.50 | 1.137 | 1.068 | 1.128 | 232.0 | |
+| 0 (default) | 22.51 (22.48–22.53) F/P | 19.44 (16.21–21.75) F/P | 8.11 (7.20–9.60) P/P | 0.171 (0.166–0.178) P/P | 0.297 (0.251–0.336) P/P | 0.167 (0.162–0.173) F/P | 68.7 (67.4–69.7) | FAIL / PASS |
+| 1 | 25.09 (25.06–25.12) F/F | 22.74 (20.49–26.15) F/F | 8.60 (7.27–10.22) P/P | 0.170 (0.165–0.180) P/P | 0.309 (0.245–0.375) P/P | 0.181 (0.179–0.183) F/F | 68.2 (67.3–69.5) | FAIL / FAIL |
+
+**roadAlongTrackCoupling: consistency (+ truth σ, gated; mean over seeds, %), roads, convergence, timing**
+
+| value | cons cl / c / m / jA / jB / d7 / m3 | wrong road fixes / distance: clean-long; clean; drive-7 (info) | unmapped (far + incompatible) / captured (far + incompatible), per seed: clean; drive-7 | manual conv km | drive-7 worst fix > 1800 s m (range) | ms/step seed 1 (min–max over drives; max ingest ms) |
+|---|---|---|---|---|---|---|
+| N3.0 | 100.0 / 100.0 / 100.0 / 100.0 / 100.0 / 99.6 / 66.7 | n/a | n/a | 7.59 | 224.0 | 0.065–0.073 (not sequential) |
+| 0 (default) | 96.4 / 100.0 / 100.0 / 100.0 / 100.0 / 87.4 / 66.7 | 1.3 / 0.5 %; 2.5 / 2.4 % (1.9–2.8); 5.7 / 3.6 % (3.5–3.7) | 83 + 0 / 0+0, 0+0, 0+0, 0+0, 0+0; 0 + 44 / 0+10, 0+10, 0+10, 0+10, 0+10 | 1.52 | 32.8 (31.9–34.1) | 0.090–0.115 (4.4) |
+| 1 | 95.2 / 99.7 / 100.0 / 100.0 / 100.0 / 81.5 / 66.7 | 0.7 / 0.2 %; 2.8 / 2.8 %; 6.5 / 3.8 % (3.7–3.9) | 83 + 0 / 0+0, 0+0, 0+0, 0+0, 0+0; 0 + 44 / 0+11, 0+11, 0+11, 0+11, 0+11 | 1.52 | 35.6 (35.2–36.0) | 0.090–0.113 (4.6) |
+
+#### Fix gate on and off
+
+**Fix gate: gated criterion, mean (range) over seeds 1–5; adoption rule (judge.py) vs N3.0 / vs N3.2b default**
+
+| value | clean-long max m | clean max m | manual pt 1 m | jammed-A end % | jammed-B end % | drive-7 worst fix > 1800 s % | manual-3 pins m (sanity) | all gated |
+|---|---|---|---|---|---|---|---|---|
+| N3.0 | 19.42 | 12.98 | 50.50 | 1.137 | 1.068 | 1.128 | 232.0 | |
+| on (default, roadFixGateSigma 3) | 22.51 (22.48–22.53) F/P | 19.44 (16.21–21.75) F/P | 8.11 (7.20–9.60) P/P | 0.171 (0.166–0.178) P/P | 0.297 (0.251–0.336) P/P | 0.167 (0.162–0.173) F/P | 68.7 (67.4–69.7) | FAIL / PASS |
+| off (roadFixGateSigma 0) | 22.51 (22.48–22.53) F/P | 19.44 (16.21–21.75) F/P | 8.11 (7.20–9.60) P/P | 0.171 (0.166–0.178) P/P | 0.297 (0.251–0.336) P/P | 0.167 (0.162–0.173) F/P | 68.7 (67.4–69.7) | FAIL / PASS |
+
+**Fix gate: consistency (+ truth σ, gated; mean over seeds, %), roads, convergence, timing**
+
+| value | cons cl / c / m / jA / jB / d7 / m3 | wrong road fixes / distance: clean-long; clean; drive-7 (info) | unmapped (far + incompatible) / captured (far + incompatible), per seed: clean; drive-7 | manual conv km | drive-7 worst fix > 1800 s m (range) | ms/step seed 1 (min–max over drives; max ingest ms) |
+|---|---|---|---|---|---|---|
+| N3.0 | 100.0 / 100.0 / 100.0 / 100.0 / 100.0 / 99.6 / 66.7 | n/a | n/a | 7.59 | 224.0 | 0.065–0.073 (not sequential) |
+| on (default, roadFixGateSigma 3) | 96.4 / 100.0 / 100.0 / 100.0 / 100.0 / 87.4 / 66.7 | 1.3 / 0.5 %; 2.5 / 2.4 % (1.9–2.8); 5.7 / 3.6 % (3.5–3.7) | 83 + 0 / 0+0, 0+0, 0+0, 0+0, 0+0; 0 + 44 / 0+10, 0+10, 0+10, 0+10, 0+10 | 1.52 | 32.8 (31.9–34.1) | 0.090–0.115 (4.4) |
+| off (roadFixGateSigma 0) | 96.4 / 100.0 / 100.0 / 100.0 / 100.0 / 87.4 / 66.7 | 1.3 / 0.5 %; 2.5 / 2.4 % (1.9–2.8); 5.7 / 3.6 % (3.5–3.7) | 83 + 0 / 0+0, 0+0, 0+0, 0+0, 0+0; 0 + 44 / 0+10, 0+10, 0+10, 0+10, 0+10 | 1.52 | 32.8 (31.9–34.1) | 0.090–0.114 (4.7) |
+
+#### Does any value pass clean and clean-long and keep the gains?
+
+**No single value does.** Against N3.0 the adoption rule needs clean-long
+≤ 21.42 m and clean ≤ 14.98 m (mean; +2 m allowed on 19.42 / 12.98 m), both
+at 100 % consistency:
+- **Three values pass one of the two clean drives, and none passes both.**
+  - roadSigmaM 10 passes clean-long (21.09 m, 100 %) and fails clean
+    (25.98 m, 99.4 %).
+  - roadSigmaM 3.0 passes clean (14.17 m, 100 %) and fails clean-long
+    (25.88 m, 96.0 %).
+  - roadCorrelationM 100 passes clean-long (19.38 m, 100 %) and fails clean
+    by 0.02 m (15.00 m, 100 %).
+
+  σ moves the two clean drives in opposite directions, monotonically
+  (clean-long 25.88 → 21.09 m and clean 14.17 → 25.98 m from 3 to 10).
+- **roadCorrelationM 100 is the nearest miss.**
+  - Clean per seed: 14.61 / 14.57 / 11.74 / 19.22 / 14.85 m, against N3.0's
+    12.24 / 10.67 / 16.46 / 12.33 / 13.21 m.
+  - It keeps every gain: manual 7.23 m, jammed-A 0.176 %, jammed-B
+    0.201 %, drive-7 0.166 %.
+  - Against the N3.2b default it improves every gated mean except
+    jammed-A (+0.005 pp), and it lifts drive-7's consistency from 87.4 to
+    92.7 %.
+- **drive-7's consistency fails against N3.0 for every value of every
+  grid:** 65.7–92.7 % against 99.6 %, 80.6–92.7 % without
+  roadCorrelationM 10. So no value in the grids passes the adoption rule
+  against N3.0 on all gated drives. It is the N3.2b FAIL, made smaller or
+  larger.
+- **Against the N3.2b default** these pass every gated drive:
+  roadOffRoadProbability 0.3, roadCorrelationM 100, roadEngageMaxEllipseM
+  500 (identical except manual and manual-3), and the fix gate off
+  (identical).
+
+**Trade-off of the best candidates against N3.0** (means over seeds 1–5;
+"error cut" = the share of N3.0's error removed):
+
+| candidate | clean-long Δ m (allowed +2) | clean Δ m (allowed +2) | consistency + σ clean-long / clean / drive-7 (N3.0 100 / 100 / 99.6) | manual pt 1 Δ m | jammed-A Δ pp (error cut) | jammed-B Δ pp (error cut) | drive-7 Δ pp (error cut) |
+|---|---:|---:|---|---:|---:|---:|---:|
+| default (N3.2b) | +3.09 | +6.46 | 96.4 / 100.0 / 87.4 | -42.38 | -0.966 (85 %) | -0.771 (72 %) | -0.961 (85 %) |
+| roadCorrelationM 100 | -0.04 | +2.02 | 100.0 / 100.0 / 92.7 | -43.27 | -0.960 (84 %) | -0.866 (81 %) | -0.962 (85 %) |
+| roadSigmaM 10 | +1.68 | +13.00 | 100.0 / 99.4 / 89.2 | -42.85 | -0.964 (85 %) | -0.833 (78 %) | -0.976 (87 %) |
+| roadSigmaM 3.0 | +6.47 | +1.19 | 96.0 / 100.0 / 86.3 | -41.98 | -0.984 (87 %) | -0.657 (62 %) | -0.416 (37 %) |
+| roadOffRoadProbability 0.3 | +2.81 | +3.26 | 96.4 / 100.0 / 89.4 | -42.25 | -0.966 (85 %) | -0.755 (71 %) | -0.990 (88 %) |
+
+- **default:** costs +3.1 m on clean-long and +6.5 m on clean. In return
+  it cuts 85 % of the error on jammed-A, 72 % on jammed-B and 85 % on
+  drive-7.
+- **roadCorrelationM 100:** costs −0.04 m on clean-long and +2.02 m on
+  clean (0.02 m over the allowance). It cuts 84 % / 81 % / 85 %, and
+  drive-7's consistency is 92.7 % against 99.6 %.
+- **roadSigmaM 10:** costs +1.7 m / +13.0 m for 85 % / 78 % / 87 %.
+- **roadSigmaM 3.0:** costs +6.5 m / +1.2 m, and gives up most of drive-7's
+  gain (37 %): it is captured at the service-road end, below.
+- **Passing one clean drive costs the other.** σ 10 passes clean-long and
+  loses 13.0 m on clean. σ 3.0 passes clean and loses 6.5 m on clean-long,
+  plus most of drive-7's gain. Only roadCorrelationM 100 comes within
+  0.02 m on both.
+- The jammed-A/B cuts stay at 62–87 % across these candidates, and
+  drive-7's at 85–88 % (except σ 3.0, 37 %).
+- The grids are one factor at a time, so no combination was run.
+
+#### Anomalies and observations
+
+- **Fix gate:** it never fires on this set. `fixesRejectedOffRoad` is 0 on
+  every default run, and "off" is identical on all 30 runs (35 GeoJSON
+  byte-identical, every checkpoint and counter equal). The set cannot
+  measure the gate.
+- **roadEngageMaxEllipseM:** only manual changes (and manual-3 at 500).
+  Clean, clean-long, jammed-A/B and drive-7 are GeoJSON byte-identical to
+  the default: their clouds are under 500 m whenever a road update would
+  run.
+  - **2000: the seeds disagree, catastrophically.** On manual, seeds 1 and 5
+    reach truth point 1 at 10.9 m and 8.5 m. Seeds 2–4 reach it at
+    7.87 / 7.96 / 4.27 km, so the criterion (≤ 200 m) fails on three
+    seeds, and manual consistency falls to 26.7 %. Each of seeds 2–5 has
+    a manual reset at the pin, whose prior is 0.45–1.03 km off (default:
+    0.19–0.35 km, no reset). Road updates now run on a cloud up to 2 km
+    wide. Why seeds 2–4 stay kilometres off after the reset was not
+    investigated (measure, don't tune).
+  - **500, manual-3 (sanity) seed 4:** three manual resets, pins 870 /
+    2906 / 614 m. The other seeds score 19–100 m, so the mean is 347 m.
+    Not gated, and not investigated further (never tuned toward manual-3).
+- **roadCorrelationM 10 fails a criterion on every seed.** Clean reaches
+  72.5 m (≤ 30 m allowed), with consistency 63 %. At ≈ 369 s the truth
+  leaves every heading-compatible road (the end of the drive), and the
+  estimate is captured on a mapped edge and carried 73 m away. It then
+  parks there (ZUPT) until the end, so 72 m holds on every seed. Its seeds
+  also disagree: jammed-B 0.021–0.493 %, drive-7 0.79–1.54 %.
+- **roadSigmaM 3.0, drive-7:** the worst fix is 137–140 m, at 2054 s on
+  seed 1, against 32.8 m for the default. It falls in the 2027–2076 s
+  service-road stretch: the truth is `noRoad`/incompatible, the estimate
+  sits on a mapped edge up to 157 m from the truth, and `onRoadShare`
+  reaches 0.9. This is the capture risk R2 on real data. Clean also shows
+  one captured far fix on 4 of 5 seeds.
+- **roadUpdateIntervalS, "does a higher rate help":** no.
+  - Clean-long improves by 0.4–0.6 m and still fails against N3.0.
+  - Manual worsens (8.1 → 9.0–10.0 m), and so does drive-7 (0.167 →
+    0.177–0.186 %). Its consistency is 87.9 / 86.7 / 86.7 % against
+    87.4 %.
+  - Clean moves within seed noise and not monotonically (20.76 / 20.29 /
+    21.60 m, seed ranges overlapping 15.6–26.9 m).
+  - At 0.1 s manual's convergence reaches 2.07 km on seed 4, over the
+    2 km N3 target.
+  - Cost: 0.44 ms per extra road update. The Mac proxy is ≤ 0.15 ms/step
+    per drive: 0.5 s exceeds it on jammed-A, jammed-B and drive-7 (0.156),
+    and 0.2 s and 0.1 s on every drive.
+  - The largest single `ingest` is 4.4–4.6 ms in every configuration, the
+    default included, as in N3.2b.
+- **roadAlongTrackCoupling 1** is worse than 0 on clean-long (+2.6 m),
+  clean (+3.3 m) and drive-7 (consistency 81.5 %).
+- **Not monotone, within seed noise:** clean against roadSplitSigmaM
+  (21.22 / 19.44 / 21.53 m, the default best, ranges overlapping). drive-7
+  against roadSigmaM: a cliff at 3.0, then flat (0.157 / 0.167 /
+  0.151 %).
+- **Seeds disagree on drive-7 under roadCorrelationM 100:** the worst fix is
+  22.8–52.8 m and consistency 233–268 of 273. Seeds 1 and 5 peak at 1980 s;
+  seeds 2–4 at the end (2082–2098 s).
+- **clean-long** is almost seed-independent in every configuration (range
+  ≤ 0.3 m). Its maximum is the creeping last 11 s (N3.2b).
+- **Every per-seed N3 criterion passes** except roadCorrelationM 10 (clean,
+  every seed), roadEngageMaxEllipseM 2000 (manual, seeds 2–4) and the
+  manual convergence at roadUpdateIntervalS 0.1 (seed 4). Clean's
+  wrong-road share stays ≤ 3.4 % by distance everywhere (target ≤ 5 %,
+  provisional).
+
 ## Known limitations and options
 
 - **Heading convergence with tower fixes only** (manual: 6.8 km against a

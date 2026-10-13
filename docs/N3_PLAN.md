@@ -757,6 +757,10 @@ stay bit-identical):
 - fix gate on and off.
 
 Each is reported as a table against N3.0.
+Measured in N3.2d (2026-10-13; docs/NAVIGATION.md, "N3.2d: pre-declared grids"). No config was
+chosen and the choice is open for the user. No single value passes clean and clean-long against N3.0. drive-7's
+consistency fails against N3.0 for every value. The residual-derived `roadSigmaM` is 3.0 m (RMS; the
+fix-error subtraction gave none).
 
 **Exit:**
 - Without `--roads`, the 30 acceptance runs are bit-identical to N3.0: every `metrics.json`
