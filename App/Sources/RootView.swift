@@ -21,10 +21,11 @@ struct RootView: View {
         _navigation = State(initialValue: NavigationFeed(source: { await service.snapshot() }))
         _sessions = State(initialValue: SessionsViewModel(services: services))
         _console = State(initialValue: ConsoleViewModel(services: services))
-        var initial = MainTabView<RecordingScreen, MapScreen, SessionsScreen, ConsoleScreen>.Tab.record
+        var initial = MainTabView<RecordingScreen, MapScreen, SessionsScreen, ConsoleScreen>.Tab.map
         #if DEBUG
-        // `-uiTab 1|2|3` opens Sessions, Console or Map at launch (simulator screenshots).
-        initial = .init(rawValue: UserDefaults.standard.integer(forKey: "uiTab")) ?? .record
+        // `-uiTab N` opens a tab at launch (simulator screenshots), N in tab order:
+        // 0 = Map (default), 1 = Record, 2 = Sessions, 3 = Console.
+        initial = .init(rawValue: UserDefaults.standard.integer(forKey: "uiTab")) ?? .map
         #endif
         _tab = State(initialValue: initial)
     }
