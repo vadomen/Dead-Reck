@@ -304,3 +304,15 @@ Verified clean: all of `ReplayRoads.swift` (match/margin/ambiguity, 15 m vs 50 m
 | R22.3-4 | MINOR | `docs/N3_PLAN.md:527, 534-535` as-built text: σ_fix = accuracy / 2.45, but the code divides by `NavigationReplay.accuracyPerSigma` 1.51; the margin is over the best edge of any other *way*, not "the second-best edge". | DEFERRED | BACKLOG |
 
 Tests: Core passes 787 tests in 107 suites, 39 known issues (all test 3). No App change.
+
+### Round 4
+
+Reviewer: one fresh `reviewer` (opus). Result: 0 BLOCKER / 3 MAJOR / 0 MINOR, all untested code whose mutation moves a published figure; no bug found. Mutations: 3 run, 3 survived (`ambiguousShare` over all withheld clean fixes; `candidateTestsPerParticle` without `/ particleCount`; truth heading gate 45° → 89°). Verified: the round-3 tests cover R22.3-1/2 with expected values matching `RoadTruthMatcher.match`; `Core/Sources` unchanged since 5efbb20, so `logs/n32b/roads` still describes the code.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R22.4-1 | MAJOR | `ambiguousShare` (`NavigationReplay.swift:846`, over matched + ambiguous) is tested only at 0 and 1, never with mixed statuses: over all withheld clean fixes it survives and moves clean 20.3 % → 12.5 % (under the Viterbi trigger, flipping the summary line and R22.1-1) and drive-7 33.2 % → 24.1 %. | CONFIRMED | Open: round 4 was the last round; loop stopped for the user's decision. |
+| R22.4-2 | MAJOR | `candidateTestsPerParticle` (`NavigationReplay.swift:861-862`) is untested (only `candidateTestsPerUpdate != nil`): dropping `/ particleCount` survives, turning the published 15–33 (≤ 64) into ~22 800. | CONFIRMED | Open, as above. |
+| R22.4-3 | MAJOR | The truth's 45° heading gate (`ReplayRoads.swift:91`, used at :350) is untested for a two-way way outside it (tests cover 30° and a reverse oneway only): 89° survives; drive-7 seed 1 off share 0.8 % → ~4.5 %, noRoad 44 → 35, matched 129 → 134. | CONFIRMED | Open, as above. |
+
+**Loop stopped after round 4 with three MAJORs (missing tests of correct code). Waiting for the user's decision.**
