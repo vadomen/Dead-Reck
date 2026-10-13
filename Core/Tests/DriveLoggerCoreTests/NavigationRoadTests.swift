@@ -497,6 +497,23 @@ struct NavigationRoadTests {
         #expect(c.validated().roadUpdateIntervalS == 0)
     }
 
+    /// R21.1-7: `--set roadUpdateIntervalS=1e10` used to trap in the
+    /// engine's `Int64` nanosecond interval. Clamped to an hour now, and an
+    /// engine with roads accepts it.
+    @Test("roadUpdateIntervalS is clamped above to maxRoadUpdateIntervalS; an engine with 1e10 s starts")
+    func intervalUpperClamp() throws {
+        var c = NavigationConfig()
+        c.roadUpdateIntervalS = NavigationConfig.maxRoadUpdateIntervalS
+        #expect(c.validated().roadUpdateIntervalS == NavigationConfig.maxRoadUpdateIntervalS)
+        for huge in [1e10, 1e300, Double.greatestFiniteMagnitude] {
+            c.roadUpdateIntervalS = huge
+            #expect(c.validated().roadUpdateIntervalS == NavigationConfig.maxRoadUpdateIntervalS, "\(huge)")
+        }
+        let net = try Self.network([Self.street(1, from: (0, -3000), to: (0, 3000))])
+        let engine = NavigationEngine(config: Self.config(particles: 10) { $0.roadUpdateIntervalS = 1e10 }, roads: net)
+        #expect(engine.config.roadUpdateIntervalS == NavigationConfig.maxRoadUpdateIntervalS)
+    }
+
     @Test("roadSearchRadiusM is clamped to the pack's guaranteed radius")
     func radiusClampedToPack() throws {
         let net = try Self.network([Self.street(1, from: (0, 0), to: (0, 100))])
