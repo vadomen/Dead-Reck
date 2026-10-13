@@ -336,6 +336,81 @@ struct NavigationRoadTests {
         }
     }
 
+    /// The engine's random stream, read through reflection (it is private)
+    /// so a test can replay the exact draws a road update will make.
+    static func random(of engine: NavigationEngine) throws -> NavigationRandom {
+        try #require(Mirror(reflecting: engine).children.first { $0.label == "rng" }?.value as? NavigationRandom,
+                     "NavigationEngine has no stored `rng: NavigationRandom`")
+    }
+
+    /// R21.4-1: Step 1 on rotated, anisotropic Gaussians (σs 15 m).
+    /// P = λ₁ v₁v₁ᵀ + λ₂ v₂v₂ᵀ with v₁ at θ from east (θ in (−90°, 90°],
+    /// the engine's eigenvector convention; v₂ = v₁ turned +90°), so
+    /// P_en ≠ 0. Per particle, cycling through: (A) only λ₁ > σs²;
+    /// (B) both above; (C) neither, no split and no draw. Expected after
+    /// the update: P = σs² v₁v₁ᵀ + (λ₂ or σs²) v₂v₂ᵀ and
+    /// μ += v₁ √(λ₁ − σs²) z₁ (+ v₂ √(λ₂ − σs²) z₂ in B), with (z₁, z₂)
+    /// from a copy of the engine's stream, one pair per split particle.
+    /// Heading east across a north–south road: no candidate, so Steps 2–4
+    /// leave μ and P as Step 1 left them.
+    @Test("Step 1 split: rotated anisotropic P splits along its eigenvectors to σs (major only, or both axes); mean shift v·√(λ − σs²)·z")
+    func splitGeometry() throws {
+        let net = try Self.network([Self.street(1, from: (0, -3000), to: (0, 3000))])
+        var engine = Self.directEngine(net, particles: 120) { $0.roadSplitSigmaM = 15 }
+        Self.place(&engine, at: (20, 0), heading: .pi / 2)
+        let s2 = 15.0 * 15.0
+        // (θ°, λ₁, λ₂): A, B, C at +30°, then the same at −60° (a < c, P_en < 0).
+        let cases: [(deg: Double, l1: Double, l2: Double, splits: Int)] = [
+            (30, 1600, 100, 1), (30, 1600, 625, 2), (30, 200, 50, 0),
+            (-60, 900, 64, 1), (-60, 2500, 400, 2), (-60, 220, 220, 0),
+        ]
+        func axes(_ deg: Double) -> (v1: (e: Double, n: Double), v2: (e: Double, n: Double)) {
+            let t = deg * .pi / 180
+            return ((cos(t), sin(t)), (-sin(t), cos(t)))
+        }
+        for i in engine.east.indices {
+            let k = cases[i % cases.count], (v1, v2) = axes(k.deg)
+            engine.covEE[i] = k.l1 * v1.e * v1.e + k.l2 * v2.e * v2.e
+            engine.covEN[i] = k.l1 * v1.e * v1.n + k.l2 * v2.e * v2.n
+            engine.covNN[i] = k.l1 * v1.n * v1.n + k.l2 * v2.n * v2.n
+        }
+        #expect(engine.covEN[0] > 100 && engine.covEN[3] < -100, "P_en \(engine.covEN[0]), \(engine.covEN[3])")
+
+        var reference = try Self.random(of: engine)
+        var after = engine
+        after.roadUpdate(evidenceDistanceM: 30)
+        let splitting = engine.east.indices.filter { cases[$0 % cases.count].splits > 0 }.count
+        #expect(after.counters.roadUpdates == 1 && after.counters.roadSplits == splitting)
+        // No candidate (r = 0 everywhere): Steps 2–4 moved nothing.
+        #expect(after.roadEdge.allSatisfy { $0 == RoadMatcher.noEdge } && after.offRoadM.allSatisfy { $0 == 30 })
+
+        func close(_ x: Double, _ y: Double) -> Bool { abs(x - y) <= 1e-9 * 2500 }
+        for i in engine.east.indices {
+            let k = cases[i % cases.count], (v1, v2) = axes(k.deg)
+            guard k.splits > 0 else {
+                #expect(after.east[i] == engine.east[i] && after.north[i] == engine.north[i], "particle \(i): no split")
+                #expect(after.covEE[i] == engine.covEE[i] && after.covEN[i] == engine.covEN[i]
+                        && after.covNN[i] == engine.covNN[i], "particle \(i): no split")
+                continue
+            }
+            let (z1, z2) = reference.nextGaussianPair()
+            let a1 = (k.l1 - s2).squareRoot() * z1
+            let a2 = k.splits == 2 ? (k.l2 - s2).squareRoot() * z2 : 0
+            let k2 = k.splits == 2 ? s2 : k.l2
+            let mean = (e: engine.east[i] + v1.e * a1 + v2.e * a2, n: engine.north[i] + v1.n * a1 + v2.n * a2)
+            #expect(close(after.east[i], mean.e) && close(after.north[i], mean.n),
+                    "particle \(i) (\(k)): μ (\(after.east[i]), \(after.north[i])), expected \(mean)")
+            let p = (ee: after.covEE[i], en: after.covEN[i], nn: after.covNN[i])
+            func quad(_ x: (e: Double, n: Double), _ y: (e: Double, n: Double)) -> Double {
+                x.e * y.e * p.ee + (x.e * y.n + x.n * y.e) * p.en + x.n * y.n * p.nn
+            }
+            #expect(close(quad(v1, v1), s2) && close(quad(v2, v2), k2) && close(quad(v1, v2), 0),
+                    "particle \(i) (\(k)): v₁ᵀPv₁ \(quad(v1, v1)), v₂ᵀPv₂ \(quad(v2, v2)) (want \(k2)), v₁ᵀPv₂ \(quad(v1, v2))")
+        }
+        // Exactly one pair per split particle, and nothing else drawn.
+        #expect(try Self.random(of: after) == reference)
+    }
+
     /// `RoadMatcher.nearest` on a 10 m segment from a = (2, 3) along
     /// u = (0.6, 0.8); n = (−0.8, 0.6) is its left normal. h points from
     /// the nearest point towards p: ±n inside, (p − Q)/d at an end vertex
