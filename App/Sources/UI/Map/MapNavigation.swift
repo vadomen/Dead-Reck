@@ -317,11 +317,15 @@ struct FollowZoom: Equatable, Sendable {
         regionFramePending = false
     }
 
-    /// True when the automatic distance has drifted enough from our last
-    /// write to be worth a camera write (and the driver is not overriding).
-    var autoWantsWrite: Bool {
+    /// True when the distance we would write now (the automatic one, widened
+    /// by the ellipse in heading-up like `autoFollowDistance`) has drifted
+    /// enough from our last write to be worth a camera write; false while
+    /// the driver's zoom holds. Compares like with like: `writtenDistance`
+    /// is the widened distance, so a constant ellipse is not a drift (R26.1-1).
+    func autoWantsWrite(headingUp: Bool, semiMajorM: Double?) -> Bool {
         guard !driverOverride, writtenDistance > 0 else { return false }
-        return abs(log(auto.distance / writtenDistance)) > Self.autoWriteThreshold
+        let wanted = Self.distance(chosen: auto.distance, headingUp: headingUp, semiMajorM: semiMajorM)
+        return abs(log(wanted / writtenDistance)) > Self.autoWriteThreshold
     }
     private static let autoWriteThreshold = 0.02
 

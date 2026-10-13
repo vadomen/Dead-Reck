@@ -645,7 +645,9 @@ struct GPSMapView: View {
             guard inputs.following else { continue }
             var heading = 0.0
             var write = published
-            let zoomWrite = headingState.zoom.autoWantsWrite
+            let zoomWrite = headingState.zoom.autoWantsWrite(
+                headingUp: inputs.headingUp, semiMajorM: nav?.semiMajorM
+            )
             if inputs.headingUp {
                 if target == nil {
                     headingState.smoother = HeadingSmoother()

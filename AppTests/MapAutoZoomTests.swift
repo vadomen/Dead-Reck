@@ -126,7 +126,7 @@ struct FollowZoomPrecedenceTests {
         #expect(zoom.driverOverride)
         for _ in 0..<100 { zoom.step(speedKmh: 110, dt: 0.1) }
         #expect(zoom.autoFollowDistance(headingUp: false, semiMajorM: nil) == 400)
-        #expect(!zoom.autoWantsWrite)
+        #expect(!zoom.autoWantsWrite(headingUp: false, semiMajorM: nil))
     }
 
     @Test("Re-centre and a new frame return to automatic")
@@ -169,6 +169,25 @@ struct FollowZoomPrecedenceTests {
         zoom.cameraReported(distance: 200)
         #expect(zoom.autoFollowDistance(headingUp: true, semiMajorM: 400) > 1000)
         #expect(abs(zoom.autoFollowDistance(headingUp: true, semiMajorM: 1) - 200) < 1e-9)
+    }
+
+    @Test("A constant widened write is not drift; only the auto distance moving is (R26.1-1)")
+    func widenedWriteIsNotDrift() {
+        var zoom = settled(at: 10)                    // auto 250 m
+        let written = zoom.autoFollowDistance(headingUp: true, semiMajorM: 100)
+        #expect(written > 350, "widened well past the auto distance")
+        for _ in 0..<100 {
+            zoom.step(speedKmh: 10, dt: 0.1)
+            #expect(!zoom.autoWantsWrite(headingUp: true, semiMajorM: 100))
+        }
+        // The auto distance drifts a lot: the widened distance follows it
+        // once the ellipse no longer dominates.
+        for _ in 0..<400 { zoom.step(speedKmh: 110, dt: 0.1) }
+        #expect(zoom.autoWantsWrite(headingUp: true, semiMajorM: 100))
+        // A growing ellipse alone still triggers a write.
+        var other = settled(at: 10)
+        _ = other.autoFollowDistance(headingUp: true, semiMajorM: 100)
+        #expect(other.autoWantsWrite(headingUp: true, semiMajorM: 200))
     }
 
     @Test("Cold start writes 250 m")
