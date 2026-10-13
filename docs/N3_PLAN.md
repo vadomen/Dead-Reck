@@ -805,7 +805,9 @@ First measurement against them (N3.2b, default road config, no tuning, 2026-10-1
 docs/NAVIGATION.md, "N3.2b: first measurement with roads". Every per-seed criterion passes,
 manual converges at 1.52 km; the adoption rule fails on clean, clean-long (max error) and
 on clean-long and drive-7 (consistency). Open for the user's decision; the criteria are
-unchanged.
+unchanged. Clean's road truth is 20.3 % ambiguous (drive-7 33.2 %), over the 20 % Viterbi
+trigger, and the Viterbi match is not implemented, so clean's wrong-road share is provisional
+until the user decides.
 
 | criterion | drive / run | today (N4-B1, seeds 1–5) | N3 target |
 |---|---|---|---|

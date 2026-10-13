@@ -990,12 +990,16 @@ above. A measurement, not an adoption: no config or engine change was made.
   ≤ 2.5 %, truth point ≤ 200 m). manual, jammed-A/B pass with large gains.
 - **Wrong-road share** (checks capture onto a wrong *mapped* road only):
   clean 2.5 % by fixes, 2.4 % by distance; clean-long 1.3 % / 0.5 %; both
-  under the 5 % starting target (Q8). drive-7 (informational) 5.7 % / 3.6 %.
-  Ambiguous share of the road truth: clean-long 7.4 %, clean 20.3 %, drive-7
-  33.2 % (over the plan's 20 % Viterbi trigger; not implemented).
+  under the 5 % starting target (Q8), but clean's figure is provisional.
+  drive-7 (informational) 5.7 % / 3.6 %. Ambiguous share of the road truth:
+  clean-long 7.4 %, clean 20.3 % (every seed), drive-7 33.2 %. Clean and
+  drive-7 are both over the plan's 20 % trigger for a Viterbi match
+  (N3_PLAN.md: "If more than 20 % are ambiguous, upgrade to a Viterbi
+  match"); the Viterbi match is not implemented, so clean's wrong-road share,
+  a gated N3 criterion, stays provisional until the user decides.
 - **No usable course:** clean-long 115 of 277 withheld clean fixes (63 with
   OBD speed 0, 52 creeping under 3 m/s GNSS: two stops and the final slow
-  section), clean 62 of 216, drive-7 29 of 273. They are not scored for
+  section), clean 62 of 216, drive-7 29 of 266. They are not scored for
   wrong road; they do count for unmapped/captured and consistency.
 - **Unmapped/captured (R21.1-11):** only clean has unmapped truth fixes (83
   per seed, > 15 m from every edge); none captured on any seed.
