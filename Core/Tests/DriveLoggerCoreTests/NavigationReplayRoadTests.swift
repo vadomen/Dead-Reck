@@ -139,6 +139,17 @@ struct NavigationReplayRoadTests {
         #expect(try #require(m.residualsAll).p95M < 1)
         #expect(m.residuals.keys.sorted() == ["residential"])
         #expect(m.candidateTestsPerUpdate != nil && result.counters.roadUpdates > 30)
+        // R22.4-2: candidate tests per road update, and per particle (300) and update.
+        let c = result.counters
+        let perUpdate = try #require(m.candidateTestsPerUpdate)
+        let perParticle = try #require(m.candidateTestsPerParticle)
+        #expect(perUpdate == Double(c.roadCandidateTests) / Double(c.roadUpdates))
+        #expect(perParticle == Double(c.roadCandidateTests) / Double(c.roadUpdates) / 300)
+        #expect(perParticle == perUpdate / 300)
+        // One segment within the search radius, so each particle tests it
+        // once per update: 300 per update, 1 per particle.
+        #expect(perUpdate == 300 && perParticle == 1, "\(perUpdate) \(perParticle)")
+        #expect(ReplayReport.summary(result).contains("(300 per update, 1.0 per particle)"))
         // The road set: result, metrics.json, summary, markdown, GeoJSON.
         #expect(result.roads == ReplayRoadSet(net).packs && result.roadSetHash == net.roadSetHashHex)
         let row = try #require(try JSONSerialization.jsonObject(
@@ -186,6 +197,57 @@ struct NavigationReplayRoadTests {
         #expect(m.truth == ["ambiguous": m.withheldCleanFixes] && m.withheldCleanFixes > 40)
         #expect(m.ambiguousShare == 1 && m.scored == 0 && m.wrongShare == nil && m.wrongShareByDistance == nil)
         #expect(m.fixes.allSatisfy { abs($0.logLikelihoodRatio ?? 1) < 1e-6 })
+    }
+
+    /// R22.4-1: the street along x = 0 and, 200 m east (beyond the engine's
+    /// 50 m search radius), two parallel ways at x = 200 and 205. Withheld
+    /// clean fixes at t 15, 20, …, one truth status each: `m` on the car
+    /// (matched, way 1), `a` 202.5 m east (between ways 2 and 3: a tie,
+    /// ambiguous), `r` 30 m east (way 1 beyond 15 m: no road), `c` with no
+    /// course.
+    static func mixedTruth(_ kinds: String) throws -> ReplayResult {
+        let net = try R.network([R.street(1, from: (0, -3000), to: (0, 3000)),
+                                 R.street(2, from: (200, -3000), to: (200, 3000)),
+                                 R.street(3, from: (205, -3000), to: (205, 3000))])
+        let kinds = Array(kinds)
+        let clean = S.cleanFix(positionNoise: 0)
+        let inputs = R.shifted(R.northDrive(seconds: 60), by: (0, -500), fix: { t, state, rng in
+            guard var f = clean(t, state, &rng) else { return nil }
+            if t <= 10 { return f }
+            guard let k = kinds.indices.first(where: { S.at(t, 15 + 5 * Double($0)) }) else { return nil }
+            switch kinds[k] {
+            case "a": f.east += 202.5
+            case "r": f.east += 30
+            case "c": f.course = -1; f.courseAccuracy = -1
+            default: break
+            }
+            return f
+        })
+        return Self.run(inputs, roads: net)
+    }
+
+    @Test("R22.4-1 ambiguous share: ambiguous / (matched + ambiguous), not over every withheld fix; the Viterbi warning only above 20 %")
+    func ambiguousShareMixed() throws {
+        let warning = "; WARNING: over 20 % ambiguous, the plan calls for a Viterbi match (not implemented)"
+        // 6 matched, 1 ambiguous, 1 no road, 1 no course: 1 / 7 (1 / 9 over all fixes).
+        let low = try Self.mixedTruth("mmamrmcmm")
+        let lm = try #require(low.roadMetrics)
+        #expect(lm.withheldCleanFixes == 9 && lm.truth == ["matched": 6, "ambiguous": 1, "noRoad": 1, "noCourse": 1])
+        #expect(lm.ambiguousShare == 1.0 / 7.0, "\(String(describing: lm.ambiguousShare))")
+        let lowSummary = ReplayReport.summary(low)
+        #expect(lowSummary.contains("Road truth    (offline) 9 withheld clean fixes: matched 6, ambiguous 1 "
+            + "(14.3 % of matched + ambiguous), no heading-compatible road within 15 m 1, no usable course 1\n"), "\(lowSummary)")
+        #expect(!lowSummary.contains("WARNING"))
+        // 3 matched, 1 ambiguous, 2 no road, 2 no course: 1 / 4 = 25 %, over
+        // the 20 % of the warning (1 / 8 = 12.5 % over all fixes is not).
+        let high = try Self.mixedTruth("marmcrmc")
+        let hm = try #require(high.roadMetrics)
+        #expect(hm.withheldCleanFixes == 8 && hm.truth == ["matched": 3, "ambiguous": 1, "noRoad": 2, "noCourse": 2])
+        #expect(hm.ambiguousShare == 0.25, "\(String(describing: hm.ambiguousShare))")
+        let highSummary = ReplayReport.summary(high)
+        #expect(highSummary.contains("Road truth    (offline) 8 withheld clean fixes: matched 3, ambiguous 1 "
+            + "(25.0 % of matched + ambiguous), no heading-compatible road within 15 m 2, no usable course 2"
+            + warning + "\n"), "\(highSummary)")
     }
 
     /// The car stays on x = 0 (unmapped: the only road is 40 m east); the
@@ -510,6 +572,36 @@ struct NavigationReplayRoadTests {
         #expect(lost.status == .ambiguous && lost.edge?.osmWayID == 2, "\(lost)")
         #expect(abs((lost.crossTrackM ?? 0) - 5) < 0.05)
         #expect(abs((lost.logLikelihoodRatio ?? 0) - 0.0368) < 0.003, "\(String(describing: lost.logLikelihoodRatio))")
+    }
+
+    /// A two-way way at `angle`° east of north whose nearest point to the
+    /// fix (0, 100) is 5 m away along the normal (cos, −sin).
+    static func angledStreet(_ id: Int64, angle: Double) -> String {
+        let a = angle * .pi / 180
+        let c = cos(a), s = sin(a)
+        let foot = (5 * c, 100 - 5 * s)
+        return R.street(id, from: (foot.0 - 50 * s, foot.1 - 50 * c), to: (foot.0 + 50 * s, foot.1 + 50 * c))
+    }
+
+    /// R22.4-3: the truth's 45° heading gate applies to two-way ways too.
+    /// The fix heads north at (0, 100).
+    @Test("R22.4-3 truth heading gate: a two-way way at 60° is no road and no competitor; one at 40° is inside the gate")
+    func truthHeadingGate() throws {
+        // Alone, 5 m away at 60°: outside the gate, no road (the nearest
+        // edge, any heading, is still that way).
+        let alone = Self.truthMatch(RoadTruthMatcher(network: try R.network([Self.angledStreet(2, angle: 60)])))
+        #expect(alone.status == .noRoad && alone.edge == nil, "\(alone)")
+        #expect(abs((alone.nearestM ?? 0) - 5) < 0.05, "\(String(describing: alone.nearestM))")
+        // Beside an aligned way 6 m west: matched on the aligned way with no
+        // competitor (ratio nil), though the 60° way is nearer.
+        let beside = Self.truthMatch(RoadTruthMatcher(network: try R.network([
+            R.street(1, from: (-6, -3000), to: (-6, 3000)), Self.angledStreet(2, angle: 60)])))
+        #expect(beside.status == .matched && beside.edge?.osmWayID == 1 && beside.logLikelihoodRatio == nil, "\(beside)")
+        #expect(abs((beside.crossTrackM ?? 0) - 6) < 0.05 && abs((beside.nearestM ?? 0) - 5) < 0.05)
+        // Alone at 40°: inside the gate, matched on it.
+        let inside = Self.truthMatch(RoadTruthMatcher(network: try R.network([Self.angledStreet(2, angle: 40)])))
+        #expect(inside.status == .matched && inside.edge?.osmWayID == 2 && inside.logLikelihoodRatio == nil, "\(inside)")
+        #expect(abs((inside.crossTrackM ?? 0) - 5) < 0.05)
     }
 
     @Test("A fix the gate rejects as off-road is marked in the result, the road metrics and the GeoJSON")
