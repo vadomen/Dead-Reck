@@ -204,6 +204,135 @@ struct NavigationReplayRoadTests {
         #expect(m.unmappedCaptured == m.fixes.filter { $0.captured == true }.count)
     }
 
+    /// R22.1-2: a parallel road 60 m east (way 2) ends at north −100; the
+    /// truth stays on way 1 along x = 0. The used fixes put the engine on
+    /// way 2, so it scores wrong there; past way 2's end no road lies within
+    /// the 50 m search radius (way 1 is 60 m away), the road update finds
+    /// no road (share 0) and every fix scores off.
+    @Test("R22.1-2 off: engaged but on no road (share < 0.5) while the truth is matched scores off, by fixes and by distance")
+    func offVerdict() throws {
+        let net = try R.network([R.street(1, from: (0, -3000), to: (0, 3000)), R.street(2, from: (60, -3000), to: (60, -100))])
+        let result = Self.run(Self.splitInputs(usedEast: 60), roads: net)
+        let m = try #require(result.roadMetrics)
+        #expect(m.truth == ["matched": m.withheldCleanFixes] && m.withheldCleanFixes == 50)
+        #expect(m.fixes.allSatisfy { $0.truthEdge?.osmWayID == 1 })
+        // Truth north of the fix at t: −500 + 12 t. On way 2 up to 50 m
+        // before its end: wrong; 50 m or more past its end: off, share 0.
+        for fix in m.fixes {
+            let north = -500 + 12 * fix.t
+            if north < -150 {
+                #expect(fix.verdict == .wrong && fix.matchedEdge?.osmWayID == 2, "t \(fix.t)")
+            } else if north > -50 {
+                #expect(fix.verdict == .off && fix.onRoadShare == 0 && fix.matchedEdge == nil, "t \(fix.t)")
+            }
+        }
+        let off = m.count(.off), wrong = m.count(.wrong)
+        #expect(off.fixes >= 20 && wrong.fixes >= 25, "off \(off.fixes) wrong \(wrong.fixes)")
+        #expect(off.fixes + wrong.fixes == m.scored && m.scored == 50 && m.count(.right).fixes == 0)
+        #expect(m.offShare == Double(off.fixes) / 50 && m.wrongShare == Double(wrong.fixes) / 50)
+        let offWeight = m.fixes.filter { $0.verdict == .off }.reduce(0) { $0 + $1.weightM }
+        let allWeight = m.fixes.reduce(0) { $0 + $1.weightM }
+        #expect(off.distanceM == offWeight && offWeight > 200)
+        #expect(abs(try #require(m.offShareByDistance) - offWeight / allWeight) < 1e-12)
+        #expect(abs(try #require(m.offShareByDistance) + (m.wrongShareByDistance ?? 0) - 1) < 1e-12)
+        #expect(m.count(.notEngaged).fixes == 0)
+    }
+
+    @Test("R22.1-2 notEngaged: a cloud always wider than roadEngageMaxEllipseM leaves onRoadShare nil, every matched fix not engaged")
+    func notEngagedVerdict() throws {
+        var options = Self.options(roads: try Self.northStreet())
+        options.config.roadEngageMaxEllipseM = 1e-3
+        let result = NavigationReplay.run(logName: "synthetic", inputs: Self.splitInputs(usedEast: 0), options: options)
+        let m = try #require(result.roadMetrics)
+        #expect(result.counters.roadUpdates == 0 && result.counters.roadUpdatesNoRoad == 0)
+        #expect(m.truth == ["matched": 50] && m.scored == 50 && m.count(.notEngaged).fixes == 50)
+        #expect(m.fixes.allSatisfy { $0.verdict == .notEngaged && $0.onRoadShare == nil && $0.matchedEdge == nil })
+        #expect(m.wrongShare == 0 && m.offShare == 0 && m.wrongShareByDistance == 0 && m.offShareByDistance == 0)
+        #expect(m.trackEngaged == 0)
+    }
+
+    /// R22.1-3: way 1 along x = 0 with a 40 m gap (north 100…140, way 2
+    /// beyond it); the used fixes put the engine on it, heading north, and a large
+    /// along-track noise makes the 95 % ellipse long along the road and
+    /// narrow across it. Two withheld clean fixes, both unmapped: at t 30 one
+    /// 200 m east of the car (outside the ellipse: captured); at t 40 one in
+    /// the middle of the gap, 20 m from each road end and 140 m ahead of
+    /// the car (inside the ellipse: not captured).
+    @Test("R22.1-3 captured: an on-edge, narrow-ellipse estimate counts as captured only with the unmapped truth outside its 95 % ellipse")
+    func capturedNeedsTruthOutsideEllipse() throws {
+        let net = try R.network([R.street(1, from: (0, -3000), to: (0, 100)), R.street(2, from: (0, 140), to: (0, 3000))])
+        let drive = R.northDrive(seconds: 60)
+        let clean = S.cleanFix(positionNoise: 0)
+        let inputs = R.shifted(drive, by: (0, -500), fix: { t, state, rng in
+            guard var f = clean(t, state, &rng) else { return nil }
+            if t <= 10 { return f }
+            if S.at(t, 30) { f.east += 200; return f }
+            if S.at(t, 40) { f.north = 120 + 500; return f }
+            return nil
+        })
+        var options = Self.options(roads: net)
+        options.config.alongTrackNoisePerSqrtM = 6
+        let result = NavigationReplay.run(logName: "synthetic", inputs: inputs, options: options)
+        let m = try #require(result.roadMetrics)
+        #expect(m.withheldCleanFixes == 2 && m.truth == ["noRoad": 2] && m.scored == 0)
+        #expect(m.unmapped == 2 && m.unmappedWithEstimate == 2 && m.unmappedCaptured == 1)
+        try #require(m.fixes.count == 2)
+        let (beside, inGap) = (m.fixes[0], m.fixes[1])
+        #expect(abs(beside.t - 30) < 0.1 && abs(inGap.t - 40) < 0.1)
+        // 200 m east: no edge within the 50 m search radius at all.
+        #expect(beside.nearestEdgeM == nil && abs((inGap.nearestEdgeM ?? 0) - 20) < 0.5)
+        for fix in m.fixes {
+            // On an edge with a narrow ellipse across it: only the truth's
+            // place relative to the ellipse tells the two apart.
+            #expect((fix.onRoadShare ?? 0) >= 0.5 && fix.matchedEdge?.osmWayID == 1, "t \(fix.t) share \(String(describing: fix.onRoadShare))")
+            #expect((fix.crossTrackSemiAxisM ?? .infinity) < 25, "t \(fix.t) across \(String(describing: fix.crossTrackSemiAxisM))")
+            #expect(fix.verdict == nil && fix.unmapped)
+        }
+        #expect(beside.inside95 == false && beside.captured == true)
+        #expect(inGap.inside95 == true && inGap.captured == false)
+        #expect(ReplayReport.summary(result).contains("Unmapped      2 withheld clean fixes"))
+    }
+
+    /// R22.1-4: dual carriageway, oneways 15 m apart: way 1 northbound along
+    /// x = 0, way 2 southbound along x = 15 (as engine test 6).
+    @Test("R22.1-4 truth oneway rule: a oneway counts in its driving direction only, nearer or not")
+    func truthOnewayRule() throws {
+        typealias N = RoadFixture.Node
+        let northbound = RoadFixture.way(1, ["highway": "primary", "oneway": "yes"],
+                                         [N(id: 10, east: 0, north: -3000), N(id: 11, east: 0, north: 3000)])
+        let southbound = RoadFixture.way(2, ["highway": "primary", "oneway": "yes"],
+                                         [N(id: 20, east: 15, north: 3000), N(id: 21, east: 15, north: -3000)])
+        let matcher = RoadTruthMatcher(network: try R.network([northbound, southbound]))
+        func match(east: Double, course: Double, courseAccuracy: Double = 2,
+                   _ m: RoadTruthMatcher = matcher) -> RoadTruthMatcher.Match {
+            let p = S.plane.geodetic(east: east, north: 100)
+            return m.match(latitude: p.latitude, longitude: p.longitude, accuracyM: 5, courseDeg: course,
+                           courseAccuracyDeg: courseAccuracy)
+        }
+        // 12 m east: 3 m from the southbound carriageway, 12 m from the
+        // northbound one. Heading north: the northbound way, matched, with
+        // no competitor at all (the southbound oneway is not one).
+        let north = match(east: 12, course: 0)
+        #expect(north.status == .matched && north.edge?.osmWayID == 1)
+        #expect(north.logLikelihoodRatio == nil && abs((north.crossTrackM ?? 0) - 12) < 0.1)
+        #expect(abs((north.nearestM ?? 0) - 3) < 0.1, "the nearest edge, any heading, is still the southbound one")
+        // A course known only to ±180°: the southbound oneway still does not count.
+        let vague = match(east: 12, course: 0, courseAccuracy: 180)
+        #expect(vague.status == .matched && vague.edge?.osmWayID == 1 && vague.logLikelihoodRatio == nil)
+        // Heading south at the same point: the southbound way.
+        let south = match(east: 12, course: 180)
+        #expect(south.status == .matched && south.edge?.osmWayID == 2 && south.logLikelihoodRatio == nil)
+        // 16 m east heading north: the northbound way is beyond 15 m and the
+        // southbound one (1 m) runs against the course: no road.
+        let beyond = match(east: 16, course: 0)
+        #expect(beyond.status == .noRoad && beyond.edge == nil && abs((beyond.nearestM ?? 0) - 1) < 0.1)
+        // The same geometry with way 2 two-way: heading north it is a
+        // competitor at 3 m and wins.
+        let twoWay = R.street(2, from: (15, 3000), to: (15, -3000), tags: ["highway": "primary"])
+        let both = match(east: 12, course: 0, RoadTruthMatcher(network: try R.network([northbound, twoWay])))
+        #expect(both.status == .matched && both.edge?.osmWayID == 2 && (both.logLikelihoodRatio ?? 0) > 1)
+    }
+
     @Test("A fix the gate rejects as off-road is marked in the result, the road metrics and the GeoJSON")
     func rejectedFix() throws {
         let net = try R.network([R.street(1, from: (0, -3000), to: (0, 3000)), R.street(2, from: (300, -3000), to: (300, 3000))])
