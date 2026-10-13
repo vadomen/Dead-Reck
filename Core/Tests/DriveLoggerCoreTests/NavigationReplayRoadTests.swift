@@ -451,6 +451,67 @@ struct NavigationReplayRoadTests {
         #expect(both.status == .matched && both.edge?.osmWayID == 2 && (both.logLikelihoodRatio ?? 0) > 1)
     }
 
+    /// The truth match of a fix at (`east`, 100) with accuracy 5 m (σ_fix
+    /// 5 / 1.51, so σ_fix² + σr² = 59.964 m²).
+    static func truthMatch(_ matcher: RoadTruthMatcher, east: Double = 0, course: Double = 0,
+                           courseAccuracy: Double = 2) -> RoadTruthMatcher.Match {
+        let p = S.plane.geodetic(east: east, north: 100)
+        return matcher.match(latitude: p.latitude, longitude: p.longitude, accuracyM: 5, courseDeg: course,
+                             courseAccuracyDeg: courseAccuracy)
+    }
+
+    /// R22.3-1: two parallel two-way ways, the fix on way 1 (x = 0) heading
+    /// along them, way 2 at x = `b`: ln ratio = b² / (2 · 59.964), equal to
+    /// ln 2 at b = 9.117 m.
+    @Test("R22.3-1 truth margin: matched from a likelihood ratio of 2 on, ambiguous just below it")
+    func truthMarginThreshold() throws {
+        func match(wayTwoEast b: Double) throws -> RoadTruthMatcher.Match {
+            let net = try R.network([R.street(1, from: (0, -3000), to: (0, 3000)),
+                                     R.street(2, from: (b, -3000), to: (b, 3000))])
+            return Self.truthMatch(RoadTruthMatcher(network: net))
+        }
+        // b = 9 m: ln ratio 0.6754 < ln 2 = 0.6931: ambiguous (a margin
+        // of 1.01 would call it matched).
+        let below = try match(wayTwoEast: 9)
+        #expect(below.status == .ambiguous && below.edge?.osmWayID == 1, "\(below)")
+        #expect(abs((below.logLikelihoodRatio ?? 0) - 0.6754) < 0.003, "\(String(describing: below.logLikelihoodRatio))")
+        // b = 9.25 m: ln ratio 0.7134 > ln 2: matched (a margin of 4,
+        // ln 1.386, would call it ambiguous).
+        let above = try match(wayTwoEast: 9.25)
+        #expect(above.status == .matched && above.edge?.osmWayID == 1, "\(above)")
+        #expect(abs((above.logLikelihoodRatio ?? 0) - 0.7134) < 0.003, "\(String(describing: above.logLikelihoodRatio))")
+    }
+
+    /// R22.3-2: heading north, way 1 along the course 6 m west of the fix,
+    /// way 2 at 30° (inside the 45° gate) 5 m from it. Distance terms
+    /// −36 / 119.93 and −25 / 119.93; heading term of way 2
+    /// −(30°)² / (2 (σ_course² + (10°)²)), σ_course = max(courseAccuracy, 2°).
+    @Test("R22.3-2 truth heading term: an aligned way beats a nearer one at 30°, unless the course is vague")
+    func truthHeadingTerm() throws {
+        let c = cos(Double.pi / 6), s = sin(Double.pi / 6)
+        // The point of way 2 nearest the fix is 5 m along the normal (cos 30°, −sin 30°).
+        let foot = (5 * c, 100 - 5 * s)
+        let angled = R.street(2, from: (foot.0 - 10 * s, foot.1 - 10 * c), to: (foot.0 + 100 * s, foot.1 + 100 * c))
+        let net = try R.network([R.street(1, from: (-6, -3000), to: (-6, 3000)), angled])
+        let matcher = RoadTruthMatcher(network: net)
+        // Course ±2°: heading term 4.3269, ln ratio 4.2352: the aligned way, matched.
+        let sharp = Self.truthMatch(matcher)
+        #expect(sharp.status == .matched && sharp.edge?.osmWayID == 1, "\(sharp)")
+        #expect(abs((sharp.crossTrackM ?? 0) - 6) < 0.05 && abs((sharp.nearestM ?? 0) - 5) < 0.05)
+        #expect(abs((sharp.logLikelihoodRatio ?? 0) - 4.2352) < 0.003, "\(String(describing: sharp.logLikelihoodRatio))")
+        // Course ±60°: heading term 0.1216, ln ratio 0.0299: still the
+        // aligned way, but ambiguous.
+        let vague = Self.truthMatch(matcher, courseAccuracy: 60)
+        #expect(vague.status == .ambiguous && vague.edge?.osmWayID == 1, "\(vague)")
+        #expect(abs((vague.logLikelihoodRatio ?? 0) - 0.0299) < 0.003, "\(String(describing: vague.logLikelihoodRatio))")
+        // Course ±90°: heading term 0.0549 no longer outweighs the metre:
+        // the nearer way at 30°, ln ratio 0.0368, ambiguous.
+        let lost = Self.truthMatch(matcher, courseAccuracy: 90)
+        #expect(lost.status == .ambiguous && lost.edge?.osmWayID == 2, "\(lost)")
+        #expect(abs((lost.crossTrackM ?? 0) - 5) < 0.05)
+        #expect(abs((lost.logLikelihoodRatio ?? 0) - 0.0368) < 0.003, "\(String(describing: lost.logLikelihoodRatio))")
+    }
+
     @Test("A fix the gate rejects as off-road is marked in the result, the road metrics and the GeoJSON")
     func rejectedFix() throws {
         let net = try R.network([R.street(1, from: (0, -3000), to: (0, 3000)), R.street(2, from: (300, -3000), to: (300, 3000))])
