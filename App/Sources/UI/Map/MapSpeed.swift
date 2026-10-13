@@ -46,13 +46,16 @@ struct MapSpeedReadout: Hashable, Sendable {
 }
 
 enum MapSpeedRule {
-    /// Oldest input, seconds, that still counts. The same freshness for the
-    /// OBD reply and the GPS fix (user decision, 2026-10-13), and the OBD
-    /// value matches `ManualFixGate.maxOBDAgeS`.
-    static let maxAgeS: Double = 2
+    /// Oldest OBD reply, seconds, that still counts (the same freshness as
+    /// `ManualFixGate.maxOBDAgeS` and the engine).
+    static let maxOBDAgeS: Double = 2
+    /// Oldest GPS fix, seconds, whose speed counts and whose accuracy colours
+    /// the chip. Longer than OBD (user decision R24.1-1): the map feed relays
+    /// a fix about once a second, so 2 s would drop GPS on a single late fix.
+    static let maxGPSAgeS: Double = 3
 
-    /// OBD if its vehicle-speed reply is at most `maxAgeS` old, else GPS if
-    /// the fix has a speed (`speed >= 0`) and is at most `maxAgeS` old, else
+    /// OBD if its vehicle-speed reply is at most `maxOBDAgeS` old, else GPS if
+    /// the fix has a speed (`speed >= 0`) and is at most `maxGPSAgeS` old, else
     /// none.
     ///
     /// - Parameters:
@@ -68,9 +71,9 @@ enum MapSpeedRule {
     static func resolve(
         obdKmh: Double?, obdAgeS: Double?, fix: LocationSample?, fixAgeS: Double?
     ) -> MapSpeedReadout {
-        let fixFresh = isFresh(fixAgeS)
+        let fixFresh = isFresh(fixAgeS, max: maxGPSAgeS)
         let quality = fixFresh ? Self.quality(of: fix) : .unknown
-        if let obdKmh, obdKmh.isFinite, isFresh(obdAgeS) {
+        if let obdKmh, obdKmh.isFinite, isFresh(obdAgeS, max: maxOBDAgeS) {
             return MapSpeedReadout(source: .obd, kmh: wholeKmh(obdKmh), quality: quality)
         }
         if fixFresh, let fix, fix.speed >= 0, fix.speed.isFinite {
@@ -91,7 +94,7 @@ enum MapSpeedRule {
         }
     }
 
-    static func isFresh(_ ageS: Double?) -> Bool {
+    static func isFresh(_ ageS: Double?, max maxAgeS: Double) -> Bool {
         guard let ageS, ageS.isFinite else { return false }
         return Int64((ageS * 1e9).rounded()) <= Int64(maxAgeS * 1e9)
     }

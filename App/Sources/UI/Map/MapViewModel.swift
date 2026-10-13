@@ -94,7 +94,7 @@ final class MapViewModel {
     /// only when the stationary state flips.
     ///
     /// Also refreshes `speed`. The caller ticks twice a second, which is what
-    /// ages an OBD reply or a fix out after `MapSpeedRule.maxAgeS`.
+    /// ages an OBD reply or a fix out after `MapSpeedRule.maxOBDAgeS` / `maxGPSAgeS`.
     func setOBDSpeed(_ kmh: Double?, replyUptime: Double?, now: Double) {
         let stationary = StationaryRule.isStopped(kmh: kmh, replyUptime: replyUptime, now: now)
         if stationary != isStationary { isStationary = stationary }
