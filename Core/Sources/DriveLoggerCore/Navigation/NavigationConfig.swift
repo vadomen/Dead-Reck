@@ -226,6 +226,59 @@ public struct NavigationConfig: Hashable, Sendable, Codable {
     /// collapse to a few copied values.
     public var resampleScaleJitter = 0.000_5
 
+    // MARK: Roads (N3.2, docs/N3_PLAN.md "Road model in the filter")
+
+    /// Grid time between road updates, s, at the end of a moving step. 0
+    /// disables road updates even with a pack loaded. Clamped to 0 or at
+    /// least one grid step.
+    public var roadUpdateIntervalS = 1.0
+    /// Cross-track σ of the car about the OSM centreline, metres: lane
+    /// offset plus OSM error.
+    public var roadSigmaM = 7.0
+    /// σ of the agreement between particle heading and road bearing, degrees.
+    public var roadHeadingSigmaDeg = 10.0
+    /// A road is a candidate only within this heading difference, degrees
+    /// (a oneway: its forward bearing only).
+    public var roadHeadingGateDeg = 45.0
+    /// Candidate radius, metres; clamped to the pack's guaranteed radius.
+    /// Also R of the off-road density 1/(2R) · 1/(2π).
+    public var roadSearchRadiusM = 50.0
+    /// Cross-track gate d² / (hᵀPh + σr²) (1 dof).
+    public var roadInnovationGateChi2 = 9.0
+    /// ε: the probability that the car is not on a mapped road.
+    public var roadOffRoadProbability = 0.1
+    /// Distance tempering: a road update weighs min(1, Δs / this), Δs the
+    /// mean distance driven since the last one, metres.
+    public var roadCorrelationM = 30.0
+    /// A particle Gaussian wider than this σ, metres, is split before
+    /// matching.
+    public var roadSplitSigmaM = 15.0
+    /// No road update while the cloud's 95 % semi-major axis is above
+    /// this, metres.
+    public var roadEngageMaxEllipseM = 1_000.0
+    /// 0: Schmidt update, along-track unchanged; 1: exact Kalman. Values
+    /// between scale the along-track gain. Outside 0…1 the config is
+    /// invalid (`invalidReason`), not clamped.
+    public var roadAlongTrackCoupling = 0.0
+    /// A candidate on another level than the particle's is eligible within
+    /// this many adjacency hops of the particle's edge.
+    public var roadLevelHops = 2
+    /// Off-road distance, metres, after which a particle's level is unknown.
+    public var roadLevelForgetM = 100.0
+    /// GNSS fix gate radius max(`roadFixGateMinM`, this × σ_fix); 0
+    /// disables the gate.
+    public var roadFixGateSigma = 3.0
+    public var roadFixGateMinM = 50.0
+    /// The gate applies only at a fresh OBD speed of at least this, km/h…
+    public var roadFixGateMinKmh = 20.0
+    /// …and while the last road update's on-road share is at least this.
+    public var roadFixGateOnRoadShare = 0.8
+    /// A pin at or above this `gateSpeedKmh` triggers an immediate road
+    /// update (the car was on a road); 0 disables. Weight 1 when the pin
+    /// initialised the engine or reset it; otherwise tempered by the
+    /// distance since the last road update, as a regular one.
+    public var roadPinAnchorMinKmh = 3.0
+
     // MARK: Reporting
 
     /// `converged` once the circular heading std is under this, degrees.
@@ -259,6 +312,10 @@ extension NavigationConfig {
         case manualFixSigmaMinM, manualFixSpanDivisor, manualFixReactionS, manualFixUnknownSpeedMps
         case manualFixResetChi2, lateManualFixWindowS
         case resampleESSFraction, resampleHeadingJitterDeg, resampleScaleJitter, convergedHeadingStdDeg
+        case roadUpdateIntervalS, roadSigmaM, roadHeadingSigmaDeg, roadHeadingGateDeg, roadSearchRadiusM
+        case roadInnovationGateChi2, roadOffRoadProbability, roadCorrelationM, roadSplitSigmaM
+        case roadEngageMaxEllipseM, roadAlongTrackCoupling, roadLevelHops, roadLevelForgetM
+        case roadFixGateSigma, roadFixGateMinM, roadFixGateMinKmh, roadFixGateOnRoadShare, roadPinAnchorMinKmh
     }
 
     /// Decodes a config written by any earlier build (R11.2-4, R12.1-1): a
@@ -325,6 +382,24 @@ extension NavigationConfig {
         resampleHeadingJitterDeg = try c.decodeIfPresent(type(of: resampleHeadingJitterDeg), forKey: .resampleHeadingJitterDeg) ?? resampleHeadingJitterDeg
         resampleScaleJitter = try c.decodeIfPresent(type(of: resampleScaleJitter), forKey: .resampleScaleJitter) ?? resampleScaleJitter
         convergedHeadingStdDeg = try c.decodeIfPresent(type(of: convergedHeadingStdDeg), forKey: .convergedHeadingStdDeg) ?? convergedHeadingStdDeg
+        roadUpdateIntervalS = try c.decodeIfPresent(type(of: roadUpdateIntervalS), forKey: .roadUpdateIntervalS) ?? roadUpdateIntervalS
+        roadSigmaM = try c.decodeIfPresent(type(of: roadSigmaM), forKey: .roadSigmaM) ?? roadSigmaM
+        roadHeadingSigmaDeg = try c.decodeIfPresent(type(of: roadHeadingSigmaDeg), forKey: .roadHeadingSigmaDeg) ?? roadHeadingSigmaDeg
+        roadHeadingGateDeg = try c.decodeIfPresent(type(of: roadHeadingGateDeg), forKey: .roadHeadingGateDeg) ?? roadHeadingGateDeg
+        roadSearchRadiusM = try c.decodeIfPresent(type(of: roadSearchRadiusM), forKey: .roadSearchRadiusM) ?? roadSearchRadiusM
+        roadInnovationGateChi2 = try c.decodeIfPresent(type(of: roadInnovationGateChi2), forKey: .roadInnovationGateChi2) ?? roadInnovationGateChi2
+        roadOffRoadProbability = try c.decodeIfPresent(type(of: roadOffRoadProbability), forKey: .roadOffRoadProbability) ?? roadOffRoadProbability
+        roadCorrelationM = try c.decodeIfPresent(type(of: roadCorrelationM), forKey: .roadCorrelationM) ?? roadCorrelationM
+        roadSplitSigmaM = try c.decodeIfPresent(type(of: roadSplitSigmaM), forKey: .roadSplitSigmaM) ?? roadSplitSigmaM
+        roadEngageMaxEllipseM = try c.decodeIfPresent(type(of: roadEngageMaxEllipseM), forKey: .roadEngageMaxEllipseM) ?? roadEngageMaxEllipseM
+        roadAlongTrackCoupling = try c.decodeIfPresent(type(of: roadAlongTrackCoupling), forKey: .roadAlongTrackCoupling) ?? roadAlongTrackCoupling
+        roadLevelHops = try c.decodeIfPresent(type(of: roadLevelHops), forKey: .roadLevelHops) ?? roadLevelHops
+        roadLevelForgetM = try c.decodeIfPresent(type(of: roadLevelForgetM), forKey: .roadLevelForgetM) ?? roadLevelForgetM
+        roadFixGateSigma = try c.decodeIfPresent(type(of: roadFixGateSigma), forKey: .roadFixGateSigma) ?? roadFixGateSigma
+        roadFixGateMinM = try c.decodeIfPresent(type(of: roadFixGateMinM), forKey: .roadFixGateMinM) ?? roadFixGateMinM
+        roadFixGateMinKmh = try c.decodeIfPresent(type(of: roadFixGateMinKmh), forKey: .roadFixGateMinKmh) ?? roadFixGateMinKmh
+        roadFixGateOnRoadShare = try c.decodeIfPresent(type(of: roadFixGateOnRoadShare), forKey: .roadFixGateOnRoadShare) ?? roadFixGateOnRoadShare
+        roadPinAnchorMinKmh = try c.decodeIfPresent(type(of: roadPinAnchorMinKmh), forKey: .roadPinAnchorMinKmh) ?? roadPinAnchorMinKmh
     }
 }
 
@@ -347,7 +422,7 @@ extension NavigationConfig {
     ///   default (there is no "off": an infinite jump is never plausible).
     /// - `lateManualFixWindowS`: into 0…`maxLateManualFixWindowS`; a
     ///   non-finite value becomes the default.
-    public func validated() -> NavigationConfig {
+    public func validated(roads: RoadNetwork? = nil) -> NavigationConfig {
         var config = self
         let defaults = NavigationConfig()
         if !config.extrapolationHorizonS.isFinite {
@@ -361,7 +436,53 @@ extension NavigationConfig {
             config.lateManualFixWindowS = defaults.lateManualFixWindowS
         }
         config.lateManualFixWindowS = min(max(config.lateManualFixWindowS, 0), Self.maxLateManualFixWindowS)
+        config.validateRoads(defaults: defaults, roads: roads)
         return config
+    }
+
+    /// The road keys (N3.2): `roadUpdateIntervalS` to 0 or at least one
+    /// grid step; probabilities into (0, 1); σ, gates and radii that are
+    /// not finite and positive become the default (as `maxForwardJumpS`);
+    /// the "0 disables" keys and the other limits to ≥ 0, a non-finite one
+    /// to the default; `roadSearchRadiusM` to the packs' guaranteed radius.
+    /// `roadAlongTrackCoupling` is not clamped: see `invalidReason`.
+    private mutating func validateRoads(defaults: NavigationConfig, roads: RoadNetwork?) {
+        if !roadUpdateIntervalS.isFinite { roadUpdateIntervalS = defaults.roadUpdateIntervalS }
+        if roadUpdateIntervalS <= 0 {
+            roadUpdateIntervalS = 0
+        } else if stepHz > 0 {
+            roadUpdateIntervalS = max(roadUpdateIntervalS, 1 / stepHz)
+        }
+        let probability = 1e-9
+        for key in [\NavigationConfig.roadOffRoadProbability, \.roadFixGateOnRoadShare] {
+            if !self[keyPath: key].isFinite { self[keyPath: key] = defaults[keyPath: key] }
+            self[keyPath: key] = min(max(self[keyPath: key], probability), 1 - probability)
+        }
+        for key in [\NavigationConfig.roadSigmaM, \.roadHeadingSigmaDeg, \.roadHeadingGateDeg, \.roadSearchRadiusM,
+                    \.roadInnovationGateChi2, \.roadCorrelationM, \.roadSplitSigmaM, \.roadEngageMaxEllipseM,
+                    \.roadFixGateMinM] where !(self[keyPath: key].isFinite && self[keyPath: key] > 0) {
+            self[keyPath: key] = defaults[keyPath: key]
+        }
+        for key in [\NavigationConfig.roadLevelForgetM, \.roadFixGateSigma, \.roadFixGateMinKmh, \.roadPinAnchorMinKmh] {
+            if !self[keyPath: key].isFinite { self[keyPath: key] = defaults[keyPath: key] }
+            self[keyPath: key] = max(self[keyPath: key], 0)
+        }
+        roadLevelHops = max(roadLevelHops, 0)
+        if let roads { roadSearchRadiusM = min(roadSearchRadiusM, roads.grid.searchRadiusM) }
+    }
+
+    /// Why the engine cannot run this configuration, or nil. Unlike the
+    /// values `validated()` clamps, these are refused: `NavigationEngine`
+    /// traps on them (as on a non-positive `particleCount`), and a replay
+    /// reports them before it starts.
+    /// - `roadAlongTrackCoupling` outside 0…1 (or not a number): the Joseph
+    ///   form stays consistent for any gain, but a coupling outside the
+    ///   Schmidt…Kalman range is a mistake, not a setting.
+    public var invalidReason: String? {
+        if !(roadAlongTrackCoupling >= 0 && roadAlongTrackCoupling <= 1) {
+            return "roadAlongTrackCoupling must be in 0…1, got \(roadAlongTrackCoupling)"
+        }
+        return nil
     }
 
     /// Compact JSON with sorted keys: byte-stable for the same values, so

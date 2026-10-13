@@ -103,6 +103,14 @@ public struct NavigationEngine: Sendable {
     /// exp(logWeight), sums to 1.
     var weight: [Double] = []
     private(set) var effectiveSampleSize = 0.0
+    /// Road state per particle (N3.2), allocated only with roads: the
+    /// global edge the particle was last matched to (`RoadMatcher.noEdge`
+    /// for none), that edge's level (`RoadGeometry.unknownLevel`), and the
+    /// distance driven since it was last on a road. Resampling copies them;
+    /// a reseed and a manual reset clear them.
+    var roadEdge: [UInt32] = []
+    var roadLevel: [Int8] = []
+    var offRoadM: [Double] = []
 
     /// The local plane, set at initialisation from the first accepted
     /// position.
@@ -161,6 +169,21 @@ public struct NavigationEngine: Sendable {
     /// Whether a stale fix is held, waiting for a fresh OBD reply.
     public var hasHeldFix: Bool { heldFix != nil }
 
+    // Roads (N3.2). nil without a road network.
+    private(set) var roads: RoadMatcher?
+    /// Mean distance driven since the last road update (Δs), metres.
+    private(set) var roadDistanceM = 0.0
+    /// Grid time of the last road update attempt (skips included).
+    private var lastRoadAttemptNs: Int64?
+    private let roadIntervalNs: Int64
+    /// From the last road update attempt: `NavigationEstimate.onRoadShare`
+    /// and `matchedEdge`.
+    private var roadShare: Double?
+    private var roadMatchedEdge: MatchedRoadEdge?
+    /// Road updates run: a road network is loaded and
+    /// `roadUpdateIntervalS` > 0. Otherwise no road code runs at all.
+    var roadsActive: Bool { roads != nil && config.roadUpdateIntervalS > 0 }
+
     // Implausible forward time jumps (B0-1): the latest accepted arrival,
     // and the arrival of the last input rejected as a jump.
     private var lastInputNs: Int64?
@@ -174,13 +197,24 @@ public struct NavigationEngine: Sendable {
     /// The primary ECU whose vehicle speed is used.
     public static let primaryECU = "7E8"
 
-    /// `config` is validated first (`NavigationConfig.validated()`); the
-    /// engine's `config` is the validated value.
-    public init(config: NavigationConfig = NavigationConfig()) {
-        let config = config.validated()
+    /// `config` is validated first (`NavigationConfig.validated(roads:)`);
+    /// the engine's `config` is the validated value. A config with an
+    /// `invalidReason` traps. `roads`: the road network the road update
+    /// matches against (N3.2); nil runs no road code at all.
+    public init(config: NavigationConfig = NavigationConfig(), roads: RoadNetwork? = nil) {
+        self.init(config: config, roads: roads, roadCacheCapacity: RoadMatcher.defaultCacheCapacity)
+    }
+
+    /// `roadCacheCapacity`: the matcher's cell cache size (tests run 1
+    /// against the default: it must not change a result).
+    init(config: NavigationConfig, roads: RoadNetwork?, roadCacheCapacity: Int) {
+        let config = config.validated(roads: roads)
         precondition(config.particleCount > 0, "particleCount must be positive")
         precondition(config.stepHz > 0, "stepHz must be positive")
+        if let reason = config.invalidReason { preconditionFailure(reason) }
         self.config = config
+        self.roads = roads.map { RoadMatcher(network: $0, cacheCapacity: roadCacheCapacity) }
+        roadIntervalNs = Int64((config.roadUpdateIntervalS * 1e9).rounded())
         rng = NavigationRandom(seed: config.seed)
         stepNs = Int64((1_000_000_000 / config.stepHz).rounded())
         // At least the per-particle window, so a late pin older than the
@@ -530,6 +564,10 @@ public struct NavigationEngine: Sendable {
         if counters.steps % reanchorCheckSteps == 0 {
             reanchorIfNeeded()
         }
+        if roadsActive {
+            roadDistanceM += meanSpeed * dt
+            roadUpdateIfDue(at: ns)
+        }
     }
 
     /// Moving steps between re-anchor checks (10 s).
@@ -628,6 +666,9 @@ public struct NavigationEngine: Sendable {
         if counters.steps / reanchorCheckSteps != checkBefore {
             reanchorIfNeeded()
         }
+        // Never a road update inside a catch-up; its distance counts
+        // towards the next one.
+        if roadsActive { roadDistanceM += meanSpeed * dt }
     }
 
     /// Exact transition over `dt` of the OU speed error dX = −X/τ dt + σ dW
@@ -714,6 +755,7 @@ public struct NavigationEngine: Sendable {
         }
         motionRing.transform(linear)
         tangentPlane = new
+        roads?.clearCache()
         counters.reanchors += 1
     }
 
@@ -745,6 +787,11 @@ public struct NavigationEngine: Sendable {
         logWeight = [Double](repeating: -log(Double(n)), count: n)
         weight = [Double](repeating: 1 / Double(n), count: n)
         effectiveSampleSize = Double(n)
+        if roads != nil {
+            roadEdge = [UInt32](repeating: RoadMatcher.noEdge, count: n)
+            roadLevel = [Int8](repeating: RoadGeometry.unknownLevel, count: n)
+            offRoadM = east
+        }
         let twoPi = 2 * Double.pi
         for i in 0..<n {
             if let course {
@@ -845,6 +892,12 @@ public struct NavigationEngine: Sendable {
         let targetEast = fix.east + since.east
         let targetNorth = fix.north + since.north
         let targetCourse = sample.course * .pi / 180 + since.yaw
+
+        if !network, rejectsOffRoad(east: targetEast, north: targetNorth, sigma: sigma,
+                                    course: courseValid ? targetCourse : nil, arrivalNs: arrivalNs, plane: plane) {
+            counters.fixesRejectedOffRoad += 1
+            return
+        }
 
         if clean && (headingStdRadians() > config.reseedHeadingStdDeg * .pi / 180
                      || !courseHasSupport(targetCourse, sigma: courseSigma)) {
@@ -995,6 +1048,7 @@ public struct NavigationEngine: Sendable {
             heading[i] = Self.wrap2Pi(course + courseSigma * rng.nextGaussian())
             speedOffset[i] = 0
             logWeight[i] = averageLogWeight
+            if roads != nil { clearRoadState(i) }
             // A new particle has no past of its own: reconstruct it as if
             // it had always had this heading and scale (not the cloud's
             // mean motion, about 0 while heading is unknown, which is when
@@ -1024,6 +1078,7 @@ public struct NavigationEngine: Sendable {
                 counters.lateManualFixes += 1
                 predictLateInitialisation(fromStep: tapStepNs)
             }
+            anchorToRoad(sample, restarted: true)
             return
         }
         let pin = plane.enu(latitude: sample.latitude, longitude: sample.longitude)
@@ -1060,7 +1115,8 @@ public struct NavigationEngine: Sendable {
         // pin. A low ESS with a compatible particle is the pin being most
         // informative (a ring-shaped cloud after km of unknown heading): keep
         // that posterior and resample (R13.1-1).
-        if nearest > config.manualFixResetChi2 {
+        let reset = nearest > config.manualFixResetChi2
+        if reset {
             // The prior has practically no support at the pin: the driver's
             // "I'm here" wins. Positions restart at it (a late pin: at it
             // plus each particle's own motion since); heading and scale
@@ -1074,10 +1130,12 @@ public struct NavigationEngine: Sendable {
                 covEN[i] = 0
                 covNN[i] = sigma * sigma
                 speedOffset[i] = 0
+                if roads != nil { clearRoadState(i) }
             }
             normalizeWeights()
         }
         resampleIfNeeded()
+        anchorToRoad(sample, restarted: reset)
     }
 
     /// Each particle's own motion since `ns`, for a late manual fix
@@ -1258,6 +1316,251 @@ public struct NavigationEngine: Sendable {
         return (-0.5 * m2 - 0.5 * log(det), m2)
     }
 
+    // MARK: Roads (N3.2)
+
+    /// A road particle's road state back to "on no road" (a reseed, a
+    /// manual reset).
+    private mutating func clearRoadState(_ i: Int) {
+        roadEdge[i] = RoadMatcher.noEdge
+        roadLevel[i] = RoadGeometry.unknownLevel
+        offRoadM[i] = 0
+    }
+
+    /// At the end of a moving grid step: a road update once
+    /// `roadUpdateIntervalS` of grid time has passed since the last attempt.
+    private mutating func roadUpdateIfDue(at ns: Int64) {
+        if let last = lastRoadAttemptNs, ns - last < roadIntervalNs { return }
+        lastRoadAttemptNs = ns
+        roadUpdate(evidenceDistanceM: roadDistanceM)
+    }
+
+    /// A pin with `gateSpeedKmh` ≥ `roadPinAnchorMinKmh` was taken while
+    /// moving, so on a road: a road update right after it, whatever the
+    /// interval. The pin gives the position along the road, the road the
+    /// position across it. `restarted`: the pin initialised the engine or
+    /// caused a manual reset, so every earlier road update's information
+    /// is gone and the road under the pin counts in full (evidence
+    /// distance at least `roadCorrelationM`, weight 1). A pin compatible
+    /// with the cloud keeps that information: the anchor is an early
+    /// regular update, tempered by the distance driven since the last one
+    /// (R21.1-1; weight 1 there would count the same road twice and add
+    /// `roadCorrelationM` off-road for ~0 m driven).
+    private mutating func anchorToRoad(_ sample: ManualFixSample, restarted: Bool) {
+        guard roadsActive, config.roadPinAnchorMinKmh > 0, let kmh = sample.gateSpeedKmh, kmh.isFinite,
+              kmh >= config.roadPinAnchorMinKmh else { return }
+        counters.roadPinAnchors += 1
+        lastRoadAttemptNs = lastStepNs
+        roadUpdate(evidenceDistanceM: restarted ? max(roadDistanceM, config.roadCorrelationM) : roadDistanceM)
+    }
+
+    /// The cloud's 95 % semi-major axis, metres (the mixture of every
+    /// particle's Gaussian, as in `estimate(at:)`).
+    private func cloudSemiMajorM() -> Double {
+        var me = 0.0, mn = 0.0
+        for i in 0..<east.count {
+            me += weight[i] * east[i]
+            mn += weight[i] * north[i]
+        }
+        var ee = 0.0, en = 0.0, nn = 0.0
+        for i in 0..<east.count {
+            let w = weight[i], de = east[i] - me, dn = north[i] - mn
+            ee += w * (covEE[i] + de * de)
+            en += w * (covEN[i] + de * dn)
+            nn += w * (covNN[i] + dn * dn)
+        }
+        return ErrorEllipse(covarianceEE: ee, en: en, nn: nn).semiMajorM
+    }
+
+    /// One road update (docs/N3_PLAN.md, Steps 0–5), with evidence weight
+    /// w = min(1, `evidenceDistanceM` / `roadCorrelationM`). Not engaged
+    /// (cloud too wide) and no road near any particle are exact no-ops: no
+    /// random number is drawn, and the distance keeps counting towards the
+    /// next update.
+    mutating func roadUpdate(evidenceDistanceM: Double) {
+        // Moved out for the update, so its cache is not copied on write.
+        guard let plane = tangentPlane, var matcher = roads.take() else { return }
+        defer { roads = matcher }
+        guard cloudSemiMajorM() <= config.roadEngageMaxEllipseM else {
+            roadShare = nil
+            roadMatchedEdge = nil
+            return
+        }
+        let w = min(1, abs(evidenceDistanceM) / config.roadCorrelationM)
+        let n = east.count
+        let q = RoadMatcher.Parameters(config: config)
+
+        // Step 0: is there any road within R of some particle's mean?
+        matcher.beginUpdate()
+        var cells = [(cx: Int32, cy: Int32)](repeating: (0, 0), count: n)
+        for i in 0..<n { cells[i] = matcher.cell(east: east[i], north: north[i], plane: plane) }
+        var slots = matcher.storeIndices(of: cells, plane: plane)
+        var anyRoad = false
+        for i in 0..<n where matcher.anySegment(inStoreCell: slots[i], px: east[i], py: north[i], radius: q.radius) {
+            anyRoad = true
+            break
+        }
+        guard anyRoad, w > 0 else {
+            if !anyRoad {
+                counters.roadUpdatesNoRoad += 1
+                roadShare = 0
+                roadMatchedEdge = nil
+            }
+            return
+        }
+        counters.roadUpdates += 1
+
+        // Step 1: split Gaussians wider than σs, one Gaussian pair each. A
+        // Gaussian already split to σs reads back a few ulps above it: the
+        // relative margin keeps it from splitting again by nothing.
+        let split2 = config.roadSplitSigmaM * config.roadSplitSigmaM
+        let splitAbove = split2 * (1 + 1e-9)
+        var moved = false
+        for i in 0..<n {
+            let a = covEE[i], b = covEN[i], c = covNN[i]
+            let mean = (a + c) / 2
+            let radius = (((a - c) / 2) * ((a - c) / 2) + b * b).squareRoot()
+            let l1 = mean + radius, l2 = mean - radius
+            guard l1 > splitAbove else { continue }
+            counters.roadSplits += 1
+            let (z1, z2) = rng.nextGaussianPair()
+            let theta = 0.5 * atan2(2 * b, a - c)
+            let v1e = cos(theta), v1n = sin(theta)
+            let v2e = -v1n, v2n = v1e
+            let s1 = (l1 - split2).squareRoot() * z1
+            east[i] += v1e * s1
+            north[i] += v1n * s1
+            var k2 = l2
+            if l2 > splitAbove {
+                let s2 = (l2 - split2).squareRoot() * z2
+                east[i] += v2e * s2
+                north[i] += v2n * s2
+                k2 = split2
+            }
+            covEE[i] = split2 * v1e * v1e + k2 * v2e * v2e
+            covEN[i] = split2 * v1e * v1n + k2 * v2e * v2n
+            covNN[i] = split2 * v1n * v1n + k2 * v2n * v2n
+            moved = true
+        }
+        if moved {
+            for i in 0..<n { cells[i] = matcher.cell(east: east[i], north: north[i], plane: plane) }
+            slots = matcher.storeIndices(of: cells, plane: plane)
+        }
+
+        // Steps 2–4: candidate, mixture weight, cross-track update.
+        let epsilon = config.roadOffRoadProbability
+        let offRoad = epsilon / (2 * q.radius * 2 * .pi)
+        let rw = q.sigmaRoad2 / w
+        let coupling = config.roadAlongTrackCoupling
+        var work = RoadMatcher.Work()
+        var responsibility = [Double](repeating: 0, count: n)
+        var chosen = [UInt32](repeating: RoadMatcher.noEdge, count: n)
+        var chosenLevel = [Int8](repeating: RoadGeometry.unknownLevel, count: n)
+        for i in 0..<n {
+            let psi = heading[i]
+            let candidate = matcher.best(
+                inStoreCell: slots[i], px: east[i], py: north[i], sinPsi: sin(psi), cosPsi: cos(psi),
+                ee: covEE[i], en: covEN[i], nn: covNN[i], level: roadLevel[i], edge: roadEdge[i],
+                parameters: q, work: &work
+            )
+            guard let e = candidate else {
+                logWeight[i] += w * log(offRoad)
+                continue
+            }
+            let onRoad = (1 - epsilon) * exp(e.logLikelihood)
+            let p = onRoad + offRoad
+            let r = onRoad / p
+            logWeight[i] += w * log(p)
+            responsibility[i] = r
+            chosen[i] = e.edge
+            chosenLevel[i] = e.level
+            // Road frame: h across (towards the particle), t along.
+            let hx = e.hx, hy = e.hy, tx = -hy, ty = hx
+            let pee = covEE[i], pen = covEN[i], pnn = covNN[i]
+            let paa = tx * tx * pee + 2 * tx * ty * pen + ty * ty * pnn
+            let pac = tx * hx * pee + (tx * hy + ty * hx) * pen + ty * hy * pnn
+            let pcc = hx * hx * pee + 2 * hx * hy * pen + hy * hy * pnn
+            let u = RoadMatcher.crossTrackUpdate(paa: paa, pac: pac, pcc: pcc, distance: e.distance, rw: rw,
+                                                 coupling: coupling)
+            // Moment-matched with the off-road branch, as a change to P so
+            // that an unchanged road-frame entry stays bit-exact:
+            // P ← P + r (P_upd − P) + r (1 − r) Δμ Δμᵀ.
+            let mix = r * (1 - r)
+            let dAA = r * (u.paa - paa) + mix * u.da * u.da
+            let dAC = r * (u.pac - pac) + mix * u.da * u.dc
+            let dCC = r * (u.pcc - pcc) + mix * u.dc * u.dc
+            east[i] += r * (u.da * tx + u.dc * hx)
+            north[i] += r * (u.da * ty + u.dc * hy)
+            covEE[i] += tx * tx * dAA + 2 * tx * hx * dAC + hx * hx * dCC
+            covEN[i] += tx * ty * dAA + (tx * hy + ty * hx) * dAC + hx * hy * dCC
+            covNN[i] += ty * ty * dAA + 2 * ty * hy * dAC + hy * hy * dCC
+        }
+        counters.roadCandidateTests += work.tests
+        counters.roadLevelBlocked += work.levelBlocked
+        normalizeWeights()
+
+        // Step 5: bookkeeping, and the share and edge for the estimate,
+        // with the posterior weights.
+        var share = 0.0
+        var byEdge: [(edge: UInt32, mass: Double)] = []
+        for i in 0..<n {
+            let r = responsibility[i]
+            if r >= 0.5 {
+                roadEdge[i] = chosen[i]
+                roadLevel[i] = chosenLevel[i]
+                offRoadM[i] = 0
+            } else {
+                offRoadM[i] += abs(evidenceDistanceM)
+                if offRoadM[i] > config.roadLevelForgetM { roadLevel[i] = RoadGeometry.unknownLevel }
+            }
+            if r > 0 {
+                share += weight[i] * r
+                byEdge.append((chosen[i], weight[i] * r))
+            }
+        }
+        byEdge.sort { $0.edge < $1.edge }
+        var best: (edge: UInt32, mass: Double)?
+        var k = 0
+        while k < byEdge.count {
+            let edge = byEdge[k].edge
+            var mass = 0.0
+            while k < byEdge.count && byEdge[k].edge == edge {
+                mass += byEdge[k].mass
+                k += 1
+            }
+            if best.map({ mass > $0.mass }) ?? true { best = (edge, mass) }
+        }
+        roadShare = share
+        roadMatchedEdge = share > 0 ? best.map { matcher.matchedEdge($0.edge) } : nil
+        roadDistanceM = 0
+        resampleIfNeeded()
+    }
+
+    /// The GNSS fix gate: a fix with a valid speed is ignored as a whole
+    /// when roads are loaded and cover it, fresh OBD speed is at least
+    /// `roadFixGateMinKmh`, the last road update put at least
+    /// `roadFixGateOnRoadShare` of the cloud on a road, and no segment of
+    /// any level lies within max(`roadFixGateMinM`, `roadFixGateSigma` · σ)
+    /// of the (latency-shifted) fix — heading-compatible with its course
+    /// when that is valid. Judged at the fix, not near the estimate: a fix
+    /// on another road far from a wrong estimate is accepted, or the filter
+    /// would confirm its own error (Q4).
+    private mutating func rejectsOffRoad(
+        east e: Double, north n: Double, sigma: Double, course: Double?, arrivalNs: Int64, plane: LocalTangentPlane
+    ) -> Bool {
+        guard roadsActive, config.roadFixGateSigma > 0,
+              isFresh(at: arrivalNs), let kmh = obdSpeedKmh, kmh >= config.roadFixGateMinKmh,
+              let share = roadShare, share >= config.roadFixGateOnRoadShare,
+              var matcher = roads.take() else { return false }
+        defer { roads = matcher }
+        let p = plane.geodetic(east: e, north: n)
+        guard matcher.network.covers(latitude: p.latitude, longitude: p.longitude) else { return false }
+        let radius = max(config.roadFixGateMinM, config.roadFixGateSigma * sigma)
+        let cosGate = cos(min(180, config.roadHeadingGateDeg) * .pi / 180)
+        let near = matcher.anyCompatibleSegment(east: e, north: n, radius: radius, course: course,
+                                                cosHeadingGate: cosGate, plane: plane)
+        return !near
+    }
+
     // MARK: Weights and resampling
 
     /// Internal, not private: the ring-consistency tests skew the weights
@@ -1309,6 +1612,8 @@ public struct NavigationEngine: Sendable {
         var newEast = east, newNorth = north, newEE = covEE, newEN = covEN, newNN = covNN
         var newHeading = heading, newScale = scale, newOffset = speedOffset
         var newMotionEast = motionEast, newMotionNorth = motionNorth
+        let withRoads = !roadEdge.isEmpty
+        var newRoadEdge = roadEdge, newRoadLevel = roadLevel, newOffRoad = offRoadM
         for i in 0..<n {
             let k = indices[i]
             newEast[i] = east[k]
@@ -1321,6 +1626,16 @@ public struct NavigationEngine: Sendable {
             newOffset[i] = speedOffset[k]
             newMotionEast[i] = motionEast[k]
             newMotionNorth[i] = motionNorth[k]
+            if withRoads {
+                newRoadEdge[i] = roadEdge[k]
+                newRoadLevel[i] = roadLevel[k]
+                newOffRoad[i] = offRoadM[k]
+            }
+        }
+        if withRoads {
+            roadEdge = newRoadEdge
+            roadLevel = newRoadLevel
+            offRoadM = newOffRoad
         }
         motionRing.remap(indices)
         east = newEast
@@ -1466,7 +1781,9 @@ public struct NavigationEngine: Sendable {
             speedScaleStd: ms2.squareRoot(),
             effectiveSampleSize: effectiveSampleSize,
             converged: headingStdDeg < config.convergedHeadingStdDeg,
-            stationary: lastStepStationary
+            stationary: lastStepStationary,
+            onRoadShare: roadShare,
+            matchedEdge: roadMatchedEdge
         )
     }
 
