@@ -1,0 +1,47 @@
+# UX backlog (driver-facing app)
+
+Separate from `docs/BACKLOG.md` (review findings). These are product changes
+requested by the user on 2026-10-13. Owner: `ios-ui-engineer`, with
+`sensors-logging-engineer` for anything that starts, stops or changes a
+recording, and `navigation-engineer` for anything that changes what the
+engine receives. Status: OPEN until done.
+
+## Constraints that apply to every item
+
+- **Navigation today runs on a recording.** `NavigationService` is fed by the
+  sample tap of a `RecordingSession`, and every run writes a sidecar next to
+  its recording, so a drive can be replayed bit-exactly. UX-1 adds a Navigate
+  mode for daily use that writes nothing: the same tap, clock and rates, a sink
+  without a writer. Record stays exactly as it is, for test drives. The engine
+  must not be able to tell the two modes apart.
+- **Log format and logger timing unchanged.** No new event kinds, no change
+  to `LogFormatVersion`, rates or the sample tap. UI-only state stays out of
+  the log.
+- **Safety.** Nothing here may add interaction while driving. Anything the
+  driver must do stays possible at a stop, with large targets.
+- **Manual fix rules unchanged:** double tap at the finger, 300 m visible-span
+  rule, undo window.
+- **Tests:** pure logic in the `MapCameraLogicTests` pattern; device checks go
+  to `docs/PLAN.md` §6 as "not verified".
+
+## Items
+
+| ID | Item | Proposed behaviour | Open decisions (proposed default) | Acceptance | Owner | Status |
+|---|---|---|---|---|---|---|
+| UX-1 | Navigate mode: start navigation as soon as OBD connects, **no file written** (decided 2026-10-13) | Two modes. **Navigate** (daily use, default, automatic): when the link reaches `polling`, sensors + OBD start and feed `NavigationService` through the same sample tap, clock and rates as a recording, but nothing is written: no recording, no sidecar. **Record** (test drives, in Settings, manual): **unchanged** — today's flow, checklist, calibration, recording + sidecar, every existing test green. Starting Record while navigating: stop Navigate's engine and start Record's own fresh session exactly as today (no hand-over, so a recording is still replayable bit-exactly from its start). Stopping Record returns to Navigate if OBD is still connected. Navigate stops when OBD stays disconnected for N min (default 5) or the app is closed. | **Decided 2026-10-13:** (a) 5 s still calibration when OBD speed is 0 at connect, skipped when already moving. (b) Pre-drive checklist (mount, orientation) once, at the first launch of the app on the phone; stored, not asked again in Navigate (Record keeps its own checklist as today). (c) Auto-stop after 5 min without OBD. (e) Pins in Navigate are position resets for the engine and are not stored. (d) Without OBD: no dead reckoning; the map shows the plain GPS position with "Connect OBD for navigation without GPS", and Navigate starts the engine when OBD connects. A fallback mode without OBD is UX-7, decided by the NAV-NOOBD numbers. | Navigate writes nothing while driving (Files app shows no new file; no sidecar); engine inputs in Navigate are identical to a recording of the same sensors (test: the same simulated sources through both modes give the same estimates); reconnect mid-drive keeps the engine; Record behaviour and its tests unchanged; switching Navigate → Record → Navigate works and Record's file starts at its own Start. Memory and battery over 1 h of Navigate measured on the device (PLAN §6). Log format untouched. | sensors-logging (sink without a writer, mode state machine) + ios-ui (modes, Settings) + navigation (engine fed without a sidecar) | OPEN |
+| NAV-NOOBD | Experiment first: how good is navigation without OBD? | Replay only, no app change: `replay_nav` with OBD speed withheld (a new `--obd none` mode, causal, like `--gps`), the engine getting speed only from what is left — GPS speed before jamming, network fixes (tower ~1 km, Wi-Fi tens of metres) and, with `--roads`, the road graph. Run on drive-7 (30 min jammed, network fixes incl. Wi-Fi), jammed-A/B and manual, seeds 1–5, against the same drives with OBD. Report position error vs distance, ellipse size and consistency. Decide (d) from the numbers. | What the engine does with unknown speed today (stale-speed OU model) may need a speed-from-fixes estimate; measure the plain engine first. | A table with OBD vs without OBD per drive; a recommendation for UX-1 (d). | navigation | OPEN |
+| UX-7 | Navigate without OBD as a fallback mode (only if NAV-NOOBD says so) | If NAV-NOOBD shows, with roads, position error ≤ 100–200 m in the city without OBD: Navigate also runs without OBD, fed by network fixes (cell, Wi-Fi) and roads, with an honest ellipse and a visible label "No OBD — lower accuracy". If the error is around a kilometre: not built; UX-1 (d) stays (plain GPS position + "Connect OBD"). | Exact threshold and where it is measured (drive-7 jammed stretch with roads, jammed-A/B), decided when the table is in. | NAV-NOOBD table; the user decides build / not build. | navigation + ios-ui | BLOCKED by NAV-NOOBD |
+| UX-1b | Later, optional: "save the last N min" from Navigate | A bounded RAM buffer of the last N min that can be saved as a recording when something interesting happens. Not now; revisit only if test drives stop being enough. Caveat: a clip starts mid-drive, so its replay starts a fresh engine and is not bit-exact with what the driver saw. | buffer length, auto-save triggers | — | sensors-logging | PARKED |
+| UX-2 | Map tab is the default | The app opens on Map. `-uiTab` debug override stays. | — | Cold launch shows Map; tab order Map first. | ios-ui | OPEN |
+| UX-3 | Record screen moves into Settings | New Settings tab (gear). Inside: "Recording" (today's Record screen: checklist, start/stop, live stats, auto-start settings from UX-1), "Console" (UX-4), "About/diagnostics". Map gets a small recording indicator (red dot + elapsed time) with Stop behind a confirmation, so the driver can stop without leaving the map. Tabs: Map · Sessions · Settings. | Keep a manual Start on the map when auto-start is off? (default yes, same button as the indicator). | Every Record function reachable in Settings; no feature lost; Stop from the map asks for confirmation. | ios-ui | OPEN |
+| UX-4 | Console moves into Settings | Console becomes a Settings row (push navigation), unchanged inside, including the recording-time guards (Disconnect/Forget confirmation, scan gating). | — | Console behaviour and its tests unchanged; reachable in two taps. | ios-ui | OPEN |
+| UX-5 | Map info block: speed and source only | Replace the block ("REFERENCE GPS — not used by the recorder", ±accuracy, band label, "No fix yet…", thermal line) with one large speed value and a source chip: `54 km/h · OBD` or `54 km/h · GPS`. Source rule: OBD if a 7E8 vehicle-speed reply ≤ 2 s old (same freshness as the engine), else GPS if the latest fix has a valid speed, else `— km/h`. OBD shows the integer as received (no +0.5). The hidden 1 s long-press for the nav stats moves to the speed value. Thermal moves to Settings and the stats overlay. | (a) Keep GPS quality visible in the chip colour (green ≤ 15 m, amber ≤ 100 m, grey for network fixes)? (default yes — it is the only sign of jamming on the map). (b) Keep the "Calibrating heading" hint? (default yes, as a small icon). | Pure-logic tests for the source rule (fresh/stale OBD, invalid GPS speed, none) and formatting; long-press still toggles stats. | ios-ui | OPEN |
+| UX-6 | Speed-dependent zoom (Waze-like) | While following, camera distance follows speed: ~250 m below 20 km/h, ~500 m at 50, ~900 m at 80, ~1500 m at 110+, interpolated, smoothed (time constant ~3 s) with hysteresis, so it does not pump at lights. Optional pitch at speed. Interaction with existing rules: a driver pinch switches to the driver's zoom until re-centre (today's FollowZoom); the ellipse fit (FollowSpan) wins when it needs more; heading-up unchanged. | (a) Exact table (default above, as config constants). (b) Pitch 0° or 30–45° at speed? (default 0°: pins and the 300 m span rule assume a top-down map). (c) Note: above ~300 m span a double tap is refused with "Zoom in…" but still zooms in, so the second double tap passes — acceptable? (default yes). | Pure-logic tests: table, smoothing, hysteresis, pinch override, ellipse fit precedence, re-centre returns to auto. Device check: no visible pumping at 0↔30 km/h. | ios-ui | OPEN |
+
+## Order
+
+UX-2 → UX-5 → UX-6 (map only, no recording change), then UX-3 + UX-4
+(navigation structure), then UX-1 (changes when recordings start and stop,
+so it goes through `sensors-logging-engineer` and the full review). Each
+step: `xcodegen generate` if files change, simulator build, app tests on a
+concrete simulator id, `/review-loop`, merge; device items to PLAN.md §6.
