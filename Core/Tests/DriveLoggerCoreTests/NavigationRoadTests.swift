@@ -624,6 +624,46 @@ struct NavigationRoadTests {
         }
     }
 
+    /// R21.3-4: the level rule's boundary, `roadLevelHops` itself. The
+    /// street's middle edge (x 60…200) meets the ramp at x = 200, and the
+    /// ramp meets the bridge: the bridge is exactly 2 hops from it (and 3
+    /// from the crossing edge under the bridge). Particles as in
+    /// `levelRuleHops`, even on the middle edge, odd on the crossing one.
+    /// Hops 2 (default): exactly 2 admits, 3 blocks. Hops 1: both blocked.
+    /// Hops 3: both admitted.
+    @Test("5. Level rule boundary: a bridge exactly roadLevelHops away is admitted, one hop further is blocked (hops 1, 2, 3)")
+    func levelRuleHopBoundary() throws {
+        let net = try RoadNetwork(packs: [RoadFixture.build(RoadGraphTests.bridgeLines())])
+        let pack = net.packs[0]
+        let bridge = try #require(RoadFixture.edgeIndices(of: pack, way: 101).first)
+        let street = RoadFixture.edgeIndices(of: pack, way: 100)
+        let crossing = street[0]
+        let middle = try #require(street.first { e in
+            let xs = RoadFixture.points(of: pack, edge: e).map { RoadFixture.metres($0).east }
+            return abs(xs.min()! - 60) < 1 && abs(xs.max()! - 200) < 1
+        })
+        #expect(pack.isEdge(bridge, withinHops: 2, of: middle) && !pack.isEdge(bridge, withinHops: 1, of: middle))
+        #expect(pack.isEdge(bridge, withinHops: 3, of: crossing) && !pack.isEdge(bridge, withinHops: 2, of: crossing))
+        for (hops, middleAdmitted, crossingAdmitted) in [(2, true, false), (1, false, false), (3, true, true)] {
+            var engine = Self.directEngine(net) { $0.roadLevelHops = hops }
+            #expect(engine.config.roadLevelHops == hops)
+            Self.place(&engine, at: (2, 100), heading: 0, level: 0)
+            for i in engine.roadEdge.indices { engine.roadEdge[i] = UInt32(i % 2 == 0 ? middle : crossing) }
+            engine.roadUpdate(evidenceDistanceM: 30)
+            #expect(engine.counters.roadUpdates == 1, "hops \(hops)")
+            let blocked = (middleAdmitted ? 0 : 50) + (crossingAdmitted ? 0 : 50)
+            #expect(engine.counters.roadLevelBlocked == blocked, "hops \(hops)")
+            for i in engine.east.indices {
+                let (admitted, own) = i % 2 == 0 ? (middleAdmitted, middle) : (crossingAdmitted, crossing)
+                if admitted {
+                    #expect(engine.roadEdge[i] == UInt32(bridge) && engine.roadLevel[i] == 1, "hops \(hops), particle \(i)")
+                } else {
+                    #expect(engine.roadEdge[i] == UInt32(own) && engine.roadLevel[i] == 0, "hops \(hops), particle \(i)")
+                }
+            }
+        }
+    }
+
     /// The particles of `engine` (initialised at the plane origin) all at
     /// plane point `at` with P = 25·I and `heading`, on `edge` at `level`
     /// (any of them may be overridden per particle afterwards).
@@ -772,6 +812,51 @@ struct NavigationRoadTests {
             e.roadUpdate(evidenceDistanceM: 30)
             #expect(e.roadEdge.allSatisfy { $0 == global }, "\(p)")
             #expect(e.estimate(at: S.ms(0.05))?.matchedEdge == expected, "\(p)")
+        }
+    }
+
+    /// R21.3-5: `RoadMatcher.storeIndices` on both paths. Cells [A, F, A, C]
+    /// map to store indices [0, 1, 0, 2] (first-appearance order, a repeat
+    /// reuses its index), and each store slice holds exactly that cell's
+    /// segments in the plane. F is 150 cells east and north of A, so the
+    /// bounding box (151 × 151 > 128 × 128) takes the dictionary fallback;
+    /// with F 78 cells away it takes the dense window. A, F and C each hold
+    /// a different street.
+    @Test("RoadMatcher.storeIndices: first-appearance indices and per-cell slices, on the dense window and the dictionary fallback")
+    func storeIndicesBothPaths() throws {
+        let net = try Self.network([
+            Self.street(1, from: (0, -100), to: (0, 100)),
+            Self.street(2, from: (9600, 9500), to: (9600, 9700)),
+            Self.street(3, from: (5000, 4900), to: (5000, 5100)),
+            Self.street(4, from: (-300, 100), to: (-300, 300)),
+        ])
+        var matcher = RoadMatcher(network: net)
+        let plane = S.plane
+        let a = matcher.cell(east: 0, north: 0, plane: plane)
+        let c = matcher.cell(east: -300, north: 200, plane: plane)
+        for (far, fallback) in [((9600.0, 9600.0), true), ((5000.0, 5000.0), false)] {
+            let f = matcher.cell(east: far.0, north: far.1, plane: plane)
+            let cells = [a, f, a, c]
+            let xs = cells.map { Int64($0.cx) }, ys = cells.map { Int64($0.cy) }
+            let box = (xs.max()! - xs.min()! + 1) * (ys.max()! - ys.min()! + 1)
+            #expect((box > Int64(RoadMatcher.maxWindowCells)) == fallback, "box \(box) cells")
+            matcher.beginUpdate()
+            #expect(matcher.storeIndices(of: cells, plane: plane) == [0, 1, 0, 2], "fallback \(fallback)")
+            let store = matcher.store
+            #expect(store.start.count == 4, "fallback \(fallback)")
+            var ways: [Set<Int64>] = []
+            for (k, cell) in [a, f, c].enumerated() {
+                let expected = matcher.planeCell(cx: cell.cx, cy: cell.cy, plane: plane)
+                let r = store.start[k]..<store.start[k + 1]
+                #expect(expected.count > 0 && r.count == expected.count, "fallback \(fallback), cell \(k)")
+                #expect(Array(store.cells.ax[r]) == expected.ax && Array(store.cells.ay[r]) == expected.ay)
+                #expect(Array(store.cells.ux[r]) == expected.ux && Array(store.cells.uy[r]) == expected.uy)
+                #expect(Array(store.cells.length[r]) == expected.length && Array(store.cells.edge[r]) == expected.edge)
+                #expect(Array(store.cells.oneway[r]) == expected.oneway && Array(store.cells.level[r]) == expected.level)
+                #expect(Array(store.cells.way[r]) == expected.way && Array(store.cells.index[r]) == expected.index)
+                ways.append(Set(expected.way))
+            }
+            #expect(ways == [[1], [fallback ? 2 : 3], [4]], "fallback \(fallback)")
         }
     }
 
@@ -995,10 +1080,13 @@ struct NavigationRoadTests {
         #expect(abs(Self.meanOffset(engine).east) < 4, "east \(Self.meanOffset(engine).east) m")
 
         // Directly: on the southbound carriageway's centreline, a
-        // southbound particle takes it, and a northbound one has only the
+        // southbound particle takes it, and a northbound one takes the
         // northbound carriageway 15 m away (P wide enough that it is the
-        // likelier explanation: r ≥ 0.5). Without the oneway rule the
-        // northbound particle would take the road it sits on.
+        // likelier explanation: r ≥ 0.5). The oneway direction gate is not
+        // what decides here: without it the southbound carriageway would be
+        // a candidate at dψ = π, whose heading likelihood (z = 18 at σψ
+        // 10°) loses to the other carriageway anyway. `onewayDirectionGate`
+        // tests the gate on its own.
         var probe = engine
         let plane = try #require(probe.tangentPlane)
         let onSouthbound = S.plane.geodetic(east: 15, north: S.plane.enu(latitude: est.latitude, longitude: est.longitude).north)
@@ -1018,6 +1106,51 @@ struct NavigationRoadTests {
         #expect(probe.counters.roadSplits == engine.counters.roadSplits)
         for i in probe.east.indices {
             #expect(probe.roadEdge[i] == (i % 2 == 0 ? north : south), "particle \(i)")
+        }
+    }
+
+    /// R21.3-3: Step 2's oneway direction gate on its own. A lone
+    /// northbound oneway along x = 0; particles on its centreline (d = 0,
+    /// P = 25·I) heading south, against it. The gate admits a oneway only
+    /// within `roadHeadingGateDeg` of its forward bearing, so there is no
+    /// candidate at all: no edge, share exactly 0, no matched edge. At
+    /// σψ 60° the heading term alone would not save it: a candidate there
+    /// (dψ = π, z = 3) would have r ≥ 0.5 and be taken. Heading north, the
+    /// same particles take it.
+    @Test("6. Oneway direction gate: on a oneway's centreline heading against it, no candidate (share 0, no edge), even at σψ 60° where r would be ≥ 0.5")
+    func onewayDirectionGate() throws {
+        let net = try Self.network([
+            RoadFixture.way(1, ["highway": "primary", "oneway": "yes"], [N(id: 10, east: 0, north: -3000), N(id: 11, east: 0, north: 3000)]),
+        ])
+        let edge = UInt32(try #require(RoadFixture.edgeIndices(of: net.packs[0], way: 1).first))
+        for sigmaDeg in [10.0, 60.0] {
+            var engine = Self.directEngine(net) { $0.roadHeadingSigmaDeg = sigmaDeg }
+            let c = engine.config
+            if sigmaDeg == 60 {
+                // Closed form at d = 0, dψ = π, S₀ = 25 + σr².
+                let s0 = 25 + c.roadSigmaM * c.roadSigmaM
+                let sigmaPsi = sigmaDeg * .pi / 180
+                let z = Double.pi / sigmaPsi
+                let onRoad = (1 - c.roadOffRoadProbability) * exp(-0.5 * z * z) / s0.squareRoot() / (2 * .pi * sigmaPsi)
+                let offRoad = c.roadOffRoadProbability / (2 * c.roadSearchRadiusM * 2 * .pi)
+                let r = onRoad / (onRoad + offRoad)
+                #expect(r >= 0.5, "without the gate, r = \(r)")
+            }
+            Self.place(&engine, at: (0, 0), heading: .pi)
+            var against = engine
+            against.roadUpdate(evidenceDistanceM: 30)
+            #expect(against.counters.roadUpdates == 1 && against.counters.roadUpdatesNoRoad == 0, "σψ \(sigmaDeg)")
+            #expect(against.roadEdge.allSatisfy { $0 == RoadMatcher.noEdge }, "σψ \(sigmaDeg)")
+            #expect(against.east.allSatisfy { $0 == 0 }, "σψ \(sigmaDeg): not moved")
+            let estimate = try #require(against.estimate(at: S.ms(0.05)))
+            #expect(estimate.onRoadShare == 0, "σψ \(sigmaDeg): share \(String(describing: estimate.onRoadShare))")
+            #expect(estimate.matchedEdge == nil, "σψ \(sigmaDeg)")
+
+            Self.place(&engine, at: (0, 0), heading: 0)
+            var with = engine
+            with.roadUpdate(evidenceDistanceM: 30)
+            #expect(with.roadEdge.allSatisfy { $0 == edge }, "σψ \(sigmaDeg): heading north takes it")
+            #expect(with.estimate(at: S.ms(0.05))?.matchedEdge?.osmWayID == 1, "σψ \(sigmaDeg)")
         }
     }
 
@@ -1117,7 +1250,7 @@ struct NavigationRoadTests {
         #expect(engine.counters.fixesRejectedOffRoad == 0)
     }
 
-    @Test("8. Fix gate: slow, off-road cloud, network fix, or outside coverage: never gated")
+    @Test("8. Fix gate: slow, network fix, outside coverage, or a fix whose gate reaches the road: never gated")
     func fixGateConditions() throws {
         let ring = [RoadFixture.point(-500, -1000), RoadFixture.point(500, -1000), RoadFixture.point(500, 1000), RoadFixture.point(-500, 1000)]
         let net = try Self.network([Self.street(1, from: (0, -3000), to: (0, 3000))], coverage: [ring])
@@ -1144,6 +1277,94 @@ struct NavigationRoadTests {
         #expect(rejected(speed: 15, fixEast: 200, network: true) == 0)
         #expect(rejected(speed: 15, fixEast: 800) == 0)         // outside coverage
         #expect(rejected(speed: 15, fixEast: 200, accuracy: 120) == 0)  // G = 3σ ≈ 238 m reaches the road
+    }
+
+    /// The car drives north on x = 0 at 15 m/s (fresh OBD, 54 km/h) from
+    /// (0, −500); a clean fix every second for 10 s, then one at 40 s moved
+    /// 200 m east. Coverage is a 4 km square, so the fix is inside it.
+    /// Returns the rejected-fix count and the on-road share the gate read
+    /// (the last road update's, just before the 40 s fix).
+    static func gateRun(_ lines: [String], obdUntil: Double? = nil,
+                        _ edit: (inout NavigationConfig) -> Void = { _ in }) throws
+        -> (rejected: Int, share: Double?, engine: NavigationEngine) {
+        let ring = [RoadFixture.point(-2000, -2000), RoadFixture.point(2000, -2000),
+                    RoadFixture.point(2000, 2000), RoadFixture.point(-2000, 2000)]
+        let net = try Self.network(lines, coverage: [ring])
+        let drive = Self.northDrive(seconds: 50, speed: 15)
+        let clean = S.cleanFix()
+        let events = drive.events(obdSpeed: { t, s in
+            obdUntil.map { t >= $0 } == true ? nil : (s.speed * 3.6).rounded(.down)
+        }, fix: { t, s, r in
+            guard t < 10 || S.at(t, 40), var f = clean(t, s, &r) else { return nil }
+            f.north -= 500
+            if S.at(t, 40) { f.east += 200 }
+            return f
+        })
+        var engine = NavigationEngine(config: Self.config(particles: 300, edit), roads: net)
+        var share: Double?? = .none
+        for input in S.inputs(events) {
+            if case .location(_, let t) = input, t > S.ms(30) {
+                share = .some(engine.estimate(at: input.arrival)?.onRoadShare)
+            }
+            engine.ingest(input)
+        }
+        let read = try #require(share, "the 40 s fix was ingested")
+        return (engine.counters.fixesRejectedOffRoad, read, engine)
+    }
+
+    /// R21.3-1: the gate needs the last road update's on-road share ≥
+    /// `roadFixGateOnRoadShare`. An off-road cloud (share 0) or one with no
+    /// road update engaged (share nil) never gates, even at speed with the
+    /// fix 200 m from any road; the same drive on the road gates it.
+    @Test("8. Fix gate on-road share: an off-road cloud (share 0: no road near, or no candidate) or an unengaged one (nil) never gates")
+    func fixGateOnRoadShare() throws {
+        // Control: on the road x = 0, share ≥ 0.8: the fix is rejected.
+        let on = try Self.gateRun([Self.street(1, from: (0, -3000), to: (0, 3000))])
+        #expect(on.rejected == 1)
+        #expect((on.share ?? 0) >= 0.8, "share \(String(describing: on.share))")
+
+        // No road within R of the cloud (the only road is x = 1000): every
+        // update is a no-road update, share 0. The fix is 800 m from it.
+        let far = try Self.gateRun([Self.street(1, from: (1000, -3000), to: (1000, 3000))])
+        #expect(far.share == 0)
+        #expect(far.engine.counters.roadUpdatesNoRoad > 0 && far.engine.counters.roadUpdates == 0)
+        #expect(far.rejected == 0)
+
+        // A road within R but no candidate: a southbound oneway 30 m east of
+        // the northbound car. Engaged updates, every r = 0: share 0. The
+        // fix (course north) is 170 m from it and against it.
+        let oneway = RoadFixture.way(2, ["highway": "residential", "oneway": "yes"],
+                                     [N(id: 20, east: 30, north: 3000), N(id: 21, east: 30, north: -3000)])
+        let against = try Self.gateRun([oneway])
+        #expect(against.share == 0)
+        #expect(against.engine.counters.roadUpdates > 0)
+        #expect(against.rejected == 0)
+
+        // On the road but never engaged (roadEngageMaxEllipseM 0.5 m):
+        // share nil.
+        let unengaged = try Self.gateRun([Self.street(1, from: (0, -3000), to: (0, 3000))]) {
+            $0.roadEngageMaxEllipseM = 0.5
+        }
+        #expect(unengaged.share == nil)
+        #expect(unengaged.engine.counters.roadUpdates == 0 && unengaged.engine.counters.roadUpdatesNoRoad == 0)
+        #expect(unengaged.rejected == 0)
+    }
+
+    /// R21.3-2: the gate needs fresh OBD speed. OBD stops at 36 s, so at
+    /// the 40 s fix the held 54 km/h is 4 s old (> `obdMaxAgeS` 2 s) while
+    /// the cloud is still on the road (share ≥ 0.8): not gated. With OBD
+    /// fresh, the same fix is rejected.
+    @Test("8. Fix gate: stale OBD speed (held, 4 s old) at speed on the road never gates; fresh OBD does")
+    func fixGateStaleOBD() throws {
+        let road = [Self.street(1, from: (0, -3000), to: (0, 3000))]
+        let fresh = try Self.gateRun(road)
+        #expect((fresh.share ?? 0) >= 0.8, "share \(String(describing: fresh.share))")
+        #expect(fresh.rejected == 1)
+
+        let stale = try Self.gateRun(road, obdUntil: 36)
+        #expect(stale.engine.counters.staleSpeedSteps > 0)
+        #expect((stale.share ?? 0) >= 0.8, "share \(String(describing: stale.share))")
+        #expect(stale.rejected == 0)
     }
 
     /// The gate judges heading compatibility with the fix's own course. The
