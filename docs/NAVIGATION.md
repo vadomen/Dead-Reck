@@ -428,7 +428,8 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   [--hold-out-acc <m>] [--truth ../logs/truth.json] [--seed N|header] [--particles N] \
   [--set <configKey>=<number>] [--out ../logs/out] \
   [--as-live | --file-order] [--compare <log.nav.jsonl> [--tolerance <m>] [--heading-tolerance <deg>]] \
-  [--write-sidecar <out.nav.jsonl>] [--pin-pair-window <s>] [--strict]
+  [--write-sidecar <out.nav.jsonl>] [--pin-pair-window <s>] [--strict] \
+  [--roads <pack.roadpack>]... [--wrong-road-tolerance <m>]
 ```
 
 - Inputs: motion, OBD, location and manualFix from any v1–v3 recording, fed in
@@ -450,6 +451,29 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   `LogRecovery.strict` and stops with status 3 on any damage, a truncated
   tail included, before `metrics.json` and `metrics.md` are updated. Every
   acceptance drive reads clean.
+- **Roads** (N3.2b; replay only, refused with `--compare` and
+  `--write-sidecar`): `--roads` (repeatable, load order, each pack fully
+  verified) gives the engine `NavigationEngine(config:roads:)`. The mode label
+  gets `-roads-<first 8 hex of roadSetHash>`. `roads` (per pack: content
+  hash, format, OSM timestamp, grid) and `roadSetHash` are in the summary,
+  `metrics.json`, `metrics.md` and the GeoJSON track, with "© OpenStreetMap
+  contributors". The road metrics (docs/N3_PLAN.md, "Metrics added to
+  replay_nav"; `ReplayRoadMetrics`, `NavigationReplay.RoadTruth`):
+  - road truth (offline) per withheld clean fix: matched, ambiguous, no road
+    (no heading-compatible edge within 15 m), no usable course (GNSS speed
+    under 3 m/s);
+  - wrong-road share by fixes and by OBD distance (right / wrong / off /
+    not engaged, `--wrong-road-tolerance`, default 20 m). It checks capture
+    onto a wrong *mapped* road only;
+  - unmapped / captured (R21.1-11): withheld clean fixes > 15 m from every
+    edge, and how many of those had the estimate on a mapped edge, < 25 m
+    across, truth outside the 95 % ellipse;
+  - residuals per highway class (p50/p95, censored at 15 m), on-road share at
+    1 Hz, candidate tests per road update and particle, rejected fixes.
+
+  The GeoJSON adds `matchedEdge` (the engine's matched OSM edge every 10 s)
+  and `fixRejectedOffRoad` (fixes the road fix gate ignored). Without
+  `--roads`, every output is byte-identical to N3.0.
 - `--seed header`: each log's seed is derived from its header's `sessionID`
   (`NavigationSeed`), the seed the live app used.
 - `--as-live`: replay as the app ran live: file order, `--seed header` and the
@@ -934,6 +958,71 @@ no reseed in arrival order. The patch and its regression test are kept
 in the git-ignored `logs/`; backlog R11.1-6 stays open.
 
 N2.2 experiment and informational runs: moved to [docs/archive/NAVIGATION-history.md](archive/NAVIGATION-history.md).
+
+### N3.2b: first measurement with roads (2026-10-13)
+
+Default road config (no tuning), packs national + region-A (`roadSetHash`
+prefix `fecadb9b`), release build on the Mac, seeds 1–5 in arrival order,
+each drive in its acceptance mode. Outputs: `logs/n32b/roads/` (git-ignored);
+the table script is `logs/n32b/table.py`. Against the N3.0 exit baseline
+above. A measurement, not an adoption: no config or engine change was made.
+
+| alias | criterion | N3.0 mean | N3.2 mean (range) | inside 95 % + truth σ (gated), N3.0 → N3.2 | engine ellipse | wrong road, fixes / distance | off, fixes / distance | unmapped / captured (per seed) | ms/step (seed 1, sequential) |
+|---|---|---:|---|---|---|---|---|---|---|
+| clean-long | max ≤ 30 m | 19.42 m | 22.51 m (22.48–22.53) | 100 → 96.4 % [267/277] | 100 → 96.0 % | 1.3 % / 0.5 % | 0.7 % / 0.3 % | 0 / 0 | 0.065 → 0.095 |
+| clean | max ≤ 30 m | 12.98 m | 19.44 m (16.21–21.75) | 100 → 100 % | 100 → 98.5 % | 2.5 % / 2.4 % (1.9–2.8) | 4.2 % / 4.4 % | 83 / 0 | 0.064 → 0.090 |
+| manual | truth point 1 ≤ 200 m | 50.50 m | 8.11 m (7.20–9.60) | 100 → 100 % | 100 → 100 % | n/a (no clean GNSS) | n/a | 0 / 0 | 0.069 → 0.107 |
+| jammed-A | end ≤ 2.5 % | 1.137 % | 0.171 % (0.166–0.178) | 100 → 100 % | 100 → 0 % [0/1] | n/a | n/a | 0 / 0 | 0.071 → 0.114 |
+| jammed-B | end ≤ 2.5 % | 1.068 % | 0.297 % (0.251–0.336) | 100 → 100 % | 100 → 100 % | n/a | n/a | 0 / 0 | 0.072 → 0.112 |
+| manual-3 (sanity) | reported | pins 232.0 m mean | pins 68.7 m mean (83 / 20–31 / 93–99 m) | 66.7 → 66.7 % | 66.7 → 33.3 % | n/a | n/a | 0 / 0 | 0.071 → 0.110 |
+| drive-7 | every withheld clean fix after 1800 s ≤ 2.5 % | 1.128 % (224.0 m) | 0.167 % (32.8 m; 31.9–34.1) | 99.6 → 87.4 % [237–240/273] | 99.6 → 86.0 % | 5.7 % / 3.6 % (5.4–6.2 / 3.5–3.7) | 0.8 % / 0.2 % | 0 / 0 | 0.072 → 0.114 |
+
+- **Heading convergence, manual:** 7.27–7.68 km (N3.0, known FAIL) →
+  1.52 km on every seed: the N3 target (≤ 2 km every seed) passes. Other
+  drives: jammed-A 8.15 → 0.31 km, jammed-B 5.26 → 0.20 km, manual-3
+  1.72 → 0.37 km, drive-7 0.58 → 0.14 km.
+- **drive-7's reported target** (max withheld clean fix after 1800 s; N3.0
+  224.0 m mean, N4-B1 226 m): 32.8 m mean, 0.167 % of distance, on every
+  seed at the drive's last minute (≈ 2083 s).
+- **Adoption rule (judge.py): FAIL** on clean (+6.46 m, allowed +2 m),
+  clean-long (+3.09 m, allowed +2 m; consistency 100 → 96.4 %) and drive-7
+  (consistency 99.6 → 87.4 %). Every per-seed criterion passes (max ≤ 30 m,
+  ≤ 2.5 %, truth point ≤ 200 m). manual, jammed-A/B pass with large gains.
+- **Wrong-road share** (checks capture onto a wrong *mapped* road only):
+  clean 2.5 % by fixes, 2.4 % by distance; clean-long 1.3 % / 0.5 %; both
+  under the 5 % starting target (Q8). drive-7 (informational) 5.7 % / 3.6 %.
+  Ambiguous share of the road truth: clean-long 7.4 %, clean 20.3 %, drive-7
+  33.2 % (over the plan's 20 % Viterbi trigger; not implemented).
+- **No usable course:** clean-long 115 of 277 withheld clean fixes (63 with
+  OBD speed 0, 52 creeping under 3 m/s GNSS: two stops and the final slow
+  section), clean 62 of 216, drive-7 29 of 273. They are not scored for
+  wrong road; they do count for unmapped/captured and consistency.
+- **Unmapped/captured (R21.1-11):** only clean has unmapped truth fixes (83
+  per seed, > 15 m from every edge); none captured on any seed.
+- **Where the misses are** (seed 1; the other seeds alike):
+  - clean-long: the last 11 s (≈ 647–657 s), creeping (no usable course):
+    the estimate held on an edge 31 m from the truth, 15.6 m across, error
+    22.5 m, so the ellipse misses.
+  - drive-7: 2058–2090 s at the end, on service roads or off any
+    heading-compatible edge (truth: no road 19, ambiguous 7, matched 7 of
+    33): the estimate on an edge up to 56 m from the truth, 15–37 m across.
+  - clean: 242–248 s, just after the mask, at about 12 m/s through a
+    junction where the truth passes from a secondary to a primary way on
+    the same course: the estimate stays on another edge (wrong, 21–46 m
+    from the truth) for 3 s, then `onRoadShare` falls to 0 (off) for 4 s,
+    then it rejoins; error 15–22 m, the max on this seed.
+
+  The end-of-drive cases are not "unmapped" by the R21.1-11 definition: a
+  mapped edge of another heading lies within 15 m. So the capture risk R2
+  (test 3) shows on real data at car parks and service roads, where the
+  unmapped metric does not count it; the consistency drop is its measure.
+- **ms/step** (seed 1, sequential, release): 0.064–0.072 without roads,
+  0.090–0.114 with, so mean ≤ 0.15 passes. Road cost by differencing:
+  0.35–0.51 ms per road update (manual 0.51, just over the 0.5 ms Mac
+  proxy). Candidate tests 15–33 per particle and update (≤ 64). Largest
+  single `ingest` 1.1–4.5 ms with roads (0.24–0.46 without).
+- **Without `--roads`:** 42/42 GeoJSON byte-identical and every
+  `metrics.json` field equal to the N3.0 exit runs (compare.py).
 
 ## Known limitations and options
 

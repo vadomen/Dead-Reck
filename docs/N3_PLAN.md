@@ -801,6 +801,12 @@ gating, attribution visibility (pure logic, in the `MapCameraLogicTests` pattern
 
 ## N3 criteria (judged in N3.2 and re-checked as live in N3.3)
 
+First measurement against them (N3.2b, default road config, no tuning, 2026-10-13):
+docs/NAVIGATION.md, "N3.2b: first measurement with roads". Every per-seed criterion passes,
+manual converges at 1.52 km; the adoption rule fails on clean, clean-long (max error) and
+on clean-long and drive-7 (consistency). Open for the user's decision; the criteria are
+unchanged.
+
 | criterion | drive / run | today (N4-B1, seeds 1–5) | N3 target |
 |---|---|---|---|
 | heading converged | manual, use, hold-out 100 | 7.27–7.68 km, known FAIL | ≤ 2 km on every seed |
