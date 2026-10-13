@@ -188,20 +188,32 @@ struct NavigationReplayRoadTests {
         #expect(m.fixes.allSatisfy { abs($0.logLikelihoodRatio ?? 1) < 1e-6 })
     }
 
-    @Test("R21.1-11 unmapped: a car 40 m beside the only mapped road is unmapped, never scored for wrong road; captured is exactly its definition")
+    /// The car stays on x = 0 (unmapped: the only road is 40 m east); the
+    /// cloud drifts onto way 2 within ~20 s of the mask. Before that it is
+    /// on no road (share 0) or still straddling (truth inside its 95 %
+    /// ellipse): not captured. From t 30 on it sits on way 2 with share
+    /// ≈ 1, a narrow ellipse across it (≈ 12 m) and the truth outside:
+    /// captured.
+    @Test("R21.1-11 unmapped: a car 40 m beside the only mapped road is unmapped, never scored for wrong road; captured once the cloud sits on that road")
     func unmapped() throws {
         let net = try R.network([R.street(2, from: (40, -3000), to: (40, 3000))])
         let result = Self.run(Self.splitInputs(usedEast: 0, seconds: 120), roads: net)
         let m = try #require(result.roadMetrics)
-        #expect(m.withheldCleanFixes > 100 && m.unmapped == m.withheldCleanFixes)
-        #expect(m.truth == ["noRoad": m.withheldCleanFixes] && m.scored == 0 && m.wrongShare == nil)
+        #expect(m.withheldCleanFixes == 110 && m.unmapped == 110)
+        #expect(m.truth == ["noRoad": 110] && m.scored == 0 && m.wrongShare == nil)
         #expect(m.fixes.allSatisfy { abs(($0.nearestEdgeM ?? 0) - 40) < 0.5 })
-        #expect(m.unmappedWithEstimate == m.unmapped)
+        #expect(m.unmappedWithEstimate == 110 && m.unmappedCaptured == 91)
         for fix in m.fixes {
-            let onEdge = (fix.onRoadShare ?? 0) >= 0.5 && fix.matchedEdge != nil
-            #expect(fix.captured == (onEdge && (fix.crossTrackSemiAxisM ?? .infinity) < 25 && fix.inside95 == false), "t \(fix.t)")
+            if fix.t < 26.5 {
+                #expect(fix.onRoadShare == 0 && fix.matchedEdge == nil && fix.captured == false, "t \(fix.t)")
+            } else if fix.t < 29.5 {
+                #expect(fix.matchedEdge?.osmWayID == 2 && fix.inside95 == true && fix.captured == false, "t \(fix.t)")
+            } else {
+                #expect((fix.onRoadShare ?? 0) > 0.9 && fix.matchedEdge?.osmWayID == 2, "t \(fix.t)")
+                #expect((fix.crossTrackSemiAxisM ?? .infinity) < 25 && fix.inside95 == false, "t \(fix.t)")
+                #expect(fix.captured == true, "t \(fix.t)")
+            }
         }
-        #expect(m.unmappedCaptured == m.fixes.filter { $0.captured == true }.count)
     }
 
     /// R22.1-2: a parallel road 60 m east (way 2) ends at north −100; the
@@ -251,6 +263,42 @@ struct NavigationReplayRoadTests {
         #expect(m.trackEngaged == 0)
     }
 
+    /// R22.2-1: the engine on the right road (way 1, the only one), with an
+    /// off-road probability ε near 1. Each particle's responsibility
+    /// r = (1 − ε) L / ((1 − ε) L + ε / (4π R)) is then a fraction, so the
+    /// on-road share is strictly between 0 and 1 while the matched edge is
+    /// still the truth's: only the share decides between off and right.
+    @Test("R22.2-1 off threshold: on-road share 0.37–0.43 on the truth's own edge scores off; 0.56–0.61 scores right")
+    func offThreshold() throws {
+        let net = try Self.northStreet()
+        func metrics(offRoadProbability: Double) throws -> ReplayRoadMetrics {
+            var options = Self.options(roads: net)
+            options.config.roadOffRoadProbability = offRoadProbability
+            let result = NavigationReplay.run(logName: "synthetic", inputs: Self.splitInputs(usedEast: 0), options: options)
+            return try #require(result.roadMetrics)
+        }
+        // ε 0.99: share 0.37…0.43 at every withheld fix, below 0.5 but not 0.
+        let below = try metrics(offRoadProbability: 0.99)
+        #expect(below.truth == ["matched": 50] && below.scored == 50)
+        for fix in below.fixes {
+            let share = try #require(fix.onRoadShare)
+            #expect(share > 0.36 && share < 0.44, "t \(fix.t) share \(share)")
+            #expect(fix.matchedEdge?.osmWayID == 1 && fix.truthEdge?.osmWayID == 1, "t \(fix.t)")
+            #expect(fix.verdict == .off, "t \(fix.t) share \(share)")
+        }
+        #expect(below.count(.off).fixes == 50 && below.offShare == 1 && below.offShareByDistance == 1)
+        // ε 0.98: share 0.55…0.61, just above 0.5: right.
+        let above = try metrics(offRoadProbability: 0.98)
+        #expect(above.truth == ["matched": 50] && above.scored == 50)
+        for fix in above.fixes {
+            let share = try #require(fix.onRoadShare)
+            #expect(share > 0.55 && share < 0.61, "t \(fix.t) share \(share)")
+            #expect(fix.matchedEdge?.osmWayID == 1, "t \(fix.t)")
+            #expect(fix.verdict == .right, "t \(fix.t) share \(share)")
+        }
+        #expect(above.count(.right).fixes == 50 && above.offShare == 0 && above.wrongShare == 0)
+    }
+
     /// R22.1-3: way 1 along x = 0 with a 40 m gap (north 100…140, way 2
     /// beyond it); the used fixes put the engine on it, heading north, and a large
     /// along-track noise makes the 95 % ellipse long along the road and
@@ -291,6 +339,76 @@ struct NavigationReplayRoadTests {
         #expect(beside.inside95 == false && beside.captured == true)
         #expect(inGap.inside95 == true && inGap.captured == false)
         #expect(ReplayReport.summary(result).contains("Unmapped      2 withheld clean fixes"))
+    }
+
+    /// R22.2-2: one mapped road along x = 0, the engine on it (long
+    /// ellipse along it, as above), two withheld clean fixes 200 m east of
+    /// the car (t 30, 40): unmapped, on no road within the search radius,
+    /// and far outside the ellipse. The default cross-track noise keeps the
+    /// ellipse ≈ 12 m across the road: captured. Five times that noise
+    /// widens it to ≈ 31 m, with share, edge and the truth's place
+    /// unchanged: not captured.
+    @Test("R22.2-2 captured needs a narrow ellipse: on the edge, truth outside, but ≥ 25 m across the road is not captured")
+    func capturedNeedsNarrowCrossTrack() throws {
+        let net = try Self.northStreet()
+        let drive = R.northDrive(seconds: 60)
+        let clean = S.cleanFix(positionNoise: 0)
+        let inputs = R.shifted(drive, by: (0, -500), fix: { t, state, rng in
+            guard var f = clean(t, state, &rng) else { return nil }
+            if t <= 10 { return f }
+            if S.at(t, 30) || S.at(t, 40) { f.east += 200; return f }
+            return nil
+        })
+        func metrics(crossTrackNoise: Double) throws -> ReplayRoadMetrics {
+            var options = Self.options(roads: net)
+            options.config.alongTrackNoisePerSqrtM = 6
+            options.config.crossTrackNoisePerSqrtM = crossTrackNoise
+            let result = NavigationReplay.run(logName: "synthetic", inputs: inputs, options: options)
+            let m = try #require(result.roadMetrics)
+            #expect(m.withheldCleanFixes == 2 && m.truth == ["noRoad": 2] && m.unmapped == 2 && m.unmappedWithEstimate == 2)
+            for fix in m.fixes {
+                #expect(fix.nearestEdgeM == nil && fix.unmapped && fix.verdict == nil, "t \(fix.t)")
+                #expect((fix.onRoadShare ?? 0) > 0.9 && fix.matchedEdge?.osmWayID == 1, "t \(fix.t)")
+                #expect(fix.inside95 == false, "t \(fix.t)")
+            }
+            return m
+        }
+        let narrow = try metrics(crossTrackNoise: 0.6)
+        #expect(narrow.fixes.allSatisfy { ($0.crossTrackSemiAxisM ?? .infinity) > 10 && ($0.crossTrackSemiAxisM ?? .infinity) < 15 },
+                "\(narrow.fixes.map(\.crossTrackSemiAxisM))")
+        #expect(narrow.fixes.allSatisfy { $0.captured == true } && narrow.unmappedCaptured == 2)
+        let wide = try metrics(crossTrackNoise: 3)
+        #expect(wide.fixes.allSatisfy { ($0.crossTrackSemiAxisM ?? 0) > 28 && ($0.crossTrackSemiAxisM ?? 0) < 35 },
+                "\(wide.fixes.map(\.crossTrackSemiAxisM))")
+        #expect(wide.fixes.allSatisfy { $0.captured == false } && wide.unmappedCaptured == 0)
+    }
+
+    /// R22.2-3: withheld clean fixes on the street at t 20 and t 30 (with a
+    /// course), and between them two without a usable course: t 25 with no
+    /// course (−1), t 27 creeping (speed 2 m/s < 3). OBD reads 43 km/h
+    /// (12 m/s truncated), so 43.5 km/h after the +0.5: 120.83 m in 10 s.
+    @Test("R22.2-3 distance weights skip fixes without a usable course: the next scored fix weighs the OBD distance since the last scored one")
+    func weightsSkipNoCourseFixes() throws {
+        let net = try Self.northStreet()
+        let drive = R.northDrive(seconds: 40)
+        let clean = S.cleanFix(positionNoise: 0)
+        let inputs = R.shifted(drive, by: (0, -500), fix: { t, state, rng in
+            guard var f = clean(t, state, &rng) else { return nil }
+            if t <= 10 || S.at(t, 20) || S.at(t, 30) { return f }
+            if S.at(t, 25) { f.course = -1; f.courseAccuracy = -1; return f }
+            if S.at(t, 27) { f.speed = 2; return f }
+            return nil
+        })
+        let m = try #require(Self.run(inputs, roads: net).roadMetrics)
+        try #require(m.fixes.count == 4)
+        #expect(m.fixes.map(\.truth) == [.matched, .noCourse, .noCourse, .matched])
+        #expect(m.fixes.map(\.verdict) == [.right, nil, nil, .right])
+        #expect(m.fixes[0].weightM == 0)
+        // Untouched: no weight for a fix without a usable course.
+        #expect(m.fixes[1].weightM == 0 && m.fixes[2].weightM == 0)
+        // t 20 → t 30 at 43.5 km/h, not t 27 → t 30 (36.25 m).
+        #expect(abs(m.fixes[3].weightM - 120.833) < 0.01, "\(m.fixes.map(\.weightM))")
+        #expect(m.count(.right).fixes == 2 && abs(m.count(.right).distanceM - 120.833) < 0.01)
     }
 
     /// R22.1-4: dual carriageway, oneways 15 m apart: way 1 northbound along
