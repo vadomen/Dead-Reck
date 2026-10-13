@@ -64,31 +64,30 @@ struct ConsoleContent: View {
     @Binding var isLinkChangeConfirmationPresented: Bool
     var actions = ConsoleActions()
 
+    /// Pushed inside Settings' navigation stack (UX-4), which owns the title bar.
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                header
-                Divider()
-                ConsoleLog(lines: lines)
-                Divider()
-                manualSection
-            }
-            .navigationTitle("Console")
-            .navigationBarTitleDisplayMode(.inline)
-            .confirmationDialog("Forget this adapter?", isPresented: $isForgetConfirmationPresented, titleVisibility: .visible) {
-                Button("Forget adapter", role: .destructive, action: actions.forget)
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text(isRecording
-                    ? "The app will stop reconnecting to it. \(ConsoleText.recordingWarning)"
-                    : "The app will stop reconnecting to it. You can pick it again from a scan.")
-            }
-            .confirmationDialog("Drop the OBD connection?", isPresented: $isLinkChangeConfirmationPresented, titleVisibility: .visible) {
-                Button("Drop OBD", role: .destructive, action: actions.confirmLinkChange)
-                Button("Keep connection", role: .cancel) {}
-            } message: {
-                Text(ConsoleText.recordingWarning)
-            }
+        VStack(spacing: 0) {
+            header
+            Divider()
+            ConsoleLog(lines: lines)
+            Divider()
+            manualSection
+        }
+        .navigationTitle("Console")
+        .navigationBarTitleDisplayMode(.inline)
+        .confirmationDialog("Forget this adapter?", isPresented: $isForgetConfirmationPresented, titleVisibility: .visible) {
+            Button("Forget adapter", role: .destructive, action: actions.forget)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(isRecording
+                ? "The app will stop reconnecting to it. \(ConsoleText.recordingWarning)"
+                : "The app will stop reconnecting to it. You can pick it again from a scan.")
+        }
+        .confirmationDialog("Drop the OBD connection?", isPresented: $isLinkChangeConfirmationPresented, titleVisibility: .visible) {
+            Button("Drop OBD", role: .destructive, action: actions.confirmLinkChange)
+            Button("Keep connection", role: .cancel) {}
+        } message: {
+            Text(ConsoleText.recordingWarning)
         }
     }
 
@@ -261,6 +260,7 @@ extension ConsoleLine {
 }
 
 private struct ConsolePreviewHost: View {
+    // Settings pushes the Console; the preview needs a stack of its own.
     var state: OBDLinkState = .polling(protocolNumber: "A6", voltage: 12.4)
     var summary: String? = "IOS-Vlink · ELM327 v2.3 · protocol A6 · poll 010D0C1 · 9.8 Hz"
     var simulated = true
@@ -273,6 +273,10 @@ private struct ConsolePreviewHost: View {
     var recording = false
 
     var body: some View {
+        NavigationStack { content }
+    }
+
+    private var content: some View {
         ConsoleContent(
             state: state,
             status: AdapterStatus(state),

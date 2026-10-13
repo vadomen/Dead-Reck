@@ -24,7 +24,7 @@ struct RootView: View {
         var initial = AppNavigation()
         #if DEBUG
         // `-uiTab N` opens a tab at launch (simulator screenshots), N in tab order:
-        // 0 = Map (default), 1 = Sessions, 2 = Settings, 3 = Console.
+        // 0 = Map (default), 1 = Sessions, 2 = Settings.
         initial.tab = AppTab(launchValue: UserDefaults.standard.integer(forKey: "uiTab"))
         #endif
         _nav = State(initialValue: initial)
@@ -45,9 +45,9 @@ struct RootView: View {
         } settings: {
             SettingsScreen(path: $nav.settingsPath) {
                 RecordingScreen(model: recording)
+            } console: {
+                ConsoleScreen(model: console)
             }
-        } console: {
-            ConsoleScreen(model: console)
         }
         // Ingest at the root so the track keeps filling on other tabs. The
         // feed is its own view so only it observes the 16 Hz `live` status.

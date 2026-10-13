@@ -760,3 +760,8 @@ Replay only the current connection's init (M6.1-1) and remembered poll plan and 
 3. **Map Start button:** with no recording, Start (bottom left of the map controls) opens Settings, Recording and starts nothing. Back returns to Settings; the Map tab is where it was.
 4. **Map recording indicator:** while calibrating or recording, a red dot and elapsed time replace Start. It must tick once a second without the map stuttering (follow camera, 10 Hz DR loop). Tapping it asks "Stop recording?"; Keep recording does nothing; Stop recording ends the recording and the file is complete in Sessions. Check the 56 pt target is hit easily in the mount, and that it does not collide with the Re-centre hint or the Fix recorded toast.
 5. **Diagnostics:** thermal state follows the system (try a warm phone) and the Version/Build rows show the version and Debug or Release.
+
+### Added by UX-4 Console in Settings (not verified on a device)
+1. **Reach:** Settings, then Console, two taps; the title bar shows "Console" with a back button to Settings. There is no Console tab and `-uiTab 3` opens Map.
+2. **Guards unchanged:** with a recording running, Forget adapter and Drop OBD still ask first and say a recording is in progress; Scan is disabled while the link holds the adapter during a recording; the manual field still accepts only the allowed commands. Check with the real adapter.
+3. **Keyboard:** the manual command field and keyboard behave inside the pushed screen (the field is not hidden by the keyboard, Send works, the log keeps scrolling to the newest line).

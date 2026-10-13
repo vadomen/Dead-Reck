@@ -10,7 +10,9 @@ struct AppNavigationTests {
         #expect(AppTab(launchValue: 0) == .map)
         #expect(AppTab(launchValue: 1) == .sessions)
         #expect(AppTab(launchValue: 2) == .settings)
-        #expect(AppTab(launchValue: 3) == .console)
+        // Console is no longer a tab (UX-4): its old value opens Map.
+        #expect(AppTab(launchValue: 3) == .map)
+        #expect(AppTab.allCases.count == 3)
         #expect(AppTab(launchValue: -1) == .map)
         #expect(AppTab(launchValue: 9) == .map)
         // The key missing from UserDefaults reads as 0.
@@ -28,6 +30,11 @@ struct AppNavigationTests {
         nav.tab = .map
         nav.openRecordingSettings()
         #expect(nav.settingsPath == [.recording])
+    }
+
+    @Test("Console is a Settings row, two taps from any tab")
+    func consoleRoute() {
+        #expect(SettingsRoute.allCases == [.recording, .console])
     }
 
     @Test("Indicator while calibrating, recording or stopping; Start otherwise")

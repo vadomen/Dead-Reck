@@ -2,14 +2,15 @@ import SwiftUI
 
 /// The Settings tab: Recording, Console and diagnostics. The pushed screens
 /// are injected so previews can use fake ones.
-struct SettingsScreen<Recording: View>: View {
+struct SettingsScreen<Recording: View, Console: View>: View {
     @Binding var path: [SettingsRoute]
     var info: AppInfo = .read()
     @ViewBuilder var recording: () -> Recording
+    @ViewBuilder var console: () -> Console
     @State private var thermal = ProcessInfo.processInfo.thermalState
 
     var body: some View {
-        SettingsContent(path: $path, info: info, thermal: thermal, recording: recording)
+        SettingsContent(path: $path, info: info, thermal: thermal, recording: recording, console: console)
             .onReceive(NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)) { _ in
                 thermal = ProcessInfo.processInfo.thermalState
             }
@@ -18,11 +19,12 @@ struct SettingsScreen<Recording: View>: View {
 }
 
 /// Plain-values presentation of Settings.
-struct SettingsContent<Recording: View>: View {
+struct SettingsContent<Recording: View, Console: View>: View {
     @Binding var path: [SettingsRoute]
     let info: AppInfo
     let thermal: ProcessInfo.ThermalState
     @ViewBuilder var recording: () -> Recording
+    @ViewBuilder var console: () -> Console
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -30,6 +32,11 @@ struct SettingsContent<Recording: View>: View {
                 Section {
                     NavigationLink(value: SettingsRoute.recording) {
                         Label("Recording", systemImage: "record.circle")
+                            .font(.title3)
+                            .frame(minHeight: 44)
+                    }
+                    NavigationLink(value: SettingsRoute.console) {
+                        Label("Console", systemImage: "terminal")
                             .font(.title3)
                             .frame(minHeight: 44)
                     }
@@ -51,6 +58,9 @@ struct SettingsContent<Recording: View>: View {
                     recording()
                         .navigationTitle("Recording")
                         .navigationBarTitleDisplayMode(.inline)
+                case .console:
+                    // Sets its own title.
+                    console()
                 }
             }
         }
@@ -61,12 +71,12 @@ struct SettingsContent<Recording: View>: View {
     SettingsContent(
         path: .constant([]), info: AppInfo(name: "DriveLogger", version: "0.1.0", build: "1"),
         thermal: .nominal
-    ) { Text("Recording") }
+    ) { Text("Recording") } console: { Text("Console") }
 }
 
 #Preview("Settings, serious thermal") {
     SettingsContent(
         path: .constant([]), info: AppInfo(name: "DriveLogger", version: "0.1.0", build: "1"),
         thermal: .serious
-    ) { Text("Recording") }
+    ) { Text("Recording") } console: { Text("Console") }
 }

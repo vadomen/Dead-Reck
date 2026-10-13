@@ -1,19 +1,17 @@
 import SwiftUI
 
 /// The tabs, with the screens injected so previews can use fake data.
-struct MainTabView<Map: View, Sessions: View, Settings: View, Console: View>: View {
+struct MainTabView<Map: View, Sessions: View, Settings: View>: View {
     @Binding var selection: AppTab
     @ViewBuilder var map: () -> Map
     @ViewBuilder var sessions: () -> Sessions
     @ViewBuilder var settings: () -> Settings
-    @ViewBuilder var console: () -> Console
 
     var body: some View {
         TabView(selection: $selection) {
             map().tabItem { Label("Map", systemImage: "map") }.tag(AppTab.map)
             sessions().tabItem { Label("Sessions", systemImage: "list.bullet") }.tag(AppTab.sessions)
             settings().tabItem { Label("Settings", systemImage: "gearshape") }.tag(AppTab.settings)
-            console().tabItem { Label("Console", systemImage: "terminal") }.tag(AppTab.console)
         }
     }
 }
@@ -25,7 +23,5 @@ struct MainTabView<Map: View, Sessions: View, Settings: View, Console: View>: Vi
         Text("Sessions")
     } settings: {
         Text("Settings")
-    } console: {
-        Text("Console")
     }
 }
