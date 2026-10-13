@@ -19,19 +19,16 @@ enum MapRecordingControl: Equatable {
     }
 }
 
-/// Stop from the map needs a confirmation: a tap only asks.
+/// Stop from the map needs a confirmation: a tap only asks. The dialog is
+/// the confirmation, so its destructive button stops directly and does not
+/// read this state (SwiftUI may reset `isPending` before the action runs).
 struct StopConfirmation: Equatable {
     private(set) var isPending = false
 
     /// The indicator was tapped. Stops nothing.
     mutating func request() { isPending = true }
 
-    /// "Stop recording" in the dialog. True when the caller should stop.
-    mutating func confirm() -> Bool {
-        defer { isPending = false }
-        return isPending
-    }
-
+    /// The dialog went away, by Keep recording, a tap outside, or after Stop.
     mutating func cancel() { isPending = false }
 }
 
@@ -40,13 +37,15 @@ struct StopConfirmation: Equatable {
 struct MapRecordingButton: View {
     let session: RecordingSession
     var onStart: () -> Void
+    /// Runs when "Stop recording" is chosen in the dialog.
+    var onStop: @MainActor () async -> Void
     @State private var stop = StopConfirmation()
 
     var body: some View {
         content(MapRecordingControl.make(state: session.state, elapsed: session.live.elapsed))
             .confirmationDialog("Stop recording?", isPresented: pending, titleVisibility: .visible) {
                 Button("Stop recording", role: .destructive) {
-                    if stop.confirm() { Task { await session.stop() } }
+                    Task { await onStop() }
                 }
                 Button("Keep recording", role: .cancel) { stop.cancel() }
             } message: {

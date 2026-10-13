@@ -54,23 +54,18 @@ struct AppNavigationTests {
         #expect(MapRecordingControl.make(state: .recording, elapsed: .nan) == .indicator(elapsed: "0:00"))
     }
 
-    @Test("Stop needs a confirmation: a tap only asks; cancel stops nothing")
+    @Test("Stop needs a confirmation: a tap only asks; the dialog going away clears it")
     func stopConfirmation() {
         var stop = StopConfirmation()
-        let idle = stop.confirm()         // no request, nothing to confirm
-        #expect(!idle)
+        #expect(!stop.isPending)
         stop.request()
         #expect(stop.isPending)
         stop.cancel()
         #expect(!stop.isPending)
-        let afterCancel = stop.confirm()
-        #expect(!afterCancel)
+        // Request, then the dialog dismisses itself (button or tap outside).
         stop.request()
-        let confirmed = stop.confirm()
-        #expect(confirmed)
+        stop.cancel()
         #expect(!stop.isPending)
-        let again = stop.confirm()        // once only
-        #expect(!again)
     }
 
     @Test("Diagnostics build configuration name")

@@ -72,7 +72,7 @@ struct MapScreen: View {
             cachedLocation: cachedLocation,
             navigation: navigation,
             showNavStats: $showNavStats,
-            recordingControl: AnyView(MapRecordingButton(session: session, onStart: onStart))
+            recordingControl: AnyView(MapRecordingButton(session: session, onStart: onStart, onStop: { [session] in await session.stop() }))
         )
         .onReceive(NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)) { _ in
             thermal = ProcessInfo.processInfo.thermalState

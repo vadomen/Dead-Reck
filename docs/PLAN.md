@@ -755,10 +755,10 @@ Replay only the current connection's init (M6.1-1) and remembered poll plan and 
 5. **Glance test:** the speed number is readable at arm's length in the mount, in daylight.
 
 ### Added by UX-3 Settings tab and map recording control (not verified on a device)
-1. **Tabs:** Map, Sessions, Settings (gear), then Console (moves into Settings with UX-4). `-uiTab` (DEBUG): 0 Map, 1 Sessions, 2 Settings, 3 Console.
+1. **Tabs:** Map · Sessions · Settings (gear); Console is a row inside Settings. `-uiTab` (DEBUG): 0 Map, 1 Sessions, 2 Settings.
 2. **Recording lives in Settings:** Settings, Recording shows the unchanged Record screen (checklist, calibration, start/stop, mark, live stats). Opening it refreshes the screen (disk space, adapter). A full test drive: checklist, Start, Mark, Stop, all from there, with the file appearing in Sessions.
-3. **Map Start button:** with no recording, Start (bottom left of the map controls) opens Settings, Recording and starts nothing. Back returns to Settings; the Map tab is where it was.
-4. **Map recording indicator:** while calibrating or recording, a red dot and elapsed time replace Start. It must tick once a second without the map stuttering (follow camera, 10 Hz DR loop). Tapping it asks "Stop recording?"; Keep recording does nothing; Stop recording ends the recording and the file is complete in Sessions. Check the 56 pt target is hit easily in the mount, and that it does not collide with the Re-centre hint or the Fix recorded toast.
+3. **Map Start button:** with no recording, Start (its own row above Heading/Follow, on the left) opens Settings, Recording and starts nothing. Back returns to Settings; the Map tab is where it was.
+4. **Map recording indicator:** while calibrating or recording, a red dot and elapsed time replace Start. It must tick once a second without the map stuttering (follow camera, 10 Hz DR loop). Tapping it asks "Stop recording?"; Keep recording does nothing; Stop recording must actually stop (the dialog's button stops directly, it does not depend on SwiftUI's dismiss order): the indicator turns back into Start and the file is closed, complete and readable in Sessions (size stops growing, `inspect_log` shows a `stop` row and no damage). Check the 56 pt target is hit easily in the mount, and that it does not collide with the Re-centre hint or the Fix recorded toast.
 5. **Diagnostics:** thermal state follows the system (try a warm phone) and the Version/Build rows show the version and Debug or Release.
 
 ### Added by UX-4 Console in Settings (not verified on a device)
