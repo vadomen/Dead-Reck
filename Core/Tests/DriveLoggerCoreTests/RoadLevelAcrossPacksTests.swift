@@ -17,9 +17,10 @@ import Testing
 /// - **coordinate:** they hold a point with equal E7 coordinates that is an
 ///   end (topological node) of at least one of them.
 ///
-/// Every test here except `nearbyIsNotEqual` fails on the engine before
-/// item 1: across packs there was no adjacency, so the candidate on the
-/// other level was blocked.
+/// Every test here except the non-matches (`nearbyIsNotEqual`,
+/// `equalInteriorPointIsNotANode`) fails on the engine before item 1:
+/// across packs there was no adjacency, so the candidate on the other level
+/// was blocked.
 @Suite("Road level rule across packs (N3.2e item 1)")
 struct RoadLevelAcrossPacksTests {
     typealias S = SyntheticDrive
@@ -116,6 +117,43 @@ struct RoadLevelAcrossPacksTests {
         let far = Self.update(net, at: (300, 2), heading: .pi / 2, edge: street, level: 0) { $0.roadLevelHops = 10 }
         #expect(far.counters.roadLevelBlocked == far.east.count)
         _ = bridge
+    }
+
+    /// A street (way 10, pack "local") and a bridge (way 12, pack
+    /// "national") crossing at A = (0, 0): both hold A as an equal E7 point,
+    /// but it is interior to both edges (an end of neither), as where a
+    /// bridge passes over a road with a coincident vertex. No shared OSM
+    /// node, so no link: the level rule still blocks the bridge from the
+    /// street and the street from the bridge. (R28.1-1: fails if any equal
+    /// point linked.)
+    @Test("Non-match: an equal E7 point interior to both edges (a crossing) does not link; the level rule still blocks")
+    func equalInteriorPointIsNotANode() throws {
+        let local = try RoadFixture.build([
+            RoadFixture.way(10, ["highway": "residential"], [
+                N(id: 100, east: 0, north: -1500), N(id: 1, east: 0, north: 0), N(id: 101, east: 0, north: 1500),
+            ]),
+        ])
+        let national = try RoadFixture.build([Self.bridgeThrough(id: 2)], classes: RoadGraphBuilder.nationalClasses)
+        #expect(local.edgeCount == 1 && national.edgeCount == 1)
+        #expect(RoadFixture.points(of: local, edge: 0)[1] == RoadFixture.points(of: national, edge: 0)[1])
+        for order in [[local, national], [national, local]] {
+            let net = try RoadNetwork(packs: order)
+            for p in net.packs.indices {
+                #expect(net.adjacentEdges(of: .init(pack: p, edge: 0)).isEmpty)
+            }
+            let street = try Self.globalEdge(net, local, way: 10)
+            let bridge = try Self.globalEdge(net, national, way: 12)
+            for hops in [2, 10] {
+                let up = Self.update(net, at: (300, 2), heading: .pi / 2, edge: street, level: 0) { $0.roadLevelHops = hops }
+                #expect(up.counters.roadUpdates == 1)
+                #expect(up.counters.roadLevelBlocked == up.east.count)
+                #expect(up.roadEdge.allSatisfy { $0 == street } && up.roadLevel.allSatisfy { $0 == 0 })
+                let down = Self.update(net, at: (2, -300), heading: 0, edge: bridge, level: 1) { $0.roadLevelHops = hops }
+                #expect(down.counters.roadUpdates == 1)
+                #expect(down.counters.roadLevelBlocked == down.east.count)
+                #expect(down.roadEdge.allSatisfy { $0 == bridge } && down.roadLevel.allSatisfy { $0 == 1 })
+            }
+        }
     }
 
     // MARK: Way node
@@ -219,6 +257,71 @@ struct RoadLevelAcrossPacksTests {
                             == pack.isEdge(b, withinHops: hops, of: a), "\(a) \(b) \(hops)")
                 }
             }
+        }
+    }
+
+    /// Way-node ranges that only touch: pack "old" holds way 12 nodes 0…1
+    /// as one edge; in pack "split" way 13 joins way 12 at node 1, so way 12
+    /// is two edges, nodes 0…1 and 1…2, every point 1 E7 unit north (no
+    /// equal coordinate). "old"'s edge shares node 1 with both, so both are
+    /// adjacent to it, not only the one whose range overlaps it.
+    @Test("Way node: ranges touching at one node (0…1 and 1…2) link")
+    func touchingWayNodeRanges() throws {
+        let old = try RoadFixture.build([
+            RoadFixture.way(12, Self.bridgeTags, [N(id: 1, east: 0, north: 0), N(id: 120, east: 700, north: 0)]),
+        ])
+        let y = Self.oneE7North
+        let split = try RoadFixture.build([
+            RoadFixture.way(12, Self.bridgeTags, [N(id: 1, east: 0, north: y), N(id: 120, east: 700, north: y), N(id: 121, east: 1500, north: y)]),
+            RoadFixture.way(13, ["highway": "primary"], [N(id: 120, east: 700, north: y), N(id: 130, east: 700, north: 800)]),
+        ], classes: RoadGraphBuilder.nationalClasses)
+        let oldPoints = Set((0..<old.pointCount).map { old.point($0) })
+        #expect((0..<split.pointCount).allSatisfy { !oldPoints.contains(split.point($0)) })
+        let parts = RoadFixture.edgeIndices(of: split, way: 12)
+        #expect(parts.map { split.edge($0).wayPointOffset } == [0, 1])
+        let net = try RoadNetwork(packs: [old, split])
+        let o = try #require(net.packs.firstIndex { $0 === old }), s = 1 - o
+        let oldEdge = RoadNetwork.EdgeRef(pack: o, edge: RoadFixture.edgeIndices(of: old, way: 12)[0])
+        #expect(net.adjacentEdges(of: oldEdge) == parts.map { RoadNetwork.EdgeRef(pack: s, edge: $0) })
+        #expect(net.adjacentEdges(of: .init(pack: s, edge: parts[1])).contains(oldEdge))
+    }
+
+    // MARK: The level rule's memo
+
+    /// `RoadMatcher.isEdge(_:withinHops:of:memo:)` with one memo shared by
+    /// several questions, as in one road update: from the street, the
+    /// bridge (another pack, linked at A) is within 1 hop and way 13 (the
+    /// bridge's pack, linked to nothing) is not; from way 13 the bridge is
+    /// not either. Every answer equals the unmemoised one, whatever the
+    /// order the questions come in. (R28.1-2: fails if the key dropped
+    /// either edge.)
+    @Test("isEdge memo: answers for one particle edge and two candidates (and two particle edges, one candidate) stay distinct")
+    func memoKeysBothEdges() throws {
+        let local = try RoadFixture.build([Self.street(endID: 1)])
+        let national = try RoadFixture.build([
+            Self.bridgeThrough(id: 2),
+            RoadFixture.way(13, ["highway": "primary"], [N(id: 130, east: 500, north: 500), N(id: 131, east: 1500, north: 500)]),
+        ], classes: RoadGraphBuilder.nationalClasses)
+        let net = try RoadNetwork(packs: [local, national])
+        let matcher = RoadMatcher(network: net)
+        let street = try Self.globalEdge(net, local, way: 10)
+        let bridge = try Self.globalEdge(net, national, way: 12)
+        let other = try Self.globalEdge(net, national, way: 13)
+        let questions: [(a: UInt32, b: UInt32, expected: Bool)] = [
+            (street, bridge, true), (street, other, false), (other, bridge, false),
+        ]
+        for q in questions {
+            #expect(matcher.isEdge(q.b, withinHops: 1, of: q.a) == q.expected, "\(q.a) \(q.b)")
+        }
+        for order in [[0, 1, 2], [1, 0, 2], [2, 0, 1], [1, 2, 0]] {
+            var memo: [UInt64: Bool] = [:]
+            for _ in 0..<2 {
+                for k in order {
+                    let q = questions[k]
+                    #expect(matcher.isEdge(q.b, withinHops: 1, of: q.a, memo: &memo) == q.expected, "\(order) \(k)")
+                }
+            }
+            #expect(memo.count == questions.count)
         }
     }
 

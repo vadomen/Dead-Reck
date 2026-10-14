@@ -312,6 +312,10 @@ struct RoadMatcher: Sendable {
     }
 
     /// `isEdge`, answered from `memo` when asked before in this update.
+    /// The key holds both edges but not `hops`: one memo must only ever be
+    /// asked with one `hops`. It is: the only caller is `best`, passing
+    /// `q.levelHops`, and `NavigationEngine.roadUpdate` builds its `Work`
+    /// (the memo) and its `Parameters` `q` (a `let`) once per update.
     func isEdge(_ b: UInt32, withinHops hops: Int, of a: UInt32, memo: inout [UInt64: Bool]) -> Bool {
         guard a != Self.noEdge else { return false }
         let key = UInt64(a) << 32 | UInt64(b)

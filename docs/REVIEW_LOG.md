@@ -498,3 +498,21 @@ Tests: Core passes 809 tests in 109 suites, 39 known issues (all test 3). App un
 ### Run 27 summary
 
 4 rounds. Findings: 3 MAJOR fixed (R27.1-1, R27.2-1, R27.3-1, all missing tests; no code change), 0 rejected, 2 MINOR deferred (R27.1-2, R27.3-2). Final: Core 809 tests in 109 suites pass, 39 known issues (as main); App unchanged.
+
+## Run 28: N3.2e level rule across packs, candidates re-run, trade-off table, CLAUDE.md perf command, WORKFLOW roadmap (main..n3.2e, ecf4f31..c6912c5), started 2026-10-14
+
+### Round 1
+
+Reviewer: one fresh `reviewer` (opus). Result: 0 BLOCKER / 2 MAJOR / 3 MINOR.
+
+Verified clean: bit-identity (clean, mask-after 230, seed 1: no roads main vs HEAD GeoJSON byte-identical, metrics.json equal apart from timing; with national + region-A packs HEAD matches the N3.2e default output; the pre-change default reproduces N3.2b); cross-pack adjacency symmetric and order-independent; memo bounded per update and deterministic; ms/step and largest ingest unchanged; N3.2e tables in NAVIGATION.md match the outputs (spot checks of clean, drive-7, drive-8 values and levelBlocked); honest wording (no adoption claimed, "likely, not proven" kept); Core imports and privacy.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R28.1-1 | MAJOR | `RoadNetwork.swift:229-230`: the condition that an equal E7 point must be an end of one of the two edges (keeps two interior points at one coordinate, e.g. a bridge over a road, from linking) is untested; mutation to `true` passes every test. | CONFIRMED | fixed in round 1: `equalInteriorPointIsNotANode` (no adjacency, the level rule still blocks both ways, both pack orders; fails under the mutation). |
+| R28.1-2 | MAJOR | `RoadMatcher.swift:314-321`: the per-update hop memo is untested; a key without `b` (or without `a`) reuses one candidate's answer for others and passes every test. | CONFIRMED | fixed in round 1: `memoKeysBothEdges` (three questions in four orders through one memo; fails under both key mutations). The key omits `hops`; one memo only sees one `hops` (comment added at the memo, no code change). |
+| R28.1-3 | MINOR | `RoadNetwork.swift:217`: way-node ranges that touch at one index are untested (`<=` → `<` passes). | FIXED | covered in round 1 by `touchingWayNodeRanges` (fails under the mutation). |
+| R28.1-4 | MINOR | `RoadLevelAcrossPacksTests.swift:221-231`: the "one pack equals RoadPack.isEdge hop for hop" check compares the function with itself (`RoadNetwork.isEdge` returns `packs[0].isEdge` for one pack); the multi-pack BFS is never compared with a pack's own adjacency. | DEFERRED | backlog. |
+| R28.1-5 | MINOR | `NavigationRoadTests.swift:851-853`: the `twoPacks` doc comment and test name still say the level rule finds adjacency within a pack only; false after N3.2e item 1 (passes only because its streets are far from the bridge). | DEFERRED | backlog. |
+
+Tests: Core passes 817 tests in 110 suites, 39 known issues (the existing `withKnownIssue` tests). App unchanged.
