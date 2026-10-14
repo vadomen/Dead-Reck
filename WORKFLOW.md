@@ -282,8 +282,18 @@ Dead reckoning on top of the logger. The model, config, replay commands, accepta
 
 - **N2 - engine + replay — done.** Causal, deterministic particle filter in `Core/Navigation`, plus the `replay_nav` evaluation CLI (docs/NAVIGATION.md).
 - **N2.1 / N2.2 - tuning — done.** Speed-scale prior, manual-fix σ from map span, network-fix tempering, ellipse consistency metric, stale-fix σ growth (docs/NAVIGATION.md: acceptance, adoption rule).
-- **N4 - live navigation in the app — next.** Sample tap, NavigationService, sidecar `.nav.jsonl`, dead-reckoning dot and ellipse on the map, pin from the estimate (docs/NAVIGATION.md; plan approved before starting).
-- **N3 - OSM roads + map matching — after N4** (docs/NAVIGATION.md: known limitations).
+- **N4 - live navigation in the app — done.** Sample tap, NavigationService, sidecar `.nav.jsonl`, dead-reckoning dot and ellipse on the map, pin from the estimate (docs/NAVIGATION.md "Live in the app (N4 B)").
+- **N3 - OSM roads + map matching** (plan: docs/N3_PLAN.md):
+  - **N3.0 - engine fixes, new baseline — done.** docs/NAVIGATION.md "N3.0 exit".
+  - **N3.1 - road pack format, builder, index, tests — done.** docs/ROAD_PACK.md.
+  - **N3.2a - off-road model prototypes — done.** Test 3 is a known FAIL (docs/N3_ROAD_OFFROAD.md).
+  - **N3.2b - `replay_nav --roads`, first measurement — done.**
+  - **N3.2c - canonical pack order, unmapped metric, perf test — done.**
+  - **N3.2d - pre-declared grids — done.** No config chosen.
+  - **N3.2e - level rule across packs — in progress.** Re-run of the declared candidates and a trade-off table against N3.0. The config choice is the user's.
+  - **N3.3 - enable roads on the live path (sidecar v2) — next after N3.2.**
+  - **N3.4 - packs in the app (import), display — after N3.3.**
+- **NAV-NOOBD - navigation without OBD — after N3.** See docs/BACKLOG_UX.md.
 
 Every engine change is judged on the replay set first and goes through `/review-loop` before merge.
 
@@ -291,10 +301,10 @@ Every engine change is judged on the replay set first and goes through `/review-
 
 ## Rules for the orchestrator
 - **Model.** The main session runs on Sonnet by default. Switch to Opus (`/model`) only to verify review findings (CONFIRMED / REJECTED) or to judge an adoption-rule verdict yourself (docs/NAVIGATION.md), then switch back. Engineer agents and the reviewer stay on Opus with effort high (their frontmatter); `ios-ui-engineer`, `drive-analyst` and `docs-editor` run on Sonnet.
-- **Delegate by default.** Code and analysis work goes to the owning agent: `navigation-engineer` (Core/Navigation, Replay, replay_nav, Roads, RoadPackBuild, tools/roads), `sensors-logging-engineer` (clock, log, sensors, RecordingSession), `elm-ble-engineer` (ELM327/OBD/BLE), `ios-ui-engineer` (App UI), `drive-analyst` (recordings), `docs-editor` (docs).
+- **Delegate by default.** Code and analysis go to the owning agent with a self-contained brief: `navigation-engineer` (Core/Navigation, Replay, replay_nav, Roads, RoadPackBuild, tools/roads), `sensors-logging-engineer` (clock, log, sensors, RecordingSession), `elm-ble-engineer` (ELM327/OBD/BLE), `ios-ui-engineer` (App UI), `drive-analyst` (recordings), `docs-editor` (docs).
   - Give the agent a self-contained brief: files to read, goal, exit criteria, memory limits.
   - Take back a short result: what changed, commits, test counts, numbers, open decisions.
-- **The main session itself only** plans the step, asks me decisions, runs the final test/build check, verifies review findings, commits and merges. It does not read large source files or run replay grids itself; it reads the agent's summary.
+- **The main session itself only** plans, asks me for decisions, verifies review findings, runs the final checks, commits and merges. It does not read large source files or run replay grids itself; it reads the agent's summary.
 - **API limit.** If an agent stops on an API limit, start a fresh one with a brief that says "resume from the last commit on <branch>".
 - **Archive.** `docs/archive/` is history: read it only on demand, never as default context for an agent. When a backlog row closes (DONE, FIXED, SUPERSEDED, OBSOLETE), move it to `docs/archive/BACKLOG-closed.md` unchanged; superseded NAVIGATION result tables go to `docs/archive/NAVIGATION-history.md`.
 - **Docs-only work goes to `docs-editor`**, not `navigation-engineer` or another engineer: wording fixes, ledger/backlog row moves, plan text. It has no shell, so you run tests and commit.
