@@ -670,15 +670,15 @@ N4 B acceptance and the as-live table: moved to [docs/archive/NAVIGATION-history
 ## Adoption rule for engine changes
 
 A change to the engine or its defaults is adopted only if, on every acceptance
-drive (clean-long, clean, manual, jammed-A, jammed-B, and from N3.0 drive-7),
-the **mean over seeds 1–5** passes:
+drive (clean-long, clean, manual, jammed-A, jammed-B, from N3.0 drive-7, and
+from N3.2e drive-8, added 2026-10-14), the **mean over seeds 1–5** passes:
 
 - **Drives scored in metres** (clean-long and clean max error, manual error at
   truth point 1): the mean may get worse by at most 2 m or 5 % of the
   previous mean, whichever is larger.
 - **Drives scored in % of distance** (jammed-A, jammed-B end error; drive-7
-  worst withheld clean fix): the mean may get worse by at most 0.1
-  percentage points.
+  and drive-8 worst withheld clean fix): the mean may get worse by at most
+  0.1 percentage points.
 - **Ellipse consistency** (share of scored checkpoints inside the 95 %
   ellipse, mean over seeds) must not drop on any drive. **Since N3.0 (Q3,
   decided by the user 2026-10-11) the gated consistency is the one with the
@@ -721,8 +721,8 @@ explained.
 ## Acceptance runs
 
 `<clean>`, `<clean-long>`, `<manual>`, `<manual-3>`, `<jammed-A>`,
-`<jammed-B>` and `<drive-7>` are the paths of the recordings known under those
-aliases (kept outside the repository or in the git-ignored `logs/`).
+`<jammed-B>`, `<drive-7>` and `<drive-8>` are the paths of the recordings known
+under those aliases (kept outside the repository or in the git-ignored `logs/`).
 
 | alias | run | criterion |
 |---|---|---|
@@ -732,6 +732,7 @@ aliases (kept outside the repository or in the git-ignored `logs/`).
 | manual | `--gps use --hold-out-acc 100` | truth point 1 ≤ 200 m; convergence reported |
 | jammed-A, jammed-B | `--gps use` | end ≤ 2.5 % of distance |
 | drive-7 | `--gps mask-after 1800` | every withheld clean fix after 1800 s ≤ 2.5 % of distance from the start (decided 2026-10-12, see below); scored-pin and clean-fix consistency reported |
+| drive-8 | `--gps mask-after 785` | every withheld clean fix up to 1988 s (truth `scoreUntilT`) ≤ 2.5 % of distance from the start (decided 2026-10-14, see below); clean-fix consistency reported |
 
 - **clean**: the criterion is `mask-after 230`, i.e. 30 s of clean GNSS at
   speed (from about 200 s), then 1.8 km of pure dead reckoning. That is what
@@ -780,6 +781,33 @@ aliases (kept outside the repository or in the git-ignored `logs/`).
     (`-Onone`). Its sidecar's `msPerStep` (median 2.8 ms) and `maxStepMs`
     (45 ms) are not a device performance number. The sidecar predates the
     `buildConfiguration` header field, so it does not say so itself.
+- **drive-8** (added 2026-10-14, before N3.2e): about 2092 s and 19.1 km,
+  iPhone 16 Pro Max, **Debug** build. Network (tower and Wi-Fi) fixes only
+  until the first clean fix at 664 s, clean after it. The screen was locked
+  from 10 s to 581 s. No pins.
+  - **Mask.** T = 785 s. Rule, pre-declared and not swept: the first clean
+    fix (≤ 15 m, 664.2 s) plus 120 s, i.e. 784.2 s, rounded up to the whole
+    second. The engine gets network fixes, then two minutes of clean GNSS;
+    the last fix it receives is at 784.1 s (7.90 km), and after that nothing.
+  - **Truth.** The withheld clean fixes up to 1988 s, the truth file's
+    `scoreUntilT` (see "replay_nav"): 1199 fixes from 785 s to 1987 s,
+    7.91–19.14 km into the drive, so up to 11.25 km of pure dead reckoning.
+    The driver left the car at about 1988 s; the OBD loss after that is
+    ignition off. The 83 clean fixes after 1988 s are listed as "after
+    scoreUntilT" and not scored. The truth file has no `end` and no points
+    for this drive.
+  - **Criterion (decided 2026-10-14 by the user).** Every scored withheld
+    clean fix is within 2.5 % of the distance travelled at its time (∫ OBD
+    speed from the start, as for drive-7). Rule: drive-8 takes the jammed
+    drives' 2.5 % threshold unchanged, chosen before any run, like drive-7.
+    For the adoption rule drive-8 is a drive scored in % of distance.
+  - **Reported, not gated:** the max error in metres, the error as a share
+    of the distance since the last fix the engine received (784.1 s), the
+    consistency over the scored clean fixes (engine ellipse and with the
+    truth's σ), and heading convergence.
+  - **Timing.** The live build that recorded drive-8 was Debug (the sidecar
+    header says `buildConfiguration` debug). Its sidecar timing is not a
+    device performance number.
 
 ```bash
 cd Core
@@ -789,6 +817,7 @@ swift run -c release replay_nav <clean> --gps mask-after 230 --truth ../logs/tru
 swift run -c release replay_nav <manual> --gps use --hold-out-acc 100 --truth ../logs/truth.json --out ../logs/out
 swift run -c release replay_nav <jammed-A> <jammed-B> --gps use --truth ../logs/truth.json --out ../logs/out
 swift run -c release replay_nav <drive-7> --gps mask-after 1800 --truth ../logs/truth.json --out ../logs/out
+swift run -c release replay_nav <drive-8> --gps mask-after 785 --truth ../logs/truth.json --out ../logs/out
 ```
 
 **drive-7 baseline (N3.0, seeds 1–5 arrival order and `--as-live`, release,
