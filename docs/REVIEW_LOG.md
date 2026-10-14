@@ -545,3 +545,31 @@ Tests: Core passes 818 tests in 110 suites, 39 known issues (the existing `withK
 ### Run 28 summary
 
 3 rounds. Findings: 3 MAJOR fixed (R28.1-1, R28.1-2, R28.2-1, all missing tests of the cross-pack adjacency and its memo; no code change), 1 MINOR fixed in passing (R28.1-3), 0 rejected, 4 MINOR deferred (R28.1-4, R28.1-5, R28.3-1, R28.3-2). Final: Core 818 tests in 110 suites pass, 39 known issues; App unchanged.
+
+## Run 29: N3.2 decision, default roadCorrelationM 100, decision docs (main..n3.2-decision, 4e87038..acd2979), started 2026-10-14
+
+### Round 1
+
+Reviewer: one fresh `reviewer` (opus). Result: 0 BLOCKER / 1 MAJOR / 2 MINOR.
+
+Verified clean: exactness re-run by the reviewer with its own release build at HEAD (drive-7 seed 4, clean seed 2, manual seed 3, drive-8 seed 5, with roads, no `--set`): every GeoJSON byte-identical to the N3.2e `roadCorrelationM` 100 outputs, `metrics.json` differs only in timing; the eight pinned tests loosen no assertion and fail without their pins; `compatiblePinAnchorIsTempered` reads the config (mutation to a literal 30 is killed); live path loads no roads; old configs decode; the config-hash warning is N3-CMPHASH; decision table numbers match the N3.2e tables; wording consistent across docs; archive row format; privacy.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R29.1-1 | MAJOR | `NavigationEngine.swift:1388`: the distance tempering weight w = min(1, \|Δs\| / roadCorrelationM) is never checked below 1; replacing `config.roadCorrelationM` with 30 passes every test. With the new default and 1 s updates, w < 1 on nearly every road update. | CONFIRMED | fixed in round 1: `evidenceWeightBelowOne` at the default config (asserts 100; Δs 30, −30, 100, 250: closed-form mean and P with rw = σr²/w, log-weight ratio scaled by w); fails under the literal 30, without the clamp, without `abs`, and without either w on the log-weight terms. |
+| R29.1-2 | MINOR | `docs/N3_ROAD_OFFROAD.md:279`: the test-3 regression pass condition says "no capture, and the truth inside the 95 % ellipse"; the test and the decided condition (lines 18–19) use "or". | DEFERRED | backlog. |
+| R29.1-3 | MINOR | `docs/N3_ROAD_OFFROAD.md:78`: table header "roadCorrelationM 30 (default)" is stale now that the default is 100. | DEFERRED | backlog. |
+
+Tests: Core passes 819 tests in 110 suites, 36 known issues (test 3 known FAIL; 36 at roadCorrelationM 100). App unchanged.
+
+### Round 2
+
+Reviewer: one fresh `reviewer` (opus). Result: 0 BLOCKER / 0 MAJOR / 0 MINOR.
+
+Verified clean: `evidenceWeightBelowOne` computes every expectation itself (r from S₀ = P_cc + σr², Kalman step with σr²/w, moment matching, weight ratio ((L_on + L_off)/L_off)^w), its preconditions hold (no split, no resampling, inside the innovation gate, odd particles outside the heading gate), and tolerances are tight against the w = 0.3 / 1 difference; mutations killed: literal 30 at the weight, `rw` without w (caught only by this test), off-road log-weight without w; the pin anchor's use of the default is covered by `compatiblePinAnchorIsTempered`; nothing else reads `roadCorrelationM`; ledger and backlog rows match the docs; privacy.
+
+Tests: Core passes 819 tests in 110 suites, 36 known issues. App unchanged.
+
+### Run 29 summary
+
+2 rounds. Findings: 1 MAJOR fixed (R29.1-1, missing test of the tempering weight below 1; no code change), 0 rejected, 2 MINOR deferred (R29.1-2, R29.1-3). Final: Core 819 tests in 110 suites pass, 36 known issues (test 3 known FAIL at roadCorrelationM 100); App unchanged, simulator build green at 4e87038.

@@ -248,8 +248,10 @@ public struct NavigationConfig: Hashable, Sendable, Codable {
     /// ε: the probability that the car is not on a mapped road.
     public var roadOffRoadProbability = 0.1
     /// Distance tempering: a road update weighs min(1, Δs / this), Δs the
-    /// mean distance driven since the last one, metres.
-    public var roadCorrelationM = 30.0
+    /// mean distance driven since the last one, metres. 100 (was 30): an
+    /// explicit trade-off, see docs/NAVIGATION.md "N3.2 decision
+    /// (2026-10-14)".
+    public var roadCorrelationM = 100.0
     /// A particle Gaussian wider than this σ, metres, is split before
     /// matching.
     public var roadSplitSigmaM = 15.0

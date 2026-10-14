@@ -291,6 +291,7 @@ struct NavigationRoadTests {
         let net = try Self.network([Self.street(1, from: (0, -3000), to: (0, 3000))])
         let config = Self.config(particles: 10) {
             $0.roadSplitSigmaM = 1000; $0.resampleESSFraction = 0; $0.roadOffRoadProbability = 0.5; $0.roadAlongTrackCoupling = 1
+            $0.roadCorrelationM = 30  // Δs 30 below: weight 1, the closed form's
         }
         var engine = NavigationEngine(config: config, roads: net)
         let p = S.plane.geodetic(east: 0, north: 0)
@@ -333,6 +334,81 @@ struct NavigationRoadTests {
                     "μ (\(after.east[i]), \(after.north[i])), expected (\(expected.east), \(expected.north))")
             #expect(close(after.covEE[i], expected.ee) && close(after.covEN[i], expected.en) && close(after.covNN[i], expected.nn),
                     "P (\(after.covEE[i]), \(after.covEN[i]), \(after.covNN[i])), expected \(expected)")
+        }
+    }
+
+    /// R29.1-1: the evidence weight w = min(1, |Δs| / roadCorrelationM)
+    /// below 1, at the default roadCorrelationM (100, the N3.2 decision).
+    /// The closed form of `momentMatching` with w: r is unchanged (the
+    /// candidate's likelihood uses S₀ = P_cc + σr²), the Kalman step uses
+    /// rw = σr² / w, and both log-weight terms are scaled by w. Even
+    /// particles sit 34 m across the road with a candidate; odd ones at the
+    /// same point heading east, outside the heading gate, have none. So
+    /// the weight ratio even/odd moves by ((L_on + L_off) / L_off)^w, and
+    /// the odd particles add |Δs| off-road. Δs 30 and −30 give w 0.3 (a
+    /// signed Δs would make w negative and skip the update); 100 and 250
+    /// give w 1 (the clamp).
+    @Test("Step 4 at the default roadCorrelationM 100: w = min(1, |Δs| / 100) sets rw = σr² / w and scales the log-weight by w (Δs 30, −30, 100, 250)")
+    func evidenceWeightBelowOne() throws {
+        let defaults = NavigationConfig()
+        #expect(defaults.roadCorrelationM == 100)
+        let net = try Self.network([Self.street(1, from: (0, -3000), to: (0, 3000))])
+        var engine = Self.directEngine(net, particles: 10) {
+            $0.roadOffRoadProbability = 0.5; $0.roadAlongTrackCoupling = 1
+        }
+        let c = engine.config
+        #expect(c.roadCorrelationM == defaults.roadCorrelationM)
+        let (d, pee, pen, pnn, psi) = (34.0, 100.0, 60.0, 400.0, 0.1)
+        for i in engine.east.indices {
+            engine.east[i] = d
+            engine.north[i] = 0
+            engine.covEE[i] = pee; engine.covEN[i] = pen; engine.covNN[i] = pnn
+            engine.heading[i] = i % 2 == 0 ? psi : .pi / 2
+            engine.roadEdge[i] = RoadMatcher.noEdge
+            engine.roadLevel[i] = RoadGeometry.unknownLevel
+            engine.offRoadM[i] = 0
+        }
+        #expect(90 > c.roadHeadingGateDeg, "odd particles must be outside the heading gate")
+
+        let sr2 = c.roadSigmaM * c.roadSigmaM, sigmaPsi = c.roadHeadingSigmaDeg * .pi / 180
+        let (paa, pac, pcc) = (pnn, pen, pee)
+        let s0 = pcc + sr2
+        let logL = -0.5 * d * d / s0 - 0.5 * log(s0) - 0.5 * (psi / sigmaPsi) * (psi / sigmaPsi) - log(2 * .pi * sigmaPsi)
+        let eps = c.roadOffRoadProbability
+        let on = (1 - eps) * exp(logL), off = eps / (2 * c.roadSearchRadiusM * 2 * .pi)
+        let r = on / (on + off)
+        #expect(r > 0.3 && r < 0.7, "r \(r)")
+        func close(_ a: Double, _ b: Double) -> Bool { abs(a - b) <= 1e-6 * max(1, abs(b)) }
+
+        for (ds, w) in [(30.0, 0.3), (-30.0, 0.3), (100.0, 1.0), (250.0, 1.0)] {
+            var after = engine
+            after.roadUpdate(evidenceDistanceM: ds)
+            #expect(after.counters.roadUpdates == 1 && after.counters.roadSplits == 0, "Δs \(ds)")
+            // Kalman with rw = σr² / w: innovation −d across the road.
+            let sw = pcc + sr2 / w
+            let da = -d * pac / sw, dc = -d * pcc / sw
+            let uAA = paa - pac * pac / sw, uAC = pac - pac * pcc / sw, uCC = pcc - pcc * pcc / sw
+            let mix = r * (1 - r)
+            let expected = (east: d + r * dc, north: r * da,
+                            ee: r * uCC + (1 - r) * pcc + mix * dc * dc,
+                            en: r * uAC + (1 - r) * pac + mix * da * dc,
+                            nn: r * uAA + (1 - r) * paa + mix * da * da)
+            for i in stride(from: 0, to: after.east.count, by: 2) {
+                #expect(close(after.east[i], expected.east) && close(after.north[i], expected.north),
+                        "Δs \(ds): μ (\(after.east[i]), \(after.north[i])), expected (\(expected.east), \(expected.north))")
+                #expect(close(after.covEE[i], expected.ee) && close(after.covEN[i], expected.en)
+                        && close(after.covNN[i], expected.nn),
+                        "Δs \(ds): P (\(after.covEE[i]), \(after.covEN[i]), \(after.covNN[i])), expected \(expected)")
+            }
+            for i in stride(from: 1, to: after.east.count, by: 2) {
+                #expect(after.east[i] == d && after.north[i] == 0 && after.covEE[i] == pee && after.covNN[i] == pnn,
+                        "Δs \(ds): particle \(i) has no candidate")
+                #expect(after.offRoadM[i] == abs(ds), "Δs \(ds): particle \(i) off-road \(after.offRoadM[i])")
+            }
+            // log(w_even / w_odd) moves by w·log(L_on + L_off) − w·log(L_off).
+            let ratio = (after.weight[0] / after.weight[1]) / (engine.weight[0] / engine.weight[1])
+            let expectedRatio = pow((on + off) / off, w)
+            #expect(abs(ratio / expectedRatio - 1) < 1e-9, "Δs \(ds): weight ratio \(ratio), expected \(expectedRatio)")
         }
     }
 
@@ -975,6 +1051,7 @@ struct NavigationRoadTests {
         let edge = UInt32(0)
         let config = Self.config(particles: 100) {
             $0.roadSplitSigmaM = 1000; $0.resampleESSFraction = 0; $0.roadOffRoadProbability = 0.9
+            $0.roadCorrelationM = 30  // Δs 30 below: weight 1, the r read-back's
         }
         var engine = NavigationEngine(config: config, roads: net)
         let p = S.plane.geodetic(east: 0, north: 0)
@@ -1018,7 +1095,7 @@ struct NavigationRoadTests {
     @Test("Step 2 χ² gate: P = 25·I, 24 m off is a candidate and moves r·g·d across; 28 m off is not (r ≥ 0.5 without the gate)")
     func innovationGate() throws {
         let net = try Self.network([Self.street(1, from: (0, -3000), to: (0, 3000))])
-        var engine = Self.directEngine(net)
+        var engine = Self.directEngine(net) { $0.roadCorrelationM = 30 }  // Δs 30 below: weight 1
         let c = engine.config
         let (inside, outside) = (24.0, 28.0)
         Self.place(&engine, at: (0, 0), heading: 0)
@@ -1678,7 +1755,7 @@ struct NavigationRoadTests {
             // Compatible: the anchor = a regular road update with Δs since
             // the last one. Reset: weight 1.
             var expected = plain
-            expected.roadUpdate(evidenceDistanceM: reset ? max(plain.roadDistanceM, 30) : plain.roadDistanceM)
+            expected.roadUpdate(evidenceDistanceM: reset ? max(plain.roadDistanceM, plain.config.roadCorrelationM) : plain.roadDistanceM)
             #expect(Self.state(anchored) == Self.state(expected), "\(delay) s, \(ahead) m")
             #expect(anchored.offRoadM == expected.offRoadM && anchored.roadEdge == expected.roadEdge, "\(delay) s")
             if reset {

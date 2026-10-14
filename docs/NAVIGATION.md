@@ -376,7 +376,8 @@ Tried and rejected (worse on the replay set): moved to [docs/archive/NAVIGATION-
 Every value is in `NavigationConfig`; `replay_nav` prints the full config with
 every result. The table lists the keys without roads; the 18 road keys
 (`road…`, used only with `--roads`) and their defaults are in
-[docs/N3_PLAN.md](N3_PLAN.md), "Config keys" (R21.4-4).
+[docs/N3_PLAN.md](N3_PLAN.md), "Config keys" (R21.4-4). `roadCorrelationM`
+default 100 (was 30 until 2026-10-14; N3.2 decision, below).
 
 | key | default | meaning |
 |---|---:|---|
@@ -1631,6 +1632,10 @@ its three pin errors, sanity only.
     moves a little (271 of 273 differ). The three flips are that noise
     at boundary checkpoints, not a new miss region. Measured, not explained
     away: under the rule it is a FAIL, and adopting it is the user's call.
+  - **Accepted by the user as a correctness fix on 2026-10-14.** It stays in
+    the engine despite the drive-7 consistency FAIL: `roadLevelBlocked` on
+    clean 23 818 → 0, clean wrong road 2.4 → 0 %, clean max 19.44 → 15.34 m.
+    The rule is unchanged.
 - **Against N3.0** the verdicts are those of the N3.2b default except clean,
   which improves but still fails by 0.36 m: clean-long (+3.09 m; 96.4 %),
   clean (+2.36 m, allowed +2), drive-7 (87.2 % against 99.6 %) and drive-8
@@ -1827,6 +1832,65 @@ Means over seeds 1–5, against N3.0:
   candidate; its gated value counts clean fixes only.
 - manual-3 (sanity): pins 68.2–68.6 m mean under every candidate, 66.7 %
   consistency; engine-only 26.7–33.3 %.
+
+### N3.2 decision (2026-10-14)
+
+**roadCorrelationM 100 is the N3.2 default.** It is an explicit trade-off
+accepted by the user against a failing gated check (drive-7 consistency). The
+adoption rule is unchanged: against N3.0 this config still FAILs it. The
+default config is now N3.2e item 1 plus `roadCorrelationM` 100.
+
+Means over seeds 1–5, from the N3.2e tables above. Gated value: metres for
+clean-long, clean, manual; % of distance for the rest. Consistency includes
+the truth's σ.
+
+| drive | gated value, mean (range) | Δ mean vs N3.0 (allowed) | consistency + truth σ (N3.0 → now) | verdict vs N3.0 |
+|---|---|---|---|---|
+| clean-long | 19.38 (19.22–19.50) m | -0.04 (≤ +2.00) | 100.0 → 100.0 % | PASS |
+| clean | 14.39 (11.81–18.82) m | +1.40 (≤ +2.00) | 100.0 → 100.0 % | PASS |
+| manual | 7.23 (5.81–10.02) m | -43.27 (≤ +2.52) | 100.0 → 100.0 % | PASS |
+| jammed-A | 0.177 (0.170–0.182) % | -0.960 (≤ +0.1) | 100.0 → 100.0 % | PASS |
+| jammed-B | 0.201 (0.171–0.245) % | -0.866 (≤ +0.1) | 100.0 → 100.0 % | PASS |
+| drive-7 | 0.130 (0.123–0.148) % | -0.998 (≤ +0.1) | 99.6 → 96.3 % | FAIL (consistency) |
+| drive-8 | 0.186 (0.184–0.188) % | -1.295 (≤ +0.1) | 100.0 → 100.0 % | PASS |
+| manual-3 (sanity, not gated) | 68.37 (66.50–70.20) m | -163.66 (not gated) | 66.7 → 66.7 % | not gated |
+
+- **Passes every gated drive except drive-7's consistency:** 6 of the 7 gated
+  drives. manual-3 is sanity only and is not counted.
+- **Fails only drive-7 consistency:** 99.6 → 96.3 %, per seed 266 / 265 / 267 /
+  252 / 265 of 273 (N3.0: 272 every seed). All the extra misses are in its
+  last 0.3 km, on service roads (2068–2087 s). The error there is about 23 m
+  against an ellipse of about 25 × 21 m.
+- **Gains:**
+  - manual truth point 1 50.5 → 7.2 m, and heading converged at 1.52–1.58 km:
+    the known FAIL (≤ 2 km) is closed;
+  - jammed-A error down 84 %, jammed-B 81 %, drive-8 1.482 → 0.186 % (87 %);
+  - drive-7 worst withheld clean fix 213–245 m → 24–28 m.
+- **Costs besides drive-7:**
+  - slower heading convergence than the old default: jammed-A 0.74–0.92 km
+    (was 0.30–0.31), jammed-B 0.43–0.44 (was 0.19–0.22), drive-8 0.66–0.68
+    (was 0.39–0.41);
+  - clean +1.40 m, within the allowance (seed 4 reaches 18.82 m).
+- **Regression cases kept for the off-road and ellipse work** (see
+  docs/N3_ROAD_OFFROAD.md, "Regression cases"): drive-7 at 2068–2087 s (the
+  service-road end) and N3.2 test 3 (an unmapped road beside a mapped one,
+  a known FAIL).
+- The default change is a separate commit (4e87038). Exactness check
+  (release build of that commit, no `--set`): with roads (national +
+  region-A), seeds 1–5, every acceptance drive, all 35 runs match the N3.2e
+  `roadCorrelationM` 100 column exactly: every GeoJSON byte-identical, and
+  `metrics.json` differs only in `msPerStep` and `maxIngestMs`. Without
+  roads (seed 1, every drive) every GeoJSON is byte-identical to N3.2e;
+  `metrics.json` differs only in `config.roadCorrelationM` (the recorded
+  config) and the timing fields. Outputs: logs/n32dec/ (git-ignored).
+- **Tests.** Eight synthetic tests built on 30 by construction now set
+  `roadCorrelationM` 30 in their config (closed-form tempering checks and
+  road-scoring scenarios measured at 30); no assertion was loosened. Test 3
+  (known FAIL) records 36 known issues at 100 instead of 39.
+- **Live path.** No packs are loaded live, so live estimates are unchanged.
+  The sidecar header's config, and so its `configHash`, changes: `replay_nav
+  --as-live --compare` on a sidecar written before this change warns about a
+  config-hash difference in `roadCorrelationM` (backlog N3-CMPHASH).
 
 ## Known limitations and options
 
