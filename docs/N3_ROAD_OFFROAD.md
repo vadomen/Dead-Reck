@@ -264,3 +264,21 @@ the change in the particles' distances to the road since the last update
 (for example the weighted spread of Δd) would separate the two cases.
 Heading novelty of the matched edge cannot. This is a follow-up option, not
 part of N3.2a.
+
+## Regression cases (N3.2 decision, 2026-10-14)
+
+The N3.2 default (`roadCorrelationM` 100) fails one gated check, drive-7's
+consistency, as a trade-off the user accepted (docs/NAVIGATION.md, "N3.2
+decision"). Two cases stay named for any later off-road or ellipse work.
+
+- **drive-7, 2068–2087 s (the service-road end).** The truth is on a road the
+  pack does not have in that direction; the error is about 23 m against an
+  ellipse of about 25 × 21 m. Passing: no extra misses in 2068–2087 s beyond
+  N3.0's single miss (the 706 s pin), i.e. consistency back to 99.6 %.
+- **N3.2 test 3** (unmapped road beside a mapped one, known FAIL above).
+  Passing: no capture, and the truth inside the 95 % ellipse.
+
+Two candidate directions, both unmeasured:
+- an ellipse that keeps the along-track uncertainty the roads cannot reduce;
+- an off-road model that releases the cloud sooner (the round-2 "Not
+  measured" candidate above).

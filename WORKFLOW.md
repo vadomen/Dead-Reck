@@ -290,8 +290,9 @@ Dead reckoning on top of the logger. The model, config, replay commands, accepta
   - **N3.2b - `replay_nav --roads`, first measurement — done.**
   - **N3.2c - canonical pack order, unmapped metric, perf test — done.**
   - **N3.2d - pre-declared grids — done.** No config chosen.
-  - **N3.2e - level rule across packs — in progress.** Re-run of the declared candidates and a trade-off table against N3.0. The config choice is the user's.
-  - **N3.3 - enable roads on the live path (sidecar v2) — next after N3.2.**
+  - **N3.2e - level rule across packs — done.** Re-run of the declared candidates and a trade-off table against N3.0.
+  - **N3.2 - done (2026-10-14).** Default config: N3.2e item 1 plus `roadCorrelationM` 100, a trade-off the user accepted (drive-7 consistency fails; docs/NAVIGATION.md "N3.2 decision").
+  - **N3.3 - enable roads on the live path (sidecar v2) — next.** Waits for a Release-build ms/step measured on the phone (device item).
   - **N3.4 - packs in the app (import), display — after N3.3.**
 - **NAV-NOOBD - navigation without OBD — after N3.** See docs/BACKLOG_UX.md.
 

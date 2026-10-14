@@ -216,7 +216,9 @@ levels differ (rare). Counter `roadLevelBlocked`. Adjacency spans packs (N3.2e i
 only rules 1–2 applied at a pack border): two edges in different packs are adjacent when they
 share an OSM node, that is the same node of the same way (way ID and normalised node index; a
 pack stores no node IDs) or an equal E7 point that is an end of at least one of them
-(`RoadNetwork.adjacentEdges`).
+(`RoadNetwork.adjacentEdges`). Item 1 fails the adoption rule against the N3.2b default only on
+drive-7's consistency (87.4 → 87.2 %, three end checkpoints); the user accepted it as a
+correctness fix (2026-10-14).
 
 **GPS fix gate** (in addition to the existing GNSS-vs-OBD speed gate, which vetoes course and
 speed only). A fix with a valid speed (GNSS, not a network fix) is ignored as a whole when
@@ -253,7 +255,7 @@ forced road update.
 | roadSearchRadiusM | 50 | candidate radius; validation clamps it to the pack's guaranteed radius |
 | roadInnovationGateChi2 | 9 | cross-track gate d²/S₀ (1 dof, 99.7 %) |
 | roadOffRoadProbability | 0.1 | ε, the off-road share of the mixture |
-| roadCorrelationM | 30 | distance tempering length |
+| roadCorrelationM | 100 (30 until the N3.2 decision, 2026-10-14) | distance tempering length |
 | roadSplitSigmaM | 15 | wider particle Gaussians are split before matching |
 | roadEngageMaxEllipseM | 1000 | no road update while the cloud's 95 % semi-major axis is above this |
 | roadAlongTrackCoupling | 0 | 0 = Schmidt (along-track unchanged), 1 = exact Kalman |
@@ -768,7 +770,14 @@ Re-measured in N3.2e (2026-10-14; docs/NAVIGATION.md, "N3.2e: candidates on the 
 rule") after the level rule's adjacency was extended across packs (N3.2e item 1): the default,
 `roadCorrelationM` 100 and `roadSigmaM` 10 and 3.0, on all eight acceptance drives. No candidate passes
 against N3.0 on every gated drive; `roadCorrelationM` 100 fails only drive-7's consistency (96.3 % against
-99.6 %) and passes against the N3.2b default. No config was chosen; the choice is open for the user.
+99.6 %) and passes against the N3.2b default. N3.2e item 1 itself fails the adoption rule against the
+N3.2b default only on drive-7's consistency (87.4 → 87.2 %, three end checkpoints); the user accepted it
+as a correctness fix (2026-10-14).
+
+**N3.2 done (2026-10-14).** The user chose the default config: N3.2e item 1 plus `roadCorrelationM`
+100 (docs/NAVIGATION.md, "N3.2 decision (2026-10-14)"). It is a trade-off the user accepted against a
+failing gated check; the adoption rule is unchanged. Regression cases for the failing check:
+docs/N3_ROAD_OFFROAD.md.
 
 **Exit:**
 - Without `--roads`, the 30 acceptance runs are bit-identical to N3.0: every `metrics.json`
@@ -777,6 +786,9 @@ against N3.0 on every gated drive; `roadCorrelationM` 100 fails only drive-7's c
   seed.
 - A failing criterion (above all manual convergence) is reported as a measured FAIL, and the
   user decides. No criterion, metric definition or convergence rule is loosened to pass.
+- **Exit notes (2026-10-14):** the drive-7 consistency criterion fails against N3.0 (99.6 → 96.3 %)
+  and was accepted as a trade-off by the user. Every other gated drive passes. N3.3 is next and
+  waits for a Release-build ms/step measured on the phone (device item).
 
 ### N3.3 — enable in the engine (live path)
 
@@ -895,7 +907,10 @@ off the road the filter matched.
    gate rejects the road and the particle goes off-road, which is soft, but it may cost
    particles.
 7. **Mis-tagged bridges and tunnels** (missing `layer`) defeat the level rule. Adjacency at
-   pack borders, missing until N3.2e item 1, now spans packs by shared OSM node.
+   pack borders, missing until N3.2e item 1, now spans packs by shared OSM node. Item 1 fails the
+   adoption rule against the N3.2b default only on drive-7's consistency (87.4 → 87.2 %, three end
+   checkpoints); the user accepted it as a correctness fix (2026-10-14). Packs store no OSM node
+   IDs (backlog N3-NODEID).
 8. **Device time and memory:** unknown iPhone/Mac ratio; pack hash verification at import
    (~100 MB, estimated well under a second); thermal state with the map open. The Mac
    already shows a 4.47 ms single-`ingest` outlier.
