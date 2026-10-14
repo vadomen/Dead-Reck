@@ -573,3 +573,21 @@ Tests: Core passes 819 tests in 110 suites, 36 known issues. App unchanged.
 ### Run 29 summary
 
 2 rounds. Findings: 1 MAJOR fixed (R29.1-1, missing test of the tempering weight below 1; no code change), 0 rejected, 2 MINOR deferred (R29.1-2, R29.1-3). Final: Core 819 tests in 110 suites pass, 36 known issues (test 3 known FAIL at roadCorrelationM 100); App unchanged, simulator build green at 4e87038.
+
+## Run 30: R26.2-1 follow-loop camera writes gated to 4 Hz (main..fix/r26.2-1-zoom-gate, 1454ae3), started 2026-10-14
+
+### Round 1
+
+Reviewer: one fresh `reviewer` (opus). Result: 0 BLOCKER / 0 MAJOR / 1 MINOR.
+
+Verified clean: `FollowCameraTick.decide` matches the old `runLoop` body apart from the gating (the distance now uses `inputs.headingUp`, as `autoWantsWrite` already did); loop writes at most 4/s (about every 0.3 s at 100 ms ticks); held zoom, heading and publish writes land on the next open tick; no caller of `noteWrite` runs faster than 0.25 s, so no unbounded delay; `publishPending` cleared on recording change, no center, no estimate (left set across a follow-off or tab leave, giving one write after the next recentre, as the old next publish did); activation still snaps; mutations by reading (no `guard due`, wrong `publishPending` updates) are caught by `FollowCameraRateTests`; privacy.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R30.1-1 | MINOR | `MapCameraLogic.swift:81-83` and `docs/PLAN.md:740` say every non-loop write calls `noteWrite`; `frame()` does not (and resets the gate in heading-up), so a tab return can give 5 writes in 1 s, by design for activation. | DEFERRED | backlog. |
+
+Tests: Core passes 819 tests in 110 suites, 36 known issues (Core unchanged). App: simulator build succeeded; 281 tests in 44 suites pass on the iPhone 15 Pro simulator.
+
+### Run 30 summary
+
+1 round. Findings: 0 fixed, 0 rejected, 1 MINOR deferred (R30.1-1). R26.2-1 closed and moved to `docs/archive/BACKLOG-closed.md`. Final: Core 819 tests in 110 suites pass, 36 known issues; App 281 tests in 44 suites pass, simulator build green at 1454ae3.
