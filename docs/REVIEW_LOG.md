@@ -528,3 +528,20 @@ Verified clean: the round-1 tests kill their mutations (end condition → `true`
 | R28.2-1 | MAJOR | `RoadNetwork.swift:230-231`: the start-of-edge half of the equal-coordinate rule (`k == ends.0`, `k == node(r.from)`) is untested: every cross-pack coordinate fixture meets at the street's last point, and dropping both passes every test. A street whose way starts at a bridge's interior node would again be blocked. | CONFIRMED | fixed in round 2: `coordinateBothDirectionsReversedStreet` (street way reversed; adjacency both ways, up and down updates, both pack orders); dropping either half alone or both fails it. |
 
 Tests: Core passes 818 tests in 110 suites, 39 known issues (the existing `withKnownIssue` tests). App unchanged.
+
+### Round 3
+
+Reviewer: one fresh `reviewer` (opus); a first attempt was cut off by an API limit and not counted, the second resumed from its notes. Result: 0 BLOCKER / 0 MAJOR / 2 MINOR.
+
+Verified clean: the N3.2e tables in NAVIGATION.md match `logs/n32e/tradeoff.md`, which `tradeoff.py` reproduces; every adoption verdict and allowed Δ recomputed (max(2 m, 5 %), manual 2.52 m; 0.1 pp), N3.0 references incl. drive-8 1.482 % / 100 %; item 1 stated as a FAIL against the N3.2b default on drive-7 consistency (seeds 1, 4, 5 one miss each), not presented as adopted, no config chosen; 40 no-roads GeoJSON byte-identical to N3.0; three more mutations on item-1 code (within-pack adjacency `[from]` only, `[to]` only, `edgeRange` upper bound) all killed; WORKFLOW.md references and CLAUDE.md perf command accurate; privacy.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R28.3-1 | MINOR | `docs/N3_PLAN.md:767-771` (also :215-219, :897-898): the N3.2e status does not say that item 1 itself fails the adoption rule against the N3.2b default (drive-7 consistency 87.4 → 87.2 %) and that adopting it is the user's call; the design text describes cross-pack adjacency as the current rule. NAVIGATION.md is explicit. | DEFERRED | backlog. |
+| R28.3-2 | MINOR | `docs/NAVIGATION.md:1821-1822`: "seed 4 misses 21 (2068–2087 s), the others 6–8" counts the 706 s pin, which is outside that window; section (b) gives 6 / 7 / 5 / 20 / 7 without it. | DEFERRED | backlog. |
+
+Tests: Core passes 818 tests in 110 suites, 39 known issues (the existing `withKnownIssue` tests). App unchanged.
+
+### Run 28 summary
+
+3 rounds. Findings: 3 MAJOR fixed (R28.1-1, R28.1-2, R28.2-1, all missing tests of the cross-pack adjacency and its memo; no code change), 1 MINOR fixed in passing (R28.1-3), 0 rejected, 4 MINOR deferred (R28.1-4, R28.1-5, R28.3-1, R28.3-2). Final: Core 818 tests in 110 suites pass, 39 known issues; App unchanged.
