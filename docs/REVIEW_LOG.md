@@ -516,3 +516,15 @@ Verified clean: bit-identity (clean, mask-after 230, seed 1: no roads main vs HE
 | R28.1-5 | MINOR | `NavigationRoadTests.swift:851-853`: the `twoPacks` doc comment and test name still say the level rule finds adjacency within a pack only; false after N3.2e item 1 (passes only because its streets are far from the bridge). | DEFERRED | backlog. |
 
 Tests: Core passes 817 tests in 110 suites, 39 known issues (the existing `withKnownIssue` tests). App unchanged.
+
+### Round 2
+
+Reviewer: one fresh `reviewer` (opus). Result: 0 BLOCKER / 1 MAJOR / 0 MINOR.
+
+Verified clean: the round-1 tests kill their mutations (end condition → `true`; `<=` → `<`; memo key without `b`; without `a`); the cell scan and its dedupe cannot lose a link (segments listed within the effective radius); adjacency through a third pack via the BFS; duplicates removed; symmetry and pack-order independence; `edgeRange(ofWay:)` relies on the enforced sort order; memo key cannot collide and is built once per update; ms/step and largest ingest unchanged or lower on the two-pack replays; docs and ledger match the code; privacy. Bit-identity not re-run (`Core/Sources` changed only by a comment since round 1).
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R28.2-1 | MAJOR | `RoadNetwork.swift:230-231`: the start-of-edge half of the equal-coordinate rule (`k == ends.0`, `k == node(r.from)`) is untested: every cross-pack coordinate fixture meets at the street's last point, and dropping both passes every test. A street whose way starts at a bridge's interior node would again be blocked. | CONFIRMED | fixed in round 2: `coordinateBothDirectionsReversedStreet` (street way reversed; adjacency both ways, up and down updates, both pack orders); dropping either half alone or both fails it. |
+
+Tests: Core passes 818 tests in 110 suites, 39 known issues (the existing `withKnownIssue` tests). App unchanged.

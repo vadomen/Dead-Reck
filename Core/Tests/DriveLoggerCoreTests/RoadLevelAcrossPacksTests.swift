@@ -96,6 +96,55 @@ struct RoadLevelAcrossPacksTests {
         #expect(down.roadEdge.allSatisfy { $0 == street } && down.roadLevel.allSatisfy { $0 == 0 })
     }
 
+    /// `coordinateBothDirections` with the street's way reversed (A → 101 →
+    /// 100), so A is the street edge's first point and `from` node instead
+    /// of its last point and `to` node. Street → bridge links only through
+    /// "A is the first point of e"; bridge → street only through "A is the
+    /// other edge's `from` node". Both pack orders, `adjacentEdges` and the
+    /// up and down road updates. (R28.2-1: fails if either start-of-edge
+    /// half of the equal-coordinate rule is dropped.)
+    @Test("Coordinate: a street starting on another pack's bridge (A is the street's first point) links in both directions")
+    func coordinateBothDirectionsReversedStreet() throws {
+        let local = try RoadFixture.build([
+            RoadFixture.way(10, ["highway": "residential"], [
+                N(id: 1, east: 0, north: 0), N(id: 101, east: 0, north: -700), N(id: 100, east: 0, north: -1500),
+            ]),
+        ])
+        let national = try RoadFixture.build([Self.bridgeThrough(id: 2)], classes: RoadGraphBuilder.nationalClasses)
+        #expect(local.edgeCount == 1 && national.edgeCount == 1)
+        #expect(local.edge(0).level == 0 && national.edge(0).level == 1)
+        // A is the street's start only, and interior to the bridge.
+        let streetPoints = RoadFixture.points(of: local, edge: 0)
+        let bridgePoints = RoadFixture.points(of: national, edge: 0)
+        let a = bridgePoints[1]
+        #expect(streetPoints.first == a && streetPoints.last != a)
+        #expect(local.node(Int(local.edge(0).from)) == a && local.node(Int(local.edge(0).to)) != a)
+        #expect(bridgePoints.first != a && bridgePoints.last != a)
+
+        for order in [[local, national], [national, local]] {
+            let net = try RoadNetwork(packs: order)
+            let l = try #require(net.packs.firstIndex { $0 === local }), n = 1 - l
+            let streetRef = RoadNetwork.EdgeRef(pack: l, edge: 0), bridgeRef = RoadNetwork.EdgeRef(pack: n, edge: 0)
+            #expect(net.adjacentEdges(of: streetRef) == [bridgeRef])
+            #expect(net.adjacentEdges(of: bridgeRef) == [streetRef])
+
+            let street = try Self.globalEdge(net, local, way: 10)
+            let bridge = try Self.globalEdge(net, national, way: 12)
+            // On the street (level 0), at the bridge 300 m east of A,
+            // heading east: the bridge is the only candidate.
+            let up = Self.update(net, at: (300, 2), heading: .pi / 2, edge: street, level: 0)
+            #expect(up.counters.roadUpdates == 1)
+            #expect(up.counters.roadLevelBlocked == 0)
+            #expect(up.roadEdge.allSatisfy { $0 == bridge } && up.roadLevel.allSatisfy { $0 == 1 })
+            // On the bridge (level 1), at the street 300 m south of A,
+            // heading south: the street is the only candidate.
+            let down = Self.update(net, at: (2, -300), heading: .pi, edge: bridge, level: 1)
+            #expect(down.counters.roadUpdates == 1)
+            #expect(down.counters.roadLevelBlocked == 0)
+            #expect(down.roadEdge.allSatisfy { $0 == street } && down.roadLevel.allSatisfy { $0 == 0 })
+        }
+    }
+
     /// The same street and bridge, but the bridge passes 1 E7 unit (≈ 1 cm)
     /// north of A: no shared point, no link. Passes before and after item 1.
     @Test("Non-match: a bridge 1 E7 unit (about 1 cm) from the street's end does not link; the level rule still blocks it")
