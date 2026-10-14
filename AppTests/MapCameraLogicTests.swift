@@ -160,3 +160,130 @@ struct MapViewModelHeadingTests {
         #expect(CameraHeading.choose(headingUp: true, bearing: m.bearing, smoothed: 200) == 0)
     }
 }
+
+/// Drives `FollowCameraTick` at the loop's real 100 ms tick with a synthetic
+/// clock; `published` fires at the feed's 4 Hz and the DR heading keeps
+/// turning, so every writer of the combined rate is active.
+@Suite("Follow camera write rate")
+struct FollowCameraRateTests {
+    struct Result {
+        var writes: [Double] = []   // seconds
+        var lastDistance = 0.0
+        var zoom = FollowZoom()
+        var maxPerSecond: Int {
+            writes.map { start in writes.filter { $0 >= start && $0 < start + 1 }.count }.max() ?? 0
+        }
+    }
+
+    /// `speed(t)` in km/h, nil for no source.
+    private func run(
+        headingUp: Bool, estimate: Bool, seconds: Double, speed: (Double) -> Double?
+    ) -> Result {
+        var smoother = HeadingSmoother()
+        var gate = HeadingWriteGate()
+        var zoom = FollowZoom()
+        var pending = false
+        var result = Result()
+        zoom.frame(distance: 250)   // the camera already sits at the cold-start zoom
+        smoother.reseed(to: 0)
+        let tick = 0.1
+        var nextPublish = 0.0
+        var now = 0.0
+        while now < seconds {
+            now += tick
+            zoom.step(speedKmh: speed(now), dt: tick)
+            var published = false
+            if estimate, now >= nextPublish - 1e-9 {
+                published = true
+                nextPublish += 0.25
+            }
+            if let write = FollowCameraTick.decide(
+                smoother: &smoother, gate: &gate, zoom: &zoom, publishPending: &pending,
+                published: published, headingUp: headingUp, frozen: false,
+                target: estimate ? 40 * now : nil,   // turning 40 deg/s: the smoother keeps moving
+                hasEstimate: estimate, hasCenter: true, semiMajorM: estimate ? 5 : nil, dt: tick,
+                now: t(now)
+            ) {
+                result.writes.append(now)
+                result.lastDistance = write.distance
+            }
+        }
+        result.zoom = zoom
+        return result
+    }
+
+    private func expectBounded(_ r: Result, converged: Bool = true, sourceLocation: SourceLocation = #_sourceLocation) {
+        #expect(r.maxPerSecond <= 4, "at most 4 camera writes in any 1 s window", sourceLocation: sourceLocation)
+        guard converged else { return }
+        // Deferred, not dropped: the last write is within the 2 % write
+        // threshold of the auto distance, which sits near the 1500 m step
+        // (the latch deadband can leave it a few percent short).
+        let auto = r.zoom.auto.distance
+        #expect(auto > 1400, sourceLocation: sourceLocation)
+        #expect(abs(log(r.lastDistance / auto)) <= 0.021, "written \(r.lastDistance), auto \(auto)", sourceLocation: sourceLocation)
+    }
+
+    @Test(
+        "A 0 to 110 km/h ramp over 15 s writes at most 4 times a second and reaches the zoom (R26.2-1)",
+        arguments: [(false, true), (true, true), (false, false)]
+    )
+    func ramp(headingUp: Bool, estimate: Bool) {
+        let r = run(headingUp: headingUp, estimate: estimate, seconds: 45) { min(110, 110 * $0 / 15) }
+        #expect(!r.writes.isEmpty)
+        expectBounded(r)
+    }
+
+    @Test(
+        "Speed jumping from none to 110 km/h writes at most 4 times a second and reaches the zoom (R26.2-1)",
+        arguments: [(false, true), (true, true), (false, false)]
+    )
+    func jump(headingUp: Bool, estimate: Bool) {
+        let r = run(headingUp: headingUp, estimate: estimate, seconds: 40) { $0 < 5 ? nil : 110 }
+        #expect(!r.writes.isEmpty)
+        expectBounded(r)
+    }
+
+    @Test("Steady state writes nothing without a publish or heading change (R26.1-1, R26.2-1)")
+    func steady() {
+        let r = run(headingUp: false, estimate: false, seconds: 30) { _ in 110 }
+        // The zoom settles at 110 km/h; after that no write follows.
+        #expect(r.writes.allSatisfy { $0 < 25 })
+        #expect(r.maxPerSecond <= 4)
+    }
+
+    @Test("A publish held back by the gate lands on the next open tick (R26.2-1)")
+    func heldPublishLands() {
+        var smoother = HeadingSmoother()
+        var gate = HeadingWriteGate()
+        var zoom = FollowZoom()
+        var pending = false
+        func tick(_ published: Bool, _ at: Double) -> FollowCameraWrite? {
+            FollowCameraTick.decide(
+                smoother: &smoother, gate: &gate, zoom: &zoom, publishPending: &pending,
+                published: published, headingUp: false, frozen: false, target: nil,
+                hasEstimate: true, hasCenter: true, semiMajorM: nil, dt: 0.1, now: t(at)
+            )
+        }
+        #expect(tick(true, 1.0) != nil)
+        #expect(tick(true, 1.1) == nil)      // 100 ms after a write: held
+        #expect(tick(false, 1.2) == nil)
+        #expect(tick(false, 1.3) != nil)     // gate open: the held publish lands
+        #expect(tick(false, 1.6) == nil)     // and is not written twice
+    }
+
+    @Test("The first write after activation is immediate (R26.2-1)")
+    func activationIsImmediate() {
+        var smoother = HeadingSmoother()
+        var gate = HeadingWriteGate()
+        var zoom = FollowZoom()
+        var pending = false
+        gate.noteWrite(0, at: t(1.0))
+        _ = CameraHeading.activate(smoother: &smoother, gate: &gate, bearing: 90)
+        let write = FollowCameraTick.decide(
+            smoother: &smoother, gate: &gate, zoom: &zoom, publishPending: &pending,
+            published: true, headingUp: true, frozen: true, target: 90,
+            hasEstimate: true, hasCenter: true, semiMajorM: nil, dt: 0.1, now: t(1.05)
+        )
+        #expect(write?.heading == 90)
+    }
+}

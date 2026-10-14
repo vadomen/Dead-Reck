@@ -240,6 +240,8 @@ struct GPSMapView: View {
         var gate = HeadingWriteGate()
         /// The driver's zoom and our latest camera write (R14.2-1).
         var zoom = FollowZoom()
+        /// A feed publish the 0.25 s gate held back (R26.2-1).
+        var publishPending = false
     }
 
     struct HeadingInputs: Equatable {
@@ -347,6 +349,7 @@ struct GPSMapView: View {
                 toast = nil
                 headingState.smoother = HeadingSmoother()
                 headingState.gate.reset()
+                headingState.publishPending = false
             }
             // No bearing: nothing to turn to; drop a stale smoothed heading.
             .onChange(of: bearing) { _, new in
@@ -623,8 +626,9 @@ struct GPSMapView: View {
 
     /// ~10 Hz while the map is visible. Polls the navigation feed, steps the
     /// heading smoother and, while following, writes the camera: when the
-    /// feed published a new estimate, or (heading-up) the heading moved
-    /// enough. When nothing changed it writes nothing.
+    /// feed published a new estimate, (heading-up) the heading moved
+    /// enough, or the auto zoom moved. At most 4 writes a second in total
+    /// (`FollowCameraTick`); when nothing changed it writes nothing.
     private func runLoop() async {
         guard isLive else { return }
         var last = ContinuousClock.now
@@ -643,28 +647,17 @@ struct GPSMapView: View {
             )
             headingState.zoom.step(speedKmh: inputs.speedKmh.map(Double.init), dt: dt)
             guard inputs.following else { continue }
-            var heading = 0.0
-            var write = published
-            let zoomWrite = headingState.zoom.autoWantsWrite(
-                headingUp: inputs.headingUp, semiMajorM: nav?.semiMajorM
-            )
-            if inputs.headingUp {
-                if target == nil {
-                    headingState.smoother = HeadingSmoother()
-                } else if let h = headingState.smoother.step(target: target, frozen: inputs.frozen, dt: dt) {
-                    heading = h
-                    if headingState.gate.admit(h, at: now) { write = true }
-                }
-            }
-            // Without an estimate the GPS onChange recentres north-up;
-            // heading-up still turns around the fix.
-            guard write || zoomWrite, let center = FollowTarget.center(dr: nav?.position, gps: inputs.fix?.geo),
-                  nav != nil || (inputs.headingUp && target != nil) || zoomWrite else { continue }
-            let d = followDistance(nav)
-            headingState.gate.noteWrite(heading, at: now)
+            let center = FollowTarget.center(dr: nav?.position, gps: inputs.fix?.geo)
+            guard let camera = FollowCameraTick.decide(
+                smoother: &headingState.smoother, gate: &headingState.gate, zoom: &headingState.zoom,
+                publishPending: &headingState.publishPending,
+                published: published, headingUp: inputs.headingUp, frozen: inputs.frozen, target: target,
+                hasEstimate: nav != nil, hasCenter: center != nil, semiMajorM: nav?.semiMajorM,
+                dt: dt, now: now
+            ), let center else { continue }
             withAnimation(.linear(duration: 0.25)) {
                 position = .camera(MapCamera(
-                    centerCoordinate: center.coordinate, distance: d, heading: heading, pitch: 0
+                    centerCoordinate: center.coordinate, distance: camera.distance, heading: camera.heading, pitch: 0
                 ))
             }
         }
