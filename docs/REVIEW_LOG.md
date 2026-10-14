@@ -561,3 +561,15 @@ Verified clean: exactness re-run by the reviewer with its own release build at H
 | R29.1-3 | MINOR | `docs/N3_ROAD_OFFROAD.md:78`: table header "roadCorrelationM 30 (default)" is stale now that the default is 100. | DEFERRED | backlog. |
 
 Tests: Core passes 819 tests in 110 suites, 36 known issues (test 3 known FAIL; 36 at roadCorrelationM 100). App unchanged.
+
+### Round 2
+
+Reviewer: one fresh `reviewer` (opus). Result: 0 BLOCKER / 0 MAJOR / 0 MINOR.
+
+Verified clean: `evidenceWeightBelowOne` computes every expectation itself (r from S₀ = P_cc + σr², Kalman step with σr²/w, moment matching, weight ratio ((L_on + L_off)/L_off)^w), its preconditions hold (no split, no resampling, inside the innovation gate, odd particles outside the heading gate), and tolerances are tight against the w = 0.3 / 1 difference; mutations killed: literal 30 at the weight, `rw` without w (caught only by this test), off-road log-weight without w; the pin anchor's use of the default is covered by `compatiblePinAnchorIsTempered`; nothing else reads `roadCorrelationM`; ledger and backlog rows match the docs; privacy.
+
+Tests: Core passes 819 tests in 110 suites, 36 known issues. App unchanged.
+
+### Run 29 summary
+
+2 rounds. Findings: 1 MAJOR fixed (R29.1-1, missing test of the tempering weight below 1; no code change), 0 rejected, 2 MINOR deferred (R29.1-2, R29.1-3). Final: Core 819 tests in 110 suites pass, 36 known issues (test 3 known FAIL at roadCorrelationM 100); App unchanged, simulator build green at 4e87038.
