@@ -341,9 +341,24 @@ extension NavigationReplayTests {
         var entry = truth
         entry.scoreUntilT = scoreUntilT
         var options = ReplayOptions(gps: .maskAfter(seconds: 20), config: S.config(particles: 200))
-        options.convergenceHoldS = 10
+        options.convergenceHoldS = cutoffHoldS
         return NavigationReplay.run(logName: "synthetic.jsonl.gz", inputs: NavigationReplay.inputs(from: events),
                                     options: options, truth: entry)
+    }
+
+    /// `cutoffRun`'s `convergenceHoldS`.
+    static let cutoffHoldS = 10.0
+
+    /// The run without a cutoff, checked to have what the convergence tests
+    /// split: a convergence after the first track point, and track beyond
+    /// the end of its hold window.
+    static func convergingBase() throws -> (result: ReplayResult, convergedT: Double) {
+        let base = cutoffRun(nil)
+        let convergedT = try #require(base.convergedT)
+        #expect(base.convergedDistanceM != nil)
+        #expect(try #require(base.track.first).t < convergedT, "track points before convergence")
+        #expect(try #require(base.track.last).t > convergedT + cutoffHoldS + 1, "track beyond the hold window")
+        return (base, convergedT)
     }
 
     /// Everything the engine produced (not the scoring): must not depend on
@@ -477,5 +492,31 @@ extension NavigationReplayTests {
         #expect(stripped == Self.untimed(base))
         #expect(try ReplayReport.geoJSON(late) == ReplayReport.geoJSON(base))
         #expect(ReplayReport.summary(late).contains("Scored until  t 1000.0 s (truth scoreUntilT): 0 checkpoints after it listed, not scored\n"))
+    }
+
+    // R27.1-1: heading convergence is judged on the track up to the cutoff
+    // only. Cutoffs are placed relative to the uncut run's convergence.
+
+    @Test("Convergence: a cutoff before the uncut run converges leaves no convergence")
+    func convergenceCutoffBeforeConvergence() throws {
+        let (_, convergedT) = try Self.convergingBase()
+        let cut = Self.cutoffRun(convergedT - 0.5)
+        #expect(cut.convergedT == nil && cut.convergedDistanceM == nil)
+    }
+
+    @Test("Convergence: a cutoff inside the hold window (after convergedT, before the hold ends) leaves no convergence")
+    func convergenceCutoffInsideHold() throws {
+        let (_, convergedT) = try Self.convergingBase()
+        let cut = Self.cutoffRun(convergedT + Self.cutoffHoldS / 2)
+        #expect(cut.convergedT == nil && cut.convergedDistanceM == nil)
+    }
+
+    @Test("Convergence: a cutoff at or after the end of the hold window keeps the uncut convergence")
+    func convergenceCutoffAfterHold() throws {
+        let (base, convergedT) = try Self.convergingBase()
+        for scoreUntilT in [convergedT + Self.cutoffHoldS, convergedT + Self.cutoffHoldS + 5] {
+            let cut = Self.cutoffRun(scoreUntilT)
+            #expect(cut.convergedT == base.convergedT && cut.convergedDistanceM == base.convergedDistanceM, "\(scoreUntilT)")
+        }
     }
 }
