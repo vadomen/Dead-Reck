@@ -224,6 +224,9 @@ public enum NavigationReplay {
     /// check of the estimate.
     public static let defaultPinPairWindowS = 3.0
 
+    /// How a checkpoint after the truth file's `scoreUntilT` is labelled.
+    public static let afterScoreUntilText = "after scoreUntilT, not scored"
+
     /// Default `ReplayOptions.wrongRoadToleranceM`, metres (docs/N3_PLAN.md,
     /// "Metrics added to replay_nav").
     public static let defaultWrongRoadToleranceM = 20.0
@@ -383,9 +386,28 @@ public struct ReplayResult: Hashable, Sendable, Codable {
         /// and of consistency. Optional so older metrics.json files decode;
         /// nil (absent) for every scored checkpoint.
         public var notScored: NavigationReplay.NotScored?
+        /// true for a checkpoint after the truth file's `scoreUntilT` (any
+        /// kind): its error is still measured and listed, but it counts in
+        /// no aggregate. Optional so older metrics.json files decode; nil
+        /// (absent) for every checkpoint at or before the cutoff and in every
+        /// run without one.
+        public var afterScoreUntilT: Bool?
 
-        /// Whether the checkpoint counts in max/end error and consistency.
-        public var isScored: Bool { notScored == nil }
+        /// Whether the checkpoint counts in max/end error, consistency and
+        /// every other aggregate.
+        public var isScored: Bool { notScored == nil && afterScoreUntilT != true }
+
+        /// Why the checkpoint is not scored, for reports: "refinement of t
+        /// 706.3 s, not scored", "after scoreUntilT, not scored", or both
+        /// joined; nil for a scored checkpoint.
+        public var notScoredText: String? {
+            switch (notScored, afterScoreUntilT == true) {
+            case (nil, false): nil
+            case (let reason?, false): reason.text
+            case (nil, true): NavigationReplay.afterScoreUntilText
+            case (let reason?, true): reason.text + "; " + NavigationReplay.afterScoreUntilText
+            }
+        }
     }
 
     /// How the manual fixes of a run were scored.
@@ -400,21 +422,27 @@ public struct ReplayResult: Hashable, Sendable, Codable {
         public var excluded: Int
         /// `excludePins` times that matched no manual fix.
         public var unmatchedExclusionsT: [Double]
+        /// Pins the pair and exclusion rules would score that are after the
+        /// truth file's `scoreUntilT`, so not scored (not in `scored`).
+        /// nil (absent) in a run without a cutoff and in older files.
+        public var afterScoreUntil: Int?
 
         public init(pairWindowS: Double, manualFixes: Int = 0, scored: Int = 0, refinements: Int = 0,
-                    excluded: Int = 0, unmatchedExclusionsT: [Double] = []) {
+                    excluded: Int = 0, unmatchedExclusionsT: [Double] = [], afterScoreUntil: Int? = nil) {
             self.pairWindowS = pairWindowS
             self.manualFixes = manualFixes
             self.scored = scored
             self.refinements = refinements
             self.excluded = excluded
             self.unmatchedExclusionsT = unmatchedExclusionsT
+            self.afterScoreUntil = afterScoreUntil
         }
 
         /// "12 manual fixes: 7 scored, 3 refinements folded into pairs (pair window 3 s), 2 excluded by truth".
         public var text: String {
             "\(manualFixes) manual fix\(manualFixes == 1 ? "" : "es"): \(scored) scored, \(refinements) refinement\(refinements == 1 ? "" : "s") folded into pairs (pair window "
                 + (pairWindowS > 0 ? "\(GPSMode.format(pairWindowS)) s" : "off") + "), \(excluded) excluded by truth"
+                + (afterScoreUntil.map { ", \($0) after scoreUntilT" } ?? "")
                 + (unmatchedExclusionsT.isEmpty ? "" : "; excludePins matching no manual fix: "
                     + unmatchedExclusionsT.map { String(format: "t %.3f s", $0) }.joined(separator: ", "))
         }
@@ -513,6 +541,12 @@ public struct ReplayResult: Hashable, Sendable, Codable {
     /// How the manual fixes were scored (pairs, truth exclusions).
     public var pinScoring = PinScoring(pairWindowS: 0)
 
+    /// The truth file's `scoreUntilT`, session seconds: checkpoints after it
+    /// are listed (`afterScoreUntilT`) but not scored. nil: no cutoff.
+    public var scoreUntilT: Double? = nil
+    /// Checkpoints after `scoreUntilT`; nil without a cutoff.
+    public var checkpointsAfterScoreUntil: Int? = nil
+
     /// The road set the engine used (N3.2): per pack in canonical order
     /// (ascending content hash), and FNV-1a 64 over their content hashes.
     /// nil without roads.
@@ -554,6 +588,9 @@ private struct ReplayRun {
     var engineNs: Int64 = 0
     var maxIngestNs: Int64 = 0
     let motionStart: MonotonicTimestamp?
+    /// The truth file's `scoreUntilT` in nanoseconds: anything later is not
+    /// scored. nil: no cutoff, and the run is exactly as before it existed.
+    let scoreUntilNs: Int64?
 
     struct Scheduled {
         var t: Int64
@@ -587,6 +624,7 @@ private struct ReplayRun {
         self.truth = truth
         engine = NavigationEngine(config: options.config, roads: options.roads?.network)
         motionStart = NavigationReplay.motionStart(inputs)
+        scoreUntilNs = truth?.scoreUntilT.map { MonotonicTimestamp(seconds: $0).nanoseconds }
         roadTruth = options.roads.map { RoadTruthMatcher(network: $0.network) }
         roadMetrics = options.roads.map { _ in ReplayRoadMetrics(wrongRoadToleranceM: options.wrongRoadToleranceM) }
     }
@@ -708,12 +746,16 @@ private struct ReplayRun {
         for (index, notScored) in zip(manualIndices, decision.notScored) {
             schedule[index].notScored = notScored
         }
+        // Pins the rules above score but the cutoff does not; nil without one.
+        let afterCutoff = scoreUntilNs.map { cut in
+            zip(manualIndices, decision.notScored).filter { $0.1 == nil && schedule[$0.0].t > cut }.count
+        }
         pinScoring = ReplayResult.PinScoring(
             pairWindowS: max(0, options.pinPairWindowS), manualFixes: manualIndices.count,
-            scored: decision.notScored.filter { $0 == nil }.count,
+            scored: decision.notScored.filter { $0 == nil }.count - (afterCutoff ?? 0),
             refinements: decision.notScored.filter { $0?.reason == .refinement }.count,
             excluded: decision.notScored.filter { $0?.reason == .excluded }.count,
-            unmatchedExclusionsT: decision.unmatchedExclusions.map(\.t))
+            unmatchedExclusionsT: decision.unmatchedExclusions.map(\.t), afterScoreUntil: afterCutoff)
         for point in truth?.points ?? [] {
             schedule.append(Scheduled(t: MonotonicTimestamp(seconds: point.t).nanoseconds, kind: .truthPoint,
                                       latitude: point.latitude, longitude: point.longitude, sigma: point.sigmaM))
@@ -737,6 +779,10 @@ private struct ReplayRun {
             truthSigmaM: item.sigma, distanceM: travelled
         )
         checkpoint.notScored = item.notScored
+        // The cutoff is applied on the final `t` (a truth `end` moved to the
+        // last input on the timeline included); exactly at it is scored.
+        let afterCutoff = isAfterCutoff(item.t)
+        if afterCutoff { checkpoint.afterScoreUntilT = true }
         let estimate = engine.estimate(at: t)
         if let estimate, let plane = engine.tangentPlane {
             let truth = plane.enu(latitude: item.latitude, longitude: item.longitude)
@@ -756,11 +802,17 @@ private struct ReplayRun {
             checkpoint.ellipseSemiMinorM = estimate.ellipse.semiMinorM
             checkpoint.ellipseOrientationDeg = estimate.ellipse.orientationDeg
         }
-        if roadTruth != nil, item.kind == .cleanFix, let index = item.inputIndex,
+        if roadTruth != nil, !afterCutoff, item.kind == .cleanFix, let index = item.inputIndex,
            case .location(let sample, _) = inputs[index] {
             scoreRoad(sample, checkpoint: checkpoint, estimate: estimate)
         }
         checkpoints.append(checkpoint)
+    }
+
+    /// Whether session time `ns` is after the truth file's `scoreUntilT`
+    /// (false without one).
+    func isAfterCutoff(_ ns: Int64) -> Bool {
+        scoreUntilNs.map { ns > $0 } ?? false
     }
 
     // MARK: Roads (N3.2b)
@@ -879,7 +931,7 @@ private struct ReplayRun {
         var byClass: [String: [Double]] = [:]
         var all: [Double] = []
         for (index, input) in inputs.enumerated() where !skippedInputs.contains(index) {
-            guard case .location(let sample, _) = input, sample.horizontalAccuracy >= 0,
+            guard case .location(let sample, let t) = input, !isAfterCutoff(t.nanoseconds), sample.horizontalAccuracy >= 0,
                   sample.horizontalAccuracy <= NavigationReplay.cleanFixTruthAccM,
                   let course = NavigationReplay.RoadTruth.course(of: sample) else { continue }
             let match = matcher.match(latitude: sample.latitude, longitude: sample.longitude,
@@ -930,7 +982,7 @@ private struct ReplayRun {
             converged: estimate.converged, distanceM: distance.distance(at: ns),
             speedScale: estimate.speedScaleMean
         ))
-        if roadMetrics != nil {
+        if roadMetrics != nil, !isAfterCutoff(ns) {
             roadMetrics!.trackSamples += 1
             if let share = estimate.onRoadShare {
                 roadMetrics!.trackEngaged += 1
@@ -956,8 +1008,13 @@ private struct ReplayRun {
     func finish(firstNs: Int64, lastNs: Int64) -> ReplayResult {
         let scored = checkpoints.filter { $0.errorM != nil && $0.isScored }
         let worst = scored.max { $0.errorM! < $1.errorM! }
-        let endCheckpoint = checkpoints.last { $0.kind == .truthEnd } ?? scored.last
-        let convergence = NavigationReplay.convergence(track, holdS: options.convergenceHoldS)
+        // A truth `end` after `scoreUntilT` is not scored: the last scored
+        // checkpoint stands in, as when there is no truth `end`.
+        let endCheckpoint = checkpoints.last { $0.kind == .truthEnd && $0.isScored } ?? scored.last
+        // Heading convergence is judged on the track up to the cutoff.
+        let scoredTrack = scoreUntilNs == nil ? track
+            : track.filter { !isAfterCutoff(MonotonicTimestamp(seconds: $0.t).nanoseconds) }
+        let convergence = NavigationReplay.convergence(scoredTrack, holdS: options.convergenceHoldS)
         let steps = engine.counters.steps
         var result = ReplayResult(
             logName: logName,
@@ -988,6 +1045,10 @@ private struct ReplayRun {
             pins: pins,
             pinScoring: pinScoring
         )
+        if let scoreUntilT = truth?.scoreUntilT {
+            result.scoreUntilT = scoreUntilT
+            result.checkpointsAfterScoreUntil = checkpoints.filter { $0.afterScoreUntilT == true }.count
+        }
         if let roads = options.roads {
             result.roads = roads.packs
             result.roadSetHash = roads.roadSetHashHex
@@ -1111,7 +1172,8 @@ struct DistanceIntegrator {
 /// `withTruthSigma: true` (`consistencyWithTruthSigma`, the gated variant,
 /// Q3) it is: P + σ_truth² I, σ_truth frozen in replay code. A checkpoint
 /// that is not scored (`notScored`: a refinement pin, or one the truth file
-/// excludes) is not counted.
+/// excludes; `afterScoreUntilT`: after the truth file's cutoff) is not
+/// counted.
 ///
 /// **The one denominator (R13.1-8):** a checkpoint counts when it is scored
 /// and the engine had an estimate at its time (`inside95` set). One before

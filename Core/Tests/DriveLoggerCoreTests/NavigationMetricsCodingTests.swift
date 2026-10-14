@@ -40,6 +40,9 @@ struct NavigationMetricsCodingTests {
         road.rejectedFixes = [[12.5, 8]]
         road.fixes = [ReplayRoadFix(t: 1, distanceM: 2, accuracyM: 5, truth: .matched)]
         metrics.roadMetrics = road
+        // The scoreUntilT keys filled too.
+        metrics.scoreUntilT = 60
+        metrics.checkpointsAfterScoreUntil = 2
         return metrics
     }
 
@@ -161,7 +164,7 @@ struct NavigationMetricsCodingTests {
         let later = Set(ReplayMetrics.CodingKeys.allCases).subtracting(ReplayMetrics.originalKeys)
         #expect(later.map(\.stringValue).sorted()
             == ["consistency", "consistencyWithTruthSigma", "motionStartT", "pinScoring", "pins",
-                "roadMetrics", "roadSetHash", "roads"])
+                "checkpointsAfterScoreUntil", "roadMetrics", "roadSetHash", "roads", "scoreUntilT"].sorted())
         for key in later {
             var old = row
             old.removeValue(forKey: key.stringValue)
@@ -177,6 +180,8 @@ struct NavigationMetricsCodingTests {
             case .roads: #expect(decoded.roads == nil)
             case .roadSetHash: #expect(decoded.roadSetHash == nil)
             case .roadMetrics: #expect(decoded.roadMetrics == nil)
+            case .scoreUntilT: #expect(decoded.scoreUntilT == nil)
+            case .checkpointsAfterScoreUntil: #expect(decoded.checkpointsAfterScoreUntil == nil)
             default: Issue.record("unexpected later key \(key)")
             }
         }

@@ -327,3 +327,155 @@ struct NavigationReplayTests {
         #expect(legacy.first?.consistency == nil)
     }
 }
+
+// MARK: - scoreUntilT (truth-file scoring cutoff)
+
+/// The truth file's `scoreUntilT`: checkpoints after it are listed but not
+/// scored; one exactly at it is scored. Scoring only: the engine ingests
+/// every input after it exactly as before.
+extension NavigationReplayTests {
+    /// `scenario()` (clean fixes 1 Hz, pin at 50 s, truth point at 70 s, end
+    /// at the last input ~95 s) masked after 20 s, with `scoreUntilT`.
+    static func cutoffRun(_ scoreUntilT: Double?) -> ReplayResult {
+        let (_, events, truth) = Self.scenario()
+        var entry = truth
+        entry.scoreUntilT = scoreUntilT
+        var options = ReplayOptions(gps: .maskAfter(seconds: 20), config: S.config(particles: 200))
+        options.convergenceHoldS = 10
+        return NavigationReplay.run(logName: "synthetic.jsonl.gz", inputs: NavigationReplay.inputs(from: events),
+                                    options: options, truth: entry)
+    }
+
+    /// Everything the engine produced (not the scoring): must not depend on
+    /// the cutoff.
+    static func engineOutput(_ r: ReplayResult) -> [String] {
+        let checkpoints = r.checkpoints.map { cp -> ReplayResult.Checkpoint in
+            var cp = cp
+            cp.afterScoreUntilT = nil
+            return cp
+        }
+        return ["\(r.track)", "\(r.ellipses)", "\(r.pins)", "\(r.counters)", "\(r.fixes)", "\(checkpoints)"]
+    }
+
+    /// The metrics row without wall-clock timings, for equality.
+    static func untimed(_ r: ReplayResult) -> ReplayMetrics {
+        var m = ReplayMetrics(r)
+        m.msPerStep = 0
+        m.maxIngestMs = 0
+        return m
+    }
+
+    @Test("Truth file: scoreUntilT decodes; an entry without it decodes unchanged (nil)")
+    func truthFileScoreUntilT() throws {
+        let json = """
+            {"A.jsonl.gz": {"end": {"latitude": 0, "longitude": 0}, "scoreUntilT": 1500.5, "note": "x"},
+             "B.jsonl.gz": {"end": {"latitude": 0, "longitude": 0}, "excludePins": [{"t": 3}]}}
+            """
+        let truth = try TruthFile(data: Data(json.utf8))
+        let a = try #require(truth.entry(forLog: "A.jsonl.gz"))
+        #expect(a.scoreUntilT == 1500.5)
+        #expect(a.end == TruthFile.Position(latitude: 0, longitude: 0))
+        let b = try #require(truth.entry(forLog: "B.jsonl.gz"))
+        #expect(b == TruthFile.Entry(end: TruthFile.Position(latitude: 0, longitude: 0), excludePins: [.init(t: 3)]))
+        #expect(b.scoreUntilT == nil)
+    }
+
+    @Test("No scoreUntilT: no new key in metrics.json, checkpoints or reports")
+    func noCutoffUnchanged() throws {
+        let r = Self.cutoffRun(nil)
+        #expect(r.scoreUntilT == nil && r.checkpointsAfterScoreUntil == nil && r.pinScoring.afterScoreUntil == nil)
+        #expect(r.checkpoints.allSatisfy { $0.afterScoreUntilT == nil && $0.isScored })
+        let json = String(decoding: try ReplayReport.metricsJSON([ReplayMetrics(r)]), as: UTF8.self)
+        #expect(!json.contains("scoreUntil") && !json.contains("ScoreUntil"))
+        #expect(!ReplayReport.summary(r).contains("scoreUntilT"))
+        #expect(!ReplayReport.markdown([ReplayMetrics(r)]).contains("scoreUntilT"))
+        #expect(r.endIsTruth)
+    }
+
+    @Test("Cutoff before a checkpoint: it and everything later are listed, not scored, in no aggregate; the engine is unchanged")
+    func cutoffBeforeCheckpoint() throws {
+        let base = Self.cutoffRun(nil)
+        let cut = Self.cutoffRun(69.9)
+        #expect(Self.engineOutput(cut) == Self.engineOutput(base))
+        #expect(try ReplayReport.geoJSON(cut) == ReplayReport.geoJSON(base))
+        #expect(cut.checkpoints.count == base.checkpoints.count, "every checkpoint is still listed")
+        for cp in cut.checkpoints {
+            #expect((cp.afterScoreUntilT == true) == (cp.t > 69.9), "t \(cp.t)")
+            #expect(cp.isScored == (cp.t <= 69.9))
+        }
+        let point = try #require(cut.checkpoints.first { $0.kind == .truthPoint })
+        #expect(point.t == 70 && point.afterScoreUntilT == true && point.errorM != nil, "still measured and listed")
+        #expect(cut.checkpoints.last { $0.kind == .truthEnd }?.afterScoreUntilT == true)
+
+        let kept = base.checkpoints.filter { $0.t <= 69.9 }
+        let measured = kept.filter { $0.errorM != nil }
+        #expect(cut.maxErrorM == measured.compactMap(\.errorM).max())
+        #expect(!cut.endIsTruth)
+        #expect(cut.endErrorM == measured.last?.errorM && cut.endErrorPercent == measured.last?.errorPercent)
+        #expect(cut.consistency == EllipseConsistency(kept))
+        #expect(cut.consistencyWithTruthSigma == EllipseConsistency(kept, withTruthSigma: true))
+        #expect(cut.consistency.byKind["truthPoint"] == nil && cut.consistency.byKind["truthEnd"] == nil)
+        #expect(cut.scoreUntilT == 69.9)
+        #expect(cut.checkpointsAfterScoreUntil == base.checkpoints.filter { $0.t > 69.9 }.count)
+        #expect(cut.pinScoring == .init(pairWindowS: 3, manualFixes: 1, scored: 1, afterScoreUntil: 0))
+
+        let summary = ReplayReport.summary(cut)
+        #expect(summary.contains("Scored until  t 69.9 s (truth scoreUntilT): \(cut.checkpointsAfterScoreUntil!) checkpoints after it listed, not scored (cleanFix "))
+        #expect(summary.contains("truthPoint    t 70.0 s") && summary.contains("[after scoreUntilT, not scored]"))
+        #expect(summary.contains("[last scored checkpoint; truth end after scoreUntilT]"))
+        let markdown = ReplayReport.markdown([ReplayMetrics(cut)])
+        #expect(markdown.contains("| truthPoint (after scoreUntilT, not scored) | 70.0 |"))
+        #expect(markdown.contains("| truthEnd (after scoreUntilT, not scored) |"))
+        #expect(markdown.contains(" (\(cut.checkpointsAfterScoreUntil!) after scoreUntilT) |"))
+        #expect(markdown.contains(" (after scoreUntilT, not scored) | | | | | | | | | |"), "the clean fixes after it, counted")
+        let cleanAfter = cut.checkpoints.filter { $0.kind == .cleanFix && $0.t > 69.9 }.count
+        #expect(cleanAfter > 0 && markdown.contains("| cleanFix ×\(cleanAfter) (after scoreUntilT, not scored) |"))
+
+        // metrics.json records the cutoff and the flags, and round-trips.
+        let data = try ReplayReport.metricsJSON([ReplayMetrics(cut)])
+        #expect(try JSONDecoder().decode([ReplayMetrics].self, from: data) == [ReplayMetrics(cut)])
+        let row = try #require(try JSONSerialization.jsonObject(with: data) as? [[String: Any]])[0]
+        #expect(row["scoreUntilT"] as? Double == 69.9)
+    }
+
+    @Test("Cutoff exactly at a checkpoint scores it; a pin after the cutoff is not scored and counted in pinScoring")
+    func cutoffAtCheckpoint() throws {
+        let base = Self.cutoffRun(nil)
+        let atPoint = Self.cutoffRun(70)
+        let point = try #require(atPoint.checkpoints.first { $0.kind == .truthPoint })
+        #expect(point.afterScoreUntilT == nil && point.isScored)
+        #expect(atPoint.consistency.byKind["truthPoint"]?.scored == 1)
+        #expect(atPoint.consistency == EllipseConsistency(base.checkpoints.filter { $0.t <= 70 }))
+        #expect(atPoint.checkpoints.contains { $0.kind == .cleanFix && $0.t == 70 && $0.isScored })
+
+        // The pin at 50 s: scored with the cutoff at 50, not at 49.9.
+        let atPin = Self.cutoffRun(50)
+        #expect(atPin.checkpoints.first { $0.kind == .manualFix }?.isScored == true)
+        #expect(atPin.pinScoring == .init(pairWindowS: 3, manualFixes: 1, scored: 1, afterScoreUntil: 0))
+        let beforePin = Self.cutoffRun(49.9)
+        let pin = try #require(beforePin.checkpoints.first { $0.kind == .manualFix })
+        #expect(pin.afterScoreUntilT == true && pin.notScored == nil && !pin.isScored)
+        #expect(beforePin.pinScoring == .init(pairWindowS: 3, manualFixes: 1, scored: 0, afterScoreUntil: 1))
+        #expect(beforePin.consistency.byKind["manualFix"] == nil)
+        let summary = ReplayReport.summary(beforePin)
+        #expect(summary.contains("1 manual fix: 0 scored, 0 refinements folded into pairs (pair window 3 s), 0 excluded by truth, 1 after scoreUntilT"))
+        #expect(summary.contains("Pin estimate  t 50.0 s") && summary.contains("[after scoreUntilT, not scored]\n"))
+        #expect(Self.engineOutput(beforePin) == Self.engineOutput(base))
+    }
+
+    @Test("Cutoff after every checkpoint: every figure as without one; only scoreUntilT and the zero count are added")
+    func cutoffAfterCheckpoints() throws {
+        let base = Self.cutoffRun(nil)
+        let late = Self.cutoffRun(1000)
+        #expect(late.checkpoints.allSatisfy { $0.afterScoreUntilT == nil && $0.isScored })
+        #expect(late.endIsTruth && late.endErrorM == base.endErrorM)
+        #expect(late.scoreUntilT == 1000 && late.checkpointsAfterScoreUntil == 0 && late.pinScoring.afterScoreUntil == 0)
+        var stripped = Self.untimed(late)
+        stripped.scoreUntilT = nil
+        stripped.checkpointsAfterScoreUntil = nil
+        stripped.pinScoring?.afterScoreUntil = nil
+        #expect(stripped == Self.untimed(base))
+        #expect(try ReplayReport.geoJSON(late) == ReplayReport.geoJSON(base))
+        #expect(ReplayReport.summary(late).contains("Scored until  t 1000.0 s (truth scoreUntilT): 0 checkpoints after it listed, not scored\n"))
+    }
+}

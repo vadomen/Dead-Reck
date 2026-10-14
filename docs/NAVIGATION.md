@@ -618,6 +618,7 @@ file name. The values here are illustrative:
     "end":    { "latitude": 0.0, "longitude": 0.0, "sigmaM": 30, "source": "…" },
     "points": [ { "t": 100.0, "latitude": 0.0, "longitude": 0.0, "sigmaM": 30, "source": "…" } ],
     "excludePins": [ { "t": 250.125, "reason": "doubtful tap" } ],
+    "scoreUntilT": 1500.0,
     "note": "unknown keys are ignored" } }
 ```
 
@@ -626,6 +627,25 @@ scored as truth, each matched to the pin nearest its `t` (the `manualFix`
 event's session-clock seconds) within 0.1 s. The engine still receives them.
 Use it for a pin that is known or likely to be wrong. The reason goes into the
 summary and `metrics.md`.
+
+`scoreUntilT` (optional, N3 drive-8; session-clock seconds): the scoring
+cutoff, for a recording that runs on after the drive it is scored on (the
+driver left the car before the recording stopped). It is scoring only: the
+engine ingests every input after it exactly as without it. A checkpoint of
+any kind (withheld clean fix, manual fix, truth point, truth `end`) with
+`t` > `scoreUntilT` is still measured and listed, marked "after
+scoreUntilT, not scored" (`afterScoreUntilT` in `metrics.json`), and counts
+in no aggregate: not in max or end error, ellipse consistency (either
+variant), heading convergence (judged on the track up to the cutoff), the
+road metrics (wrong road, unmapped, residuals, 1 Hz on-road samples) or
+`pinScoring.scored` (`pinScoring.afterScoreUntil` counts those pins). One
+exactly at `scoreUntilT` is scored. The truth `end` sits at the last input,
+so with a cutoff before it the end error falls back to the last scored
+checkpoint, as without a truth `end`. Distance is still to the last input.
+The summary ("Scored until"), `metrics.md` and `metrics.json`
+(`scoreUntilT`, `checkpointsAfterScoreUntil`) record the cutoff and the
+count; a run without it writes none of these keys, so its outputs are
+byte-identical to the build before it.
 
 ## Live in the app (N4 B)
 

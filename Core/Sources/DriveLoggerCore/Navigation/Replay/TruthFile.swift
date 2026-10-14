@@ -4,16 +4,18 @@ import Foundation
 /// git-ignored JSON file (`logs/truth.json`), never from the repository.
 ///
 /// Keyed by recording file name. Each entry may hold an `end` position (where
-/// the car stood at the last sample), `points` at session-clock times, and
+/// the car stood at the last sample), `points` at session-clock times,
 /// `excludePins`: manual fixes of the recording that are not scored as truth
-/// (the engine still receives them). Unknown keys (notes, future fields) are
-/// ignored:
+/// (the engine still receives them), and `scoreUntilT`: the session-clock
+/// time after which nothing is scored (the engine still ingests every input
+/// after it). Unknown keys (notes, future fields) are ignored:
 ///
 /// ```json
 /// { "<file name>": {
 ///     "end": { "latitude": …, "longitude": …, "sigmaM": 30, "source": "…" },
 ///     "points": [ { "t": 744.3, "latitude": …, "longitude": …, "sigmaM": 30, "source": "…" } ],
 ///     "excludePins": [ { "t": 100.25, "reason": "…" } ],
+///     "scoreUntilT": 1500.0,
 ///     "note": "…" } }
 /// ```
 public struct TruthFile: Hashable, Sendable {
@@ -73,11 +75,20 @@ public struct TruthFile: Hashable, Sendable {
         public var points: [Point]?
         /// Manual fixes not scored as truth; optional so older files decode.
         public var excludePins: [ExcludedPin]?
+        /// Scoring cutoff, session-clock seconds: a checkpoint of any kind
+        /// (withheld clean fix, manual fix, truth point, the `end` at the
+        /// last input) whose `t` is after it is listed but not scored; one
+        /// exactly at it is scored. Scoring only: the engine ingests every
+        /// input as without it. Optional so older files decode; nil scores
+        /// the whole recording.
+        public var scoreUntilT: Double?
 
-        public init(end: Position? = nil, points: [Point]? = nil, excludePins: [ExcludedPin]? = nil) {
+        public init(end: Position? = nil, points: [Point]? = nil, excludePins: [ExcludedPin]? = nil,
+                    scoreUntilT: Double? = nil) {
             self.end = end
             self.points = points
             self.excludePins = excludePins
+            self.scoreUntilT = scoreUntilT
         }
     }
 
