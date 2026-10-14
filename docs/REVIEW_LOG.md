@@ -461,3 +461,15 @@ Verified clean: bit-identity re-run by the reviewer (clean seed 1 no roads, driv
 | R27.1-2 | MINOR | `docs/NAVIGATION.md:883-886` (drive-8 baseline): "% since last fix received" 2.35–2.74 %, "above 2.5 % on seeds 3 and 5" is only the value at each seed's max-%-from-start fix (1944.1 s); seed 1 is 2.501 %, also above; the max over scored fixes > 500 m into dead reckoning is 2.72–2.84 % on every seed. Reported, not gated. | DEFERRED | backlog. |
 
 Tests: Core passes 808 tests in 109 suites, 39 known issues (all test 3). App unchanged.
+
+### Round 2
+
+Reviewer: one fresh `reviewer` (opus). Result: 0 BLOCKER / 1 MAJOR / 0 MINOR.
+
+Verified clean: R27.1-1 tests kill the cutoff-boundary mutation in the convergence track (`< scoreUntilNs`); dropping the cutoff from the 1 Hz road samples is killed by `scoreUntilTRoads`; Core imports and privacy unchanged. Bit-identity not re-run (`Core/Sources` unchanged since round 1).
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R27.2-1 | MAJOR | `ReplayReport.swift:277-283`: the summary's `cleanFix` line under a cutoff has no test; scoring every clean fix (no `cleanFixes(...)`) passes every test, and on drive-8 would print 1282 fixes with median and max over the fixes after the driver left the car. | CONFIRMED | fixed in round 2: `cutoffBeforeCheckpoint` checks the count, median and max over scored clean fixes only, the "more after scoreUntilT" suffix and the metrics.md scored row (fails under the mutation). |
+
+Tests: Core passes 808 tests in 109 suites, 39 known issues (all test 3). App unchanged.

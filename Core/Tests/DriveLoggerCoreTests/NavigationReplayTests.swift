@@ -438,13 +438,25 @@ extension NavigationReplayTests {
         #expect(summary.contains("Scored until  t 69.9 s (truth scoreUntilT): \(cut.checkpointsAfterScoreUntil!) checkpoints after it listed, not scored (cleanFix "))
         #expect(summary.contains("truthPoint    t 70.0 s") && summary.contains("[after scoreUntilT, not scored]"))
         #expect(summary.contains("[last scored checkpoint; truth end after scoreUntilT]"))
+        // R27.2-1: the cleanFix line counts, and takes median and max over,
+        // the scored clean fixes only, and counts the ones after the cutoff.
+        let cleanScored = cut.checkpoints.filter { $0.kind == .cleanFix && $0.t <= 69.9 }
+        let cleanAfter = cut.checkpoints.filter { $0.kind == .cleanFix && $0.t > 69.9 }.count
+        #expect(!cleanScored.isEmpty && cleanAfter > 0, "clean fixes on both sides of the cutoff")
+        let scoredErrors = cleanScored.compactMap(\.errorM).sorted()
+        let allCleanMax = try #require(cut.checkpoints.filter { $0.kind == .cleanFix }.compactMap(\.errorM).max())
+        let scoredMax = try #require(scoredErrors.last)
+        #expect(scoredMax < allCleanMax, "the fixture's worst clean fix is after the cutoff, so the max tells them apart")
+        #expect(summary.contains("cleanFix      \(cleanScored.count) withheld clean fixes: "
+            + "median \(ReplayReport.m(scoredErrors[scoredErrors.count / 2])) m, max \(ReplayReport.m(scoredMax)) m, inside 95 % "))
+        #expect(summary.contains("; \(cleanAfter) more after scoreUntilT, not scored"))
         let markdown = ReplayReport.markdown([ReplayMetrics(cut)])
+        #expect(markdown.contains("| cleanFix ×\(cleanScored.count) |"))
         #expect(markdown.contains("| truthPoint (after scoreUntilT, not scored) | 70.0 |"))
         #expect(markdown.contains("| truthEnd (after scoreUntilT, not scored) |"))
         #expect(markdown.contains(" (\(cut.checkpointsAfterScoreUntil!) after scoreUntilT) |"))
         #expect(markdown.contains(" (after scoreUntilT, not scored) | | | | | | | | | |"), "the clean fixes after it, counted")
-        let cleanAfter = cut.checkpoints.filter { $0.kind == .cleanFix && $0.t > 69.9 }.count
-        #expect(cleanAfter > 0 && markdown.contains("| cleanFix ×\(cleanAfter) (after scoreUntilT, not scored) |"))
+        #expect(markdown.contains("| cleanFix ×\(cleanAfter) (after scoreUntilT, not scored) |"))
 
         // metrics.json records the cutoff and the flags, and round-trips.
         let data = try ReplayReport.metricsJSON([ReplayMetrics(cut)])
