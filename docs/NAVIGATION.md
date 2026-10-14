@@ -846,6 +846,64 @@ two excluded pins; the scored truth is described above.
   than the jammed drives are against their whole distance. That is reported,
   not gated: the jammed rule is defined on the distance from the start.
 
+**drive-8 baseline (2026-10-14, seeds 1–5 arrival order, release, Mac,
+default config, build 598d2f6, `--gps mask-after 785`, truth `scoreUntilT`
+1988).** Without roads and with roads (`--roads` national + region-A packs, as
+N3.2b/N3.2d). Scored truth: 1199 withheld clean fixes from 785.1 s to
+1987.1 s (7.91–19.14 km); 83 clean fixes after scoreUntilT, listed, not
+scored. The engine's last received fix is at 784.1 s (7.90 km), so the scored
+fixes cover up to 11.25 km of pure dead reckoning. No `--as-live` row was run.
+
+No roads:
+
+| run | max over scored withheld clean fixes | at | % of distance | % since last fix received | clean fixes inside 95 % | + truth σ | after scoreUntilT | converged at | ms/step | criterion |
+|---|---:|---|---:|---:|---|---|---:|---:|---:|---|
+| seed 1 | 275.22 m | 1944.1 s, 18.90 km | 1.456 % | 2.50 % | 1199/1199 | 1199/1199 | 83 | 6.62 km (665 s) | 0.070 | **PASS** |
+| seed 2 | 270.91 m | 1944.1 s, 18.90 km | 1.433 % | 2.46 % | 1199/1199 | 1199/1199 | 83 | 6.62 km | 0.070 | **PASS** |
+| seed 3 | 293.34 m | 1944.1 s, 18.90 km | 1.552 % | 2.67 % | 1199/1199 | 1199/1199 | 83 | 6.62 km | 0.070 | **PASS** |
+| seed 4 | 259.16 m | 1944.1 s, 18.90 km | 1.371 % | 2.35 % | 1199/1199 | 1199/1199 | 83 | 6.62 km | 0.069 | **PASS** |
+| seed 5 | 301.66 m | 1944.1 s, 18.90 km | 1.596 % | 2.74 % | 1199/1199 | 1199/1199 | 83 | 6.62 km | 0.069 | **PASS** |
+| mean | 280.06 m | | 1.482 % | 2.54 % | 100 % | 100 % | | | 0.070 | **PASS** |
+
+With roads:
+
+| run | max over scored withheld clean fixes | at | % of distance | % since last fix received | clean fixes inside 95 % | + truth σ | after scoreUntilT | converged at | ms/step | criterion |
+|---|---:|---|---:|---:|---|---|---:|---:|---:|---|
+| seed 1 | 15.87 m | 904.2 s, 8.88 km | 0.179 % | 1.61 % | 1176/1199 | 1194/1199 | 83 | 0.41 km | 0.111 | **PASS** |
+| seed 2 | 15.74 m | 904.2 s, 8.88 km | 0.177 % | 1.59 % | 1176/1199 | 1195/1199 | 83 | 0.40 km | 0.113 | **PASS** |
+| seed 3 | 15.84 m | 904.2 s, 8.88 km | 0.178 % | 1.60 % | 1176/1199 | 1194/1199 | 83 | 0.40 km | 0.113 | **PASS** |
+| seed 4 | 15.75 m | 904.2 s, 8.88 km | 0.177 % | 1.59 % | 1176/1199 | 1194/1199 | 83 | 0.41 km | 0.114 | **PASS** |
+| seed 5 | 15.77 m | 904.2 s, 8.88 km | 0.178 % | 1.60 % | 1176/1199 | 1194/1199 | 83 | 0.39 km | 0.109 | **PASS** |
+| mean | 15.79 m | | 0.178 % | 1.60 % | 98.1 % | 99.6 % | | | 0.112 | **PASS** |
+
+- Column changes from drive-7's table: "since the last pin" becomes "since
+  last fix received" (drive-8 has no pins); the two pin columns are replaced
+  by "+ truth σ" and "after scoreUntilT"; separate no-roads and roads tables,
+  because drive-7's baseline predates roads.
+- Without roads the error over the dead-reckoned distance is 2.35–2.74 %,
+  above 2.5 % on seeds 3 and 5. Reported, not gated, like drive-7's "since the
+  last pin". The gate (distance from the start) passes with about 0.9 pp
+  margin.
+- Seed 4's max in metres is 259.16 m at 1946.1 s; its max in % is at
+  1944.1 s.
+- Without roads the heading converges only at 6.62 km (665 s), the first
+  clean fix; before that the drive has network fixes only.
+- The first scored fixes are trivial (about 1.3 m, 1 s after the last
+  received fix); the test is the 11 km after.
+- With roads: end error (last scored fix) 4.3–4.4 m, wrong-road share 0 on
+  every seed; the max is early (904 s, 8.88 km) rather than near the end.
+- OBD vs GPS speed on the clean stretch (664–1988 s, GPS > 30 km/h, 659
+  pairs, OBD interpolated within 0.5 s): GPS/(OBD + 0.5 km/h) median 1.015
+  (bootstrap SE 0.001), flat across 30–50 / 50–70 / 70+ km/h bands (1.013 /
+  1.015 / 1.016); without the +0.5 offset 1.023. Consistent with the
+  speedScale prior 1.016 ± 0.01; the engine's final scale is 1.016–1.018 (no
+  roads), 1.015–1.017 (roads). Serially correlated pairs, so the SE is
+  optimistic; the band spread (about ±0.002) is the better guide. (For
+  context, drive-7's shorter, noisier clean stretch gives 1.030, 174 pairs.)
+- Timing: the recording build was Debug; ms/step here is the Mac release
+  replay.
+- Outputs (git-ignored): logs/drive8/acc/.
+
 Superseded result tables (N2.1 baseline, N2.3, N4-B0, N4-B1): moved to [docs/archive/NAVIGATION-history.md](archive/NAVIGATION-history.md).
 
 ### N3.0 step 1: scoring rule (2026-10-12): refinement pairs and truth pin exclusion
