@@ -486,3 +486,15 @@ Verified clean: scoreUntilT paths in TruthFile, NavigationReplay (schedule, pinS
 | R27.3-2 | MINOR | Report text under a cutoff partly untested (joined `notScoredText`, metrics.md "Scored until" line and footnote). | DEFERRED | backlog. |
 
 Tests: Core passes 809 tests in 109 suites, 39 known issues (all test 3). App unchanged.
+
+### Round 4
+
+Reviewer: one fresh `reviewer` (opus). Result: 0 BLOCKER / 0 MAJOR / 0 MINOR.
+
+Verified clean: R27.3-1 fix (dropping the `$0.1 == nil` clause and `>` → `>=` in the cutoff count are both killed); ledger and backlog rows match the code; privacy of the round-3 diff and every commit message in the range.
+
+Tests: Core passes 809 tests in 109 suites, 39 known issues (all test 3). App unchanged.
+
+### Run 27 summary
+
+4 rounds. Findings: 3 MAJOR fixed (R27.1-1, R27.2-1, R27.3-1, all missing tests; no code change), 0 rejected, 2 MINOR deferred (R27.1-2, R27.3-2). Final: Core 809 tests in 109 suites pass, 39 known issues (as main); App unchanged.
