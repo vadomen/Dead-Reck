@@ -73,6 +73,13 @@ cd Core && swift test --filter OBDDecoderTests/decodesEngineSpeed
 cd Core && swift test --filter OBDDecoderTests
 ```
 
+Run the road-update performance test in a release build. Its timing assertions
+only run there; a debug run checks only the candidate-test count:
+
+```bash
+cd Core && swift test -c release --filter NavigationRoadPerfTests
+```
+
 Summarise a recording (header, rates, gaps, OBD latency, damage; `--csv <dir>`
 exports one CSV per kind). Recordings live outside the repo — never commit one:
 
