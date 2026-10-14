@@ -132,9 +132,10 @@ struct NavigationReplayRoadTests {
     }
 
     static func run(_ inputs: [NavigationInput], roads: RoadNetwork?, gps: GPSMode = .maskAfter(seconds: 10),
-                    tolerance: Double? = nil) -> ReplayResult {
+                    tolerance: Double? = nil, roadCorrelationM: Double? = nil) -> ReplayResult {
         var options = Self.options(gps, roads: roads)
         if let tolerance { options.wrongRoadToleranceM = tolerance }
+        if let roadCorrelationM { options.config.roadCorrelationM = roadCorrelationM }
         return NavigationReplay.run(logName: "synthetic", inputs: inputs, options: options)
     }
 
@@ -281,7 +282,10 @@ struct NavigationReplayRoadTests {
     @Test("R21.1-11 unmapped: a car 40 m beside the only mapped road is unmapped, never scored for wrong road; captured once the cloud sits on that road")
     func unmapped() throws {
         let net = try R.network([R.street(2, from: (40, -3000), to: (40, 3000))])
-        let result = Self.run(Self.splitInputs(usedEast: 0, seconds: 120), roads: net)
+        // The scenario's numbers were measured at roadCorrelationM 30 (the
+        // default before the N3.2 decision); it tests the scoring, not the
+        // tempering.
+        let result = Self.run(Self.splitInputs(usedEast: 0, seconds: 120), roads: net, roadCorrelationM: 30)
         let m = try #require(result.roadMetrics)
         #expect(m.withheldCleanFixes == 110 && m.unmapped == 110)
         #expect(m.truth == ["noRoad": 110] && m.scored == 0 && m.wrongShare == nil)
@@ -313,7 +317,10 @@ struct NavigationReplayRoadTests {
     @Test("R22.1-2 off: engaged but on no road (share < 0.5) while the truth is matched scores off, by fixes and by distance")
     func offVerdict() throws {
         let net = try R.network([R.street(1, from: (0, -3000), to: (0, 3000)), R.street(2, from: (60, -3000), to: (60, -100))])
-        let result = Self.run(Self.splitInputs(usedEast: 60), roads: net)
+        // The scenario's numbers were measured at roadCorrelationM 30 (the
+        // default before the N3.2 decision); it tests the scoring, not the
+        // tempering.
+        let result = Self.run(Self.splitInputs(usedEast: 60), roads: net, roadCorrelationM: 30)
         let m = try #require(result.roadMetrics)
         #expect(m.truth == ["matched": m.withheldCleanFixes] && m.withheldCleanFixes == 50)
         #expect(m.fixes.allSatisfy { $0.truthEdge?.osmWayID == 1 })
@@ -363,6 +370,10 @@ struct NavigationReplayRoadTests {
         func metrics(offRoadProbability: Double) throws -> ReplayRoadMetrics {
             var options = Self.options(roads: net)
             options.config.roadOffRoadProbability = offRoadProbability
+            // The scenario's numbers were measured at roadCorrelationM 30 (the
+            // default before the N3.2 decision); it tests the scoring, not the
+            // tempering.
+            options.config.roadCorrelationM = 30
             let result = NavigationReplay.run(logName: "synthetic", inputs: Self.splitInputs(usedEast: 0), options: options)
             return try #require(result.roadMetrics)
         }
@@ -452,6 +463,10 @@ struct NavigationReplayRoadTests {
             var options = Self.options(roads: net)
             options.config.alongTrackNoisePerSqrtM = 6
             options.config.crossTrackNoisePerSqrtM = crossTrackNoise
+            // The scenario's numbers were measured at roadCorrelationM 30 (the
+            // default before the N3.2 decision); it tests the scoring, not the
+            // tempering.
+            options.config.roadCorrelationM = 30
             let result = NavigationReplay.run(logName: "synthetic", inputs: inputs, options: options)
             let m = try #require(result.roadMetrics)
             #expect(m.withheldCleanFixes == 2 && m.truth == ["noRoad": 2] && m.unmapped == 2 && m.unmappedWithEstimate == 2)

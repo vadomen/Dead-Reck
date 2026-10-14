@@ -291,6 +291,7 @@ struct NavigationRoadTests {
         let net = try Self.network([Self.street(1, from: (0, -3000), to: (0, 3000))])
         let config = Self.config(particles: 10) {
             $0.roadSplitSigmaM = 1000; $0.resampleESSFraction = 0; $0.roadOffRoadProbability = 0.5; $0.roadAlongTrackCoupling = 1
+            $0.roadCorrelationM = 30  // Δs 30 below: weight 1, the closed form's
         }
         var engine = NavigationEngine(config: config, roads: net)
         let p = S.plane.geodetic(east: 0, north: 0)
@@ -975,6 +976,7 @@ struct NavigationRoadTests {
         let edge = UInt32(0)
         let config = Self.config(particles: 100) {
             $0.roadSplitSigmaM = 1000; $0.resampleESSFraction = 0; $0.roadOffRoadProbability = 0.9
+            $0.roadCorrelationM = 30  // Δs 30 below: weight 1, the r read-back's
         }
         var engine = NavigationEngine(config: config, roads: net)
         let p = S.plane.geodetic(east: 0, north: 0)
@@ -1018,7 +1020,7 @@ struct NavigationRoadTests {
     @Test("Step 2 χ² gate: P = 25·I, 24 m off is a candidate and moves r·g·d across; 28 m off is not (r ≥ 0.5 without the gate)")
     func innovationGate() throws {
         let net = try Self.network([Self.street(1, from: (0, -3000), to: (0, 3000))])
-        var engine = Self.directEngine(net)
+        var engine = Self.directEngine(net) { $0.roadCorrelationM = 30 }  // Δs 30 below: weight 1
         let c = engine.config
         let (inside, outside) = (24.0, 28.0)
         Self.place(&engine, at: (0, 0), heading: 0)
@@ -1678,7 +1680,7 @@ struct NavigationRoadTests {
             // Compatible: the anchor = a regular road update with Δs since
             // the last one. Reset: weight 1.
             var expected = plain
-            expected.roadUpdate(evidenceDistanceM: reset ? max(plain.roadDistanceM, 30) : plain.roadDistanceM)
+            expected.roadUpdate(evidenceDistanceM: reset ? max(plain.roadDistanceM, plain.config.roadCorrelationM) : plain.roadDistanceM)
             #expect(Self.state(anchored) == Self.state(expected), "\(delay) s, \(ahead) m")
             #expect(anchored.offRoadM == expected.offRoadM && anchored.roadEdge == expected.roadEdge, "\(delay) s")
             if reset {
