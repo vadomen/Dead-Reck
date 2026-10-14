@@ -435,7 +435,7 @@ Verified clean: the R26.1-1 fix is complete (`cameraReported`, `writtenDistance`
 
 | ID | Tag | Finding | Status | Note |
 |---|---|---|---|---|
-| R26.2-1 | MINOR | Zoom-only writes skip the 4 Hz `NavWriteGate` while the zoom ramps (up to 9–10/s for ~3 s), contradicting PLAN §6 N4 check 1. | DEFERRED | BACKLOG |
+| R26.2-1 | MINOR | Zoom-only writes skip the 4 Hz `NavWriteGate` while the zoom ramps (up to 9–10/s for ~3 s), contradicting PLAN §6 N4 check 1. | FIXED | Fixed after the run (branch `fix/r26.2-1-zoom-gate`): every follow-loop camera write, zoom-only or published, now waits for `HeadingWriteGate.isDue` (0.25 s since the last camera write), in `FollowCameraTick`; a held publish is kept pending, a held zoom write stays wanted. `FollowCameraRateTests` fail on the ungated logic and pass after. |
 | R26.2-2 | MINOR | No test expects `autoWantsWrite` true when the wanted distance falls; dropping `abs` survives. | DEFERRED | BACKLOG |
 | R26.2-3 | MINOR | `FollowZoom.followDistance` is unused by the app but still tested; PLAN §6 N4 item 3 describes its old behaviour. | DEFERRED | BACKLOG |
 

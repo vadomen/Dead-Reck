@@ -36,6 +36,13 @@ struct HeadingWriteGate: Equatable, Sendable {
         return true
     }
 
+    /// True when at least `minInterval` has passed since the last write
+    /// (or there was none): the rate limit every 10 Hz loop write obeys.
+    func isDue(at now: ContinuousClock.Instant) -> Bool {
+        guard let lastTime else { return true }
+        return now - lastTime >= Self.minInterval
+    }
+
     /// Note a write made elsewhere (recentre, mode switch).
     mutating func noteWrite(_ heading: Double, at now: ContinuousClock.Instant) {
         lastHeading = heading
@@ -56,6 +63,61 @@ extension CameraHeading {
         smoother.reseed(to: bearing)
         gate.reset()
         return choose(headingUp: true, bearing: bearing, smoothed: smoother.heading)
+    }
+}
+
+/// One camera write decided by the 10 Hz follow loop.
+struct FollowCameraWrite: Equatable, Sendable {
+    let heading: Double
+    let distance: Double
+}
+
+/// The follow loop's per-tick write decision, pure (R26.2-1). Every loop
+/// write, whatever wants it (a feed publish, a heading change, the auto zoom
+/// moving), waits for `HeadingWriteGate.isDue`, so the camera is written at
+/// most 4 times a second in every mode. A publish that arrives while the gate
+/// is closed is kept in `publishPending` and lands on the next open tick; the
+/// zoom needs no flag, `autoWantsWrite` stays true until it is written. With
+/// nothing wanted it writes nothing (R26.1-1). Non-loop writes (recentre,
+/// framing, mode toggle) do not go through here and stay immediate; they
+/// still `noteWrite`, so the loop waits after them.
+enum FollowCameraTick {
+    /// Steps the heading smoother and returns the write to make, if any.
+    /// `hasCenter` is whether `FollowTarget.center` found a position.
+    static func decide(
+        smoother: inout HeadingSmoother, gate: inout HeadingWriteGate, zoom: inout FollowZoom,
+        publishPending: inout Bool,
+        published: Bool, headingUp: Bool, frozen: Bool, target: Double?,
+        hasEstimate: Bool, hasCenter: Bool, semiMajorM: Double?, dt: Double,
+        now: ContinuousClock.Instant
+    ) -> FollowCameraWrite? {
+        let due = gate.isDue(at: now)
+        var heading = 0.0
+        var write = published || publishPending
+        let zoomWrite = zoom.autoWantsWrite(headingUp: headingUp, semiMajorM: semiMajorM)
+        if headingUp {
+            if target == nil {
+                smoother = HeadingSmoother()
+            } else if let h = smoother.step(target: target, frozen: frozen, dt: dt) {
+                heading = h
+                if due, gate.admit(h, at: now) { write = true }
+            }
+        }
+        // Without an estimate the GPS onChange recentres north-up;
+        // heading-up still turns around the fix.
+        guard write || zoomWrite, hasCenter,
+              hasEstimate || (headingUp && target != nil) || zoomWrite else {
+            publishPending = false
+            return nil
+        }
+        guard due else {
+            publishPending = write
+            return nil
+        }
+        publishPending = false
+        let distance = zoom.autoFollowDistance(headingUp: headingUp, semiMajorM: semiMajorM)
+        gate.noteWrite(heading, at: now)
+        return FollowCameraWrite(heading: heading, distance: distance)
     }
 }
 
