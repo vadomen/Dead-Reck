@@ -764,6 +764,11 @@ Measured in N3.2d (2026-10-13; docs/NAVIGATION.md, "N3.2d: pre-declared grids").
 chosen and the choice is open for the user. No single value passes clean and clean-long against N3.0. drive-7's
 consistency fails against N3.0 for every value. The residual-derived `roadSigmaM` is 3.0 m (RMS; the
 fix-error subtraction gave none).
+Re-measured in N3.2e (2026-10-14; docs/NAVIGATION.md, "N3.2e: candidates on the cross-pack level
+rule") after the level rule's adjacency was extended across packs (N3.2e item 1): the default,
+`roadCorrelationM` 100 and `roadSigmaM` 10 and 3.0, on all eight acceptance drives. No candidate passes
+against N3.0 on every gated drive; `roadCorrelationM` 100 fails only drive-7's consistency (96.3 % against
+99.6 %) and passes against the N3.2b default. No config was chosen; the choice is open for the user.
 
 **Exit:**
 - Without `--roads`, the 30 acceptance runs are bit-identical to N3.0: every `metrics.json`
