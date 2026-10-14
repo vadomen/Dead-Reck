@@ -15,10 +15,12 @@ import Foundation
 /// same key (osmWayID, way point index) in each, because extracts use
 /// `--strategy complete_ways`; the canonically first pack that contains the
 /// key (lowest content hash) wins and the other copies are dropped from
-/// every query. Which copy wins matters: it decides the edge a particle is
-/// on, so the level rule's adjacency (within one pack only) and the matched
-/// edge. The road set's identity is `roadSetHash`, FNV-1a 64 over the
-/// content hashes in ascending order.
+/// every query. Which copy wins decides the edge a particle is on and the
+/// matched edge. The level rule's adjacency spans packs (`adjacentEdges`,
+/// N3.2e item 1): before it, adjacency stopped at a pack border, so the
+/// winning copy also decided whether a car could change level there. The
+/// road set's identity is `roadSetHash`, FNV-1a 64 over the content hashes
+/// in ascending order.
 ///
 /// Data: © OpenStreetMap contributors, ODbL 1.0.
 public final class RoadNetwork: @unchecked Sendable {
@@ -102,6 +104,135 @@ public final class RoadNetwork: @unchecked Sendable {
                     if isShadowed(s.key, inPack: p) { return }
                 }
                 body(SegmentRef(pack: p, startPoint: start))
+            }
+        }
+    }
+
+    // MARK: Adjacency (the level rule)
+
+    /// An edge of the network: its pack (canonical order) and its index in
+    /// that pack. Shadowed copies are edges too: adjacency is over every
+    /// edge of every pack, as within one pack.
+    public struct EdgeRef: Hashable, Comparable, Sendable {
+        public var pack: Int
+        public var edge: Int
+
+        public init(pack: Int, edge: Int) {
+            self.pack = pack
+            self.edge = edge
+        }
+
+        public static func < (a: EdgeRef, b: EdgeRef) -> Bool {
+            (a.pack, a.edge) < (b.pack, b.edge)
+        }
+    }
+
+    /// The edges adjacent to `e` (one hop), ascending, `e` itself excluded
+    /// (N3.2e item 1):
+    /// - **within its pack:** every edge incident to one of its two nodes;
+    /// - **in every other pack:** every edge that shares an OSM node with it.
+    ///   A pack stores no OSM node IDs, so a shared node is either the same
+    ///   node of the same way (same `osmWayID`, and their way-node index
+    ///   ranges `wayPointOffset … wayPointOffset + pointCount − 1`
+    ///   intersect: the pack-independent identity segment keys use), or a
+    ///   point with equal E7 coordinates that is an end (a topological node)
+    ///   of at least one of the two edges. Equal means equal: a point 1 E7
+    ///   unit away does not link.
+    ///
+    /// A function of the pack set only (symmetric, and independent of the
+    /// order the packs were given in). With one pack it is that pack's
+    /// adjacency.
+    public func adjacentEdges(of e: EdgeRef) -> [EdgeRef] {
+        let pack = packs[e.pack]
+        let record = pack.edge(e.edge)
+        var out: [EdgeRef] = []
+        for node in [Int(record.from), Int(record.to)] {
+            for f in pack.incidentEdges(node) where f != e.edge { out.append(EdgeRef(pack: e.pack, edge: f)) }
+        }
+        if packs.count > 1 { appendCrossPackEdges(of: e, record: record, to: &out) }
+        out.sort()
+        var unique: [EdgeRef] = []
+        for x in out where unique.last != x { unique.append(x) }
+        return unique
+    }
+
+    /// Whether edge `b` is within `hops` of edge `a` in `adjacentEdges`: 0
+    /// hops is the edge itself, 1 an adjacent edge, and so on. With one pack
+    /// this is `RoadPack.isEdge`.
+    public func isEdge(_ b: EdgeRef, withinHops hops: Int, of a: EdgeRef) -> Bool {
+        if packs.count == 1 { return packs[0].isEdge(b.edge, withinHops: hops, of: a.edge) }
+        if a == b { return true }
+        guard hops > 0 else { return false }
+        var frontier = [a]
+        var seen: Set<EdgeRef> = [a]  // membership only, never iterated
+        for _ in 0..<hops {
+            var next: [EdgeRef] = []
+            for e in frontier {
+                for f in adjacentEdges(of: e) where !seen.contains(f) {
+                    if f == b { return true }
+                    seen.insert(f)
+                    next.append(f)
+                }
+            }
+            if next.isEmpty { return false }
+            frontier = next
+        }
+        return false
+    }
+
+    @inline(__always)
+    private static func coordinateKey(_ p: RoadPoint) -> UInt64 {
+        UInt64(UInt32(bitPattern: p.latE7)) << 32 | UInt64(UInt32(bitPattern: p.lonE7))
+    }
+
+    /// Appends the edges of the other packs that share an OSM node with
+    /// edge `e` (see `adjacentEdges`). Unsorted, possibly repeated.
+    private func appendCrossPackEdges(of e: EdgeRef, record: RoadEdgeRecord, to out: inout [EdgeRef]) {
+        let pack = packs[e.pack]
+        let first = Int(record.firstPoint), count = Int(record.pointCount)
+        let points = (first..<(first + count)).map { pack.point($0) }
+        let keys = points.map(Self.coordinateKey)
+        let sortedKeys = keys.sorted()
+        let ends = (keys[0], keys[count - 1])
+        func isPoint(_ k: UInt64) -> Bool {
+            var lo = 0, hi = sortedKeys.count
+            while lo < hi {
+                let mid = (lo + hi) / 2
+                if sortedKeys[mid] < k { lo = mid + 1 } else { hi = mid }
+            }
+            return lo < sortedKeys.count && sortedKeys[lo] == k
+        }
+        // The cells holding a point of e: every segment that touches the
+        // point is listed in its cell.
+        var cells = points.map { p -> UInt64 in
+            let c = grid.cell(latitude: p.latitude, longitude: p.longitude)
+            return RoadGrid.key(cx: c.cx, cy: c.cy)
+        }
+        cells.sort()
+        let lo = UInt64(record.wayPointOffset), hi = lo + UInt64(count) - 1
+        for q in packs.indices where q != e.pack {
+            let other = packs[q]
+            // The same node of the same way.
+            for f in other.edgeRange(ofWay: record.osmWayID) {
+                let r = other.edge(f)
+                let flo = UInt64(r.wayPointOffset), fhi = flo + UInt64(r.pointCount) - 1
+                if flo <= hi && lo <= fhi { out.append(EdgeRef(pack: q, edge: f)) }
+            }
+            // An equal coordinate that is an end of e or of the other edge.
+            var previous: UInt64?
+            for cell in cells where cell != previous {
+                previous = cell
+                let c = RoadGrid.cell(ofKey: cell)
+                other.forEachSegment(inCellX: c.cx, y: c.cy) { start in
+                    for k in [Self.coordinateKey(other.point(start)), Self.coordinateKey(other.point(start + 1))] where isPoint(k) {
+                        let f = other.edgeOfPoint(start)
+                        let r = other.edge(f)
+                        if k == ends.0 || k == ends.1
+                            || k == Self.coordinateKey(other.node(Int(r.from))) || k == Self.coordinateKey(other.node(Int(r.to))) {
+                            out.append(EdgeRef(pack: q, edge: f))
+                        }
+                    }
+                }
             }
         }
     }

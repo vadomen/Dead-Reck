@@ -1168,6 +1168,7 @@ above. A measurement, not an adoption: no config or engine change was made.
   gets a new hash and can flip the order. Clean shows the choice is worth
   about 6 m. Adjacency across packs (shared OSM node IDs) or a deliberate
   precedence rule would be an engine change under the adoption rule.
+  Adjacency across packs: N3.2e item 1 below.
 
 ### N3.2c item 2: unmapped counts fixes with no heading-compatible road within 15 m (2026-10-13)
 
@@ -1560,6 +1561,272 @@ at 100 % consistency:
   manual convergence at roadUpdateIntervalS 0.1 (seed 4). Clean's
   wrong-road share stays ≤ 3.4 % by distance everywhere (target ≤ 5 %,
   provisional).
+
+### N3.2e item 1: level rule across packs (2026-10-14)
+
+**Change (engine).** The level rule's adjacency (rule 3, docs/N3_PLAN.md
+"Layer, bridge and tunnel rule") now spans packs: `RoadNetwork.adjacentEdges`.
+Within a pack it is the pack's own adjacency, unchanged. Two edges in
+different packs are adjacent (one hop) when they share an OSM node:
+- **same way node:** the same `osmWayID`, and their way-node index ranges
+  (`wayPointOffset` … `wayPointOffset + pointCount − 1`) intersect. A pack
+  stores no OSM node IDs (`NODE` holds coordinates only; the builder's
+  node IDs are not written), so this is the pack-independent node identity
+  the format does carry, the one segment keys use;
+- **equal coordinate:** a point with equal E7 coordinates on both edges that
+  is an end (a topological node) of at least one of them. Equal means equal:
+  a point 1 E7 unit (about 1 cm) away does not link.
+
+The adjacency is a function of the pack set only, so results stay
+independent of pack order. With one pack the network asks the pack directly,
+as before. The hop answers are memoised within one road update (lookup only,
+a pure function, so no result can change). No config key changed.
+
+**Tests** (`RoadLevelAcrossPacksTests`, synthetic packs near (0, 0)): a street
+in one pack ending on another pack's bridge (equal E7, different node IDs),
+in both directions; the same way node in two packs whose coordinates all
+differ by 1 E7 unit (admitted at 2 hops, blocked at 1); a bridge 1 E7 unit
+from the street's end (still blocked, at any hop count); `adjacentEdges`
+itself (expected links, symmetric, independent of order, one pack equal to
+`RoadPack.isEdge` for hops 0–3); and a drive from the street onto the bridge
+(never level-blocked, on the bridge 50 m past the junction, both pack orders).
+Run against the engine before the change (tests first, engine change
+after), the coordinate, way-node and drive tests fail with 10 issues: every
+particle blocked, bridge share 0.0 at 50 m. The non-match test passes
+before and after, as a negative test should. The stacked-bridge test 5,
+the hop-boundary test and the two-pack test still pass.
+
+**Replay.** Default config, packs national + region-A (`roadSetHash` prefix
+`fecadb9b`), release build on the Mac, seeds 1–5 in arrival order, the eight
+acceptance runs in their acceptance modes. "N3.2b default" was re-run with the
+build before this change (4a4d697): it reproduces `logs/n32b/roads` and the
+drive-8 roads baseline exactly (every GeoJSON byte; `metrics.json` equal
+except the N3.2c item-2 unmapped fields the N3.2b files predate). Outputs and
+scripts: `logs/n32e/` (git-ignored). Values are the gated criterion (clean-long,
+clean, manual in metres; the rest in % of distance); manual-3 is the mean of
+its three pin errors, sanity only.
+
+| alias | criterion | N3.2b default, mean (range) | item 1, mean (range) | Δ mean | allowed | + truth σ (gated), N3.2b → item 1 | engine ellipse | verdict vs N3.2b default | verdict vs N3.0 | levelBlocked, seed 1 (range 1–5), N3.2b → item 1 | wrong road by distance | ms/step seed 1 |
+|---|---|---|---|---:|---|---|---|---|---|---|---|---|
+| clean-long | max ≤ 30 m | 22.51 (22.48–22.53) m | 22.51 (22.48–22.53) m | +0.00 | +2.00 m | 96.4 → 96.4 % | 96.0 → 96.0 % | PASS | FAIL (mean, consistency) | 0 (0–0) → 0 (0–0) | 0.5 → 0.5 % | 0.097 → 0.098 |
+| clean | max ≤ 30 m | 19.44 (16.21–21.75) m | 15.34 (13.69–16.00) m | -4.10 | +2.00 m | 100.0 → 100.0 % | 98.5 → 100.0 % | PASS | FAIL (mean) | 23818 (22000–23818) → 0 (0–0) | 2.4 → 0.0 % | 0.090 → 0.089 |
+| manual | truth point 1 ≤ 200 m | 8.11 (7.20–9.60) m | 8.11 (7.20–9.60) m | +0.00 | +2.00 m | 100.0 → 100.0 % | 100.0 → 100.0 % | PASS | PASS | 237 (97–411) → 236 (97–411) | n/a | 0.109 → 0.108 |
+| manual-3 | pins, mean (sanity) | 68.73 (67.38–69.72) m | 68.26 (66.89–69.23) m | -0.48 | +3.44 m | 66.7 → 66.7 % | 33.3 → 33.3 % | not gated | not gated | 8596 (8061–9399) → 964 (337–2075) | n/a | 0.110 → 0.109 |
+| jammed-A | end ≤ 2.5 % | 0.171 (0.166–0.178) % | 0.171 (0.164–0.178) % | -0.000 | +0.1 pp | 100.0 → 100.0 % | 0.0 → 0.0 % | PASS | PASS | 8871 (8271–10015) → 2917 (2382–4054) | n/a | 0.114 → 0.113 |
+| jammed-B | end ≤ 2.5 % | 0.297 (0.251–0.336) % | 0.297 (0.251–0.336) % | +0.000 | +0.1 pp | 100.0 → 100.0 % | 100.0 → 100.0 % | PASS | PASS | 0 (0–1) → 0 (0–1) | n/a | 0.112 → 0.114 |
+| drive-7 | worst withheld clean fix ≤ 2.5 % | 0.167 (0.162–0.173) % | 0.168 (0.162–0.178) % | +0.002 | +0.1 pp | 87.4 → 87.2 % | 86.0 → 85.7 % | FAIL (consistency) | FAIL (consistency) | 12859 (12859–13683) → 5453 (5453–6049) | 3.6 → 3.6 % | 0.115 → 0.114 |
+| drive-8 | worst scored withheld clean fix ≤ 2.5 % | 0.178 (0.177–0.179) % | 0.178 (0.177–0.179) % | -0.000 | +0.1 pp | 99.6 → 99.6 % | 98.1 → 98.1 % | PASS | FAIL (consistency) | 10723 (10524–11057) → 4083 (3810–4220) | 0.0 → 0.0 % | 0.109 → 0.110 |
+
+- **Adoption rule against the N3.2b default: FAIL, on drive-7's consistency
+  only** (87.4 → 87.2 %, mean over seeds; must not drop). Its gated mean
+  passes (+0.002 pp, allowed +0.1), and every per-seed criterion passes on
+  every drive.
+  - The drop is one clean fix on each of seeds 1, 4 and 5 (seeds 2 and 3
+    unchanged), at 2090.0 / 2093.0 / 2091.0 s, 19.76–19.78 km: the
+    service-road end of the drive, where N3.2b already misses 33–36 of 273.
+    Each is on the ellipse's edge: error 26.1 → 26.3, 27.0 → 27.5,
+    26.4 → 26.8 m against a semi-major axis of 26.0, 27.0, 26.4 m.
+  - Mechanism: from the first pin (706 s) a level decision changes, the
+    resampling draws a different realisation, and every later checkpoint
+    moves a little (271 of 273 differ). The three flips are that noise
+    at boundary checkpoints, not a new miss region. Measured, not explained
+    away: under the rule it is a FAIL, and adopting it is the user's call.
+- **Against N3.0** the verdicts are those of the N3.2b default except clean,
+  which improves but still fails by 0.36 m: clean-long (+3.09 m; 96.4 %),
+  clean (+2.36 m, allowed +2), drive-7 (87.2 % against 99.6 %) and drive-8
+  (99.6 % against 100 %, as in its with-roads baseline) fail; manual,
+  jammed-A and jammed-B pass.
+- **Every change, explained.**
+  - clean: `roadLevelBlocked` 23 818 → 0 on seed 1 (0 on every seed), wrong
+    road 2.4 → 0.0 % by distance, max 19.44 → 15.34 m mean. Seed 1 gives
+    15.63 m, the region-A-first value N3.2c item 7 measured (15.6 m): the
+    block that pack order caused is gone.
+  - manual-3, jammed-A, drive-7 and drive-8 change: their `roadLevelBlocked`
+    falls by 56–96 % per seed (drive-7 56–58 %, jammed-A 60–71 %, drive-8
+    62–64 %, manual-3 78–96 %), and their criteria move within seed noise.
+  - clean-long and jammed-B are bit-identical (every GeoJSON byte). manual's
+    GeoJSON is byte-identical; only its `roadLevelBlocked` counter changes, on
+    seeds 1 and 5 (237 → 236, 191 → 189): a candidate now admitted was not
+    the best one.
+  - What still blocks (jammed-A 2382–4054, drive-7 5453–6049, drive-8
+    3810–4220 per seed) is a level change more than 2 hops away in the
+    joined graph. Not investigated further.
+- **Pack order:** region-A first against national first, seed 1, all eight
+  drives: `metrics.json` equal (timing aside) and every GeoJSON byte
+  identical (`logs/n32e/order-check.txt`).
+- **Without roads:** 35 of 35 runs (seeds 1–5, all eight drives) equal to the
+  build before the change (`metrics.json` timing aside, every GeoJSON byte),
+  and every GeoJSON byte-identical to the N3.0 references (`logs/n30/p3/r2011`,
+  and drive-8's no-roads baseline).
+- **Timing:** ms/step (seed 1, sequential) 0.089–0.114, unchanged within
+  ±0.002 per drive. Largest single `ingest` 0.85–4.52 ms (before 1.11–4.64).
+  `NavigationRoadPerfTests` (release, one pack, 3 runs): mean
+  0.366–0.368 ms, max 0.646–0.682 ms (N3.2c: 0.366–0.369 / 0.650–0.765).
+
+### N3.2e: candidates on the cross-pack level rule (2026-10-14)
+
+The four declared candidates, re-run on the item-1 engine, and nothing else:
+the default, `roadCorrelationM` 100, `roadSigmaM` 10 and `roadSigmaM` 3.0 (the
+residual value). **A measurement, not an adoption: no config was chosen and no
+default was changed. The choice is open for the user.**
+
+- **Setup.** Packs national + region-A (`roadSetHash` prefix `fecadb9b`),
+  release build of the item-1 engine (ecf4f31) on the Mac, seeds 1–5 in
+  arrival order, all eight acceptance runs in their acceptance modes (drive-8
+  `--gps mask-after 785`, scored to its `scoreUntilT`). Seed 1 ran alone (the
+  ms/step below), then seeds 2 + 3 and 4 + 5. Outputs and scripts:
+  `logs/n32e/` (git-ignored; `tradeoff.py`, `misses.py`, `lib.py`).
+- **References.** N3.0 is the N3.0 exit runs, and for drive-8 its no-roads
+  baseline (1.482 %, 100 %). Without roads this build reproduces both byte for
+  byte (item 1). "N3.2b default" is the default config on the build before item
+  1 (re-run, identical to N3.2b; drive-8 0.178 %, 99.6 %).
+- **Reading the table.** "Δ mean vs N3.0" is the mean rule alone (+2 m or 5 %
+  for metre drives, +0.1 pp for % drives); "adoption" adds the criterion on
+  every seed and the gated consistency (with the truth's σ) not dropping.
+  Wrong road is for the clean drives only and stays provisional (clean's road
+  truth is 20.3 % ambiguous). Unmapped is far + incompatible (N3.2c item 2),
+  captured per seed. "converged" is the heading convergence distance; manual's
+  N3 target is ≤ 2 km on every seed. manual-3 is the mean of its three pin
+  errors, sanity only, never gated.
+
+**(A) short DR stretches, engine already accurate**
+
+| drive | candidate | gated value, mean (range) | Δ mean vs N3.0 (allowed) | consistency + truth σ, mean % (gated) | engine ellipse % | adoption vs N3.0 | adoption vs N3.2b default | wrong road, fixes / distance | unmapped far+incompatible / captured per seed | converged km (seeds) | ms/step seed 1 |
+|---|---|---|---|---|---:|---|---|---|---|---|---:|
+| clean | default | 15.34 (13.69–16.00) m | +2.36 (≤ +2.00) FAIL | 100.0 (N3.0 100.0) PASS | 100.0 | FAIL | PASS | 0.0 / 0.0 % (prov.) | 83+0 / 0,0,0,0,0 | 0.04 | 0.089 |
+| clean | roadCorrelationM 100 | 14.39 (11.81–18.82) m | +1.40 (≤ +2.00) PASS | 100.0 (N3.0 100.0) PASS | 100.0 | PASS | PASS | 0.0 / 0.0 % (prov.) | 83+0 / 0,0,0,0,0 | 0.03 | 0.091 |
+| clean | roadSigmaM 10 | 24.18 (23.34–25.54) m | +11.20 (≤ +2.00) FAIL | 100.0 (N3.0 100.0) PASS | 100.0 | FAIL | FAIL | 0.0 / 0.0 % (prov.) | 83+0 / 0,0,0,0,0 | 0.04 | 0.090 |
+| clean | roadSigmaM 3.0 | 14.08 (13.38–15.51) m | +1.10 (≤ +2.00) PASS | 100.0 (N3.0 100.0) PASS | 99.6 | PASS | PASS | 0.0 / 0.0 % (prov.) | 83+0 / 1,1,1,0,1 | 0.04 | 0.087 |
+| clean-long | default | 22.51 (22.48–22.53) m | +3.09 (≤ +2.00) FAIL | 96.4 (N3.0 100.0) FAIL | 96.0 | FAIL | PASS | 1.3 / 0.5 % (prov.) | 0+0 / 0,0,0,0,0 | 0.02 | 0.098 |
+| clean-long | roadCorrelationM 100 | 19.38 (19.22–19.50) m | -0.04 (≤ +2.00) PASS | 100.0 (N3.0 100.0) PASS | 100.0 | PASS | PASS | 1.3 / 0.5 % (prov.) | 0+0 / 0,0,0,0,0 | 0.02 | 0.095 |
+| clean-long | roadSigmaM 10 | 21.09 (21.07–21.13) m | +1.68 (≤ +2.00) PASS | 100.0 (N3.0 100.0) PASS | 100.0 | PASS | PASS | 1.3 / 0.5 % (prov.) | 0+0 / 0,0,0,0,0 | 0.02 | 0.095 |
+| clean-long | roadSigmaM 3.0 | 25.88 (25.85–25.91) m | +6.47 (≤ +2.00) FAIL | 96.0 (N3.0 100.0) FAIL | 95.7 | FAIL | FAIL | 0.0 / 0.0 % (prov.) | 0+0 / 0,0,0,0,0 | 0.02 | 0.092 |
+
+**(B) long DR stretches or jamming**
+
+| drive | candidate | gated value, mean (range) | Δ mean vs N3.0 (allowed) | consistency + truth σ, mean % (gated) | engine ellipse % | adoption vs N3.0 | adoption vs N3.2b default | wrong road, fixes / distance | unmapped far+incompatible / captured per seed | converged km (seeds) | ms/step seed 1 |
+|---|---|---|---|---|---:|---|---|---|---|---|---:|
+| manual | default | 8.11 (7.20–9.60) m | -42.38 (≤ +2.52) PASS | 100.0 (N3.0 100.0) PASS | 100.0 | PASS | PASS | – | – | 1.52 | 0.108 |
+| manual | roadCorrelationM 100 | 7.23 (5.81–10.02) m | -43.27 (≤ +2.52) PASS | 100.0 (N3.0 100.0) PASS | 100.0 | PASS | PASS | – | – | 1.52–1.58 | 0.109 |
+| manual | roadSigmaM 10 | 7.64 (6.37–9.90) m | -42.85 (≤ +2.52) PASS | 100.0 (N3.0 100.0) PASS | 100.0 | PASS | PASS | – | – | 1.52 | 0.111 |
+| manual | roadSigmaM 3.0 | 8.52 (8.10–9.33) m | -41.98 (≤ +2.52) PASS | 100.0 (N3.0 100.0) PASS | 86.7 | PASS | PASS | – | – | 1.52 | 0.106 |
+| manual-3 | default | 68.26 (66.89–69.23) m | -163.78 (not gated) | 66.7 (N3.0 66.7) | 33.3 | – | – | – | – | 0.37 | 0.109 |
+| manual-3 | roadCorrelationM 100 | 68.37 (66.50–70.20) m | -163.66 (not gated) | 66.7 (N3.0 66.7) | 26.7 | – | – | – | – | 0.41–0.48 | 0.113 |
+| manual-3 | roadSigmaM 10 | 68.57 (66.94–70.55) m | -163.46 (not gated) | 66.7 (N3.0 66.7) | 26.7 | – | – | – | – | 0.37 | 0.114 |
+| manual-3 | roadSigmaM 3.0 | 68.23 (66.82–69.93) m | -163.80 (not gated) | 66.7 (N3.0 66.7) | 26.7 | – | – | – | – | 0.27–0.37 | 0.108 |
+| jammed-A | default | 0.171 (0.164–0.178) % | -0.966 (≤ +0.1) PASS | 100.0 (N3.0 100.0) PASS | 0.0 | PASS | PASS | – | – | 0.30–0.31 | 0.113 |
+| jammed-A | roadCorrelationM 100 | 0.177 (0.170–0.182) % | -0.960 (≤ +0.1) PASS | 100.0 (N3.0 100.0) PASS | 100.0 | PASS | PASS | – | – | 0.74–0.92 | 0.117 |
+| jammed-A | roadSigmaM 10 | 0.172 (0.166–0.179) % | -0.964 (≤ +0.1) PASS | 100.0 (N3.0 100.0) PASS | 100.0 | PASS | PASS | – | – | 0.31–0.33 | 0.115 |
+| jammed-A | roadSigmaM 3.0 | 0.152 (0.138–0.159) % | -0.985 (≤ +0.1) PASS | 100.0 (N3.0 100.0) PASS | 0.0 | PASS | PASS | – | – | 0.29–0.31 | 0.111 |
+| jammed-B | default | 0.297 (0.251–0.336) % | -0.771 (≤ +0.1) PASS | 100.0 (N3.0 100.0) PASS | 100.0 | PASS | PASS | – | – | 0.19–0.22 | 0.114 |
+| jammed-B | roadCorrelationM 100 | 0.201 (0.171–0.245) % | -0.866 (≤ +0.1) PASS | 100.0 (N3.0 100.0) PASS | 100.0 | PASS | PASS | – | – | 0.43–0.44 | 0.116 |
+| jammed-B | roadSigmaM 10 | 0.235 (0.203–0.270) % | -0.833 (≤ +0.1) PASS | 100.0 (N3.0 100.0) PASS | 100.0 | PASS | PASS | – | – | 0.22–0.22 | 0.113 |
+| jammed-B | roadSigmaM 3.0 | 0.411 (0.354–0.454) % | -0.657 (≤ +0.1) PASS | 100.0 (N3.0 100.0) PASS | 100.0 | PASS | FAIL | – | – | 0.19 | 0.110 |
+| drive-7 | default | 0.168 (0.162–0.178) % | -0.960 (≤ +0.1) PASS | 87.2 (N3.0 99.6) FAIL | 85.7 | FAIL | FAIL | – | 0+44 / 10,10,10,10,10 | 0.14 | 0.114 |
+| drive-7 | roadCorrelationM 100 | 0.130 (0.123–0.148) % | -0.998 (≤ +0.1) PASS | 96.3 (N3.0 99.6) FAIL | 95.2 | FAIL | PASS | – | 0+44 / 1,1,1,2,1 | 0.14 | 0.117 |
+| drive-7 | roadSigmaM 10 | 0.154 (0.147–0.164) % | -0.974 (≤ +0.1) PASS | 88.9 (N3.0 99.6) FAIL | 87.5 | FAIL | PASS | – | 0+44 / 7,7,7,7,7 | 0.14 | 0.117 |
+| drive-7 | roadSigmaM 3.0 | 0.714 (0.707–0.721) % | -0.414 (≤ +0.1) PASS | 86.3 (N3.0 99.6) FAIL | 84.5 | FAIL | FAIL | – | 0+44 / 11,10,9,10,10 | 0.14 | 0.111 |
+| drive-8 | default | 0.178 (0.177–0.179) % | -1.304 (≤ +0.1) PASS | 99.6 (N3.0 100.0) FAIL | 98.1 | FAIL | PASS | – | 0+0 / 0,0,0,0,0 | 0.39–0.41 | 0.110 |
+| drive-8 | roadCorrelationM 100 | 0.186 (0.184–0.188) % | -1.295 (≤ +0.1) PASS | 100.0 (N3.0 100.0) PASS | 100.0 | PASS | PASS | – | 0+0 / 0,0,0,0,0 | 0.66–0.68 | 0.115 |
+| drive-8 | roadSigmaM 10 | 0.179 (0.178–0.181) % | -1.303 (≤ +0.1) PASS | 100.0 (N3.0 100.0) PASS | 99.5 | PASS | PASS | – | 0+0 / 0,0,0,0,0 | 0.52 | 0.114 |
+| drive-8 | roadSigmaM 3.0 | 0.201 (0.199–0.203) % | -1.281 (≤ +0.1) PASS | 97.8 (N3.0 100.0) FAIL | 90.7 | FAIL | FAIL | – | 0+0 / 0,0,0,0,0 | 0.29–0.38 | 0.107 |
+
+**Overall: adoption rule over the seven gated drives**
+
+| candidate | vs N3.0 | failing drives vs N3.0 | vs N3.2b default | failing drives vs N3.2b default | ms/step seed 1 (min–max) | max single ingest ms |
+|---|---|---|---|---|---|---:|
+| default | FAIL | clean-long, clean, drive-7, drive-8 | FAIL | drive-7 | 0.089–0.114 | 4.52 |
+| roadCorrelationM 100 | FAIL | drive-7 | PASS | – | 0.091–0.117 | 4.55 |
+| roadSigmaM 10 | FAIL | clean, drive-7 | FAIL | clean | 0.090–0.117 | 4.88 |
+| roadSigmaM 3.0 | FAIL | clean-long, drive-7, drive-8 | FAIL | clean-long, jammed-B, drive-7, drive-8 | 0.087–0.111 | 4.53 |
+
+**No candidate passes the adoption rule against N3.0 on every gated drive.**
+roadCorrelationM 100 is the only one that passes against the N3.2b default on
+every gated drive, and it fails against N3.0 on one: drive-7's consistency.
+
+**(a) The best candidate, as an explicit trade-off: roadCorrelationM 100.**
+Means over seeds 1–5, against N3.0:
+- **Costs:** drive-7's consistency, 99.6 → 96.3 % (inside per seed 266 / 265 /
+  267 / 252 / 265 of 273, against 272 every seed). That is 5–20 more misses
+  per seed, all at 2068–2087 s (19.60–19.73 km, the last 0.3 km). Also
+  slower heading convergence than the default on jammed-A (0.74–0.92 km
+  against 0.30–0.31), jammed-B (0.43–0.44 against 0.19–0.22) and drive-8
+  (0.66–0.68 against 0.39–0.41), still far below N3.0's. ms/step
+  0.091–0.117 (default 0.089–0.114).
+- **Within the allowance, still a cost:** clean +1.40 m (14.39 m against
+  12.98; allowed +2), with seed 4 at 18.82 m.
+- **Gains:** clean-long −0.04 m (19.38 m, 100 %); manual truth point 1
+  −43.27 m (7.23 m), converged at 1.52–1.58 km (N3 target met, N3.0 7.27–7.68
+  km); jammed-A −0.960 pp (84 % of N3.0's error removed); jammed-B −0.866 pp
+  (81 %); drive-7 worst clean fix −0.998 pp (1.128 → 0.130 %, 24.2–27.8 m
+  against 213–245 m, 88 % removed); drive-8 −1.295 pp (1.482 → 0.186 %,
+  16.4–16.8 m against 259–302 m, 87 % removed) at 100 % consistency.
+  Against the N3.2b default it passes every gated drive (drive-7 consistency
+  87.4 → 96.3 %).
+- Item 1 is what moved it. On the N3.2c engine (N3.2d) the same value failed
+  clean by 0.02 m (15.00 m) and had drive-7 at 92.7 %; now clean is 14.39 m and
+  drive-7 96.3 %.
+
+**(b) What would be needed to pass cleanly.**
+- **roadCorrelationM 100, drive-7 consistency.** N3.0 is 272/273 on every seed;
+  the one miss is the first pin of the 706 s pair (209 m off; N3MF-1, likely,
+  not proven), which every candidate also misses (about 250 m with roads). To
+  keep the mean at 99.6 % a run may miss nothing else on any seed. It misses
+  6 / 7 / 5 / 20 / 7 clean fixes, at 2068–2073 s on every seed (seed 4 to
+  2087 s, seeds 2 and 5 also at 2082 s). Measured on seed 1: the truth is on a
+  road the pack does not have in that direction (`noCompatibleRoadWithin15`,
+  nearest edge 2–3 m away and of another heading), `onRoadShare` falls
+  0.93 → 0, and the error is 22.1–23.7 m against a 95 % ellipse of
+  25.3–28.6 × 20.9–22.6 m. The error itself is about 23 m from 2068 s to the
+  end, i.e. along-track dead-reckoning error after about 5 km (0.12 %); the
+  misses are where the ellipse is smallest, as the road evidence ends. What
+  could address it (unmeasured): an ellipse that keeps the along-track
+  uncertainty the road cannot reduce (the road update is Schmidt along the
+  road, so this would be in how the estimate's ellipse is formed, not in the
+  road update), or an off-road model that lets the cloud leave a mapped road
+  sooner (the N3.2a question; test 3 is a known FAIL, and its follow-up,
+  novelty from the particles' distance-to-road change, is unmeasured).
+- **Default** fails against N3.0 on four drives:
+  - clean-long +3.09 m and 96.4 %: the creeping last 11 s (648–657 s, no
+    usable course; N3.2b). The estimate is held on an edge, 21.3–22.5 m off
+    against a 18.6 m semi-major axis, 10 misses per seed. roadCorrelationM 100
+    removes it, consistent with its tempering: an update's road weight is the
+    distance driven since the last one over 100 m, so creeping adds little
+    road evidence (the mechanism is not isolated).
+  - clean +2.36 m (0.36 m over): the maximum is now at 374–376 s, 3.50 km,
+    where the car leaves mapped roads (truth `noRoad` from 363 s, 17 m from
+    the nearest edge, then no edge near). The estimate stays on the road for about 3 s
+    (`onRoadShare` ≥ 0.93 to 365 s), then parks off-road 15.6 m off (seed 1).
+    N3.0's maximum was earlier (259 s on seeds 1–4, 357 s on seed 5;
+    10.7–16.5 m). Like drive-7's misses, it is where the car leaves the
+    mapped roads, but here the road holds the estimate while the error grows.
+  - drive-7 consistency 87.2 %: 33–36 misses at 2058–2093 s, the stretch above
+    with the smaller ellipse of roadCorrelationM 30.
+  - drive-8 99.6 %: 3–5 misses at 897–901 s, on the right road (secondary):
+    the 5 m GNSS fixes are 14.3–14.7 m from its OSM centreline, the estimate
+    is on the centreline, and the 95 % semi-minor axis is 12.4 m. Either the
+    centreline or the fixes are off there; which is not measured.
+    roadCorrelationM 100 and roadSigmaM 10 both cover it (100 %).
+- **roadSigmaM 10** fails clean: 24.18 m (+11.20 m), its maximum also at the
+  drive's end (374–376 s); why a wider σ costs more there was not
+  investigated. drive-7 88.9 %.
+- **roadSigmaM 3.0** fails clean-long (+6.47 m: the creep, against a 15 m
+  ellipse), drive-7 (0.714 %: captured on the service-road end up to 141 m off,
+  as in N3.2d) and drive-8 (97.8 %: 890–901 s as above, and 1286–1301 s on
+  right and wrong roads); against the N3.2b default also jammed-B
+  (0.411 %, +0.114 pp).
+- No combination was run (none was declared).
+
+**Anomalies.**
+- Seeds disagree on drive-7 under roadCorrelationM 100: seed 4 misses 21
+  (2068–2087 s), the others 6–8.
+- jammed-A's engine-only consistency is 0 % for the default and roadSigmaM 3.0
+  (its single truth end outside the engine's ellipse, inside with the truth's
+  σ), 100 % for the other two.
+- drive-7's worst checkpoint overall is the 706 s pin (250 m) under every
+  candidate; its gated value counts clean fixes only.
+- manual-3 (sanity): pins 68.2–68.6 m mean under every candidate, 66.7 %
+  consistency; engine-only 26.7–33.3 %.
 
 ## Known limitations and options
 

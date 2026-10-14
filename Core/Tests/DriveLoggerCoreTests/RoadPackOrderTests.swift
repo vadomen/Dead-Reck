@@ -16,10 +16,10 @@ import Testing
 /// - "local": the street only, plus an unrelated street far north (way 15).
 ///
 /// The street and the bridge are each in two packs. Which copy a network
-/// keeps decides the edge a particle sits on, and the level rule admits the
-/// bridge from the street only when both copies come from the same pack
-/// (adjacency exists within a pack only). So before item 7 the order of the
-/// packs changed the particles, not only the labels.
+/// keeps decides the edge a particle sits on, and (until N3.2e item 1, when
+/// adjacency stopped at a pack border) the level rule admitted the bridge
+/// from the street only when both copies came from the same pack. So before
+/// item 7 the order of the packs changed the particles, not only the labels.
 @Suite("Road pack order (N3.2c item 7)")
 struct RoadPackOrderTests {
     typealias S = SyntheticDrive

@@ -207,13 +207,16 @@ The `bridge` and `tunnel` flags are kept too. A candidate e is eligible for part
 any of these holds:
 1. `roadLevel[i]` is unknown;
 2. level(e) = `roadLevel[i]`;
-3. e is within `roadLevelHops` hops of `roadEdge[i]` in the pack's adjacency.
+3. e is within `roadLevelHops` hops of `roadEdge[i]` in the network's adjacency.
 
 Rule 3 is how a car gets onto a bridge or into a tunnel: the ramp or approach shares a node
 with it. So a particle on the street below a stacked viaduct cannot be captured by the
 viaduct even when heading and distance agree, and vice versa. Hops are checked only when the
-levels differ (rare). Counter `roadLevelBlocked`. Across packs there is no adjacency, so only
-rules 1–2 apply at a pack border.
+levels differ (rare). Counter `roadLevelBlocked`. Adjacency spans packs (N3.2e item 1; before it,
+only rules 1–2 applied at a pack border): two edges in different packs are adjacent when they
+share an OSM node, that is the same node of the same way (way ID and normalised node index; a
+pack stores no node IDs) or an equal E7 point that is an end of at least one of them
+(`RoadNetwork.adjacentEdges`).
 
 **GPS fix gate** (in addition to the existing GNSS-vs-OBD speed gate, which vetoes course and
 speed only). A fix with a valid speed (GNSS, not a network fix) is ignored as a whole when
@@ -761,6 +764,11 @@ Measured in N3.2d (2026-10-13; docs/NAVIGATION.md, "N3.2d: pre-declared grids").
 chosen and the choice is open for the user. No single value passes clean and clean-long against N3.0. drive-7's
 consistency fails against N3.0 for every value. The residual-derived `roadSigmaM` is 3.0 m (RMS; the
 fix-error subtraction gave none).
+Re-measured in N3.2e (2026-10-14; docs/NAVIGATION.md, "N3.2e: candidates on the cross-pack level
+rule") after the level rule's adjacency was extended across packs (N3.2e item 1): the default,
+`roadCorrelationM` 100 and `roadSigmaM` 10 and 3.0, on all eight acceptance drives. No candidate passes
+against N3.0 on every gated drive; `roadCorrelationM` 100 fails only drive-7's consistency (96.3 % against
+99.6 %) and passes against the N3.2b default. No config was chosen; the choice is open for the user.
 
 **Exit:**
 - Without `--roads`, the 30 acceptance runs are bit-identical to N3.0: every `metrics.json`
@@ -886,8 +894,8 @@ off the road the filter matched.
 6. **Reversing** (N2-1) on a oneway or in a car park is integrated forward. The heading
    gate rejects the road and the particle goes off-road, which is soft, but it may cost
    particles.
-7. **Mis-tagged bridges and tunnels** (missing `layer`) defeat the level rule. Missing
-   adjacency at pack borders weakens it.
+7. **Mis-tagged bridges and tunnels** (missing `layer`) defeat the level rule. Adjacency at
+   pack borders, missing until N3.2e item 1, now spans packs by shared OSM node.
 8. **Device time and memory:** unknown iPhone/Mac ratio; pack hash verification at import
    (~100 MB, estimated well under a second); thermal state with the map open. The Mac
    already shows a 4.47 ms single-`ingest` outlier.

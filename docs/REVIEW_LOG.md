@@ -498,3 +498,50 @@ Tests: Core passes 809 tests in 109 suites, 39 known issues (all test 3). App un
 ### Run 27 summary
 
 4 rounds. Findings: 3 MAJOR fixed (R27.1-1, R27.2-1, R27.3-1, all missing tests; no code change), 0 rejected, 2 MINOR deferred (R27.1-2, R27.3-2). Final: Core 809 tests in 109 suites pass, 39 known issues (as main); App unchanged.
+
+## Run 28: N3.2e level rule across packs, candidates re-run, trade-off table, CLAUDE.md perf command, WORKFLOW roadmap (main..n3.2e, ecf4f31..c6912c5), started 2026-10-14
+
+### Round 1
+
+Reviewer: one fresh `reviewer` (opus). Result: 0 BLOCKER / 2 MAJOR / 3 MINOR.
+
+Verified clean: bit-identity (clean, mask-after 230, seed 1: no roads main vs HEAD GeoJSON byte-identical, metrics.json equal apart from timing; with national + region-A packs HEAD matches the N3.2e default output; the pre-change default reproduces N3.2b); cross-pack adjacency symmetric and order-independent; memo bounded per update and deterministic; ms/step and largest ingest unchanged; N3.2e tables in NAVIGATION.md match the outputs (spot checks of clean, drive-7, drive-8 values and levelBlocked); honest wording (no adoption claimed, "likely, not proven" kept); Core imports and privacy.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R28.1-1 | MAJOR | `RoadNetwork.swift:229-230`: the condition that an equal E7 point must be an end of one of the two edges (keeps two interior points at one coordinate, e.g. a bridge over a road, from linking) is untested; mutation to `true` passes every test. | CONFIRMED | fixed in round 1: `equalInteriorPointIsNotANode` (no adjacency, the level rule still blocks both ways, both pack orders; fails under the mutation). |
+| R28.1-2 | MAJOR | `RoadMatcher.swift:314-321`: the per-update hop memo is untested; a key without `b` (or without `a`) reuses one candidate's answer for others and passes every test. | CONFIRMED | fixed in round 1: `memoKeysBothEdges` (three questions in four orders through one memo; fails under both key mutations). The key omits `hops`; one memo only sees one `hops` (comment added at the memo, no code change). |
+| R28.1-3 | MINOR | `RoadNetwork.swift:217`: way-node ranges that touch at one index are untested (`<=` → `<` passes). | FIXED | covered in round 1 by `touchingWayNodeRanges` (fails under the mutation). |
+| R28.1-4 | MINOR | `RoadLevelAcrossPacksTests.swift:221-231`: the "one pack equals RoadPack.isEdge hop for hop" check compares the function with itself (`RoadNetwork.isEdge` returns `packs[0].isEdge` for one pack); the multi-pack BFS is never compared with a pack's own adjacency. | DEFERRED | backlog. |
+| R28.1-5 | MINOR | `NavigationRoadTests.swift:851-853`: the `twoPacks` doc comment and test name still say the level rule finds adjacency within a pack only; false after N3.2e item 1 (passes only because its streets are far from the bridge). | DEFERRED | backlog. |
+
+Tests: Core passes 817 tests in 110 suites, 39 known issues (the existing `withKnownIssue` tests). App unchanged.
+
+### Round 2
+
+Reviewer: one fresh `reviewer` (opus). Result: 0 BLOCKER / 1 MAJOR / 0 MINOR.
+
+Verified clean: the round-1 tests kill their mutations (end condition → `true`; `<=` → `<`; memo key without `b`; without `a`); the cell scan and its dedupe cannot lose a link (segments listed within the effective radius); adjacency through a third pack via the BFS; duplicates removed; symmetry and pack-order independence; `edgeRange(ofWay:)` relies on the enforced sort order; memo key cannot collide and is built once per update; ms/step and largest ingest unchanged or lower on the two-pack replays; docs and ledger match the code; privacy. Bit-identity not re-run (`Core/Sources` changed only by a comment since round 1).
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R28.2-1 | MAJOR | `RoadNetwork.swift:230-231`: the start-of-edge half of the equal-coordinate rule (`k == ends.0`, `k == node(r.from)`) is untested: every cross-pack coordinate fixture meets at the street's last point, and dropping both passes every test. A street whose way starts at a bridge's interior node would again be blocked. | CONFIRMED | fixed in round 2: `coordinateBothDirectionsReversedStreet` (street way reversed; adjacency both ways, up and down updates, both pack orders); dropping either half alone or both fails it. |
+
+Tests: Core passes 818 tests in 110 suites, 39 known issues (the existing `withKnownIssue` tests). App unchanged.
+
+### Round 3
+
+Reviewer: one fresh `reviewer` (opus); a first attempt was cut off by an API limit and not counted, the second resumed from its notes. Result: 0 BLOCKER / 0 MAJOR / 2 MINOR.
+
+Verified clean: the N3.2e tables in NAVIGATION.md match `logs/n32e/tradeoff.md`, which `tradeoff.py` reproduces; every adoption verdict and allowed Δ recomputed (max(2 m, 5 %), manual 2.52 m; 0.1 pp), N3.0 references incl. drive-8 1.482 % / 100 %; item 1 stated as a FAIL against the N3.2b default on drive-7 consistency (seeds 1, 4, 5 one miss each), not presented as adopted, no config chosen; 40 no-roads GeoJSON byte-identical to N3.0; three more mutations on item-1 code (within-pack adjacency `[from]` only, `[to]` only, `edgeRange` upper bound) all killed; WORKFLOW.md references and CLAUDE.md perf command accurate; privacy.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R28.3-1 | MINOR | `docs/N3_PLAN.md:767-771` (also :215-219, :897-898): the N3.2e status does not say that item 1 itself fails the adoption rule against the N3.2b default (drive-7 consistency 87.4 → 87.2 %) and that adopting it is the user's call; the design text describes cross-pack adjacency as the current rule. NAVIGATION.md is explicit. | DEFERRED | backlog. |
+| R28.3-2 | MINOR | `docs/NAVIGATION.md:1821-1822`: "seed 4 misses 21 (2068–2087 s), the others 6–8" counts the 706 s pin, which is outside that window; section (b) gives 6 / 7 / 5 / 20 / 7 without it. | DEFERRED | backlog. |
+
+Tests: Core passes 818 tests in 110 suites, 39 known issues (the existing `withKnownIssue` tests). App unchanged.
+
+### Run 28 summary
+
+3 rounds. Findings: 3 MAJOR fixed (R28.1-1, R28.1-2, R28.2-1, all missing tests of the cross-pack adjacency and its memo; no code change), 1 MINOR fixed in passing (R28.1-3), 0 rejected, 4 MINOR deferred (R28.1-4, R28.1-5, R28.3-1, R28.3-2). Final: Core 818 tests in 110 suites pass, 39 known issues; App unchanged.
