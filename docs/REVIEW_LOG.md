@@ -473,3 +473,16 @@ Verified clean: R27.1-1 tests kill the cutoff-boundary mutation in the convergen
 | R27.2-1 | MAJOR | `ReplayReport.swift:277-283`: the summary's `cleanFix` line under a cutoff has no test; scoring every clean fix (no `cleanFixes(...)`) passes every test, and on drive-8 would print 1282 fixes with median and max over the fixes after the driver left the car. | CONFIRMED | fixed in round 2: `cutoffBeforeCheckpoint` checks the count, median and max over scored clean fixes only, the "more after scoreUntilT" suffix and the metrics.md scored row (fails under the mutation). |
 
 Tests: Core passes 808 tests in 109 suites, 39 known issues (all test 3). App unchanged.
+
+### Round 3
+
+Reviewer: one fresh `reviewer` (opus). Result: 0 BLOCKER / 1 MAJOR / 1 MINOR.
+
+Verified clean: scoreUntilT paths in TruthFile, NavigationReplay (schedule, pinScoring, score, road residuals, 1 Hz samples, end fallback, convergence) and ReplayReport (summary, metrics.md, metrics.json keys and decoding) against NAVIGATION.md; privacy of the diff and commit messages. R19.1-2 not re-raised (drive-8's gated max % is still computed outside `replay_nav`, as for drive-7).
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R27.3-1 | MAJOR | `NavigationReplay.swift:750-751`: the `$0.1 == nil` clause of the pin cutoff count has no test; without it a refinement pair after the cutoff gives `pinScoring.scored` -1. | CONFIRMED | fixed in round 3: `cutoffPinScoringCounts` (refinement and excluded pins after the cutoff; every count and metrics.json checked; fails under the mutation). |
+| R27.3-2 | MINOR | Report text under a cutoff partly untested (joined `notScoredText`, metrics.md "Scored until" line and footnote). | DEFERRED | backlog. |
+
+Tests: Core passes 809 tests in 109 suites, 39 known issues (all test 3). App unchanged.

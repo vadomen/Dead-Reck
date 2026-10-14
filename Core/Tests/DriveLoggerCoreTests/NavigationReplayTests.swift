@@ -531,4 +531,40 @@ extension NavigationReplayTests {
             #expect(cut.convergedT == base.convergedT && cut.convergedDistanceM == base.convergedDistanceM, "\(scoreUntilT)")
         }
     }
+
+    // R27.3-1: pins after the cutoff that the pair or exclusion rule already
+    // leaves unscored are not counted again in `afterScoreUntil`.
+
+    @Test("Pins after scoreUntilT: a refinement or excluded pin keeps its reason and is not counted in afterScoreUntil; the counts add up")
+    func cutoffPinScoringCounts() throws {
+        // Pin 20 s before the cutoff (30 s); after it a pair 40/41.5 s, a pin
+        // at 55 s excluded by truth and a plain pin at 65 s.
+        let (events, truth) = NavigationPinScoringTests.scenario(pinTimes: [20, 40, 41.5, 55, 65])
+        var entry = truth
+        entry.excludePins = [.init(t: 55, reason: "doubtful")]
+        entry.scoreUntilT = 30
+        let result = NavigationPinScoringTests.run(events, truth: entry, window: 3)
+
+        let manual = result.checkpoints.filter { $0.kind == .manualFix }
+        #expect(manual.map(\.t) == [20, 40, 41.5, 55, 65])
+        #expect(manual.map { $0.notScored?.reason } == [nil, nil, .refinement, .excluded, nil])
+        #expect(manual.map { $0.afterScoreUntilT == true } == [false, true, true, true, true])
+        #expect(manual.map(\.isScored) == [true, false, false, false, false])
+
+        let expected = ReplayResult.PinScoring(pairWindowS: 3, manualFixes: 5, scored: 1, refinements: 1, excluded: 1,
+                                               afterScoreUntil: 2)
+        #expect(result.pinScoring == expected)
+        let p = result.pinScoring
+        #expect(p.scored + p.refinements + p.excluded + (p.afterScoreUntil ?? 0) == p.manualFixes)
+        #expect(result.consistency.byKind["manualFix"]?.scored == 1)
+
+        // metrics.json keeps the same counts.
+        let data = try ReplayReport.metricsJSON([ReplayMetrics(result)])
+        let row = try #require(try JSONSerialization.jsonObject(with: data) as? [[String: Any]])[0]
+        let pinScoring = try #require(row["pinScoring"] as? [String: Any])
+        #expect(pinScoring["manualFixes"] as? Int == 5 && pinScoring["scored"] as? Int == 1)
+        #expect(pinScoring["refinements"] as? Int == 1 && pinScoring["excluded"] as? Int == 1)
+        #expect(pinScoring["afterScoreUntil"] as? Int == 2)
+        #expect(try JSONDecoder().decode([ReplayMetrics].self, from: data)[0].pinScoring == expected)
+    }
 }
