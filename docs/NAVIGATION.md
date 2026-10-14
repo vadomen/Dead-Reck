@@ -1168,6 +1168,7 @@ above. A measurement, not an adoption: no config or engine change was made.
   gets a new hash and can flip the order. Clean shows the choice is worth
   about 6 m. Adjacency across packs (shared OSM node IDs) or a deliberate
   precedence rule would be an engine change under the adoption rule.
+  Adjacency across packs: N3.2e item 1 below.
 
 ### N3.2c item 2: unmapped counts fixes with no heading-compatible road within 15 m (2026-10-13)
 
@@ -1560,6 +1561,107 @@ at 100 % consistency:
   manual convergence at roadUpdateIntervalS 0.1 (seed 4). Clean's
   wrong-road share stays ≤ 3.4 % by distance everywhere (target ≤ 5 %,
   provisional).
+
+### N3.2e item 1: level rule across packs (2026-10-14)
+
+**Change (engine).** The level rule's adjacency (rule 3, docs/N3_PLAN.md
+"Layer, bridge and tunnel rule") now spans packs: `RoadNetwork.adjacentEdges`.
+Within a pack it is the pack's own adjacency, unchanged. Two edges in
+different packs are adjacent (one hop) when they share an OSM node:
+- **same way node:** the same `osmWayID`, and their way-node index ranges
+  (`wayPointOffset` … `wayPointOffset + pointCount − 1`) intersect. A pack
+  stores no OSM node IDs (`NODE` holds coordinates only; the builder's
+  node IDs are not written), so this is the pack-independent node identity
+  the format does carry, the one segment keys use;
+- **equal coordinate:** a point with equal E7 coordinates on both edges that
+  is an end (a topological node) of at least one of them. Equal means equal:
+  a point 1 E7 unit (about 1 cm) away does not link.
+
+The adjacency is a function of the pack set only, so results stay
+independent of pack order. With one pack the network asks the pack directly,
+as before. The hop answers are memoised within one road update (lookup only,
+a pure function, so no result can change). No config key changed.
+
+**Tests** (`RoadLevelAcrossPacksTests`, synthetic packs near (0, 0)): a street
+in one pack ending on another pack's bridge (equal E7, different node IDs),
+in both directions; the same way node in two packs whose coordinates all
+differ by 1 E7 unit (admitted at 2 hops, blocked at 1); a bridge 1 E7 unit
+from the street's end (still blocked, at any hop count); `adjacentEdges`
+itself (expected links, symmetric, independent of order, one pack equal to
+`RoadPack.isEdge` for hops 0–3); and a drive from the street onto the bridge
+(never level-blocked, on the bridge 50 m past the junction, both pack orders).
+Run against the engine before the change (tests first, engine change
+after), the coordinate, way-node and drive tests fail with 10 issues: every
+particle blocked, bridge share 0.0 at 50 m. The non-match test passes
+before and after, as a negative test should. The stacked-bridge test 5,
+the hop-boundary test and the two-pack test still pass.
+
+**Replay.** Default config, packs national + region-A (`roadSetHash` prefix
+`fecadb9b`), release build on the Mac, seeds 1–5 in arrival order, the eight
+acceptance runs in their acceptance modes. "N3.2b default" was re-run with the
+build before this change (4a4d697): it reproduces `logs/n32b/roads` and the
+drive-8 roads baseline exactly (every GeoJSON byte; `metrics.json` equal
+except the N3.2c item-2 unmapped fields the N3.2b files predate). Outputs and
+scripts: `logs/n32e/` (git-ignored). Values are the gated criterion (clean-long,
+clean, manual in metres; the rest in % of distance); manual-3 is the mean of
+its three pin errors, sanity only.
+
+| alias | criterion | N3.2b default, mean (range) | item 1, mean (range) | Δ mean | allowed | + truth σ (gated), N3.2b → item 1 | engine ellipse | verdict vs N3.2b default | verdict vs N3.0 | levelBlocked, seed 1 (range 1–5), N3.2b → item 1 | wrong road by distance | ms/step seed 1 |
+|---|---|---|---|---:|---|---|---|---|---|---|---|---|
+| clean-long | max ≤ 30 m | 22.51 (22.48–22.53) m | 22.51 (22.48–22.53) m | +0.00 | +2.00 m | 96.4 → 96.4 % | 96.0 → 96.0 % | PASS | FAIL (mean, consistency) | 0 (0–0) → 0 (0–0) | 0.5 → 0.5 % | 0.097 → 0.098 |
+| clean | max ≤ 30 m | 19.44 (16.21–21.75) m | 15.34 (13.69–16.00) m | -4.10 | +2.00 m | 100.0 → 100.0 % | 98.5 → 100.0 % | PASS | FAIL (mean) | 23818 (22000–23818) → 0 (0–0) | 2.4 → 0.0 % | 0.090 → 0.089 |
+| manual | truth point 1 ≤ 200 m | 8.11 (7.20–9.60) m | 8.11 (7.20–9.60) m | +0.00 | +2.00 m | 100.0 → 100.0 % | 100.0 → 100.0 % | PASS | PASS | 237 (97–411) → 236 (97–411) | n/a | 0.109 → 0.108 |
+| manual-3 | pins, mean (sanity) | 68.73 (67.38–69.72) m | 68.26 (66.89–69.23) m | -0.48 | +3.44 m | 66.7 → 66.7 % | 33.3 → 33.3 % | not gated | not gated | 8596 (8061–9399) → 964 (337–2075) | n/a | 0.110 → 0.109 |
+| jammed-A | end ≤ 2.5 % | 0.171 (0.166–0.178) % | 0.171 (0.164–0.178) % | -0.000 | +0.1 pp | 100.0 → 100.0 % | 0.0 → 0.0 % | PASS | PASS | 8871 (8271–10015) → 2917 (2382–4054) | n/a | 0.114 → 0.113 |
+| jammed-B | end ≤ 2.5 % | 0.297 (0.251–0.336) % | 0.297 (0.251–0.336) % | +0.000 | +0.1 pp | 100.0 → 100.0 % | 100.0 → 100.0 % | PASS | PASS | 0 (0–1) → 0 (0–1) | n/a | 0.112 → 0.114 |
+| drive-7 | worst withheld clean fix ≤ 2.5 % | 0.167 (0.162–0.173) % | 0.168 (0.162–0.178) % | +0.002 | +0.1 pp | 87.4 → 87.2 % | 86.0 → 85.7 % | FAIL (consistency) | FAIL (consistency) | 12859 (12859–13683) → 5453 (5453–6049) | 3.6 → 3.6 % | 0.115 → 0.114 |
+| drive-8 | worst scored withheld clean fix ≤ 2.5 % | 0.178 (0.177–0.179) % | 0.178 (0.177–0.179) % | -0.000 | +0.1 pp | 99.6 → 99.6 % | 98.1 → 98.1 % | PASS | FAIL (consistency) | 10723 (10524–11057) → 4083 (3810–4220) | 0.0 → 0.0 % | 0.109 → 0.110 |
+
+- **Adoption rule against the N3.2b default: FAIL, on drive-7's consistency
+  only** (87.4 → 87.2 %, mean over seeds; must not drop). Its gated mean
+  passes (+0.002 pp, allowed +0.1), and every per-seed criterion passes on
+  every drive.
+  - The drop is one clean fix on each of seeds 1, 4 and 5 (seeds 2 and 3
+    unchanged), at 2090.0 / 2093.0 / 2091.0 s, 19.76–19.78 km: the
+    service-road end of the drive, where N3.2b already misses 33–36 of 273.
+    Each is on the ellipse's edge: error 26.1 → 26.3, 27.0 → 27.5,
+    26.4 → 26.8 m against a semi-major axis of 26.0, 27.0, 26.4 m.
+  - Mechanism: from the first pin (706 s) a level decision changes, the
+    resampling draws a different realisation, and every later checkpoint
+    moves a little (271 of 273 differ). The three flips are that noise
+    at boundary checkpoints, not a new miss region. Measured, not explained
+    away: under the rule it is a FAIL, and adopting it is the user's call.
+- **Against N3.0** the verdicts are those of the N3.2b default except clean,
+  which improves but still fails by 0.36 m: clean-long (+3.09 m; 96.4 %),
+  clean (+2.36 m, allowed +2), drive-7 (87.2 % against 99.6 %) and drive-8
+  (99.6 % against 100 %, as in its with-roads baseline) fail; manual,
+  jammed-A and jammed-B pass.
+- **Every change, explained.**
+  - clean: `roadLevelBlocked` 23 818 → 0 on seed 1 (0 on every seed), wrong
+    road 2.4 → 0.0 % by distance, max 19.44 → 15.34 m mean. Seed 1 gives
+    15.63 m, the region-A-first value N3.2c item 7 measured (15.6 m): the
+    block that pack order caused is gone.
+  - manual-3, jammed-A, drive-7 and drive-8 change: their `roadLevelBlocked`
+    falls by 56–96 % per seed (drive-7 56–58 %, jammed-A 60–71 %, drive-8
+    62–64 %, manual-3 78–96 %), and their criteria move within seed noise.
+  - clean-long and jammed-B are bit-identical (every GeoJSON byte). manual's
+    GeoJSON is byte-identical; only its `roadLevelBlocked` counter changes, on
+    seeds 1 and 5 (237 → 236, 191 → 189): a candidate now admitted was not
+    the best one.
+  - What still blocks (jammed-A 2382–4054, drive-7 5453–6049, drive-8
+    3810–4220 per seed) is a level change more than 2 hops away in the
+    joined graph. Not investigated further.
+- **Pack order:** region-A first against national first, seed 1, all eight
+  drives: `metrics.json` equal (timing aside) and every GeoJSON byte
+  identical (`logs/n32e/order-check.txt`).
+- **Without roads:** 35 of 35 runs (seeds 1–5, all eight drives) equal to the
+  build before the change (`metrics.json` timing aside, every GeoJSON byte),
+  and every GeoJSON byte-identical to the N3.0 references (`logs/n30/p3/r2011`,
+  and drive-8's no-roads baseline).
+- **Timing:** ms/step (seed 1, sequential) 0.089–0.114, unchanged within
+  ±0.002 per drive. Largest single `ingest` 0.85–4.52 ms (before 1.11–4.64).
+  `NavigationRoadPerfTests` (release, one pack, 3 runs): mean
+  0.366–0.368 ms, max 0.646–0.682 ms (N3.2c: 0.366–0.369 / 0.650–0.765).
 
 ## Known limitations and options
 

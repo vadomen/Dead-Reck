@@ -247,6 +247,11 @@ struct RoadMatcher: Sendable {
     struct Work {
         var tests = 0
         var levelBlocked = 0
+        /// The level rule's hop answers of this update, keyed by
+        /// (particle edge << 32 | candidate edge); `levelHops` is fixed
+        /// within an update. A memo of a pure function, lookup only: it
+        /// cannot change a result.
+        var withinHops: [UInt64: Bool] = [:]
     }
 
     /// e* for one particle: the eligible segment of store cell `k` with the
@@ -278,7 +283,7 @@ struct RoadMatcher: Sendable {
             guard d2 <= q.chi2 * s0 else { continue }
             let candidateLevel = c.level[j]
             if !RoadGeometry.levelAllows(particleLevel: level, candidateLevel: candidateLevel,
-                                         withinHops: { isEdge(c.edge[j], withinHops: q.levelHops, of: edge) }) {
+                                         withinHops: { isEdge(c.edge[j], withinHops: q.levelHops, of: edge, memo: &work.withinHops) }) {
                 work.levelBlocked += 1
                 continue
             }
@@ -299,12 +304,27 @@ struct RoadMatcher: Sendable {
     }
 
     /// Whether global edge `b` is within `hops` of global edge `a` in the
-    /// pack's adjacency. Across packs there is no adjacency: false.
+    /// network's adjacency (`RoadNetwork.adjacentEdges`: within a pack, and
+    /// across packs where two edges share an OSM node, N3.2e item 1).
     func isEdge(_ b: UInt32, withinHops hops: Int, of a: UInt32) -> Bool {
         guard a != Self.noEdge else { return false }
-        let pa = pack(ofEdge: a), pb = pack(ofEdge: b)
-        guard pa == pb else { return false }
-        return network.packs[pa].isEdge(Int(b) - edgeBase[pa], withinHops: hops, of: Int(a) - edgeBase[pa])
+        return network.isEdge(edgeRef(b), withinHops: hops, of: edgeRef(a))
+    }
+
+    /// `isEdge`, answered from `memo` when asked before in this update.
+    func isEdge(_ b: UInt32, withinHops hops: Int, of a: UInt32, memo: inout [UInt64: Bool]) -> Bool {
+        guard a != Self.noEdge else { return false }
+        let key = UInt64(a) << 32 | UInt64(b)
+        if let known = memo[key] { return known }
+        let answer = isEdge(b, withinHops: hops, of: a)
+        memo[key] = answer
+        return answer
+    }
+
+    /// The network edge of a global edge index.
+    func edgeRef(_ e: UInt32) -> RoadNetwork.EdgeRef {
+        let p = pack(ofEdge: e)
+        return RoadNetwork.EdgeRef(pack: p, edge: Int(e) - edgeBase[p])
     }
 
     func pack(ofEdge e: UInt32) -> Int {

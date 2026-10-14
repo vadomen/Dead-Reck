@@ -305,6 +305,21 @@ public final class RoadPack: @unchecked Sendable {
         return segment(startingAt: Int(record.firstPoint) + k)
     }
 
+    /// The edges of way `osmWayID` (contiguous, since EDGE is sorted by way,
+    /// then offset), by binary search; empty if the way is absent.
+    public func edgeRange(ofWay osmWayID: Int64) -> Range<Int> {
+        func firstEdge(after: Bool) -> Int {
+            var lo = 0, hi = edgeCount
+            while lo < hi {
+                let mid = (lo + hi) / 2
+                let way: Int64 = bytes.le(edgeBase + RoadPackFormat.edgeRecordSize * mid + 16)
+                if way < osmWayID || (after && way == osmWayID) { lo = mid + 1 } else { hi = mid }
+            }
+            return lo
+        }
+        return firstEdge(after: false)..<firstEdge(after: true)
+    }
+
     // MARK: Cells
 
     /// The CELK index of a cell, or nil when the cell is empty.
