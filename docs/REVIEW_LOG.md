@@ -446,3 +446,55 @@ Tests: Core passes 799 tests in 109 suites, 39 known issues (all test 3). App: 2
 - **Rounds:** 2. Round 2 found no BLOCKER or MAJOR; loop stopped.
 - **Findings:** 1 MAJOR fixed with a regression test (R26.1-1: 10 Hz camera writes in heading-up with a wide ellipse); 0 rejected; 5 MINOR deferred (R26.1-2..3, R26.2-1..3).
 - **Final tests:** Core 799 / 109 pass, 39 known issues; App 276 / 43 pass.
+
+## Run 27: drive-8 acceptance, scoreUntilT, PLAN B-2 note (main..drive8-acceptance, b61fa86..6c99826), started 2026-10-14
+
+### Round 1
+
+Reviewer: one fresh `reviewer` (opus). Result: 0 BLOCKER / 1 MAJOR / 1 MINOR.
+
+Verified clean: bit-identity re-run by the reviewer (clean seed 1 no roads, drive-7 seed 2 with roads: identical); drive-8 table values match `metrics.json`; PLAN B-2 numbers match the sidecar; mutations M2 and M3 killed.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R27.1-1 | MAJOR | `NavigationReplay.swift:1015-1017`: heading convergence judged on the track up to `scoreUntilT` (`scoredTrack`) has no test; mutation `convergence(track, …)` passes every test. | CONFIRMED | fixed in round 1: tests for a cutoff before convergence, inside the hold window, and after the hold (fail under the mutation). |
+| R27.1-2 | MINOR | `docs/NAVIGATION.md:883-886` (drive-8 baseline): "% since last fix received" 2.35–2.74 %, "above 2.5 % on seeds 3 and 5" is only the value at each seed's max-%-from-start fix (1944.1 s); seed 1 is 2.501 %, also above; the max over scored fixes > 500 m into dead reckoning is 2.72–2.84 % on every seed. Reported, not gated. | DEFERRED | backlog. |
+
+Tests: Core passes 808 tests in 109 suites, 39 known issues (all test 3). App unchanged.
+
+### Round 2
+
+Reviewer: one fresh `reviewer` (opus). Result: 0 BLOCKER / 1 MAJOR / 0 MINOR.
+
+Verified clean: R27.1-1 tests kill the cutoff-boundary mutation in the convergence track (`< scoreUntilNs`); dropping the cutoff from the 1 Hz road samples is killed by `scoreUntilTRoads`; Core imports and privacy unchanged. Bit-identity not re-run (`Core/Sources` unchanged since round 1).
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R27.2-1 | MAJOR | `ReplayReport.swift:277-283`: the summary's `cleanFix` line under a cutoff has no test; scoring every clean fix (no `cleanFixes(...)`) passes every test, and on drive-8 would print 1282 fixes with median and max over the fixes after the driver left the car. | CONFIRMED | fixed in round 2: `cutoffBeforeCheckpoint` checks the count, median and max over scored clean fixes only, the "more after scoreUntilT" suffix and the metrics.md scored row (fails under the mutation). |
+
+Tests: Core passes 808 tests in 109 suites, 39 known issues (all test 3). App unchanged.
+
+### Round 3
+
+Reviewer: one fresh `reviewer` (opus). Result: 0 BLOCKER / 1 MAJOR / 1 MINOR.
+
+Verified clean: scoreUntilT paths in TruthFile, NavigationReplay (schedule, pinScoring, score, road residuals, 1 Hz samples, end fallback, convergence) and ReplayReport (summary, metrics.md, metrics.json keys and decoding) against NAVIGATION.md; privacy of the diff and commit messages. R19.1-2 not re-raised (drive-8's gated max % is still computed outside `replay_nav`, as for drive-7).
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R27.3-1 | MAJOR | `NavigationReplay.swift:750-751`: the `$0.1 == nil` clause of the pin cutoff count has no test; without it a refinement pair after the cutoff gives `pinScoring.scored` -1. | CONFIRMED | fixed in round 3: `cutoffPinScoringCounts` (refinement and excluded pins after the cutoff; every count and metrics.json checked; fails under the mutation). |
+| R27.3-2 | MINOR | Report text under a cutoff partly untested (joined `notScoredText`, metrics.md "Scored until" line and footnote). | DEFERRED | backlog. |
+
+Tests: Core passes 809 tests in 109 suites, 39 known issues (all test 3). App unchanged.
+
+### Round 4
+
+Reviewer: one fresh `reviewer` (opus). Result: 0 BLOCKER / 0 MAJOR / 0 MINOR.
+
+Verified clean: R27.3-1 fix (dropping the `$0.1 == nil` clause and `>` → `>=` in the cutoff count are both killed); ledger and backlog rows match the code; privacy of the round-3 diff and every commit message in the range.
+
+Tests: Core passes 809 tests in 109 suites, 39 known issues (all test 3). App unchanged.
+
+### Run 27 summary
+
+4 rounds. Findings: 3 MAJOR fixed (R27.1-1, R27.2-1, R27.3-1, all missing tests; no code change), 0 rejected, 2 MINOR deferred (R27.1-2, R27.3-2). Final: Core 809 tests in 109 suites pass, 39 known issues (as main); App unchanged.

@@ -44,6 +44,11 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
     public var roadSetHash: String?
     /// The road metrics; nil (absent) without roads.
     public var roadMetrics: ReplayRoadMetrics?
+    /// The truth file's `scoreUntilT` and how many checkpoints are after it
+    /// (listed, not scored). nil (absent) in a run without a cutoff and in
+    /// files written before it.
+    public var scoreUntilT: Double?
+    public var checkpointsAfterScoreUntil: Int?
 
     public init(_ result: ReplayResult) {
         logName = result.logName
@@ -75,6 +80,8 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
         roads = result.roads
         roadSetHash = result.roadSetHash
         roadMetrics = result.roadMetrics
+        scoreUntilT = result.scoreUntilT
+        checkpointsAfterScoreUntil = result.checkpointsAfterScoreUntil
     }
 
     /// `metrics.json` key: one row per log and mode.
@@ -89,6 +96,7 @@ extension ReplayMetrics {
         case convergedT, convergedDistanceM, finalHeadingStdDeg, consistency, consistencyWithTruthSigma
         case steps, msPerStep, maxIngestMs, counters, fixesUsed, fixesWithheld, pins, pinScoring
         case roads, roadSetHash, roadMetrics
+        case scoreUntilT, checkpointsAfterScoreUntil
     }
 
     /// Keys every `metrics.json` row has had since the first one (N2). A row
@@ -103,7 +111,8 @@ extension ReplayMetrics {
     /// - The original keys (`originalKeys`) are required.
     /// - Every key added later is optional and nil when absent:
     ///   `motionStartT`, `consistency`, `consistencyWithTruthSigma`, `pins`,
-    ///   `pinScoring`, `roads`, `roadSetHash`, `roadMetrics` (and any key a
+    ///   `pinScoring`, `roads`, `roadSetHash`, `roadMetrics`, `scoreUntilT`,
+    ///   `checkpointsAfterScoreUntil` (and any key a
     ///   later build adds, which must be optional or take a default here).
     /// - `config` and `counters` decode tolerantly themselves: a config key
     ///   or counter added later takes its default (0 for a counter).
@@ -140,6 +149,8 @@ extension ReplayMetrics {
         roads = try c.decodeIfPresent([ReplayRoadPack].self, forKey: .roads)
         roadSetHash = try c.decodeIfPresent(String.self, forKey: .roadSetHash)
         roadMetrics = try c.decodeIfPresent(ReplayRoadMetrics.self, forKey: .roadMetrics)
+        scoreUntilT = try c.decodeIfPresent(Double.self, forKey: .scoreUntilT)
+        checkpointsAfterScoreUntil = try c.decodeIfPresent(Int.self, forKey: .checkpointsAfterScoreUntil)
     }
 }
 
@@ -186,8 +197,36 @@ public enum ReplayReport {
     /// checkpoint is not scored, else "".
     static func notScoredSuffix(_ pin: NavSidecar.Pin, _ checkpoints: [ReplayResult.Checkpoint]) -> String {
         let t = pin.t.seconds
-        guard let notScored = checkpoints.first(where: { $0.kind == .manualFix && $0.t == t })?.notScored else { return "" }
-        return " [\(notScored.text)]"
+        guard let text = checkpoints.first(where: { $0.kind == .manualFix && $0.t == t })?.notScoredText else { return "" }
+        return " [\(text)]"
+    }
+
+    /// "Scored until t 1500.0 s (truth scoreUntilT): 3 checkpoints after it
+    /// listed, not scored (cleanFix 2, truthEnd 1)"; nil without a cutoff.
+    static func scoreUntilText(_ scoreUntilT: Double?, _ checkpoints: [ReplayResult.Checkpoint]) -> String? {
+        guard let scoreUntilT else { return nil }
+        let after = checkpoints.filter { $0.afterScoreUntilT == true }
+        let kinds = ReplayResult.Checkpoint.Kind.allCases.compactMap { kind -> String? in
+            let n = after.filter { $0.kind == kind }.count
+            return n > 0 ? "\(kind.rawValue) \(n)" : nil
+        }
+        return String(format: "t %.1f s (truth scoreUntilT): ", scoreUntilT)
+            + "\(after.count) checkpoint\(after.count == 1 ? "" : "s") after it listed, not scored"
+            + (kinds.isEmpty ? "" : " (" + kinds.joined(separator: ", ") + ")")
+    }
+
+    /// The end-error note when it is not a truth `end`.
+    static func endNote(_ checkpoints: [ReplayResult.Checkpoint]) -> String {
+        checkpoints.contains { $0.kind == .truthEnd && $0.afterScoreUntilT == true }
+            ? "last scored checkpoint; truth end after scoreUntilT" : "last scored checkpoint; no truth end"
+    }
+
+    /// The clean-fix part of a run: the scored ones, and how many are after
+    /// `scoreUntilT` (0 without a cutoff).
+    static func cleanFixes(_ checkpoints: [ReplayResult.Checkpoint]) -> (scored: [ReplayResult.Checkpoint], after: Int) {
+        let clean = checkpoints.filter { $0.kind == .cleanFix }
+        let scored = clean.filter(\.isScored)
+        return (scored, clean.count - scored.count)
     }
 
     /// The clean-fix "inside 95 %" figure, with the consistency's
@@ -232,14 +271,16 @@ public enum ReplayReport {
                 lines.append(name + String(format: " t %.1f s, at %.0f m: ", cp.t, cp.distanceM)
                     + "error \(m(cp.errorM)) m (\(pct(cp.errorPercent))), σhead \(sigma)°, inside 95 %: \(inside) (+ truth σ: \(insideTruth))"
                     + ", truth σ \(m(cp.truthSigmaM)) m, 95 % ellipse \(ellipse(cp))"
-                    + (cp.notScored.map { " [\($0.text)]" } ?? ""))
+                    + (cp.notScoredText.map { " [\($0)]" } ?? ""))
             }
         }
-        if let clean = byKind[.cleanFix], !clean.isEmpty {
+        let (clean, cleanAfter) = cleanFixes(result.checkpoints)
+        if !clean.isEmpty || cleanAfter > 0 {
             let errors = clean.compactMap(\.errorM).sorted()
             let median = errors.isEmpty ? nil : errors[errors.count / 2]
             lines.append("cleanFix      \(clean.count) withheld clean fixes: median \(m(median)) m, max \(m(errors.last)) m, inside 95 % "
-                + cleanFixInside(clean.count, result.consistency))
+                + cleanFixInside(clean.count, result.consistency)
+                + (cleanAfter > 0 ? "; \(cleanAfter) more after scoreUntilT, not scored" : ""))
         }
         for pin in result.pins {
             lines.append("Pin estimate  " + pinText(pin.pin) + notScoredSuffix(pin.pin, result.checkpoints))
@@ -247,10 +288,13 @@ public enum ReplayReport {
         if result.pinScoring.manualFixes > 0 || !result.pinScoring.unmatchedExclusionsT.isEmpty {
             lines.append("Pins scored   " + result.pinScoring.text)
         }
+        if let text = scoreUntilText(result.scoreUntilT, result.checkpoints) {
+            lines.append("Scored until  " + text)
+        }
         lines.append("Consistency   " + consistencyText(result.consistency) + " (engine ellipse)")
         lines.append("  + truth σ   " + consistencyText(result.consistencyWithTruthSigma) + " (engine covariance + truth σ²; gated)")
         lines.append("Max error     \(m(result.maxErrorM)) m (\(pct(result.maxErrorPercent)))")
-        lines.append("End error     \(m(result.endErrorM)) m (\(pct(result.endErrorPercent)))\(result.endIsTruth ? "" : " [last scored checkpoint; no truth end]")")
+        lines.append("End error     \(m(result.endErrorM)) m (\(pct(result.endErrorPercent)))\(result.endIsTruth ? "" : " [\(endNote(result.checkpoints))]")")
         if let last = result.track.last {
             lines.append(String(format: "Final         speed scale %.4f, σhead %.1f°", last.speedScale, last.headingStdDeg))
         }
@@ -362,9 +406,13 @@ public enum ReplayReport {
         out += "| log | mode | distance m | checkpoints | end err m | end % | max err m | max % | inside 95 % | inside 95 % + truth σ (gated) | converged at | ms/step | max ingest ms |\n"
         out += "|---|---|---:|---:|---:|---:|---:|---:|---|---|---:|---:|---:|\n"
         for r in runs {
-            out += "| \(r.logName) | \(r.mode) | \(m(r.distanceM)) | \(r.checkpoints.count) | \(m(r.endErrorM))\(r.endIsTruth ? "" : "*") | \(pct(r.endErrorPercent)) | \(m(r.maxErrorM)) | \(pct(r.maxErrorPercent)) | \(consistencyText(r.consistency)) | \(consistencyText(r.consistencyWithTruthSigma)) | \(km(r.convergedDistanceM)) | \(String(format: "%.3f", r.msPerStep)) | \(String(format: "%.2f", r.maxIngestMs)) |\n"
+            out += "| \(r.logName) | \(r.mode) | \(m(r.distanceM)) | \(r.checkpoints.count)\(r.checkpointsAfterScoreUntil.map { " (\($0) after scoreUntilT)" } ?? "") | \(m(r.endErrorM))\(r.endIsTruth ? "" : "*") | \(pct(r.endErrorPercent)) | \(m(r.maxErrorM)) | \(pct(r.maxErrorPercent)) | \(consistencyText(r.consistency)) | \(consistencyText(r.consistencyWithTruthSigma)) | \(km(r.convergedDistanceM)) | \(String(format: "%.3f", r.msPerStep)) | \(String(format: "%.2f", r.maxIngestMs)) |\n"
         }
         out += "\n\\* no truth `end`: error at the last scored checkpoint.\n"
+        if runs.contains(where: { $0.scoreUntilT != nil }) {
+            out += "\nWith a truth `scoreUntilT`, checkpoints after it are listed but not scored (no error, consistency or "
+                + "convergence figure counts them); a truth `end` after it is replaced by the last scored checkpoint (\\*).\n"
+        }
         let roadRuns = runs.filter { $0.roadMetrics != nil }
         if !roadRuns.isEmpty {
             out += "\n## Roads\n\n"
@@ -391,14 +439,20 @@ public enum ReplayReport {
             if let scoring = r.pinScoring, scoring.manualFixes > 0 || !scoring.unmatchedExclusionsT.isEmpty {
                 out += "Pins: \(scoring.text).\n\n"
             }
+            if let text = scoreUntilText(r.scoreUntilT, r.checkpoints) {
+                out += "Scored until \(text).\n\n"
+            }
             out += "| kind | t s | distance m | error m | % of distance | σ heading ° | inside 95 % | + truth σ | truth σ m | 95 % ellipse |\n|---|---:|---:|---:|---:|---:|---|---|---:|---|\n"
             for cp in r.checkpoints where cp.kind != .cleanFix {
-                out += "| \(cp.kind.rawValue)\(cp.notScored.map { " (\($0.text))" } ?? "") | \(String(format: "%.1f", cp.t)) | \(m(cp.distanceM)) | \(m(cp.errorM)) | \(pct(cp.errorPercent)) | \(cp.headingStdDeg.map { String(format: "%.1f", $0) } ?? "n/a") | \(cp.inside95.map { $0 ? "yes" : "no" } ?? "n/a") | \(cp.inside95WithTruthSigma.map { $0 ? "yes" : "no" } ?? "n/a") | \(m(cp.truthSigmaM)) | \(ellipse(cp)) |\n"
+                out += "| \(cp.kind.rawValue)\(cp.notScoredText.map { " (\($0))" } ?? "") | \(String(format: "%.1f", cp.t)) | \(m(cp.distanceM)) | \(m(cp.errorM)) | \(pct(cp.errorPercent)) | \(cp.headingStdDeg.map { String(format: "%.1f", $0) } ?? "n/a") | \(cp.inside95.map { $0 ? "yes" : "no" } ?? "n/a") | \(cp.inside95WithTruthSigma.map { $0 ? "yes" : "no" } ?? "n/a") | \(m(cp.truthSigmaM)) | \(ellipse(cp)) |\n"
             }
-            let clean = r.checkpoints.filter { $0.kind == .cleanFix }
+            let (clean, cleanAfter) = cleanFixes(r.checkpoints)
             if !clean.isEmpty {
                 let errors = clean.compactMap(\.errorM).sorted()
                 out += "| cleanFix ×\(clean.count) | | | median \(m(errors.isEmpty ? nil : errors[errors.count / 2])), max \(m(errors.last)) | | | \(cleanFixInside(clean.count, r.consistency ?? EllipseConsistency(r.checkpoints))) | \(r.consistencyWithTruthSigma.map { cleanFixInside(clean.count, $0) } ?? "n/a") | | |\n"
+            }
+            if cleanAfter > 0 {
+                out += "| cleanFix ×\(cleanAfter) (\(NavigationReplay.afterScoreUntilText)) | | | | | | | | | |\n"
             }
             if let pins = r.pins, !pins.isEmpty {
                 out += "\nDR estimate at each manual fix (prior):\n\n"

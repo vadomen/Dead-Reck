@@ -618,6 +618,7 @@ file name. The values here are illustrative:
     "end":    { "latitude": 0.0, "longitude": 0.0, "sigmaM": 30, "source": "…" },
     "points": [ { "t": 100.0, "latitude": 0.0, "longitude": 0.0, "sigmaM": 30, "source": "…" } ],
     "excludePins": [ { "t": 250.125, "reason": "doubtful tap" } ],
+    "scoreUntilT": 1500.0,
     "note": "unknown keys are ignored" } }
 ```
 
@@ -626,6 +627,25 @@ scored as truth, each matched to the pin nearest its `t` (the `manualFix`
 event's session-clock seconds) within 0.1 s. The engine still receives them.
 Use it for a pin that is known or likely to be wrong. The reason goes into the
 summary and `metrics.md`.
+
+`scoreUntilT` (optional, N3 drive-8; session-clock seconds): the scoring
+cutoff, for a recording that runs on after the drive it is scored on (the
+driver left the car before the recording stopped). It is scoring only: the
+engine ingests every input after it exactly as without it. A checkpoint of
+any kind (withheld clean fix, manual fix, truth point, truth `end`) with
+`t` > `scoreUntilT` is still measured and listed, marked "after
+scoreUntilT, not scored" (`afterScoreUntilT` in `metrics.json`), and counts
+in no aggregate: not in max or end error, ellipse consistency (either
+variant), heading convergence (judged on the track up to the cutoff), the
+road metrics (wrong road, unmapped, residuals, 1 Hz on-road samples) or
+`pinScoring.scored` (`pinScoring.afterScoreUntil` counts those pins). One
+exactly at `scoreUntilT` is scored. The truth `end` sits at the last input,
+so with a cutoff before it the end error falls back to the last scored
+checkpoint, as without a truth `end`. Distance is still to the last input.
+The summary ("Scored until"), `metrics.md` and `metrics.json`
+(`scoreUntilT`, `checkpointsAfterScoreUntil`) record the cutoff and the
+count; a run without it writes none of these keys, so its outputs are
+byte-identical to the build before it.
 
 ## Live in the app (N4 B)
 
@@ -650,15 +670,15 @@ N4 B acceptance and the as-live table: moved to [docs/archive/NAVIGATION-history
 ## Adoption rule for engine changes
 
 A change to the engine or its defaults is adopted only if, on every acceptance
-drive (clean-long, clean, manual, jammed-A, jammed-B, and from N3.0 drive-7),
-the **mean over seeds 1–5** passes:
+drive (clean-long, clean, manual, jammed-A, jammed-B, from N3.0 drive-7, and
+from N3.2e drive-8, added 2026-10-14), the **mean over seeds 1–5** passes:
 
 - **Drives scored in metres** (clean-long and clean max error, manual error at
   truth point 1): the mean may get worse by at most 2 m or 5 % of the
   previous mean, whichever is larger.
 - **Drives scored in % of distance** (jammed-A, jammed-B end error; drive-7
-  worst withheld clean fix): the mean may get worse by at most 0.1
-  percentage points.
+  and drive-8 worst withheld clean fix): the mean may get worse by at most
+  0.1 percentage points.
 - **Ellipse consistency** (share of scored checkpoints inside the 95 %
   ellipse, mean over seeds) must not drop on any drive. **Since N3.0 (Q3,
   decided by the user 2026-10-11) the gated consistency is the one with the
@@ -701,8 +721,8 @@ explained.
 ## Acceptance runs
 
 `<clean>`, `<clean-long>`, `<manual>`, `<manual-3>`, `<jammed-A>`,
-`<jammed-B>` and `<drive-7>` are the paths of the recordings known under those
-aliases (kept outside the repository or in the git-ignored `logs/`).
+`<jammed-B>`, `<drive-7>` and `<drive-8>` are the paths of the recordings known
+under those aliases (kept outside the repository or in the git-ignored `logs/`).
 
 | alias | run | criterion |
 |---|---|---|
@@ -712,6 +732,7 @@ aliases (kept outside the repository or in the git-ignored `logs/`).
 | manual | `--gps use --hold-out-acc 100` | truth point 1 ≤ 200 m; convergence reported |
 | jammed-A, jammed-B | `--gps use` | end ≤ 2.5 % of distance |
 | drive-7 | `--gps mask-after 1800` | every withheld clean fix after 1800 s ≤ 2.5 % of distance from the start (decided 2026-10-12, see below); scored-pin and clean-fix consistency reported |
+| drive-8 | `--gps mask-after 785` | every withheld clean fix up to 1988 s (truth `scoreUntilT`) ≤ 2.5 % of distance from the start (decided 2026-10-14, see below); clean-fix consistency reported |
 
 - **clean**: the criterion is `mask-after 230`, i.e. 30 s of clean GNSS at
   speed (from about 200 s), then 1.8 km of pure dead reckoning. That is what
@@ -760,6 +781,33 @@ aliases (kept outside the repository or in the git-ignored `logs/`).
     (`-Onone`). Its sidecar's `msPerStep` (median 2.8 ms) and `maxStepMs`
     (45 ms) are not a device performance number. The sidecar predates the
     `buildConfiguration` header field, so it does not say so itself.
+- **drive-8** (added 2026-10-14, before N3.2e): about 2092 s and 19.1 km,
+  iPhone 16 Pro Max, **Debug** build. Network (tower and Wi-Fi) fixes only
+  until the first clean fix at 664 s, clean after it. The screen was locked
+  from 10 s to 581 s. No pins.
+  - **Mask.** T = 785 s. Rule, pre-declared and not swept: the first clean
+    fix (≤ 15 m, 664.2 s) plus 120 s, i.e. 784.2 s, rounded up to the whole
+    second. The engine gets network fixes, then two minutes of clean GNSS;
+    the last fix it receives is at 784.1 s (7.90 km), and after that nothing.
+  - **Truth.** The withheld clean fixes up to 1988 s, the truth file's
+    `scoreUntilT` (see "replay_nav"): 1199 fixes from 785 s to 1987 s,
+    7.91–19.14 km into the drive, so up to 11.25 km of pure dead reckoning.
+    The driver left the car at about 1988 s; the OBD loss after that is
+    ignition off. The 83 clean fixes after 1988 s are listed as "after
+    scoreUntilT" and not scored. The truth file has no `end` and no points
+    for this drive.
+  - **Criterion (decided 2026-10-14 by the user).** Every scored withheld
+    clean fix is within 2.5 % of the distance travelled at its time (∫ OBD
+    speed from the start, as for drive-7). Rule: drive-8 takes the jammed
+    drives' 2.5 % threshold unchanged, chosen before any run, like drive-7.
+    For the adoption rule drive-8 is a drive scored in % of distance.
+  - **Reported, not gated:** the max error in metres, the error as a share
+    of the distance since the last fix the engine received (784.1 s), the
+    consistency over the scored clean fixes (engine ellipse and with the
+    truth's σ), and heading convergence.
+  - **Timing.** The live build that recorded drive-8 was Debug (the sidecar
+    header says `buildConfiguration` debug). Its sidecar timing is not a
+    device performance number.
 
 ```bash
 cd Core
@@ -769,6 +817,7 @@ swift run -c release replay_nav <clean> --gps mask-after 230 --truth ../logs/tru
 swift run -c release replay_nav <manual> --gps use --hold-out-acc 100 --truth ../logs/truth.json --out ../logs/out
 swift run -c release replay_nav <jammed-A> <jammed-B> --gps use --truth ../logs/truth.json --out ../logs/out
 swift run -c release replay_nav <drive-7> --gps mask-after 1800 --truth ../logs/truth.json --out ../logs/out
+swift run -c release replay_nav <drive-8> --gps mask-after 785 --truth ../logs/truth.json --out ../logs/out
 ```
 
 **drive-7 baseline (N3.0, seeds 1–5 arrival order and `--as-live`, release,
@@ -796,6 +845,64 @@ two excluded pins; the scored truth is described above.
 - Against its distance since the last pin (4.3–4.9 %), drive-7 is worse
   than the jammed drives are against their whole distance. That is reported,
   not gated: the jammed rule is defined on the distance from the start.
+
+**drive-8 baseline (2026-10-14, seeds 1–5 arrival order, release, Mac,
+default config, build 598d2f6, `--gps mask-after 785`, truth `scoreUntilT`
+1988).** Without roads and with roads (`--roads` national + region-A packs, as
+N3.2b/N3.2d). Scored truth: 1199 withheld clean fixes from 785.1 s to
+1987.1 s (7.91–19.14 km); 83 clean fixes after scoreUntilT, listed, not
+scored. The engine's last received fix is at 784.1 s (7.90 km), so the scored
+fixes cover up to 11.25 km of pure dead reckoning. No `--as-live` row was run.
+
+No roads:
+
+| run | max over scored withheld clean fixes | at | % of distance | % since last fix received | clean fixes inside 95 % | + truth σ | after scoreUntilT | converged at | ms/step | criterion |
+|---|---:|---|---:|---:|---|---|---:|---:|---:|---|
+| seed 1 | 275.22 m | 1944.1 s, 18.90 km | 1.456 % | 2.50 % | 1199/1199 | 1199/1199 | 83 | 6.62 km (665 s) | 0.070 | **PASS** |
+| seed 2 | 270.91 m | 1944.1 s, 18.90 km | 1.433 % | 2.46 % | 1199/1199 | 1199/1199 | 83 | 6.62 km | 0.070 | **PASS** |
+| seed 3 | 293.34 m | 1944.1 s, 18.90 km | 1.552 % | 2.67 % | 1199/1199 | 1199/1199 | 83 | 6.62 km | 0.070 | **PASS** |
+| seed 4 | 259.16 m | 1944.1 s, 18.90 km | 1.371 % | 2.35 % | 1199/1199 | 1199/1199 | 83 | 6.62 km | 0.069 | **PASS** |
+| seed 5 | 301.66 m | 1944.1 s, 18.90 km | 1.596 % | 2.74 % | 1199/1199 | 1199/1199 | 83 | 6.62 km | 0.069 | **PASS** |
+| mean | 280.06 m | | 1.482 % | 2.54 % | 100 % | 100 % | | | 0.070 | **PASS** |
+
+With roads:
+
+| run | max over scored withheld clean fixes | at | % of distance | % since last fix received | clean fixes inside 95 % | + truth σ | after scoreUntilT | converged at | ms/step | criterion |
+|---|---:|---|---:|---:|---|---|---:|---:|---:|---|
+| seed 1 | 15.87 m | 904.2 s, 8.88 km | 0.179 % | 1.61 % | 1176/1199 | 1194/1199 | 83 | 0.41 km | 0.111 | **PASS** |
+| seed 2 | 15.74 m | 904.2 s, 8.88 km | 0.177 % | 1.59 % | 1176/1199 | 1195/1199 | 83 | 0.40 km | 0.113 | **PASS** |
+| seed 3 | 15.84 m | 904.2 s, 8.88 km | 0.178 % | 1.60 % | 1176/1199 | 1194/1199 | 83 | 0.40 km | 0.113 | **PASS** |
+| seed 4 | 15.75 m | 904.2 s, 8.88 km | 0.177 % | 1.59 % | 1176/1199 | 1194/1199 | 83 | 0.41 km | 0.114 | **PASS** |
+| seed 5 | 15.77 m | 904.2 s, 8.88 km | 0.178 % | 1.60 % | 1176/1199 | 1194/1199 | 83 | 0.39 km | 0.109 | **PASS** |
+| mean | 15.79 m | | 0.178 % | 1.60 % | 98.1 % | 99.6 % | | | 0.112 | **PASS** |
+
+- Column changes from drive-7's table: "since the last pin" becomes "since
+  last fix received" (drive-8 has no pins); the two pin columns are replaced
+  by "+ truth σ" and "after scoreUntilT"; separate no-roads and roads tables,
+  because drive-7's baseline predates roads.
+- Without roads the error over the dead-reckoned distance is 2.35–2.74 %,
+  above 2.5 % on seeds 3 and 5. Reported, not gated, like drive-7's "since the
+  last pin". The gate (distance from the start) passes with about 0.9 pp
+  margin.
+- Seed 4's max in metres is 259.16 m at 1946.1 s; its max in % is at
+  1944.1 s.
+- Without roads the heading converges only at 6.62 km (665 s), the first
+  clean fix; before that the drive has network fixes only.
+- The first scored fixes are trivial (about 1.3 m, 1 s after the last
+  received fix); the test is the 11 km after.
+- With roads: end error (last scored fix) 4.3–4.4 m, wrong-road share 0 on
+  every seed; the max is early (904 s, 8.88 km) rather than near the end.
+- OBD vs GPS speed on the clean stretch (664–1988 s, GPS > 30 km/h, 659
+  pairs, OBD interpolated within 0.5 s): GPS/(OBD + 0.5 km/h) median 1.015
+  (bootstrap SE 0.001), flat across 30–50 / 50–70 / 70+ km/h bands (1.013 /
+  1.015 / 1.016); without the +0.5 offset 1.023. Consistent with the
+  speedScale prior 1.016 ± 0.01; the engine's final scale is 1.016–1.018 (no
+  roads), 1.015–1.017 (roads). Serially correlated pairs, so the SE is
+  optimistic; the band spread (about ±0.002) is the better guide. (For
+  context, drive-7's shorter, noisier clean stretch gives 1.030, 174 pairs.)
+- Timing: the recording build was Debug; ms/step here is the Mac release
+  replay.
+- Outputs (git-ignored): logs/drive8/acc/.
 
 Superseded result tables (N2.1 baseline, N2.3, N4-B0, N4-B1): moved to [docs/archive/NAVIGATION-history.md](archive/NAVIGATION-history.md).
 

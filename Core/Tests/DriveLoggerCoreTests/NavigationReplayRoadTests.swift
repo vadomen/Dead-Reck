@@ -97,6 +97,25 @@ struct NavigationReplayRoadTests {
         #expect(without.mode == "mask-after-10")
     }
 
+    @Test("scoreUntilT: road fixes, residuals and 1 Hz on-road samples after the cutoff are not scored; the run is unchanged")
+    func scoreUntilTRoads() throws {
+        let (_, inputs) = Self.northInputs()
+        let net = try Self.northStreet()
+        let base = NavigationReplay.run(logName: "synthetic", inputs: inputs, options: Self.options(roads: net))
+        let cut = NavigationReplay.run(logName: "synthetic", inputs: inputs, options: Self.options(roads: net),
+                                       truth: TruthFile.Entry(scoreUntilT: 30))
+        #expect("\(cut.track)" == "\(base.track)" && cut.counters == base.counters)
+        #expect(try ReplayReport.geoJSON(cut) == ReplayReport.geoJSON(base))
+        let b = try #require(base.roadMetrics), c = try #require(cut.roadMetrics)
+        #expect(!c.fixes.isEmpty && c.fixes.count < b.fixes.count)
+        #expect(c.fixes == b.fixes.filter { $0.t <= 30 })
+        #expect(c.withheldCleanFixes == cut.checkpoints.filter { $0.kind == .cleanFix && $0.isScored }.count)
+        #expect(c.trackSamples == base.track.filter { $0.t <= 30 }.count)
+        let all = try #require(c.residualsAll), allBase = try #require(b.residualsAll)
+        #expect(all.count > 0 && all.count < allBase.count)
+        #expect(c.rejectedFixes == b.rejectedFixes, "engine behaviour, listed as before")
+    }
+
     // MARK: Items 2-4: road metrics, the road set in every output, GeoJSON
 
     /// A north drive whose fixes before `maskS` sit `usedEast` m east of the
