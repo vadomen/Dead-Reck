@@ -119,4 +119,64 @@ struct NavSidecarV2Tests {
         let data = try Live.encoded(fromStart.openingLines + attached.lines.filter { if case .roads = $0 { false } else { true } })
         #expect(try NavSidecar.read(data).roads == atInit)
     }
+
+    enum FixtureError: Error { case noHeader }
+
+    /// Compares `sampleLines` with itself, its estimate at t = 1 s given
+    /// onRoadShare `live` on the sidecar side and `replay` on the replay
+    /// side; every other field identical.
+    static func compareOnRoadShare(live: Double?, replay: Double?) throws -> SidecarComparison {
+        func with(_ share: Double?) -> [NavSidecar.Line] {
+            var lines = Live.sampleLines()
+            if case .estimate(var e) = lines[1] {
+                e.onRoadShare = share
+                lines[1] = .estimate(e)
+            }
+            return lines
+        }
+        let liveLines = with(live)
+        guard case .header(let header) = liveLines[0] else { throw FixtureError.noHeader }
+        let config = try JSONDecoder().decode(NavigationConfig.self, from: Data(header.configJSON.utf8))
+        return SidecarComparison(sidecar: try NavSidecar.read(Live.encoded(liveLines)), replay: with(replay),
+                                 replayConfig: config)
+    }
+
+    @Test("Compare: an estimate differing only in onRoadShare (one ulp, or nil vs a value) is unequal and not exact; the difference is reported (the gap, or 1 for nil vs a value) and not gated by the tolerance")
+    func compareOnRoadShareOnly() throws {
+        // Control: the same share on both sides is exact.
+        let same = try Self.compareOnRoadShare(live: 0.5, replay: 0.5)
+        #expect(same.exact && same.estimates.unequal == 0 && same.estimates.onRoadShare == 0)
+
+        let oneUlp = (0.5).nextUp
+        let gap = oneUlp - 0.5
+        #expect(gap > 0 && gap < 1e-15)
+        let cases: [(live: Double?, replay: Double?, difference: Double)] = [
+            (0.5, oneUlp, gap),
+            (oneUlp, 0.5, gap),
+            (nil, 0.5, 1),  // present on one side only: 1, whatever the value
+            (0.5, nil, 1),
+        ]
+        for c in cases {
+            let label = "live \(String(describing: c.live)), replay \(String(describing: c.replay))"
+            let comparison = try Self.compareOnRoadShare(live: c.live, replay: c.replay)
+            let d = comparison.estimates
+            #expect(d.matched == 3 && d.unequal == 1 && d.firstDifferenceT == SyntheticDrive.ms(1), "\(label)")
+            #expect(d.onRoadShare == c.difference, "\(label)")
+            // Every other compared field identical.
+            #expect(d.positionM == 0 && d.headingDeg == 0 && d.headingStdDeg == 0 && d.ellipseAxesM == 0
+                    && d.ellipseOrientationDeg == 0 && d.speedScale == 0 && d.convergedMismatches == 0, "\(label)")
+            #expect(comparison.pins.unequal == 0 && comparison.sidecarOnly == 0 && comparison.replayOnly == 0
+                    && comparison.pinsUnmatched == 0, "\(label)")
+            // Part of the exact check.
+            #expect(!comparison.linesIdentical && !comparison.exact, "\(label)")
+            // Not gated by the tolerance: even a zero tolerance passes, so the
+            // verdict is "PASS within tolerance", never exact and never FAIL.
+            let zero = SidecarComparison.Tolerance(metres: 0, degrees: 0)
+            #expect(comparison.passes(.default) && comparison.passes(zero), "\(label)")
+            let report = comparison.report(tolerance: zero)
+            #expect(report.contains("Compare       PASS within tolerance") && !report.contains("PASS (exact")
+                    && !report.contains("FAIL"), "\(label)")
+            #expect(report.contains(String(format: "on-road share %.3g,", c.difference)), "\(label)")
+        }
+    }
 }
