@@ -131,7 +131,7 @@ full precision for an exact compare.
 ```bash
 cd Core
 swift run -c release replay_nav <recording> --as-live --compare <recording>.nav.jsonl \
-  [--tolerance <m>] [--heading-tolerance <deg>] --out ../logs/out
+  [--roads <pack.roadpack>]... [--tolerance <m>] [--heading-tolerance <deg>] --out ../logs/out
 ```
 
 `--compare` matches estimates by `t` and pins by `t` and order. It reports:
@@ -147,17 +147,39 @@ swift run -c release replay_nav <recording> --as-live --compare <recording>.nav.
   error rows: the live engine saw them, the file does not hold them).
 
 A seed or config-hash mismatch is a warning, and the differing config keys are
-listed.
+listed. When neither side used roads (no `roads` line in the sidecar, none
+attached in the replay), keys in `NavigationConfig.roadOnlyKeys` (every
+`road*` key) change nothing: they are listed as inert in a `Note`, not
+blamed as a cause, and do not affect the verdict (N3-CMPHASH, closed in
+N3.3). A sidecar written before `roadCorrelationM` became 100 compares that
+way.
+
+**Roads (v2).** The replay's road packs are `--roads` (each fully verified):
+- the sidecar has a `roads` line: the given packs, all of them as one
+  network, are attached after its `afterInputs` inputs;
+- it has none (v1, or v2 without roads) and packs are given: the live rule
+  (`replay_nav --as-live --roads`, docs/NAVIGATION.md);
+- it has none and no packs are given: as before roads existed.
+
+A `Roads` line names both sides' `roadSetHash` and `afterInputs`. The roads
+**match** only when the sidecar's `roadSetHash` equals the given packs' and
+the replay's `roads` line equals the sidecar's. Otherwise (another set,
+packs on one side only, another attach point) a `Warning` names the hashes,
+the mismatch is listed as a known cause, and the verdict is at best
+**PASS within tolerance**, never exact: an unknown pack must not hide a
+difference.
 
 **Verdict:**
-- **PASS (exact)** when every compared field is identical bit for bit.
+- **PASS (exact)** when every compared field is identical bit for bit and
+  the roads match (or neither side used any).
 - **PASS within tolerance** when every difference is within `--tolerance`
   (default 1 m for position and ellipse axes) and `--heading-tolerance`
   (default 0.1°) and nothing is unmatched.
 - **FAIL** otherwise, with exit status 4.
 
-Any non-exact result names its known causes (drops, encoding failures, seed
-or config, truncation), or says there is none.
+Any non-exact result names its known causes (drops, encoding failures, a
+different road set or attach, seed or config, truncation), or says there is
+none.
 
 Exact equality between an arm64 Mac and an iPhone is not verified yet (R13.1-7,
 docs/PLAN.md §6), which is why a tolerance exists. Within one machine the
@@ -166,4 +188,7 @@ simulator, where the service's sidecar matches the Core loop.
 
 `--write-sidecar <path>` writes the sidecar the app would have written for a
 recording, with no drops. It uses the same loop with file order, the header
-seed and the default config, to check `--compare` end to end on a Mac.
+seed and the default config, to check `--compare` end to end on a Mac. With
+`--roads` it attaches them by the live rule (the app with its packs ready),
+at the same input as the `--as-live` metrics replay, and writes the `roads`
+line there.

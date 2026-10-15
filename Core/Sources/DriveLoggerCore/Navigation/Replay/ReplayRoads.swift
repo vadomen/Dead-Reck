@@ -36,6 +36,17 @@ public struct ReplayRoadSet: Hashable, Sendable {
     /// `roadSetHash`, so runs with and without roads (or with another road
     /// set) never share a `metrics.json` row or a GeoJSON file.
     public var labelSuffix: String { "roads-" + String(roadSetHashHex.prefix(8)) }
+
+    /// A selector over these packs (`ReplayRoadAttach.live`), each named by
+    /// its content hash. A pack whose coverage cannot be read covers
+    /// nothing.
+    public var selector: RoadPackSelector {
+        RoadPackSelector(candidates: network.packs.map { pack in
+            let name = NavigationSeed.hex(pack.contentHash)
+            let coverage = (try? RoadPackCoverage(pack: pack)) ?? RoadPackCoverage(rings: nil, bounds: nil)
+            return RoadPackSelection.Candidate(name: name, pack: pack, coverage: coverage)
+        })
+    }
 }
 
 /// One road pack of a replay, as recorded in `metrics.json`, the summary

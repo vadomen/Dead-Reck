@@ -134,13 +134,65 @@ public struct SidecarComparison: Hashable, Sendable {
     public var seedMismatch: Bool
     /// Navigation rows that failed to encode (see type doc).
     public var encodingFailures: Int
+    /// The sidecar's `roads` line (v2); nil when it used no roads.
+    public var sidecarRoads: NavSidecar.Roads?
+    /// The replay's `roads` line; nil when it attached no roads.
+    public var replayRoads: NavSidecar.Roads?
+    /// roadSetHash of the packs given to the replay; nil when none.
+    public var givenRoadSetHash: String?
+    /// Config keys that differ but are road-only and inert because neither
+    /// side used roads (N3-CMPHASH): named, never blamed.
+    public var inertConfigDifferences: [String] = []
 
-    /// Nothing differs: every estimate and pin matched bit for bit, none
-    /// missing on either side.
-    public var exact: Bool {
+    /// Roads were in use on either side.
+    public var roadsInUse: Bool { sidecarRoads != nil || replayRoads != nil }
+
+    /// Why the two runs cannot have used the same roads, or nil: packs
+    /// given on one side only, another road set, or another attach point.
+    /// Rules out an exact verdict.
+    public var roadsMismatch: String? {
+        switch (sidecarRoads, givenRoadSetHash) {
+        case (nil, nil):
+            return nil
+        case (let live?, nil):
+            return "the sidecar used roads (roadSetHash \(live.roadSetHash), after \(live.afterInputs) inputs); "
+                + "no packs were given to the replay"
+        case (nil, let given?):
+            return "packs were given to the replay (roadSetHash \(given)); the sidecar used no roads"
+        case (let live?, let given?):
+            if live.roadSetHash != given {
+                return "roadSetHash differs: sidecar \(live.roadSetHash), given \(given)"
+            }
+            if replayRoads != live {
+                return "the roads line differs: sidecar after \(live.afterInputs) inputs, replay "
+                    + (replayRoads.map { "after \($0.afterInputs) inputs" } ?? "never attached")
+            }
+            return nil
+        }
+    }
+
+    /// Config differences blamed as a possible cause: all of them, unless
+    /// neither side used roads, when the road-only keys are inert.
+    public var blamedConfigDifferences: [String] {
+        configDifferences.filter { !inertConfigDifferences.contains($0) }
+    }
+
+    /// The config may explain a difference: its hash differs in a key that
+    /// is not inert (or in keys that could not be parsed).
+    public var configBlamed: Bool {
+        configHashMismatch && (configDifferences.isEmpty || !blamedConfigDifferences.isEmpty)
+    }
+
+    /// Every estimate and pin matched bit for bit, none missing on either
+    /// side.
+    public var linesIdentical: Bool {
         estimates.unequal == 0 && pins.unequal == 0 && sidecarOnly == 0 && replayOnly == 0 && pinsUnmatched == 0
             && estimates.matched > 0
     }
+
+    /// Nothing differs: identical lines, and the same roads (or none) on
+    /// both sides.
+    public var exact: Bool { linesIdentical && roadsMismatch == nil }
 
     /// Exact, or every difference within `tolerance` with nothing missing.
     public func passes(_ tolerance: Tolerance) -> Bool {
@@ -148,9 +200,16 @@ public struct SidecarComparison: Hashable, Sendable {
                   && estimates.within(tolerance) && pins.within(tolerance))
     }
 
-    /// Compares `sidecar` with `replay` (header line optional, ignored).
+    /// Compares `sidecar` with `replay` (header line optional, ignored; its
+    /// `roads` line, if any, is the replay's). `givenRoadSetHash`: the
+    /// packs given to the replay, nil for none.
     public init(sidecar: NavSidecar.Contents, replay: [NavSidecar.Line], replayConfig: NavigationConfig,
-                encodingFailures: Int = 0) {
+                encodingFailures: Int = 0, givenRoadSetHash: String? = nil) {
+        sidecarRoads = sidecar.roads
+        self.givenRoadSetHash = givenRoadSetHash
+        for line in replay {
+            if case .roads(let roads) = line { replayRoads = roads }
+        }
         droppedInputs = sidecar.droppedInputs
         truncatedLastLine = sidecar.truncatedLastLine
         configHashMismatch = sidecar.header.configHash != replayConfig.hashHex
@@ -158,6 +217,9 @@ public struct SidecarComparison: Hashable, Sendable {
                                                    String(decoding: replayConfig.canonicalJSON(), as: UTF8.self))
         seedMismatch = sidecar.header.seed != replayConfig.seed
         self.encodingFailures = encodingFailures
+        if sidecarRoads == nil && replayRoads == nil {
+            inertConfigDifferences = configDifferences.filter { NavigationConfig.roadOnlyKeys.contains($0) }
+        }
 
         var replayEstimates: [MonotonicTimestamp: NavSidecar.Estimate] = [:]
         var replayPins: [MonotonicTimestamp: [NavSidecar.Pin]] = [:]
@@ -231,9 +293,24 @@ public struct SidecarComparison: Hashable, Sendable {
         }
         if truncatedLastLine { lines.append("Note          the sidecar's last line was cut short and ignored") }
         if seedMismatch { lines.append("Warning       seed differs from the sidecar's (use --as-live or --seed header)") }
-        if configHashMismatch {
+        if roadsInUse || givenRoadSetHash != nil {
+            func side(_ roads: NavSidecar.Roads?) -> String {
+                roads.map { "roadSetHash \($0.roadSetHash) after \($0.afterInputs) inputs" } ?? "no roads"
+            }
+            lines.append("Roads         sidecar \(side(sidecarRoads)); replay \(side(replayRoads))"
+                         + (givenRoadSetHash.map { " (packs given: roadSetHash \($0))" } ?? " (no packs given)"))
+        }
+        if let roadsMismatch {
+            lines.append("Warning       roads: \(roadsMismatch); no exact verdict without the same packs")
+        }
+        if configBlamed {
             lines.append("Warning       config hash differs from the sidecar's; keys: "
-                         + (configDifferences.isEmpty ? "(none parsed)" : configDifferences.joined(separator: ", ")))
+                         + (configDifferences.isEmpty ? "(none parsed)" : blamedConfigDifferences.joined(separator: ", "))
+                         + (inertConfigDifferences.isEmpty ? ""
+                            : "; road-only keys, inert without roads: " + inertConfigDifferences.joined(separator: ", ")))
+        } else if configHashMismatch {
+            lines.append("Note          config hash differs from the sidecar's only in road-only keys, inert without roads "
+                         + "on either side (not a cause): " + inertConfigDifferences.joined(separator: ", "))
         }
         let verdict: String
         if exact {
@@ -248,7 +325,8 @@ public struct SidecarComparison: Hashable, Sendable {
             var causes: [String] = []
             if droppedInputs > 0 { causes.append("\(droppedInputs) dropped input(s)") }
             if encodingFailures > 0 { causes.append("\(encodingFailures) row(s) that failed to encode") }
-            if seedMismatch || configHashMismatch { causes.append("a different seed or config") }
+            if let roadsMismatch { causes.append("a different road set or attach (\(roadsMismatch))") }
+            if seedMismatch || configBlamed { causes.append("a different seed or config") }
             if truncatedLastLine { causes.append("a truncated last line") }
             explanation = causes.isEmpty
                 ? "; no known cause (dropped inputs 0, encoding failures 0, same seed and config)"

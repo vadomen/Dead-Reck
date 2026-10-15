@@ -455,9 +455,10 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   `LogRecovery.strict` and stops with status 3 on any damage, a truncated
   tail included, before `metrics.json` and `metrics.md` are updated. Every
   acceptance drive reads clean.
-- **Roads** (N3.2b; replay only, refused with `--compare` and
-  `--write-sidecar`): `--roads` (repeatable, each pack fully verified) gives
-  the engine `NavigationEngine(config:roads:)`. **Pack order does not matter**
+- **Roads** (N3.2b): `--roads` (repeatable, each pack fully verified) gives
+  the engine `NavigationEngine(config:roads:)`, from the first input. With
+  `--as-live`, `--compare` or `--write-sidecar` the packs are attached the
+  way the app attaches them (N3.3, `ReplayRoadAttach`, next bullets). **Pack order does not matter**
   (N3.2c item 7): `RoadNetwork` sorts the packs by ascending content hash, so
   the same set in any order gives bit-identical results, one `roadSetHash`
   (FNV-1a 64 over the sorted content hashes), one label and one `roads` list.
@@ -498,7 +499,15 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   that arrived in the meantime, not at its samples' own `t`. The normal replay
   sorts by arrival, `max(receivedT, t)`, so the two differ in a few late
   samples per batch, which changes the bits (not the accuracy). The mode label
-  gets `-as-live`.
+  gets `-as-live`. With `--roads` (N3.3) the engine starts without roads and
+  attaches them by the live rule with the packs ready: at each selection
+  request (`RoadSelectionRule`) the given packs covering the estimate's 95 %
+  circle are selected (`RoadPackSelector`) and attached at that input
+  boundary. The summary's `Roads attach` line and `metrics.json`
+  (`roadsAttachedAfterInputs`, `attachedRoadSetHash`) record when and which
+  set; `roads`/`roadSetHash` stay the given set (the road truth's). The
+  written sidecar (`--write-sidecar`, always this rule) attaches at the same
+  input.
 - `--file-order`: inputs in file order, as `--as-live`, but with any
   `--seed`, `--particles` and `--set`: a seed sweep of the live order. The
   mode label gets `-file-order`.
@@ -509,7 +518,13 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   `droppedInputs` and any navigation rows that failed to encode. It passes
   when the result is exact, or within `--tolerance` (default 1 m) and
   `--heading-tolerance` (default 0.1°). Exit status 4 on a failure. A seed or
-  config-hash mismatch is a warning. Format and verdicts:
+  config-hash mismatch is a warning; without roads on either side, keys that
+  differ only in road-only keys are named inert, not blamed (N3-CMPHASH).
+  With `--roads`: a sidecar `roads` line attaches the given set at its
+  `afterInputs` (the metrics replay too); a sidecar without one gets the live
+  rule. A `roadSetHash` that differs, or packs on one side only, is a warning
+  naming the hashes, and the verdict is never PASS (exact). Format and
+  verdicts:
   [NAV_SIDECAR.md](NAV_SIDECAR.md).
 - `--write-sidecar <path>` (one log): writes the sidecar the app would have
   written for the recording with no drops (same loop, file order, header seed,

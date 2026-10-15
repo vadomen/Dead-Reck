@@ -49,6 +49,11 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
     /// files written before it.
     public var scoreUntilT: Double?
     public var checkpointsAfterScoreUntil: Int?
+    /// Roads attached as live (N3.3): inputs given before the attach and
+    /// the attached set's hash. nil (absent) when roads were given from
+    /// the start, when none was attached, and in files written before N3.3.
+    public var roadsAttachedAfterInputs: Int?
+    public var attachedRoadSetHash: String?
 
     public init(_ result: ReplayResult) {
         logName = result.logName
@@ -82,6 +87,8 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
         roadMetrics = result.roadMetrics
         scoreUntilT = result.scoreUntilT
         checkpointsAfterScoreUntil = result.checkpointsAfterScoreUntil
+        roadsAttachedAfterInputs = result.roadsAttachedAfterInputs
+        attachedRoadSetHash = result.attachedRoadSetHash
     }
 
     /// `metrics.json` key: one row per log and mode.
@@ -97,6 +104,7 @@ extension ReplayMetrics {
         case steps, msPerStep, maxIngestMs, counters, fixesUsed, fixesWithheld, pins, pinScoring
         case roads, roadSetHash, roadMetrics
         case scoreUntilT, checkpointsAfterScoreUntil
+        case roadsAttachedAfterInputs, attachedRoadSetHash
     }
 
     /// Keys every `metrics.json` row has had since the first one (N2). A row
@@ -112,7 +120,8 @@ extension ReplayMetrics {
     /// - Every key added later is optional and nil when absent:
     ///   `motionStartT`, `consistency`, `consistencyWithTruthSigma`, `pins`,
     ///   `pinScoring`, `roads`, `roadSetHash`, `roadMetrics`, `scoreUntilT`,
-    ///   `checkpointsAfterScoreUntil` (and any key a
+    ///   `checkpointsAfterScoreUntil`, `roadsAttachedAfterInputs`,
+    ///   `attachedRoadSetHash` (and any key a
     ///   later build adds, which must be optional or take a default here).
     /// - `config` and `counters` decode tolerantly themselves: a config key
     ///   or counter added later takes its default (0 for a counter).
@@ -151,6 +160,8 @@ extension ReplayMetrics {
         roadMetrics = try c.decodeIfPresent(ReplayRoadMetrics.self, forKey: .roadMetrics)
         scoreUntilT = try c.decodeIfPresent(Double.self, forKey: .scoreUntilT)
         checkpointsAfterScoreUntil = try c.decodeIfPresent(Int.self, forKey: .checkpointsAfterScoreUntil)
+        roadsAttachedAfterInputs = try c.decodeIfPresent(Int.self, forKey: .roadsAttachedAfterInputs)
+        attachedRoadSetHash = try c.decodeIfPresent(String.self, forKey: .attachedRoadSetHash)
     }
 }
 
