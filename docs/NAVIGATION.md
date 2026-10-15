@@ -671,14 +671,16 @@ N4 B acceptance and the as-live table: moved to [docs/archive/NAVIGATION-history
 ## Adoption rule for engine changes
 
 A change to the engine or its defaults is adopted only if, on every acceptance
-drive (clean-long, clean, manual, jammed-A, jammed-B, from N3.0 drive-7, and
-from N3.2e drive-8, added 2026-10-14), the **mean over seeds 1–5** passes:
+drive (clean-long, clean, manual, jammed-A, jammed-B, from N3.0 drive-7,
+from N3.2e drive-8, added 2026-10-14, and from N3 drive-9's two runs, added
+2026-10-15), the **mean over seeds 1–5** passes:
 
 - **Drives scored in metres** (clean-long and clean max error, manual error at
   truth point 1): the mean may get worse by at most 2 m or 5 % of the
   previous mean, whichever is larger.
 - **Drives scored in % of distance** (jammed-A, jammed-B end error; drive-7
-  and drive-8 worst withheld clean fix): the mean may get worse by at most
+  and drive-8 worst withheld clean fix; drive-9 error at its truth point,
+  both runs, with and without roads): the mean may get worse by at most
   0.1 percentage points.
 - **Ellipse consistency** (share of scored checkpoints inside the 95 %
   ellipse, mean over seeds) must not drop on any drive. **Since N3.0 (Q3,
@@ -722,7 +724,7 @@ explained.
 ## Acceptance runs
 
 `<clean>`, `<clean-long>`, `<manual>`, `<manual-3>`, `<jammed-A>`,
-`<jammed-B>`, `<drive-7>` and `<drive-8>` are the paths of the recordings known
+`<jammed-B>`, `<drive-7>`, `<drive-8>` and `<drive-9>` are the paths of the recordings known
 under those aliases (kept outside the repository or in the git-ignored `logs/`).
 
 | alias | run | criterion |
@@ -734,6 +736,8 @@ under those aliases (kept outside the repository or in the git-ignored `logs/`).
 | jammed-A, jammed-B | `--gps use` | end ≤ 2.5 % of distance |
 | drive-7 | `--gps mask-after 1800` | every withheld clean fix after 1800 s ≤ 2.5 % of distance from the start (decided 2026-10-12, see below); scored-pin and clean-fix consistency reported |
 | drive-8 | `--gps mask-after 785` | every withheld clean fix up to 1988 s (truth `scoreUntilT`) ≤ 2.5 % of distance from the start (decided 2026-10-14, see below); clean-fix consistency reported |
+| drive-9 (1) | `--gps mask-after 1229` | error at the truth point (1937.7 s) ≤ 2.5 % of distance from the start, gated with roads only (decided 2026-10-15, see below) |
+| drive-9 (2) | `--gps use --hold-out-acc 100` | the same point and threshold, gated with roads only |
 
 - **clean**: the criterion is `mask-after 230`, i.e. 30 s of clean GNSS at
   speed (from about 200 s), then 1.8 km of pure dead reckoning. That is what
@@ -809,6 +813,46 @@ under those aliases (kept outside the repository or in the git-ignored `logs/`).
   - **Timing.** The live build that recorded drive-8 was Debug (the sidecar
     header says `buildConfiguration` debug). Its sidecar timing is not a
     device performance number.
+- **drive-9** (added 2026-10-15, decided by the user): about 2024 s and
+  14.2 km, iPhone 16 Pro Max, the first **Release** build drive. GNSS is jammed for the
+  whole drive: 170 of 171 fixes are speedless network fixes (speed −1), and
+  there is no clean fix at all, so a worst-withheld-clean-fix criterion is
+  impossible. 37 speedless fixes carry a valid course (courseAccuracy
+  22–45°). Three pins (228.7, 317.5, 580.3 s), all scored, none excluded.
+  The car is parked about 604–1229 s, with OBD down for most of it (the
+  replies stop at 683 s at a stop); leg 2 runs 1230–1985 s, after which the
+  car is parked again.
+  - **Truth.** One truth point: the speedless 61 m fix at 1937.7 s, taken
+    while moving, with σ = 61 / 1.51 = 40.4 m (the clean-fix rule's
+    accuracy / 1.51). Both runs withhold it from the engine. No `end` (there
+    is no position for the parked car after the drive), no `excludePins`, no
+    `scoreUntilT`.
+  - **Run (1), `--gps mask-after 1229`.** The engine gets nothing after the
+    park: leg 2 is about 7.9 km of pure dead reckoning (the truth point is
+    at 13.71 km, the last fix the engine receives at 5.78 km). This run
+    hides every leg-2 fix and course from the engine.
+  - **Run (2), `--gps use --hold-out-acc 100`** (manual-style): every fix
+    under 100 m is withheld, so the ~1414 m network fixes, and their
+    courses, reach the engine as they did live. It also withholds the 49
+    park fixes under 100 m (604–1229 s, while OBD was down), five 72–85 m
+    fixes at 1418–1437 s and the pre-session fix. Sanity check, done on the
+    baseline before adopting the run: the estimate at 1229 s is 34–35 m
+    (with roads) and 21 m (without) from the two 16.5 m stop fixes of the
+    park (1040.8 and 1053.5 s), which lie 12 m from the median of the park
+    fixes; run (1), which receives the park fixes, is 18 m and 3–4 m from
+    them. That is within the park fixes' own scatter and a pin's σ, so the
+    run is sane and is gated with the same rules.
+  - **Criterion (both runs).** The error at the truth point is within 2.5 %
+    of the distance travelled at its time (∫ OBD speed from the start), the
+    jammed drives' threshold, unchanged. The absolute gate applies **with
+    roads only**: without roads the baseline misses it by about 4× (run (1)
+    10.0–10.4 %, run (2) 8.3–8.5 %), which is reported, not gated. The
+    adoption rule (mean ≤ 0.1 pp worse, consistency with the truth's σ must
+    not drop) applies to both runs with and without roads. For it drive-9
+    is a drive scored in % of distance.
+  - **Reported, not gated:** the pin priors (scored checkpoints, they count
+    in consistency), and the time and distance to first converged.
+  - **Timing.** Release build: see docs/PLAN.md §6 B-1.
 
 ```bash
 cd Core
@@ -819,6 +863,8 @@ swift run -c release replay_nav <manual> --gps use --hold-out-acc 100 --truth ..
 swift run -c release replay_nav <jammed-A> <jammed-B> --gps use --truth ../logs/truth.json --out ../logs/out
 swift run -c release replay_nav <drive-7> --gps mask-after 1800 --truth ../logs/truth.json --out ../logs/out
 swift run -c release replay_nav <drive-8> --gps mask-after 785 --truth ../logs/truth.json --out ../logs/out
+swift run -c release replay_nav <drive-9> --gps mask-after 1229 --truth ../logs/truth.json --out ../logs/out
+swift run -c release replay_nav <drive-9> --gps use --hold-out-acc 100 --truth ../logs/truth.json --out ../logs/out
 ```
 
 **drive-7 baseline (N3.0, seeds 1–5 arrival order and `--as-live`, release,
