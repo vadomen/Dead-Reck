@@ -194,6 +194,9 @@ updates reweight only by what heading and scale actually predict.
     does not. That last gate rejects glitch fixes (the clean
     drive has one reporting 25 m/s at 10 m/s with a "good" course) and slow
     manoeuvres. Wrapped Gaussian with σ = max(courseAccuracy, 2°).
+  - The course of a fix **without a valid speed** (a network fix that
+    reports a course) is not used. Using it was measured and rejected: see
+    "N3 candidate: speedless course" below.
   - **Speed** updates the scale under the same gates, when OBD speed is above
     10.8 km/h and speedAccuracy is valid, with σ = max(speedAccuracy, 1 m/s).
     GNSS and OBD speeds differ by about 1 m/s RMS on the clean drive.
@@ -671,14 +674,16 @@ N4 B acceptance and the as-live table: moved to [docs/archive/NAVIGATION-history
 ## Adoption rule for engine changes
 
 A change to the engine or its defaults is adopted only if, on every acceptance
-drive (clean-long, clean, manual, jammed-A, jammed-B, from N3.0 drive-7, and
-from N3.2e drive-8, added 2026-10-14), the **mean over seeds 1–5** passes:
+drive (clean-long, clean, manual, jammed-A, jammed-B, from N3.0 drive-7,
+from N3.2e drive-8, added 2026-10-14, and from N3 drive-9's two runs, added
+2026-10-15), the **mean over seeds 1–5** passes:
 
 - **Drives scored in metres** (clean-long and clean max error, manual error at
   truth point 1): the mean may get worse by at most 2 m or 5 % of the
   previous mean, whichever is larger.
 - **Drives scored in % of distance** (jammed-A, jammed-B end error; drive-7
-  and drive-8 worst withheld clean fix): the mean may get worse by at most
+  and drive-8 worst withheld clean fix; drive-9 error at its truth point,
+  both runs, with and without roads): the mean may get worse by at most
   0.1 percentage points.
 - **Ellipse consistency** (share of scored checkpoints inside the 95 %
   ellipse, mean over seeds) must not drop on any drive. **Since N3.0 (Q3,
@@ -722,7 +727,7 @@ explained.
 ## Acceptance runs
 
 `<clean>`, `<clean-long>`, `<manual>`, `<manual-3>`, `<jammed-A>`,
-`<jammed-B>`, `<drive-7>` and `<drive-8>` are the paths of the recordings known
+`<jammed-B>`, `<drive-7>`, `<drive-8>` and `<drive-9>` are the paths of the recordings known
 under those aliases (kept outside the repository or in the git-ignored `logs/`).
 
 | alias | run | criterion |
@@ -734,6 +739,8 @@ under those aliases (kept outside the repository or in the git-ignored `logs/`).
 | jammed-A, jammed-B | `--gps use` | end ≤ 2.5 % of distance |
 | drive-7 | `--gps mask-after 1800` | every withheld clean fix after 1800 s ≤ 2.5 % of distance from the start (decided 2026-10-12, see below); scored-pin and clean-fix consistency reported |
 | drive-8 | `--gps mask-after 785` | every withheld clean fix up to 1988 s (truth `scoreUntilT`) ≤ 2.5 % of distance from the start (decided 2026-10-14, see below); clean-fix consistency reported |
+| drive-9 (1) | `--gps mask-after 1229` | error at the truth point (1937.7 s) ≤ 2.5 % of distance from the start, gated with roads only (decided 2026-10-15, see below) |
+| drive-9 (2) | `--gps use --hold-out-acc 100` | the same point and threshold, gated with roads only |
 
 - **clean**: the criterion is `mask-after 230`, i.e. 30 s of clean GNSS at
   speed (from about 200 s), then 1.8 km of pure dead reckoning. That is what
@@ -809,6 +816,46 @@ under those aliases (kept outside the repository or in the git-ignored `logs/`).
   - **Timing.** The live build that recorded drive-8 was Debug (the sidecar
     header says `buildConfiguration` debug). Its sidecar timing is not a
     device performance number.
+- **drive-9** (added 2026-10-15, decided by the user): about 2024 s and
+  14.2 km, iPhone 16 Pro Max, the first **Release** build drive. GNSS is
+  jammed for the whole drive: 170 of 171 fixes are speedless network fixes (speed −1), and
+  there is no clean fix at all, so a worst-withheld-clean-fix criterion is
+  impossible. 37 speedless fixes carry a valid course (courseAccuracy
+  22–45°). Three pins (228.7, 317.5, 580.3 s), all scored, none excluded.
+  The car is parked about 604–1229 s, with OBD down for most of it (the
+  replies stop at 683 s at a stop); leg 2 runs 1230–1985 s, after which the
+  car is parked again.
+  - **Truth.** One truth point: the speedless 61 m fix at 1937.7 s, taken
+    while moving, with σ = 61 / 1.51 = 40.4 m (the clean-fix rule's
+    accuracy / 1.51). Both runs withhold it from the engine. No `end` (there
+    is no position for the parked car after the drive), no `excludePins`, no
+    `scoreUntilT`.
+  - **Run (1), `--gps mask-after 1229`.** The engine gets nothing after the
+    park: leg 2 is about 7.9 km of pure dead reckoning (the truth point is
+    at 13.71 km, the last fix the engine receives at 5.78 km). This run
+    hides every leg-2 fix and course from the engine.
+  - **Run (2), `--gps use --hold-out-acc 100`** (manual-style): every fix
+    under 100 m is withheld, so the ~1414 m network fixes, and their
+    courses, reach the engine as they did live. It also withholds the 49
+    park fixes under 100 m (604–1229 s, while OBD was down), five 72–85 m
+    fixes at 1418–1437 s and the pre-session fix. Sanity check, done on the
+    baseline before adopting the run: the estimate at 1229 s is 34–35 m
+    (with roads) and 21 m (without) from the two 16.5 m stop fixes of the
+    park (1040.8 and 1053.5 s), which lie 12 m from the median of the park
+    fixes; run (1), which receives the park fixes, is 18 m and 3–4 m from
+    them. That is within the park fixes' own scatter and a pin's σ, so the
+    run is sane and is gated with the same rules.
+  - **Criterion (both runs).** The error at the truth point is within 2.5 %
+    of the distance travelled at its time (∫ OBD speed from the start), the
+    jammed drives' threshold, unchanged. The absolute gate applies **with
+    roads only**: without roads the baseline misses it by about 4× (run (1)
+    10.0–10.4 %, run (2) 8.3–8.5 %), which is reported, not gated. The
+    adoption rule (mean ≤ 0.1 pp worse, consistency with the truth's σ must
+    not drop) applies to both runs with and without roads. For it drive-9
+    is a drive scored in % of distance.
+  - **Reported, not gated:** the pin priors (scored checkpoints, they count
+    in consistency), and the time and distance to first converged.
+  - **Timing.** Release build: see docs/PLAN.md §6 B-1.
 
 ```bash
 cd Core
@@ -819,6 +866,8 @@ swift run -c release replay_nav <manual> --gps use --hold-out-acc 100 --truth ..
 swift run -c release replay_nav <jammed-A> <jammed-B> --gps use --truth ../logs/truth.json --out ../logs/out
 swift run -c release replay_nav <drive-7> --gps mask-after 1800 --truth ../logs/truth.json --out ../logs/out
 swift run -c release replay_nav <drive-8> --gps mask-after 785 --truth ../logs/truth.json --out ../logs/out
+swift run -c release replay_nav <drive-9> --gps mask-after 1229 --truth ../logs/truth.json --out ../logs/out
+swift run -c release replay_nav <drive-9> --gps use --hold-out-acc 100 --truth ../logs/truth.json --out ../logs/out
 ```
 
 **drive-7 baseline (N3.0, seeds 1–5 arrival order and `--as-live`, release,
@@ -1891,6 +1940,117 @@ the truth's σ.
   The sidecar header's config, and so its `configHash`, changes: `replay_nav
   --as-live --compare` on a sidecar written before this change warns about a
   config-hash difference in `roadCorrelationM` (backlog N3-CMPHASH).
+
+### N3 candidate: speedless course (2026-10-15): measured, rejected
+
+**Not adopted; the code is dropped** (user decision 2026-10-15, backlog
+N3-SLC REJECTED). The measured implementation is commit **0b3a1f7** (config
+keys `speedlessCourse`, `speedlessCourseMaxAccDeg`, counter
+`speedlessCourseUpdates`, 14 tests); it was reverted in d55e23c, so the
+engine, its config JSON and hash and every sidecar are as before. This
+section is kept as a measured negative result. To revive it, start from
+0b3a1f7 and from "Why a gate cannot rescue it" below.
+
+**What was tried.** Under jamming iOS delivers network (tower and Wi-Fi)
+fixes with speed −1, which the engine uses for position only: the course
+rule needs a GNSS speed ≥ 3 m/s. On drive-7, drive-8 and drive-9 (iPhone 16
+Pro Max) some of those fixes still report a valid course with a
+courseAccuracy of 16–45° (87, 28 and 37 fixes); none of the six older
+drives has one. How iOS derives that course is not documented. The rule:
+use such a course when
+- the fix has no valid speed;
+- the **fresh** OBD speed at the fix time is ≥ `courseMinSpeedMps` (3 m/s),
+  not the held one (a stale moving speed after a dropout at a stop must not
+  admit courses while parked); the existing OBD veto and Doppler gate kept;
+- courseAccuracy ≤ 45° (cuts nothing on the acceptance set).
+
+σ = max(courseAccuracy, 2°); only the course likelihood term was added
+(position σ and tempering unchanged), and such a fix was never clean (no
+initial heading, no reseed). Correlation: the course term was tempered by
+the network-fix function and constant (`networkFixCorrelationS` 60 s),
+measured from the last accepted speedless course in its own timestamp (not
+`lastNetworkFixNs`, which courseless fixes advance too). With the key off
+every replay output on the acceptance set matched main (90 runs; GeoJSON
+byte-identical).
+
+**Measurement** (release, Mac, seeds 1–5; roads = national + region-A, the
+N3.2 default; key 0 columns = the baseline on main, which equals
+logs/n32dec on the old drives; key 1 = commit 0b3a1f7 with
+`--set speedlessCourse=1`). Gated value: metres for clean-long, clean,
+manual; % of distance for the rest; consistency includes the truth's σ.
+The six older drives have no speedless course: every value is identical in
+both key columns (they are left out of the table; all pass).
+
+| drive | roads | gated mean, key 0 → 1 (Δ, allowed) | consistency + σ, key 0 → 1 | first converged, key 0 → 1 | pins inside 95 % + truth σ, sum of 5 seeds, key 0 → 1 | speedless updates per seed (w < 0.1) | verdict |
+|---|---|---|---|---|---|---|---|
+| drive-7 | no | 1.128 → 0.698 % (−0.430, ≤ +0.1) | 99.6 → 98.9 % | 88 s, 0.58 km → same | 30 → 20 of 35 | 79 (30) | FAIL (consistency) |
+| drive-8 | no | 1.482 → 1.506 % (+0.025) | 100 → 100 % | 665 s, 6.62 km → 329 s, 2.66 km | – | 24 (11) | PASS |
+| drive-9 (1) | no | 10.21 → 10.26 % (+0.045) | 75 → 50 % | 318 s, 3.36 km → same | 15 → 10 of 15 | 15 (4) | FAIL (consistency) |
+| drive-9 (2) | no | 8.38 → 8.59 % (+0.214) | 75 → 50 % | 318 s, 3.36 km → same | 15 → 10 of 15 | 36 (9) | FAIL (mean, consistency) |
+| drive-7 | yes | 0.130 → 0.162 % (+0.033) | 96.3 → 94.1 % | 26 s, 0.14 km → 23–88 s, 0.12–0.58 km | 30 → 30 of 35 | 79 (30) | FAIL (consistency) |
+| drive-8 | yes | 0.186 → 0.186 % (+0.000) | 100 → 100 % | 96–97 s, 0.66–0.68 km → 42–43 s, 0.22–0.24 km | – | 24 (11) | PASS |
+| drive-9 (1) | yes | 0.042 → 0.048 % (+0.007) | 100 → 100 % | 242 s, 2.51 km → 234–236 s, 2.43–2.45 km | 15 → 15 of 15 | 15 (4) | PASS |
+| drive-9 (2) | yes | 0.043 → 0.046 % (+0.002) | 100 → 100 % | 242 s, 2.51 km → 234–236 s, 2.43–2.45 km | 15 → 15 of 15 | 36 (9) | PASS |
+
+- **Verdict.** The adoption rule FAILS. With roads (the gate): drive-7
+  consistency (96.3 → 94.1 %); every other drive passes, and drive-9's
+  criterion passes on every seed in both runs (0.03–0.07 %). Without roads:
+  drive-7 and drive-9 (1) consistency, drive-9 (2) mean and consistency.
+- **Gains, for the record.** drive-9's first-pin prior 446–448 → 204–207 m
+  (both roads modes, every seed, σhead 63° → 16°); drive-8's convergence
+  0.66 → 0.22 km with roads. drive-9's first converged moved only 6–8 s
+  with roads and not at all without (318 s).
+
+**Why it fails: the courses are not reliable.** Reference: the converged
+heading of the key-0 run with roads (offline, every speedless fix while it
+was converged, seeds pooled; `logs/n3sc/course-vs-ref.txt`).
+- **drive-7: 80–150° off on every fix** (median 109°) while claiming
+  17–44°. The offset is near-constant over minutes and drifts slowly, from
+  about −80° at the start to about −150° at the end. Not explained by the
+  phone's orientation (the same upright mount on drives 7–9, mean gravity
+  within 0.05 g). Without roads it puts the pins at 87 s and 359 s outside
+  the ellipse on every seed (prior error 63 → 434 m and 90–96 → 302–350 m);
+  with roads seeds 3 and 4 lose 18 and 17 withheld clean fixes at
+  2067–2103 s. drive-7's lower worst error without roads (1.13 → 0.70 %)
+  comes from these wrong courses and is not evidence for the rule.
+- **drive-8: a +22° bias** (median), within 2 × courseAccuracy on every
+  fix, which makes heading converge fast and wrong without roads (6.62 →
+  2.66 km, then 22° median off the matched road for 120 s; key 0: 1.4°).
+- **Frozen values.** drive-7 and drive-8 repeat one course value for tens
+  of seconds to minutes while the network positions jump
+  (`logs/n3sc/frozen.txt`): on drive-7, seven fixes from 236.4 s to
+  460.5 s carry a bit-identical course while the car drives 1.33 km and the
+  fix positions jump 8–657 m between fixes (1414–2455 m accuracy); on
+  drive-8, eight fixes from 335.8 s to 365.2 s hold one value within 0.001°
+  over 361 m of driving (jumps 58–695 m), and three from 182.4 s to 331.5 s
+  stay within 0.11° over 879 m. In these runs the car itself was going
+  nearly straight (the reference heading moved 5° and under 1°), so a
+  frozen value is not shown to have missed a turn, but it is not a fresh
+  per-fix measurement either. drive-9 has only short near-repeats (two or
+  three fixes over at most 23 s).
+- **drive-9 is the only drive where the courses were good**: median
+  |error| 12–14°, at most 22°.
+
+**Why a gate cannot rescue it.** The drive-7 error is a systematic offset,
+not noise, and it is there before the filter has a heading of its own.
+- A consistency gate (reject a course far from the converged heading)
+  needs a converged heading, which is exactly when the course is no longer
+  needed; before convergence there is nothing to check a 90° offset against,
+  and a course claiming 20° looks the same whether it is right or 90° off.
+- A gyro check (course changes must follow the integrated yaw) passes a
+  constant offset, because the differences of offset courses still track
+  the turns. It could catch frozen values, but rejecting those leaves the
+  offset.
+- The claimed courseAccuracy does not flag it (17–44° on drive-7, the same
+  range as drive-9's good courses).
+
+Also: pre-convergence heading-up in the app (`GPSCourseBearingSource`)
+needs a GNSS speed > 10 km/h, so it never used these courses either.
+Outputs, scripts and the full table (heading error against clean GNSS
+courses and matched edges, reseeds after convergence, weights, the probe's
+counter cross-check): logs/n3sc/ (git-ignored; `table.md`, `dist.md`,
+`course-vs-ref.txt`, `frozen.txt`, `run.sh`, `identity.py`, `table.py`,
+`frozen.py`, the offline `probe/`).
 
 ## Known limitations and options
 
