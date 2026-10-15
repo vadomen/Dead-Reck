@@ -591,3 +591,22 @@ Tests: Core passes 819 tests in 110 suites, 36 known issues (Core unchanged). Ap
 ### Run 30 summary
 
 1 round. Findings: 0 fixed, 0 rejected, 1 MINOR deferred (R30.1-1). R26.2-1 closed and moved to `docs/archive/BACKLOG-closed.md`. Final: Core 819 tests in 110 suites pass, 36 known issues; App 281 tests in 44 suites pass, simulator build green at 1454ae3.
+
+## Run 31: N3-SLC speedless course, measured and rejected; drive-9 acceptance definition (main..n3-speedless-course, 6f9c235), started 2026-10-15
+
+### Round 1
+
+Reviewer: one fresh `reviewer` (sonnet). Net diff is docs only: Core and App are identical to main after the d55e23c revert of 0b3a1f7. Result: 0 BLOCKER / 0 MAJOR / 4 MINOR.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R31.1-1 | MINOR | `docs/NAVIGATION.md:821-822` says drive-9 has "no clean fix at all"; the pre-session fix at −456.6 s is 5 m with a valid speed, but 457 s stale and ignored (fixesIgnoredStale 1). | DEFERRED | backlog. |
+| R31.1-2 | MINOR | `docs/NAVIGATION.md:839-841` run (2) (`--hold-out-acc 100`) withheld list omits the 97 m fix at 603.8 s (57 withheld: 49 park fixes 604–1229 s, 5 fixes of 72–85 m, the pre-session fix, the 603.8 s fix, the truth point). | DEFERRED | backlog. |
+| R31.1-3 | MINOR | `docs/NAVIGATION.md:851` "misses it by about 4×": it is 4.1× for run (1) (10.2 %) and 3.4× for run (2) (8.4 %). | DEFERRED | backlog. |
+| R31.1-4 | MINOR | `docs/BACKLOG.md` line references of R27.1-2 (`docs/NAVIGATION.md:883-886`) and R28.3-2 (`:1821-1822`) drifted by about 50 lines from this range's insertions (R28.3-2 text now at about 1875). | DEFERRED | backlog. |
+
+Tests: Core passes 819 tests in 110 suites, 36 known issues (test 3 known FAIL at roadCorrelationM 100). App unchanged.
+
+### Run 31 summary
+
+1 round, round 1 clean. Findings: 0 fixed, 0 rejected, 4 MINOR deferred (R31.1-1 to R31.1-4). Final: Core 819 tests in 110 suites pass, 36 known issues (test 3); App unchanged.
