@@ -152,11 +152,6 @@ public struct NavigationEngine: Sendable {
     private var preInitSteps: PreInitSteps
 
     private var lastNetworkFixNs: Int64?
-    /// Fix time of the last accepted speedless course
-    /// (`NavigationConfig.speedlessCourse`): its correlation tempering is
-    /// measured from here, not from `lastNetworkFixNs`, which courseless
-    /// network fixes advance too.
-    private var lastSpeedlessCourseNs: Int64?
     /// End of the latest grid step since initialisation in which the cloud
     /// moved (not a ZUPT or parked step); nil if none (R11.1-5). A stale
     /// fix accepted while stopped must be no older than this: then every
@@ -869,24 +864,10 @@ public struct NavigationEngine: Sendable {
         if sample.speed >= 0, let v = obdAtFix {
             dopplerConsistent = abs(sample.speed - v) <= max(config.gnssSpeedGateMps, config.gnssSpeedGateFraction * v)
         }
-        let gnssCourse = sample.hasValidCourse && sample.speed >= config.courseMinSpeedMps
+        let courseValid = sample.hasValidCourse && sample.speed >= config.courseMinSpeedMps
             && (heldAtFix ?? 0) >= config.courseMinSpeedMps && dopplerConsistent
-        // Speedless course (N3, off by default): a fix with no valid speed
-        // (a network fix) can still carry a CoreLocation course. With no
-        // GNSS speed, OBD is the only evidence of motion, so the speed
-        // checked is the *fresh* one at the fix time (`since.obdSpeed`, nil
-        // when stale): a stale moving speed after a dropout at a stop must
-        // not admit courses while parked. The OBD veto above still applies.
-        // Such a fix is never clean: `clean` stays on the GNSS rule, so it
-        // never sets the initial heading and never reseeds.
-        let speedlessCourse = config.speedlessCourse == 1 && !gnssCourse && tangentPlane != nil
-            && sample.hasValidCourse && !sample.hasValidSpeed
-            && (since.obdSpeed ?? 0) >= config.courseMinSpeedMps
-            && sample.courseAccuracy <= config.speedlessCourseMaxAccDeg
-            && (heldAtFix ?? 0) >= config.courseMinSpeedMps && dopplerConsistent
-        let courseValid = gnssCourse || speedlessCourse
         let courseSigma = max(sample.courseAccuracy, config.courseSigmaFloorDeg) * .pi / 180
-        let clean = accuracy <= config.cleanFixAccM && gnssCourse
+        let clean = accuracy <= config.cleanFixAccM && courseValid
 
         guard let plane = tangentPlane else {
             // The cloud starts at the fix, but the car has moved for the
@@ -913,7 +894,7 @@ public struct NavigationEngine: Sendable {
         let targetCourse = sample.course * .pi / 180 + since.yaw
 
         if !network, rejectsOffRoad(east: targetEast, north: targetNorth, sigma: sigma,
-                                    course: gnssCourse ? targetCourse : nil, arrivalNs: arrivalNs, plane: plane) {
+                                    course: courseValid ? targetCourse : nil, arrivalNs: arrivalNs, plane: plane) {
             counters.fixesRejectedOffRoad += 1
             return
         }
@@ -939,19 +920,7 @@ public struct NavigationEngine: Sendable {
         let useSpeed = sample.hasValidSpeed && (since.obdSpeed ?? 0) * 3.6 > config.speedUpdateMinKmh && dopplerConsistent
         let obdSpeed = since.obdSpeed ?? 0
         let speedSigma = max(sample.speedAccuracy, config.speedSigmaFloorMps)
-        // A speedless course's errors are correlated like its position's
-        // (the same network solution): its term is tempered by the time
-        // since the last accepted speedless course, with the network-fix
-        // function and constant. A GNSS course keeps weight 1.
-        var courseTemper = 1.0
-        if speedlessCourse {
-            courseTemper = Self.networkTemper(
-                sinceLastS: lastSpeedlessCourseNs.map { Double(fixNs - $0) / 1e9 }, correlationS: config.networkFixCorrelationS
-            )
-            lastSpeedlessCourseNs = max(lastSpeedlessCourseNs ?? fixNs, fixNs)
-            counters.speedlessCourseUpdates += 1
-        }
-        if gnssCourse { counters.courseUpdates += 1 }
+        if courseValid { counters.courseUpdates += 1 }
         if useSpeed { counters.speedUpdates += 1 }
         for i in 0..<east.count {
             var l = positionVariance.isFinite
@@ -959,7 +928,7 @@ public struct NavigationEngine: Sendable {
                 : 0
             if courseValid {
                 let r = Self.wrapPi(heading[i] - targetCourse) / courseSigma
-                l -= 0.5 * r * r * courseTemper
+                l -= 0.5 * r * r
             }
             if useSpeed {
                 let r = (obdSpeed * scale[i] - sample.speed) / speedSigma

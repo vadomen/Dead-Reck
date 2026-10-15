@@ -146,14 +146,7 @@ public struct NavigationCounters: Hashable, Sendable, Codable {
     /// Stale fixes dropped because only one is held: the older of two.
     public var heldFixesReplaced = 0
     public var fixesIgnoredInvalid = 0
-    /// Fixes whose course entered the likelihood under today's rule (a
-    /// valid GNSS speed at or above `courseMinSpeedMps`).
     public var courseUpdates = 0
-    /// Speedless courses used (`NavigationConfig.speedlessCourse`): a fix
-    /// without a valid speed whose course entered the likelihood because
-    /// fresh OBD said the car was moving. Not in `courseUpdates`. Counted
-    /// when accepted, whatever its correlation weight (which may be 0).
-    public var speedlessCourseUpdates = 0
     public var speedUpdates = 0
     public var reseeds = 0
     public var manualFixes = 0
@@ -219,7 +212,7 @@ extension NavigationCounters {
         case steps, zuptSteps, staleSpeedSteps, staleParkedSteps, fixesUsed, networkFixesUsed, fixesIgnoredStale
         case fixesHeld, heldFixesUsed, heldFixesDroppedMoving, heldFixesDroppedTimeout, heldFixesReplaced
         case staleFixesIgnoredMoved
-        case fixesIgnoredInvalid, courseUpdates, speedlessCourseUpdates, speedUpdates, reseeds, manualFixes, manualResets, resamples
+        case fixesIgnoredInvalid, courseUpdates, speedUpdates, reseeds, manualFixes, manualResets, resamples
         case lateManualFixes, lateManualFixesMeanShift
         case reanchors, coalescedSteps, macroSteps, inputsRejectedTimeJump
         case roadUpdates, roadUpdatesNoRoad, roadSplits, roadCandidateTests, roadLevelBlocked
@@ -247,7 +240,6 @@ extension NavigationCounters {
         staleFixesIgnoredMoved = try value(.staleFixesIgnoredMoved)
         fixesIgnoredInvalid = try value(.fixesIgnoredInvalid)
         courseUpdates = try value(.courseUpdates)
-        speedlessCourseUpdates = try value(.speedlessCourseUpdates)
         speedUpdates = try value(.speedUpdates)
         reseeds = try value(.reseeds)
         manualFixes = try value(.manualFixes)

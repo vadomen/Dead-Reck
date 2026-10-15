@@ -151,19 +151,6 @@ public struct NavigationConfig: Hashable, Sendable, Codable {
     public var courseMinSpeedMps = 3.0
     /// Lower bound on the course σ, degrees.
     public var courseSigmaFloorDeg = 2.0
-    /// Speedless course (N3 candidate, docs/NAVIGATION.md "Speedless
-    /// course"): 1 uses the course of a fix without a valid speed (a
-    /// network fix, speed −1) when the *fresh* OBD speed at the fix time is
-    /// at least `courseMinSpeedMps` and its courseAccuracy is at most
-    /// `speedlessCourseMaxAccDeg`. Only the course likelihood term is
-    /// added, tempered by the time since the last such course
-    /// (`networkFixCorrelationS`); the fix stays a network fix for position
-    /// and is never clean (no initial heading, no reseed). 0: off (the
-    /// default until the user decides on the measurement). Any other value
-    /// is invalid (`invalidReason`).
-    public var speedlessCourse = 0
-    /// Largest courseAccuracy of a speedless course that is used, degrees.
-    public var speedlessCourseMaxAccDeg = 45.0
     /// GNSS speed updates the scale only when OBD speed is above this,
     /// km/h (and speedAccuracy is valid). 10.8 km/h (3 m/s). A 30 km/h gate
     /// (how the scale prior was measured) was tried: equal on clean-long,
@@ -322,7 +309,6 @@ extension NavigationConfig {
         case reanchorDistanceM, maxMotionGapS, fixSigmaPerAccuracy, fixSigmaFloorM
         case networkFixInflation, networkFixCorrelationS, staleFixSigmaGrowthMps, staleFixAgeS
         case maxFixAgeS, heldFixTimeoutS, courseMinSpeedMps, courseSigmaFloorDeg
-        case speedlessCourse, speedlessCourseMaxAccDeg
         case speedUpdateMinKmh, gnssSpeedGateMps, gnssSpeedGateFraction, speedSigmaFloorMps
         case cleanFixAccM, reseedHeadingStdDeg, reseedNoSupportSigma, reseedFraction
         case manualFixSigmaMinM, manualFixSpanDivisor, manualFixReactionS, manualFixUnknownSpeedMps
@@ -380,8 +366,6 @@ extension NavigationConfig {
         heldFixTimeoutS = try c.decodeIfPresent(type(of: heldFixTimeoutS), forKey: .heldFixTimeoutS) ?? heldFixTimeoutS
         courseMinSpeedMps = try c.decodeIfPresent(type(of: courseMinSpeedMps), forKey: .courseMinSpeedMps) ?? courseMinSpeedMps
         courseSigmaFloorDeg = try c.decodeIfPresent(type(of: courseSigmaFloorDeg), forKey: .courseSigmaFloorDeg) ?? courseSigmaFloorDeg
-        speedlessCourse = try c.decodeIfPresent(type(of: speedlessCourse), forKey: .speedlessCourse) ?? speedlessCourse
-        speedlessCourseMaxAccDeg = try c.decodeIfPresent(type(of: speedlessCourseMaxAccDeg), forKey: .speedlessCourseMaxAccDeg) ?? speedlessCourseMaxAccDeg
         speedUpdateMinKmh = try c.decodeIfPresent(type(of: speedUpdateMinKmh), forKey: .speedUpdateMinKmh) ?? speedUpdateMinKmh
         gnssSpeedGateMps = try c.decodeIfPresent(type(of: gnssSpeedGateMps), forKey: .gnssSpeedGateMps) ?? gnssSpeedGateMps
         gnssSpeedGateFraction = try c.decodeIfPresent(type(of: gnssSpeedGateFraction), forKey: .gnssSpeedGateFraction) ?? gnssSpeedGateFraction
@@ -502,13 +486,9 @@ extension NavigationConfig {
     /// - `roadAlongTrackCoupling` outside 0…1 (or not a number): the Joseph
     ///   form stays consistent for any gain, but a coupling outside the
     ///   Schmidt…Kalman range is a mistake, not a setting.
-    /// - `speedlessCourse` other than 0 or 1: a switch, not a weight.
     public var invalidReason: String? {
         if !(roadAlongTrackCoupling >= 0 && roadAlongTrackCoupling <= 1) {
             return "roadAlongTrackCoupling must be in 0…1, got \(roadAlongTrackCoupling)"
-        }
-        if speedlessCourse != 0 && speedlessCourse != 1 {
-            return "speedlessCourse must be 0 or 1, got \(speedlessCourse)"
         }
         return nil
     }
