@@ -493,6 +493,28 @@ extension NavigationConfig {
         return nil
     }
 
+    /// The keys whose values differ between `self` and `other`, sorted
+    /// (values compared as their canonical JSON). Empty when equal.
+    public func differingKeys(_ other: NavigationConfig) -> [String] {
+        func object(_ config: NavigationConfig) -> [String: Any] {
+            (try? JSONSerialization.jsonObject(with: config.canonicalJSON())) as? [String: Any] ?? [:]
+        }
+        let a = object(self), b = object(other)
+        // Iterates the declared key list (an array), never the dictionaries.
+        return CodingKeys.allCases.map(\.rawValue).filter { key in
+            switch (a[key] as? NSObject, b[key] as? NSObject) {
+            case let (x?, y?): return !x.isEqual(y)
+            case (nil, nil): return false
+            default: return true
+            }
+        }.sorted()
+    }
+
+    /// The road keys (N3.2): without a road network the engine runs no road
+    /// code, so these change nothing (`replay_nav --compare` names them as
+    /// inert when no roads are in use, N3-CMPHASH).
+    public static let roadOnlyKeys: [String] = CodingKeys.allCases.map(\.rawValue).filter { $0.hasPrefix("road") }
+
     /// Compact JSON with sorted keys: byte-stable for the same values, so
     /// it can be hashed (`hashHex`). Non-finite numbers are written as the
     /// strings "inf", "-inf" and "nan".

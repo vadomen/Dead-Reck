@@ -669,6 +669,24 @@ For every recording it:
   heading, `converged`, `initialized`, ms/step, ESS, heading std, speed scale,
   `droppedInputs`) on the recording's session clock.
 
+**Roads attached mid-run (N3.3).** `LiveNavigationRun` starts without roads
+unless a network is given at init. `NavigationEngine.attachRoads(_:)`
+attaches one between two inputs, once, before or after initialisation: the
+road state starts cleared (as a reseed leaves it), and nothing else changes,
+so every line before the attach is the no-roads run's, and an attach before
+the first input equals `init(config:roads:)`. It is refused, engine
+unchanged, when a network is already attached or when
+`config.validated(roads:)` would change any key: the config never changes
+mid-run. The selection rule (`RoadSelectionRule`): the run raises a
+`RoadSelectionRequest` (the estimate's centre and 95 % semi-major axis)
+after the ingest at which the engine first initialises and, while no
+network is attached, after every ingest in which it used a position (a fix,
+a released held fix, a manual fix). Once a network is attached no request
+is raised again, a manual reset of the cloud included. The attach's
+`afterInputs` is the run's `inputs` then; its `t` is the engine's latest
+accepted arrival (`NavigationEngine.latestArrival`), nil for an attach
+before the first input.
+
 N4 B acceptance and the as-live table: moved to [docs/archive/NAVIGATION-history.md](archive/NAVIGATION-history.md).
 
 ## Adoption rule for engine changes

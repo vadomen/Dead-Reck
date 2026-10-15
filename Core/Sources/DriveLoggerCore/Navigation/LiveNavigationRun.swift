@@ -18,10 +18,22 @@ import Foundation
 ///    are emitted and the grid then resumes at the arrival.
 /// 3. for a manual fix, emits a `pin` line with the estimate at its `t`,
 ///    the prior just before the engine ingests it;
-/// 4. ingests it, timing the engine call with `ContinuousClock`.
+/// 4. ingests it, timing the engine call with `ContinuousClock`;
+/// 5. updates the road selection rule (`RoadSelectionRule`): while no
+///    network is attached, an ingest at which the engine first initialises
+///    or uses a position raises a `RoadSelectionRequest`
+///    (`newSelectionRequest`).
 ///
-/// Deterministic apart from the timing diagnostics: the same inputs, seed
-/// and config give the same lines, bit for bit.
+/// **Roads (N3.3).** A network given at init is attached before the first
+/// input; `attachRoads(_:emit:)` attaches one between two inputs, once. The
+/// config never changes: a network that would change the validated config
+/// is refused (`roadsRefusal`) and the run goes on without roads. Until the
+/// attach every line is the no-roads run's. `ingest(_:droppedInputs:selectRoads:emit:)`
+/// runs a synchronous selector at each request and attaches its network at
+/// once: the rule `replay_nav --as-live --roads` uses.
+///
+/// Deterministic apart from the timing diagnostics: the same inputs, seed,
+/// config and attach point give the same lines, bit for bit.
 public struct LiveNavigationRun: Sendable {
     public private(set) var engine: NavigationEngine
     public let sessionID: UUID
@@ -33,6 +45,18 @@ public struct LiveNavigationRun: Sendable {
     /// Estimate lines emitted.
     public private(set) var estimates = 0
     private var nextEstimateNs: Int64?
+    /// The road selection rule's state.
+    public private(set) var selectionRule = RoadSelectionRule()
+    /// The request the latest `ingest` raised; nil if it raised none.
+    public private(set) var newSelectionRequest: RoadSelectionRequest?
+    /// The attached network and when; nil without roads.
+    public private(set) var roads: RoadAttachment?
+    /// The latest refused attach, if any.
+    public private(set) var roadsRefusal: RoadAttachRefusal?
+
+    /// The latest selection request; nil before the first and once a
+    /// network is attached.
+    public var selectionRequest: RoadSelectionRequest? { selectionRule.request }
 
     /// Spacing of the estimate grid, ns (1 s).
     public static let estimateIntervalNs: Int64 = 1_000_000_000
@@ -42,18 +66,52 @@ public struct LiveNavigationRun: Sendable {
     /// The app's run: the default config with the seed derived from the
     /// recording's header. `buildConfiguration` goes into the sidecar
     /// header (`NavSidecar.Header.buildConfiguration`).
-    public init(header: LogHeader, appBuild: String, buildConfiguration: String? = nil) {
+    /// `roads`: attached before the first input (`afterInputs` 0), or
+    /// refused (`roadsRefusal`).
+    public init(header: LogHeader, appBuild: String, buildConfiguration: String? = nil, roads: RoadNetwork? = nil) {
         self.init(sessionID: header.sessionID,
                   config: NavigationConfig(seed: NavigationSeed.derive(header: header)),
-                  appBuild: appBuild, buildConfiguration: buildConfiguration)
+                  appBuild: appBuild, buildConfiguration: buildConfiguration, roads: roads)
     }
 
     public init(sessionID: UUID, config: NavigationConfig, appBuild: String,
-                buildConfiguration: String? = nil) {
+                buildConfiguration: String? = nil, roads: RoadNetwork? = nil) {
         engine = NavigationEngine(config: config)
         self.sessionID = sessionID
         header = NavSidecar.Header(sessionID: sessionID, config: engine.config, appBuild: appBuild,
                                    buildConfiguration: buildConfiguration)
+        if let roads { try? attachRoads(roads) { _ in } }
+    }
+
+    /// Attaches `network` now, between two inputs (`afterInputs` = `inputs`).
+    /// Refused, run unchanged, when a network is already attached or when
+    /// the network would change the validated config
+    /// (`NavigationEngine.attachRoads`); the refusal is kept in
+    /// `roadsRefusal`. No selection request is raised after an attach.
+    public mutating func attachRoads(_ network: RoadNetwork, emit: (NavSidecar.Line) -> Void) throws(RoadAttachRefusal) {
+        do {
+            try engine.attachRoads(network)
+        } catch {
+            roadsRefusal = error
+            throw error
+        }
+        roads = RoadAttachment(network: network, afterInputs: inputs, t: inputs > 0 ? engine.latestArrival : nil)
+        selectionRule.attached()
+        newSelectionRequest = nil
+    }
+
+    /// `ingest(_:droppedInputs:emit:)`, then, if it raised a selection
+    /// request, `selectRoads` is asked at once and the network it returns
+    /// (if any) is attached before the next input. A refused attach leaves
+    /// the run without roads; later requests ask again.
+    public mutating func ingest(
+        _ input: NavigationInput, droppedInputs: Int = 0,
+        selectRoads: (RoadSelectionRequest) -> RoadNetwork?, emit: (NavSidecar.Line) -> Void
+    ) {
+        ingest(input, droppedInputs: droppedInputs, emit: emit)
+        if let request = newSelectionRequest, let network = selectRoads(request) {
+            try? attachRoads(network, emit: emit)
+        }
     }
 
     /// Feeds one input; `emit` receives the lines it produces, in order.
@@ -62,6 +120,7 @@ public struct LiveNavigationRun: Sendable {
         _ input: NavigationInput, droppedInputs: Int = 0, emit: (NavSidecar.Line) -> Void
     ) {
         inputs += 1
+        newSelectionRequest = nil
         guard engine.accepts(input) else {
             engine.ingest(input)
             return
@@ -93,10 +152,12 @@ public struct LiveNavigationRun: Sendable {
             emit(.pin(NavSidecar.Pin(sample, at: t, prior: prior)))
         }
         let stepsBefore = engine.counters.steps
+        let before = RoadSelectionRule.Before(engine)
         let start = ContinuousClock.now
         engine.ingest(input)
         let elapsed = ContinuousClock.now - start
         timing.observe(elapsed: elapsed, steps: engine.counters.steps - stepsBefore)
+        newSelectionRequest = selectionRule.observe(engine, before: before, inputs: inputs)
     }
 
     private func line(_ estimate: NavigationEstimate, droppedInputs: Int) -> NavSidecar.Estimate {
