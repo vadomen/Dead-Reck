@@ -18,6 +18,8 @@ final class AppServices {
     /// Live dead reckoning for each recording (N4 B): it consumes every
     /// recording's navigation feed and writes its sidecar.
     let navigation: NavigationService
+    /// The road packs (developer bridge: Documents/RoadPacks), verified once each.
+    let roadPacks: RoadPackLibrary
 
     init(
         link: any OBDLinkServicing = OBDLinkFactory.makeDefault(),
@@ -39,7 +41,11 @@ final class AppServices {
             sensorConfiguration: sensors.configuration,
             notes: notes.compactMap { $0 }.joined(separator: " ").nilIfEmpty
         )
-        let navigation = NavigationService()
+        let roadPacks = RoadPackLibrary.makeDefault()
+        self.roadPacks = roadPacks
+        // Verification runs off the main actor at .utility; never awaited here.
+        Task(priority: .utility) { await roadPacks.rescan() }
+        let navigation = NavigationService(library: roadPacks)
         self.navigation = navigation
         // Synchronous inside `start`, before any row: only start the task.
         session.onNavigationFeed = { feed in navigation.start(feed) }
