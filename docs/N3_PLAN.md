@@ -827,6 +827,15 @@ docs/N3_ROAD_OFFROAD.md.
 - **replay_nav:** `--roads` is allowed with `--as-live --compare` (attaching at the sidecar's `afterInputs`) and with `--write-sidecar`. Compare warns on a `roadSetHash` mismatch and gives no exact verdict without the same packs. N3-CMPHASH (road-only keys inert without roads) is closed in the same change.
 - **Exit additions:** Mac memory of national + region-A after building the `RoadNetwork` (mapped and heap reported separately, with build time); the phone's number stays open for D1.
 
+**N3.3 implemented (2026-10-15); device items open.** Items 0–6 are in: the plan amendment, the
+mid-run attach, sidecar v2, the pack catalog and selection, `replay_nav --roads` with `--as-live`,
+`--compare` and `--write-sidecar`, and the app wiring. The adoption replays were repeated as live, and every
+criterion passes as live with and without roads (docs/NAVIGATION.md, "N3.3: roads live (2026-10-15)").
+The live attach equals roads from the start on every acceptance run. The Mac memory of national +
+region-A is measured: mapped and heap separately, with build time. N2-2 (`convergedHeadingStdDeg`)
+is reported, with no change. Open: D1 and D2 (docs/PLAN.md §6, not claimed), including the phone's
+memory number.
+
 ### N3.4 — pack in the app, and display
 
 **Deliverables:**
