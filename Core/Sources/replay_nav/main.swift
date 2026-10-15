@@ -295,7 +295,7 @@ for path in paths {
         var run = LiveNavigationRun(header: header, appBuild: "replay_nav")
         do {
             let writer = try NavSidecarWriter(url: URL(fileURLWithPath: writeSidecarPath))
-            writer.append(.header(run.header))
+            for line in run.openingLines { writer.append(line) }
             var count = 0
             for input in NavigationReplay.fileOrderInputs(from: events) {
                 run.ingest(input) { writer.append($0); count += 1 }

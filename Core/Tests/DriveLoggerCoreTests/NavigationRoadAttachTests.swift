@@ -182,7 +182,8 @@ struct NavigationRoadAttachTests {
         var lines: [NavSidecar.Line] = []
         for input in inputs { fromStart.ingest(input) { lines.append($0) } }
         let atZero = Self.live(inputs, network: net, attachAfter: 0)
-        #expect(Self.stripped(lines) == Self.stripped(atZero.lines))
+        // The roads line: after the header at init, emitted by the attach.
+        #expect(Self.stripped(fromStart.openingLines + lines) == Self.stripped([.header(atZero.run.header)] + atZero.lines))
         #expect(fromStart.roads?.afterInputs == 0 && fromStart.roads?.t == nil)
         #expect(atZero.run.roads?.afterInputs == 0 && atZero.run.roads?.t == nil)
         #expect(fromStart.header == atZero.run.header)

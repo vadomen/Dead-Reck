@@ -7,7 +7,7 @@ sidecar exists so that `replay_nav --as-live --compare` can prove a Mac replay
 reproduces the drive exactly, or explain why it does not.
 
 - It is separate from the log format and versioned on its own (`NavSidecar.version`,
-  currently 1). The logger and `inspect_log` never read it. `LogStore` shares
+  currently 2). The logger and `inspect_log` never read it. `LogStore` shares
   and deletes it together with its recording. `.gitignore` covers it
   (`*.jsonl`), and it holds real positions, so it stays private like the
   recording.
@@ -25,8 +25,9 @@ are written as the strings `"inf"`, `"-inf"` and `"nan"`.
 | kind | when | fields |
 |---|---|---|
 | `header` | first line, written and flushed at Start | `sidecarVersion`, `sessionID`, `seed`, `configHash`, `configJSON`, `appBuild`, `buildConfiguration` (optional) |
-| `estimate` | each whole second of session time, from the engine's initialisation on | `t`, `latitude`, `longitude`, `headingDeg`, `headingStdDeg`, `semiMajorM`, `semiMinorM`, `orientationDeg` (95 % ellipse), `converged`, `speedScale`, `droppedInputs`, `msPerStep`, `maxStepMs` |
+| `estimate` | each whole second of session time, from the engine's initialisation on | `t`, `latitude`, `longitude`, `headingDeg`, `headingStdDeg`, `semiMajorM`, `semiMinorM`, `orientationDeg` (95 % ellipse), `converged`, `speedScale`, `droppedInputs`, `msPerStep`, `maxStepMs`, `onRoadShare` (v2, optional) |
 | `pin` | at each confirmed manual fix (`manualFix` row) | `t` (the fix's), `latitude`, `longitude` (where the driver put the pin), `mapSpanM`, `prior` (an `estimate` object: the engine just before it ingested the pin; absent when the pin initialised the engine) |
+| `roads` (v2) | once, when a road network becomes active | `t` (optional), `afterInputs`, `roads` (per pack: `contentHash`, `formatVersion`, `osmTimestamp`, `gridID`), `roadSetHash` |
 
 - **seed** is `NavigationSeed.derive(header:)`: the 64-bit FNV-1a hash of the
   UTF-8 bytes of the header's `sessionID.uuidString`. It is a JSON integer up
@@ -46,6 +47,30 @@ are written as the strings `"inf"`, `"-inf"` and `"nan"`.
   second, from the engine state before the first input arriving at or after
   `t`. Position is latitude/longitude, not plane east/north, which jump when
   the plane re-anchors.
+- **onRoadShare** (v2): `NavigationEstimate.onRoadShare`, the weight share
+  of the cloud on a road at the last road update. The key is omitted when
+  it is nil (no roads, or no road update yet), so a no-roads `estimate` line
+  is byte-identical to a v1 line.
+- **roads** (v2): written once, when the run attaches a road network
+  (`LiveNavigationRun.attachRoads`, docs/NAVIGATION.md "Live in the app").
+  A v2 sidecar without a `roads` line used no roads. Its line comes where
+  the attach happened: right after the header for a network given at
+  Start, else between the lines of the inputs before and after it.
+  - `afterInputs`: the number of navigation inputs the run had been handed
+    (`LiveNavigationRun.inputs`, a rejected time jump included) before the
+    attach; the network is used from the next input on. 0: before the
+    first input.
+  - `t`: the engine's latest accepted arrival at the attach
+    (`NavigationEngine.latestArrival`, session-clock ns): the arrival of
+    the last input before it, unless that input was rejected as an
+    implausible time jump. Omitted when `afterInputs` is 0.
+  - `roads`: the packs in canonical order (ascending content hash), as
+    `replay_nav` results record them: `contentHash` and `gridID` as 16
+    lowercase hex digits, `formatVersion` an integer, `osmTimestamp` Unix
+    seconds (0 unknown).
+  - `roadSetHash`: FNV-1a 64 over the packs' content hashes in ascending
+    order, 16 lowercase hex digits (`RoadNetwork.roadSetHashHex`).
+  - Data: © OpenStreetMap contributors, ODbL 1.0.
 - **Not compared** by `--compare`:
   - `droppedInputs`: navigation inputs the live feed had dropped by then
     (`NavigationTap.droppedInputs`). The feed buffers 4096 inputs and drops the
@@ -62,6 +87,7 @@ are written as the strings `"inf"`, `"-inf"` and `"nan"`.
 | Version | Changes |
 |---|---|
 | 1 | Header, `estimate` and `pin` as above. Within v1, with no version bump: the header's optional `buildConfiguration`. |
+| 2 | N3.3: the `roads` line and the estimate's optional `onRoadShare`. The header is unchanged in shape (written at Start, before any position, so it cannot name the packs). The app always writes v2. A v1 reader refuses v2: it would skip the `roads` line and hide which packs the run used. |
 
 The rules for a change:
 - A new **optional** field that a reader can ignore without misreading
@@ -73,8 +99,7 @@ The rules for a change:
 - A field whose absence or whose being ignored would mislead a reader needs
   a version bump. A reader refuses a newer version. Examples: something
   `--compare` must check, or a change in what an existing field means.
-  The road-pack hashes planned for N3.3 (docs/N3_PLAN.md, sidecar v2) are
-  such a change.
+  The road-pack hashes of v2 (the `roads` line) are such a change.
 - A new line kind is skipped and counted by older readers (`Unknown kinds`
   below).
 
@@ -93,8 +118,10 @@ full precision for an exact compare.
 ## Reading
 
 `NavSidecar.read(_:)` checks the following:
-- The first line must be a `header` with a version this reader knows; a newer
-  version is refused.
+- The first line must be a `header` with a version this reader knows (1 or
+  2); a newer version is refused.
+- A second `roads` line is refused (`duplicateRoadsLine`): a run attaches
+  roads once.
 - A last line that does not decode is dropped and reported
   (`truncatedLastLine`). Any other bad line throws.
 - Unknown kinds are skipped and counted.
@@ -110,6 +137,8 @@ swift run -c release replay_nav <recording> --as-live --compare <recording>.nav.
 `--compare` matches estimates by `t` and pins by `t` and order. It reports:
 - the maximum position (m), heading and heading σ (°), ellipse axes (m),
   ellipse orientation (°) and speed-scale differences;
+- the largest `onRoadShare` difference (1 where only one side has one): part
+  of the exact check, not gated by the tolerance;
 - converged-flag mismatches;
 - the first `t` that differs;
 - unmatched lines;

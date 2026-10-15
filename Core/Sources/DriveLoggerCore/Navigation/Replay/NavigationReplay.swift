@@ -206,7 +206,7 @@ public enum NavigationReplay {
         inputs: [NavigationInput], sessionID: UUID, config: NavigationConfig, appBuild: String = "replay"
     ) -> [NavSidecar.Line] {
         var run = LiveNavigationRun(sessionID: sessionID, config: config, appBuild: appBuild)
-        var lines: [NavSidecar.Line] = [.header(run.header)]
+        var lines: [NavSidecar.Line] = run.openingLines
         for input in inputs {
             run.ingest(input) { lines.append($0) }
         }

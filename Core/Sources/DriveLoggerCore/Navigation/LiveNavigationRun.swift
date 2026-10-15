@@ -80,14 +80,26 @@ public struct LiveNavigationRun: Sendable {
         self.sessionID = sessionID
         header = NavSidecar.Header(sessionID: sessionID, config: engine.config, appBuild: appBuild,
                                    buildConfiguration: buildConfiguration)
-        if let roads { try? attachRoads(roads) { _ in } }
+        if let roads {
+            var lines: [NavSidecar.Line] = []
+            try? attachRoads(roads) { lines.append($0) }
+            initialLines = lines
+        }
     }
+
+    /// The `roads` line of a network given at init, written after the header.
+    private var initialLines: [NavSidecar.Line] = []
+
+    /// What a sidecar starts with, before any input: the header, then the
+    /// `roads` line of a network given at init.
+    public var openingLines: [NavSidecar.Line] { [.header(header)] + initialLines }
 
     /// Attaches `network` now, between two inputs (`afterInputs` = `inputs`).
     /// Refused, run unchanged, when a network is already attached or when
     /// the network would change the validated config
     /// (`NavigationEngine.attachRoads`); the refusal is kept in
     /// `roadsRefusal`. No selection request is raised after an attach.
+    /// `emit` receives the sidecar's `roads` line.
     public mutating func attachRoads(_ network: RoadNetwork, emit: (NavSidecar.Line) -> Void) throws(RoadAttachRefusal) {
         do {
             try engine.attachRoads(network)
@@ -95,9 +107,11 @@ public struct LiveNavigationRun: Sendable {
             roadsRefusal = error
             throw error
         }
-        roads = RoadAttachment(network: network, afterInputs: inputs, t: inputs > 0 ? engine.latestArrival : nil)
+        let attachment = RoadAttachment(network: network, afterInputs: inputs, t: inputs > 0 ? engine.latestArrival : nil)
+        roads = attachment
         selectionRule.attached()
         newSelectionRequest = nil
+        emit(.roads(NavSidecar.Roads(attachment)))
     }
 
     /// `ingest(_:droppedInputs:emit:)`, then, if it raised a selection

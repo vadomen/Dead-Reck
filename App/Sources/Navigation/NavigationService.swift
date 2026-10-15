@@ -96,7 +96,7 @@ actor NavigationService {
         } catch {
             openFailure = String(describing: error)
         }
-        writer?.append(.header(live.header))
+        for line in live.openingLines { writer?.append(line) }
         writer?.flush()
         runs[feed.generation] = Run(feed: feed, live: live, writer: writer, openFailure: openFailure,
                                     lastFlush: ContinuousClock.now)

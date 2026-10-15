@@ -253,7 +253,9 @@ struct NavigationLiveTests {
             let contents = try NavSidecar.read(data)
             #expect(contents.header == header)
             #expect(contents.header.buildConfiguration == value)
-            #expect(contents.header.sidecarVersion == 1, "an optional field added within v1, no version bump")
+            // An optional field added within v1 with no version bump; v2 is
+            // the roads line (N3.3).
+            #expect(contents.header.sidecarVersion == NavSidecar.version)
         }
         // nil (replay_nav, or a writer that does not know it): the key is absent.
         let plain = NavSidecar.Header(sessionID: LogFixtures.sessionID, config: config, appBuild: "42")

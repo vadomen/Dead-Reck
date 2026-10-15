@@ -44,6 +44,9 @@ public struct SidecarComparison: Hashable, Sendable {
         /// ill-conditioned for a near-circular ellipse).
         public var ellipseOrientationDeg = 0.0
         public var speedScale = 0.0
+        /// `onRoadShare` (v2): the largest difference where both have one;
+        /// 1 where only one has one. Reported, not gated.
+        public var onRoadShare = 0.0
         /// Estimates whose `converged` flag differs.
         public var convergedMismatches = 0
         /// Estimates that differ in any compared field, bit for bit.
@@ -69,6 +72,11 @@ public struct SidecarComparison: Hashable, Sendable {
             ellipseOrientationDeg = max(ellipseOrientationDeg,
                                         Self.angle(live.orientationDeg, replay.orientationDeg, period: 180))
             speedScale = max(speedScale, abs(live.speedScale - replay.speedScale))
+            switch (live.onRoadShare, replay.onRoadShare) {
+            case let (a?, b?): onRoadShare = max(onRoadShare, abs(a - b))
+            case (nil, nil): break
+            default: onRoadShare = max(onRoadShare, 1)
+            }
             if live.converged != replay.converged { convergedMismatches += 1 }
             if !Self.bitEqual(live, replay) {
                 unequal += 1
@@ -93,6 +101,7 @@ public struct SidecarComparison: Hashable, Sendable {
                 && a.orientationDeg.bitPattern == b.orientationDeg.bitPattern
                 && a.converged == b.converged
                 && a.speedScale.bitPattern == b.speedScale.bitPattern
+                && a.onRoadShare?.bitPattern == b.onRoadShare?.bitPattern
         }
 
         /// Every gated difference within `tolerance` (NaN never is).
@@ -206,9 +215,9 @@ public struct SidecarComparison: Hashable, Sendable {
     /// Human-readable report: one block for `replay_nav`.
     public func report(tolerance: Tolerance) -> String {
         func row(_ name: String, _ d: Differences) -> String {
-            name + String(format: " %d matched: position %.6g m, heading %.6g°, heading σ %.6g°, ellipse axes %.6g m, ellipse orientation %.6g°, speed scale %.3g, converged mismatches %d, unequal %d",
+            name + String(format: " %d matched: position %.6g m, heading %.6g°, heading σ %.6g°, ellipse axes %.6g m, ellipse orientation %.6g°, speed scale %.3g, on-road share %.3g, converged mismatches %d, unequal %d",
                    d.matched, d.positionM, d.headingDeg, d.headingStdDeg, d.ellipseAxesM,
-                   d.ellipseOrientationDeg, d.speedScale, d.convergedMismatches, d.unequal)
+                   d.ellipseOrientationDeg, d.speedScale, d.onRoadShare, d.convergedMismatches, d.unequal)
                 + (d.firstDifferenceT.map { String(format: ", first difference at t %.1f s", $0.seconds) } ?? "")
                 + (d.worstPositionT.map { d.positionM > 0 ? String(format: ", largest position difference at t %.1f s", $0.seconds) : "" } ?? "")
         }
