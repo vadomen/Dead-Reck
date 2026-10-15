@@ -687,6 +687,27 @@ is raised again, a manual reset of the cloud included. The attach's
 accepted arrival (`NavigationEngine.latestArrival`), nil for an attach
 before the first input.
 
+**Pack catalog and selection (N3.3, Core; the app wiring is a later item).**
+`RoadPackCatalog(urls:cache:)` takes the pack files a caller offers (it
+chooses the directory) and a `RoadPackVerificationCache`, keyed by file
+identity (name, size, modification date), not by content hash. A cache hit
+is not verified again; a miss is opened with full verification
+(`RoadPack(contentsOf:verify: true)`) and timed. A truncated, corrupt or
+structurally bad pack is refused with its reason (cached too, until the
+file changes); a file that cannot be read is listed and not cached. The
+value holds the content hash, verified yes/no and the reason, the verify
+time, OSM timestamp, format version, bounds (E7) and grid ID; the caller
+persists it as JSON (`encoded()`, `init(data:)`). `RoadPackSelection`
+opens the usable packs memory-mapped without full verification, refusing a
+pack whose identity changed or whose header's content hash is not the
+verified one, then selects every pack whose coverage (`COVR`, else the
+bounding box) intersects the request's circle and builds their
+`RoadNetwork`; packs that cannot be used together (different grids, the
+same pack twice) are refused as a set. `RoadPackSelector` is the
+synchronous form over fixed packs (`replay_nav --as-live --roads`).
+Everything is Sendable values and pure functions, callable off the main
+actor. Data: © OpenStreetMap contributors, ODbL 1.0.
+
 N4 B acceptance and the as-live table: moved to [docs/archive/NAVIGATION-history.md](archive/NAVIGATION-history.md).
 
 ## Adoption rule for engine changes
