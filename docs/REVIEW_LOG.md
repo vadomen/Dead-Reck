@@ -610,3 +610,23 @@ Tests: Core passes 819 tests in 110 suites, 36 known issues (test 3 known FAIL a
 ### Run 31 summary
 
 1 round, round 1 clean. Findings: 0 fixed, 0 rejected, 4 MINOR deferred (R31.1-1 to R31.1-4). Final: Core 819 tests in 110 suites pass, 36 known issues (test 3); App unchanged.
+
+## Run 32: N3.3 roads in the live engine, developer pack bridge (main..n3.3, 4e29b3e), started 2026-10-15
+
+### Round 1
+
+Reviewers: three fresh `reviewer` (opus) on disjoint sets: A engine, live loop and sidecar; B replay, compare, pack catalog and selection, docs; C app. Result: 0 BLOCKER / 2 MAJOR / 7 MINOR.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R32.1-1 | MAJOR | `RoadAttach.swift:88-91`: no test pins a `RoadSelectionRequest`'s contents (centre and radius = the estimate at `latestArrival` and its 95 % semi-major axis); test (a) checks only finiteness. Mutation semiMajorM → semiMinorM survives every suite; an elongated cloud would then miss a pack and roads never attach. | CONFIRMED | regression test added (round 1 commit). |
+| R32.1-2 | MAJOR | `NavigationReplay.swift:729-733`: the input count for an input the engine rejects as a time jump is untested; removing `givenInputs += 1` survives, and the metrics replay would attach one input later than `LiveNavigationRun` after such an input. | CONFIRMED | regression test added (round 1 commit). |
+| R32.1-3 | MINOR | `docs/NAV_SIDECAR.md:64` and `RoadAttachment.t` doc (`RoadAttach.swift:118-121`) say `t` is the arrival of the last input before the attach; it is the latest (largest) accepted arrival (`NavigationEngine.swift:285`). Informational: replay attaches by `afterInputs`. | DEFERRED | backlog. |
+| R32.1-4 | MINOR | `docs/NAV_SIDECAR.md:52` and `Estimate.onRoadShare` doc (`NavSidecar.swift:88-91`): the key is also omitted with roads attached when the cloud was too wide to engage at the last attempt (drive-8: 10 of 2092 seconds). Readers should rely on the `roads` line. | DEFERRED | backlog. |
+| R32.1-5 | MINOR | `replay_nav --compare` attaches the metrics replay at the sidecar's `afterInputs` but keeps the from-start (or live-rule) mode label, so it overwrites that row in metrics.json and its GeoJSON (`main.swift:262`, `NavigationReplay.swift:98-104`, `ReplayReport.swift:95`). | DEFERRED | backlog. |
+| R32.1-6 | MINOR | `RoadPackCatalog.swift:218-223`: the "file changed during verification" branch is untested (needs an injectable identity reader). | DEFERRED | backlog. |
+| R32.1-7 | MINOR | `App/Sources/Navigation/MemoryFootprint.swift:12`: `task_self_trap()` leaks a send right per call (Diagnostics polls every 2 s; saturates after about 36 h). Use `mach_task_self_`. | DEFERRED | backlog. |
+| R32.1-8 | MINOR | Packs are memory-mapped directly from `Documents/RoadPacks` and held for the drive (`RoadPack.swift:64`, `RoadPackLibrary.swift:132-133`); a pack overwritten or truncated in place during a recording could SIGBUS. Not verified whether Finder/Files overwrite in place. Fix: clone into a private directory before mapping (N3.4 import into Application Support is the natural place). | DEFERRED | backlog; test-drive instructions say not to copy packs during a recording. |
+| R32.1-9 | MINOR | `RoadsDiagnostics.swift:34-41`: with no recording running, "Recording uses" shows the last finished recording's packs unlabelled. Label it "Last recording used". | DEFERRED | backlog. |
+
+Tests: Core passes 839 tests in 114 suites at 4e29b3e, 36 known issues (test 3). App: 292 tests; `RecordingSessionTests` "A write failure: error row, finish, failed; no stop row (rule 4)" failed in 2 of 4 runs at 4e29b3e (RecordingSession is not in the range; baseline on main pending).

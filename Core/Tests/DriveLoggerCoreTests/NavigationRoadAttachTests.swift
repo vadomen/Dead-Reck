@@ -129,6 +129,43 @@ struct NavigationRoadAttachTests {
         #expect(run.selectionRequest == requests.last)
     }
 
+    /// R32.1-1: what a request holds, not only that it is finite.
+    @Test("(a2) Each selection request is the estimate at the latest arrival of an engine fed the same inputs: centre, 95 % semi-major axis, afterInputs, t")
+    func selectionRequestContents() throws {
+        let inputs = Self.inputs()
+        var run = LiveNavigationRun(sessionID: Self.sessionID, config: Self.config(), appBuild: "test")
+        // Fed the same inputs in lockstep, independently of the run.
+        var reference = NavigationEngine(config: Self.config())
+        var requests = 0
+        var initialisationChecked = false
+        var pinChecked = false
+        var majorDiffersFromMinor = false
+        for (index, input) in inputs.enumerated() {
+            let wasInitialized = reference.isInitialized
+            run.ingest(input) { _ in }
+            reference.ingest(input)
+            guard let request = run.newSelectionRequest else { continue }
+            requests += 1
+            let t = try #require(reference.latestArrival)
+            let expected = try #require(reference.estimate(at: t))
+            #expect(request.latitude == expected.latitude, "input \(index)")
+            #expect(request.longitude == expected.longitude, "input \(index)")
+            #expect(request.radiusM == expected.ellipse.semiMajorM, "input \(index)")
+            #expect(request.afterInputs == index + 1 && request.afterInputs == run.inputs, "input \(index)")
+            #expect(request.t == input.arrival && request.t == t, "input \(index)")
+            if expected.ellipse.semiMajorM != expected.ellipse.semiMinorM { majorDiffersFromMinor = true }
+            if !wasInitialized {
+                // The initialisation request comes first.
+                #expect(requests == 1)
+                initialisationChecked = true
+            }
+            if case .manualFix = input { pinChecked = true }
+        }
+        #expect(initialisationChecked && pinChecked && requests == 21)
+        // Otherwise semi-major and semi-minor could not be told apart.
+        #expect(majorDiffersFromMinor)
+    }
+
     // MARK: (b) attach after k inputs
 
     @Test("(b) Attach after k inputs: every line before the attach is the no-roads run's; the engine state there too")

@@ -89,6 +89,76 @@ struct NavigationReplayLiveRoadsTests {
         #expect(fromStart.roadsAttachedAfterInputs == nil && fromStart.attachedRoadSetHash == nil)
     }
 
+    /// R32.1-2: an input the engine rejects as an implausible forward time
+    /// jump still counts as given (`LiveNavigationRun.inputs` counts it), so
+    /// the metrics replay attaches after the same number of inputs.
+    @Test("A corrupt huge-t input before the attach counts as given: the metrics replay attaches where LiveNavigationRun does, as live and after k inputs")
+    func rejectedTimeJumpCountsAsGiven() throws {
+        let clean = Attach.inputs()
+        let firstInit = try #require(clean.indices.first { k in
+            var e = NavigationEngine(config: Attach.config())
+            for input in clean[...k] { e.ingest(input) }
+            return e.isInitialized
+        })
+        // The first motion row, re-stamped at 1e9 s and inserted right after
+        // it: before the input that initialises the engine (and so before
+        // the live attach). The very first input is always accepted, so the
+        // corrupt one cannot come first.
+        let j = try #require(clean.indices.first { if case .motion = clean[$0] { true } else { false } })
+        #expect(j < firstInit, "first motion \(j), first initialisation \(firstInit)")
+        guard case .motion(let sample, _) = clean[j] else { return }
+        var inputs = clean
+        inputs.insert(.motion(sample, at: MonotonicTimestamp(seconds: 1e9)), at: j + 1)
+        var probe = NavigationEngine(config: Attach.config())
+        for input in inputs[...j] { probe.ingest(input) }
+        #expect(!probe.accepts(inputs[j + 1]))
+
+        let (near, far) = try Self.packs()
+        let given = ReplayRoadSet(try RoadNetwork(packs: [near, far]))
+
+        /// The replay's track is the live run's estimates at each second.
+        func expectTrack(_ result: ReplayResult, _ lines: [NavSidecar.Line], _ label: String) {
+            let estimates = lines.compactMap { if case .estimate(let e) = $0 { e } else { nil } }
+            let byT = Dictionary(uniqueKeysWithValues: estimates.map { ($0.t.seconds, $0) })
+            var matched = 0
+            for point in result.track {
+                guard let e = byT[point.t] else { continue }
+                matched += 1
+                #expect(point.latitude == e.latitude && point.longitude == e.longitude, "\(label) t \(point.t)")
+            }
+            #expect(matched > 50, "\(label)")
+        }
+
+        // As live: the app's loop with a synchronous selector over the packs.
+        var run = LiveNavigationRun(sessionID: Attach.sessionID, config: Attach.config(), appBuild: "replay")
+        var selector = given.selector
+        var lines: [NavSidecar.Line] = []
+        for input in inputs {
+            run.ingest(input, selectRoads: { selector.network(for: $0) }) { lines.append($0) }
+        }
+        let roads = try #require(run.roads)
+        #expect(roads.afterInputs == firstInit + 2)
+        #expect(run.engine.counters.inputsRejectedTimeJump == 1)
+        let live = NavigationReplay.run(logName: "live", inputs: inputs, options: Self.options(given, attach: .live))
+        #expect(live.counters.inputsRejectedTimeJump == 1)
+        #expect(live.roadsAttachedAfterInputs == roads.afterInputs)
+        #expect(live.counters == run.engine.counters)
+        expectTrack(live, lines, "live")
+
+        // After k inputs, k past the rejected one: the replay attaches at k,
+        // and runs as a LiveNavigationRun attached at k. k = inputs.count:
+        // after the last input.
+        let set = ReplayRoadSet(try RoadNetwork(packs: [near]))
+        for k in [j + 2, firstInit + 1, 2_500, 2_501, 2_502, inputs.count] {
+            let app = Attach.live(inputs, network: set.network, attachAfter: k)
+            #expect(app.run.roads?.afterInputs == k, "k \(k)")
+            let result = NavigationReplay.run(logName: "live", inputs: inputs, options: Self.options(set, attach: .afterInputs(k)))
+            #expect(result.roadsAttachedAfterInputs == k, "k \(k)")
+            #expect(result.counters == app.run.engine.counters, "k \(k)")
+            expectTrack(result, app.lines, "k \(k)")
+        }
+    }
+
     @Test("Compare with a v2 sidecar's roads line: the same packs at its afterInputs give PASS (exact); the metrics replay attaches there too")
     func compareAtAfterInputs() throws {
         let inputs = Attach.inputs()
