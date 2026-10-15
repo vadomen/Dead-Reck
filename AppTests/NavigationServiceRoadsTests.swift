@@ -56,10 +56,22 @@ struct NavigationServiceRoadsTests {
         RoadPackLibrary(source: RoadPackLibrary.directorySource(dir), cacheURL: nil)
     }
 
-    func comparison(feed: RecordingNavigationFeed, events: [LogEvent], packs: [URL]) throws
+    /// Core's loop over `events` (a 2000-particle replay, slow in Debug)
+    /// compared with the sidecar, off the main actor so it doesn't stall the
+    /// main-actor work of tests running alongside (R32.2-1).
+    func comparison(feed: RecordingNavigationFeed, events: [LogEvent], packs: [URL]) async throws
         -> (SidecarComparison, NavSidecar.Contents) {
-        let contents = try NavSidecar.read(contentsOf: feed.sidecarURL)
-        let config = NavigationConfig(seed: NavigationSeed.derive(header: feed.header))
+        let sidecarURL = feed.sidecarURL
+        let header = feed.header
+        return try await Task.detached {
+            try Self.compare(sidecarURL: sidecarURL, header: header, events: events, packs: packs)
+        }.value
+    }
+
+    nonisolated static func compare(sidecarURL: URL, header: LogHeader, events: [LogEvent], packs: [URL]) throws
+        -> (SidecarComparison, NavSidecar.Contents) {
+        let contents = try NavSidecar.read(contentsOf: sidecarURL)
+        let config = NavigationConfig(seed: NavigationSeed.derive(header: header))
         let inputs = events.compactMap { NavigationInput($0) }
         var roads: ReplayRoadSet?
         var attach = ReplayRoadAttach.live
@@ -67,8 +79,8 @@ struct NavigationServiceRoadsTests {
             roads = ReplayRoadSet(try RoadNetwork(packs: packs.map { try RoadPack(contentsOf: $0) }))
         }
         if let live = contents.roads { attach = .afterInputs(live.afterInputs) }
-        let lines = NavigationReplay.liveLines(inputs: inputs, sessionID: feed.header.sessionID, config: config,
-                                               appBuild: feed.header.app.build, roads: roads,
+        let lines = NavigationReplay.liveLines(inputs: inputs, sessionID: header.sessionID, config: config,
+                                               appBuild: header.app.build, roads: roads,
                                                attach: roads == nil ? .live : attach)
         return (SidecarComparison(sidecar: contents, replay: lines, replayConfig: config,
                                   givenRoadSetHash: roads?.roadSetHashHex), contents)
@@ -97,7 +109,7 @@ struct NavigationServiceRoadsTests {
         tap.finish()
         await task.value
 
-        let (comparison, contents) = try comparison(feed: feed, events: early + late, packs: [pack])
+        let (comparison, contents) = try await comparison(feed: feed, events: early + late, packs: [pack])
         let roads = try #require(contents.roads, "the sidecar has a roads line")
         #expect(roads.afterInputs >= 1 && roads.afterInputs <= early.count + late.count)
         #expect(roads.roads.count == 1 && roads.roadSetHash.hasPrefix(status.roadSetHashPrefix ?? "?"))
@@ -121,7 +133,7 @@ struct NavigationServiceRoadsTests {
         tap.finish()
         await task.value
 
-        let (comparison, contents) = try comparison(feed: feed, events: events, packs: [])
+        let (comparison, contents) = try await comparison(feed: feed, events: events, packs: [])
         #expect(contents.roads == nil)
         #expect(comparison.exact, "\(comparison.report(tolerance: .default))")
         #expect(await service.roadsStatus().inUse == false)
@@ -149,7 +161,7 @@ struct NavigationServiceRoadsTests {
 
         let packs = await lib.status().packs
         #expect(packs.count == 2 && packs.allSatisfy { !$0.verified && $0.refusal != nil })
-        let (comparison, contents) = try comparison(feed: feed, events: events, packs: [])
+        let (comparison, contents) = try await comparison(feed: feed, events: events, packs: [])
         #expect(contents.roads == nil)
         #expect(comparison.exact, "\(comparison.report(tolerance: .default))")
     }
@@ -172,7 +184,7 @@ struct NavigationServiceRoadsTests {
         tap.finish()
         await task.value
 
-        let (comparison, contents) = try comparison(feed: feed, events: events, packs: [])
+        let (comparison, contents) = try await comparison(feed: feed, events: events, packs: [])
         #expect(contents.roads == nil)
         #expect(comparison.exact, "\(comparison.report(tolerance: .default))")
         let finished = try #require(await service.finished.first)
@@ -188,7 +200,12 @@ struct NavigationServiceRoadsTests {
         try RoadPackFixture.write(try RoadPackFixture.data(), named: "fixture.roadpack", in: dir)
         let gate = DispatchSemaphore(value: 0)
         let urls = RoadPackLibrary.listing(dir)
-        let slow = RoadPackLibrary(source: { _ = gate.wait(timeout: .now() + 20); return urls }, cacheURL: nil)
+        // Each scan passes the gate on, so a second scan never waits out the timeout.
+        let slow = RoadPackLibrary(source: {
+            _ = gate.wait(timeout: .now() + 20)
+            gate.signal()
+            return urls
+        }, cacheURL: nil)
         let service = NavigationService(library: slow)
         let (feed, tap) = makeFeed(5, scratch: scratch)
         let task = service.start(feed)
@@ -200,7 +217,7 @@ struct NavigationServiceRoadsTests {
         _ = await slow.candidates()
         try await Task.sleep(for: .milliseconds(100))
 
-        let (_, contents) = try comparison(feed: feed, events: events, packs: [])
+        let (_, contents) = try await comparison(feed: feed, events: events, packs: [])
         #expect(contents.roads == nil)
         #expect(await service.finished.first?.roadPackNames == [])
     }

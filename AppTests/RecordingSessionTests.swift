@@ -248,6 +248,37 @@ struct RecordingSessionTests {
         #expect(session.state == .idle)
     }
 
+    @Test("A write failure stops every source before its error row: a late sample can't follow it (R32.2-1)")
+    func writeFailureQuiescesBeforeErrorRow() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let source = OnDemandSource()
+        // No periodic stats row: the source's samples are the only other rows.
+        let session = RecordingFixtures.session(sources: [source], store: scratch.store, statsInterval: .seconds(3_600))
+        try await session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
+        let url = try #require(session.currentFile)
+        let generation = try #require(session.currentGeneration)
+        source.emit()
+
+        let failing = Task { await session.handleWriteFailure(.diskFull, generation: generation) }
+        // One main-actor turn: `handleWriteFailure` runs up to its first
+        // suspension; the end path's body has not run yet.
+        await Task.yield()
+        #expect(!source.isRunning)
+        // A sample from the sensor's own queue in that gap.
+        source.emit()
+        await failing.value
+        #expect(session.state == .failed(reason: "disk full", unwrittenEvents: 0))
+        // A second report writes nothing.
+        await session.handleWriteFailure(.diskFull, generation: generation)
+
+        let (_, events, _) = try RecordingFixtures.read(url)
+        let errorRow = LogEvent.Payload.lifecycle(LifecycleSample(.error, detail: "write failed: disk full"))
+        #expect(events.last?.payload == errorRow)
+        #expect(events.filter { $0.payload == errorRow }.count == 1)
+        #expect(RecordingFixtures.kinds(events, .accelerometer).count == 1)
+    }
+
     @Test("A failure delivered while stopping ends in failed, not idle (R3-2, R3-3)")
     func failureWhileStopping() async throws {
         let scratch = try ScratchStore()
@@ -852,5 +883,31 @@ struct RecordingSessionManualFixTests {
         #expect(try #require(stale.obdSpeedT).interval(to: t) > ManualFixGate.maxOBDAgeS)
         let gone = fixes[1].sample
         #expect(gone.obdSpeedKmh == nil && gone.obdSpeedT == nil && gone.speedSource == "unknown")
+    }
+}
+
+/// A source that delivers one `accel` row, through its `SampleGate`, only
+/// when the test calls `emit()` — as a sensor queue may still do after the
+/// session decided to stop it. `stop()` closes the gate, so a later `emit()`
+/// writes nothing.
+@MainActor
+private final class OnDemandSource: SensorSource {
+    let name = "onDemandIMU"
+    let availability = SensorAvailability.available
+    private var gate: SampleGate?
+
+    var isRunning: Bool { gate.map { !$0.isClosed } ?? false }
+
+    func start(clock: SessionClock, sink: LogSink) throws {
+        gate = SampleGate(source: name, clock: clock, sink: sink)
+    }
+
+    func stop() {
+        gate?.close()
+    }
+
+    func emit() {
+        guard let gate else { return }
+        gate.deliver(LogEvent(timestamp: gate.clock.now(), payload: .accelerometer(Vector3(x: 0, y: -1, z: 0))))
     }
 }

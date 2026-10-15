@@ -573,8 +573,9 @@ policy (the doc comment on `RecordingSession` is authoritative):
    `canStart == false`, `startBlocker == .lowDiskSpace(…)`; `start` re-checks
    and throws it before creating anything. An unreadable volume does not
    block start.
-4. A write failure on `failures` (`ENOSPC`, I/O error): `lifecycle` `error`
-   row, `finish()`, `failed(reason:unwrittenEvents:)` — so the user sees it
+4. A write failure on `failures` (`ENOSPC`, I/O error): stop every source,
+   then the `lifecycle` `error` row (nothing after it, R32.2-1), `finish()`,
+   `failed(reason:unwrittenEvents:)` — so the user sees it
    even if the row never reached the disk. The only way into `failed`,
    including when the final `finish()` of any stop (user or rule 2) fails;
    then no further row is written (R3-3).

@@ -630,3 +630,18 @@ Reviewers: three fresh `reviewer` (opus) on disjoint sets: A engine, live loop a
 | R32.1-9 | MINOR | `RoadsDiagnostics.swift:34-41`: with no recording running, "Recording uses" shows the last finished recording's packs unlabelled. Label it "Last recording used". | DEFERRED | backlog. |
 
 Tests: Core passes 839 tests in 114 suites at 4e29b3e, 36 known issues (test 3). App: 292 tests; `RecordingSessionTests` "A write failure: error row, finish, failed; no stop row (rule 4)" failed in 2 of 4 runs at 4e29b3e (RecordingSession is not in the range; baseline on main pending).
+
+Round 1 commit: 4482802.
+
+### Round 2
+
+Reviewers: two fresh `reviewer` (opus): A2 Core (engine, live loop, sidecar, replay, compare, catalog, selection, replay_nav); C2 app, with the `RecordingSessionTests` failure as its primary question. Result: 0 BLOCKER / 1 MAJOR / 3 MINOR.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R32.2-1 | MAJOR | `App/Sources/Recording/RecordingSession.swift` `handleWriteFailure`: the rule-4 `error` row was written before the sources were quiesced and before `stopRowQueued` was set (both only in `performFail`, after a main-actor hop), so sample or `stats` rows could land after it; `writeFailureEntersFailed` failed 2 of 8 app-test runs (pre-existing, same as R5.1-4; the range's main-actor test replays widened the gap). | CONFIRMED | Fixed (user decision 2026-10-15: fix in this branch): quiesce, then the error row, then `stopRowQueued`, before the first suspension; rule 4 in docs/LOG_FORMAT.md and docs/PLAN.md now reads "stop every source, then the error row". Regression test `writeFailureQuiescesBeforeErrorRow` fails before, passes after. `NavigationServiceRoadsTests.comparison` moved off the main actor. Closes R5.1-4. |
+| R32.2-2 | MINOR | `AppTests/NavigationServiceRoadsTests.swift:191` `lateResultDropped`: one `gate.signal()` can leave a second scan blocked 20 s. | FIXED | in the round 2 commit (the gate passes the signal on). |
+| R32.2-3 | MINOR | `Core/Sources/replay_nav/main.swift:248, 358-361`: when the live attach is refused because the config would change (only `--compare --set <road key>`), replay_nav prints a clamp note that does not apply and "Roads attach none (no selection request met a covering pack set)"; the same fallback text is printed for a set refused at build time; each used fix rebuilds the network (selector caches only build refusals). | DEFERRED | backlog. |
+| R32.2-4 | MINOR | Link-loss tests flaky: `OBDLinkServiceTests.swift:283` ("Link loss: disconnected → reconnecting → connected…") and `StartupInitRecordingTests.swift:348` ("Real link dropped before Start (reconnecting)…"): after `central.loseLink()` the dropped session's "→ failed (transport closed)" event sometimes never arrives; 2 of 4 full runs, and once in 15 iterations of the two tests alone. Outside the range; baseline on main pending. | DEFERRED | backlog. |
+
+Tests: Core passes 841 tests in 114 suites, 36 known issues (test 3). App: 293 tests; 4 full runs: 2 pass, 2 fail on one link-loss test each (R32.2-4); `writeFailureEntersFailed` and the new `writeFailureQuiescesBeforeErrorRow` pass in all 4. Simulator build succeeds.
