@@ -68,6 +68,8 @@ actor NavigationService {
         var refusal: String?
         /// Covering sets (file names, in candidate order) already refused.
         var knownRefusals: [RoadPackSelection.Refusal] = []
+        /// How the latest finished attempt of this recording ended.
+        var lastOutcome: NavSidecar.RoadsSelection.Outcome?
     }
 
     /// What Diagnostics shows about roads in the recording.
@@ -82,6 +84,9 @@ actor NavigationService {
         var refusal: String?
         var selectionPending = false
         var onRoadShare: Double?
+        /// How the latest selection attempt of this recording ended; nil
+        /// before the first (the map's roads warning reads it).
+        var lastOutcome: NavSidecar.RoadsSelection.Outcome?
 
         var inUse: Bool { !packNames.isEmpty }
         static let none = RoadsStatus()
@@ -235,6 +240,7 @@ actor NavigationService {
         let record = run.live.finishSelection(attempt) { writer?.append($0) }
         selectionAttempts += 1
         lastAttemptOutcome = record.outcome
+        state.lastOutcome = record.outcome
         if let refusal = record.refusal {
             state.refusal = (refusal.names.isEmpty ? "" : refusal.names.joined(separator: ", ") + ": ") + refusal.reason
             if !state.knownRefusals.contains(where: { $0.names == refusal.names }) {
@@ -260,7 +266,8 @@ actor NavigationService {
         if let generation = current, let run = runs[generation] {
             let state = roadStates[generation]
             var status = RoadsStatus(recording: true, refusal: state?.refusal,
-                                     selectionPending: run.live.roads == nil && run.live.selectionRequest != nil)
+                                     selectionPending: run.live.roads == nil && run.live.selectionRequest != nil,
+                                     lastOutcome: state?.lastOutcome)
             if let roads = run.live.roads {
                 status.packNames = state?.names ?? []
                 status.packHashPrefixes = roads.network.packs.map { String(NavigationSeed.hex($0.contentHash).prefix(8)) }
