@@ -433,8 +433,35 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   [--set <configKey>=<number>] [--out ../logs/out] \
   [--as-live | --file-order] [--compare <log.nav.jsonl> [--tolerance <m>] [--heading-tolerance <deg>]] \
   [--write-sidecar <out.nav.jsonl>] [--pin-pair-window <s>] [--strict] \
-  [--roads <pack.roadpack>]... [--wrong-road-tolerance <m>]
+  [--roads <pack.roadpack>]... [--wrong-road-tolerance <m>] \
+  [--fix-offset <from>:<to>|auto[:<len>:<step>]]... [--fix-source any|accessory|phone] [--fix-max-acc <m>] \
+  [--fix-offset-max <m>] [--fix-offset-step <m>] [--fix-offset-stat mean|median] \
+  [--fix-offset-course <deg>|off] [--fix-offset-test <m>@<deg>]... [--fix-offset-trace]
 ```
+
+- **Constant-offset check** (`--fix-offset`, needs `--roads`; analysis
+  only: no engine, no metrics files, nothing but relative metres and
+  bearings printed). `FixOffsetScan` scores each window of clean fixes
+  (session seconds; `auto` = 60 s windows every 30 s) by the mean
+  distance to the nearest road, capped at 100 m. A moving fix (≥ 2 m/s,
+  with a course) counts only roads within 30° of its course. It scores
+  the recorded track and every constant shift on a ±400 m grid (10 m,
+  then 1 m around the best). It prints the best shift and a runner-up at
+  least 100 m from it, the 5th percentile and median of all shift scores,
+  and the recorded track's rank (the share of shifts that do as well).
+  The verdict: **off roads** when the recorded mean is ≥ 15 m and its
+  rank ≥ 20 %; **shift fits** when, in addition, the best shift is
+  ≥ 50 m and halves the mean; **unique** when the runner-up scores at
+  least twice the best and 10 m more. `--fix-offset-test` scores a
+  hypothesis (a pin's vector) in every window with its rank among the
+  grid shifts. Explicit windows also get the fixes' dynamics (path
+  against the OBD distance, |GNSS − OBD speed|, net course change
+  against gyro yaw about gravity), and every pin is set against the
+  time-nearest scanned fix within 5 s. `--fix-source` picks
+  `isProducedByAccessory` fixes or the rest. `--fix-max-acc` widens the
+  15 m clean limit; the header then says the run is not the clean-fix
+  rule. `--fix-offset-trace` lists each fix's distance to the road.
+  Results: "Constant-offset GNSS check" below.
 
 - Inputs: motion, OBD, location and manualFix from any v1–v3 recording, fed in
   arrival order: by `t`, a location fix by `max(receivedT, t)`, ties in file
@@ -2410,6 +2437,138 @@ Outputs, scripts and tables (git-ignored): logs/n33/ (`acc/` the replays,
 `mem-engine.txt`; `n22/` the N2-2 analysis and diagnostic runs; `tools/` the
 probes; `bin/` the binary).
 
+### Constant-offset GNSS check (2026-10-16): drive-10's CarPlay fixes
+
+drive-10 (recorded 2026-10-16, in the git-ignored `logs/drives/`) has
+149 clean fixes, all `accessory: true` (CarPlay) at an accuracy of exactly
+10.0 m, 0–148 s. Then come 103 accessory fixes at 20–50 m (149–251 s:
+the accuracy jumps to 25 m and grows by about 1.2 m/s, as if the source
+were dead-reckoning), then phone fixes at ≥ 205 m. It has 7 pins: 1 at
+58.5 s (moving), 2 at 211.4 s (stopped), the rest after the accessory
+fixes end. The user's numpy check outside the repo reported a constant
+offset of ~330 m at ~65°. Everything below is from `replay_nav
+--fix-offset` with national + region-A (roadSetHash fecadb9b75a85f3b).
+Outputs and the runner are in the git-ignored `logs/fixoffset/` (`run.sh`,
+`<drive>-accessory.txt`, `<drive>-phone.txt`, `drive10-*.txt`).
+
+**drive-10, clean fixes** (mean/p50/p90 in metres, capped at 100):
+
+| window s | fixes | recorded mean/p50/p90 | rank | best shift | best mean | shifts p5 | runner-up (mean) | pin 1 vector 298 m @64° rank | pin 2 vector 326 m @70° rank |
+|---|---|---|---|---|---|---|---|---|---|
+| 0–148 | 148 | 56.3/46.9/100 | 84 % | 335 m @65° | 13.9 | 23.2 | 406 m @10° (15.7) | 0.70 % | 0.41 % |
+| 0–50 | 50 | 45.1/39.6/99.8 | 87 % | 264 m @65° | 5.2 | 17.8 | 447 m @40° (12.9) | 2.8 % | 6.6 % |
+| 50–88 | 38 | 39.3/36.4/74.0 | 56 % | 394 m @21° | 5.6 | 12.6 | 436 m @53° (6.7) | 9.9 % | 2.0 % |
+| 88–140 (lake) | 52 | 82.9/100/100 | 82 % | 413 m @7° | 6.9 | 18.9 | 344 m @64° (9.7) | 9.1 % | 12.9 % |
+| 140–148 | 8 | 34.0/12.2/100 | 31 % | 409 m @40° | 1.1 | 10.5 | 149 m @290° (1.6) | 22 % | 1.3 % |
+| 148–181 (≤ 50 m fixes) | 33 | 20.3/15.8/31.9 | 34 % | 306 m @281° | 2.5 | 6.9 | 469 m @214° (2.6) | 9.9 % | 11 % |
+| 180–251 stop (≤ 50 m fixes) | 71 | 12.7 (one point) | 32 % | any | 0.0 | 1.6 | any (0.0) | 33 % | 15 % |
+
+- **The track as recorded is off the roads.** It sits at 46.9 m median
+  (98–100 m over 88–140 s), and 84 % of all shifts within ±400 m lay it
+  closer to roads than it is. In every other drive, every window where the
+  car is on a mapped road is at most 14.2 m (mean) from roads, and 10.7 m
+  outside clean's car park (below).
+- **The best shift is ~335 m at ~65°** over the whole 0–148 s, with and
+  without the course gate (`--fix-offset-course off`: 335 m @65°, mean
+  8.2 m). 60 s sliding windows from 61 to 148 s give 328–335 m at 64–69°.
+- **Road fit alone does not single the shift out.** The runner-up
+  (406 m @10°) scores 15.7 against 13.9. In 30–60 s windows the best
+  shift wanders (264 m @65°, 394 m @21°, 413 m @7°, even 336 m @282°
+  over 31–90 s) because a few hundred metres of track fit many places in
+  a street grid. The user's "5 m after the shift, p90 17 m against a
+  5th-percentile shift of 30 m" was not reproduced as a clean
+  separation: here p5 is 23.2 m (14.2 m without the course gate).
+- **The pins identify it.** They are independent of the fixes, and each
+  pin's vector from the time-nearest fix (+0.4 s and +0.5 s) is 298 m
+  @64° and 326 m @70°. Those vectors are 43 m apart, inside the pins'
+  30 m σ each, and lie 40 m and 30 m from the best shift. Scored on the
+  0–148 s track they rank 0.70 % and 0.41 % among the 6561 grid shifts.
+  Two independent pins falling in the best ~0.5 % of the shift plane, on
+  a track that ranks 84 % unshifted, is the evidence for a constant
+  offset. It is not the road fit on its own.
+- **The dynamics are genuine** (explicit windows, every 30 s from 0 to
+  181 s). Fix path against OBD distance is +2.2 to +4.6 % per window, the
+  same +2–4 % as genuine drives (the OBD scale, `scalePriorMean` 1.016).
+  The median |GNSS − OBD speed| is 0.5–1.3 km/h. The net course change
+  equals gyro yaw within 2°: 42/42, −57/−58, 6/6, 210/210, −60/−62 and
+  6/6°. A shifted copy of the true track is what a spoofer, or a source
+  with a shifted position, produces.
+- **When it starts and ends.** It starts at or before the first fix
+  (−0.1 s): no window is on roads and there is no jump, so the shift was
+  already there when the recording began. While moving at 10 m
+  accuracy it lasts to 148 s. At 148.9–181 s (20–48 m fixes) the track
+  is still off roads (34 %) but too short to identify a vector. The stop
+  at 180–251 s is one point, which no road test can place; pin 2
+  (211.4 s, 326 m @70°) says the offset was still there. After 251 s
+  there are no accessory fixes, and the phone fixes (≥ 205 m) cannot show
+  a 330 m offset. Its end is unknown.
+
+**Every other drive** (60 s windows every 30 s; recordings without clean
+fixes: the 2026-10-08 16:48 drive, jammed-A, jammed-B, manual and manual-3
+have none, drive-9 has one):
+
+| drive | source | windows | on roads | recorded mean (on-road windows) | rank | off-road windows |
+|---|---|---|---|---|---|---|
+| clean | accessory | 8 | 4 | 2.0–3.1 m | 0 % | 322–445 s (below) |
+| clean | phone | 4 | 2 | 5.6–14.2 m | 6–9 % | 66–119 s (below) |
+| clean-long | accessory | 21 | 21 | 0.2–7.8 m | 0–15 % | none |
+| clean-long | phone | 3 | 3 | 3.2–5.9 m | 0–1 % | none |
+| drive-7 | accessory | 8 | 8 | 1.1–7.5 m | 0–23 % | none |
+| drive-7 | phone | 5 | 5 | 3.6–4.9 m | 0–4 % | none |
+| drive-8 | accessory | 44 | 44 | 0.6–10.7 m | 0–8 % | none |
+| drive-8 | phone | 3 | 3 | 5.9–7.2 m | 8–11 % | none |
+| drive-10 | accessory | 5 | 0 | — | — | all (43.5–75.5 m, 51–91 %) |
+
+The phone-GNSS rows are the control: the phone's own clean fixes are on
+the roads wherever the car is on a mapped road, and so are the
+accessory fixes of every earlier drive. The off-road thresholds (15 m,
+20 %) were set after seeing these numbers, just above their maxima.
+The mean reaches 14.2 m once (clean, phone, 36–95 s, slow, leaving the
+car park), so 15 m has little margin. The rank alone reaches 23 % on a
+short stationary window (drive-7, 6 fixes), which is why the gate needs
+both.
+
+- **clean, 322–445 s (accessory), likely unmapped, not proven.** The
+  fixes are on roads to 359 s (0.6–2 m). The car then slows from 14 to
+  3 m/s, and the distance grows smoothly 9 → 100 m over 20 s as it drives
+  away and parks (410–445 s at 0 m/s). There is no jump. The dynamics
+  match: 355–385 s path 161 m against OBD 155 m (+4.0 %), course change
+  179° against gyro 178°. A drag-off of ~100 m over that path would show
+  about +19 % and a course/gyro mismatch. The best shift per window is
+  inconsistent (323 m @171°, 382 m @215°, 275 m @147°, 375 m @99°). The
+  packs include `service`, so the car stopped more than 100 m from any
+  mapped way.
+- **clean, 66–119 s (phone), unmapped manoeuvring.** At 0–10 m/s the
+  distances jump between 0 and 100 m fix to fix, and the best shift is
+  not unique. Again no constant vector.
+
+**Answers.**
+
+1. **drive-10's pins 1 and 2 should be scored, and the CarPlay fixes
+   0–251 s are the wrong truth there.** The pins agree with each other
+   and with the roads, and the fixes agree with neither. Any replay mode
+   is affected today. With `--gps use` the engine follows the fixes: at
+   pin 1 its prior is 298 m off with a 4 × 4 m 95 % ellipse, at pin 2
+   327 m off with 5 × 5 m (3 pin resets, 0 fixes rejected off-road). That
+   is the engine's real behaviour and the right thing to score. Any mask
+   mode would instead score the withheld CarPlay fixes as clean-fix
+   truth. The truth file has no way to exclude fixes, so a drive-10
+   acceptance run needs one (BACKLOG N3-FIXPIN) before it can be defined.
+   No truth entry was written.
+2. **No acceptance drive's clean-fix truth shows this offset.** clean-long,
+   drive-7 (from 1870 s) and drive-8 (664–1988 s) are on roads in every
+   window, accessory and phone. clean's withheld fixes after 230 s include
+   the 362–445 s stretch, which is off the mapped roads but moves with the
+   car (above): likely unmapped, not proven. drive-9's truth is a network
+   fix and the other truth-file drives have no clean fixes, so this check
+   does not apply to them.
+3. **What the check cannot see:** an offset below ~15 m mean; one that
+   lays the track onto an equally road-like place, e.g. along a straight
+   road, or a whole block in a regular grid (the runner-ups above show
+   how close that comes); and any offset while stationary. On its own a
+   60 s window identifies the vector only sometimes. A long window, or a
+   vector from an independent pin, is what pins it down.
+
 ## Known limitations and options
 
 - **Heading convergence with tower fixes only** (manual: 6.8 km against a
@@ -2440,6 +2599,12 @@ probes; `bin/` the binary).
   OBD (clean drive before 230 s). The tight per-vehicle prior (± 0.01) holds
   it; a new car needs its prior measured, or a wider std.
 
+- **A fix with a small claimed accuracy outweighs a pin** (drive-10,
+  2026-10-16; BACKLOG N3-FIXPIN). CarPlay fixes ~330 m off at a claimed
+  10 m keep the estimate on them through pins 1 and 2 (298 and 327 m
+  error, 95 % ellipses of 4–5 m). The engine checks neither whether a
+  run of fixes is road-consistent nor whether fixes agree with a pin.
+  See "Constant-offset GNSS check".
 - **Capture by a parallel mapped road** (N3.2, roads only; known FAIL,
   measured 2026-10-13). A car on a road missing from the pack, 40 m from a
   mapped parallel road, is captured onto the mapped road with a confident
