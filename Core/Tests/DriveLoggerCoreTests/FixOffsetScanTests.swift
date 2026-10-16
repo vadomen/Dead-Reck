@@ -8,20 +8,37 @@ import Testing
 @Suite struct FixOffsetScanTests {
     typealias N = RoadFixture.Node
 
+    /// Default thresholds and range on a 20 m / 2 m grid (1681 coarse shifts
+    /// instead of 6561), so the scans do not load the machine while timing
+    /// tests run in parallel (NavigationB0Tests R13.1-6c failed under it).
+    static var fast: FixOffsetScan.Options {
+        var o = FixOffsetScan.Options()
+        o.coarseStepM = 20
+        o.fineStepM = 2
+        return o
+    }
+
     /// One irregular road: no constant shift but zero lays it onto itself.
     static let corners: [(Double, Double)] = [(-500, -200), (-200, -200), (-100, 100), (300, 100), (300, 400)]
 
-    static func network() throws -> RoadNetwork {
-        let nodes = corners.enumerated().map { N(id: Int64(10 + $0.offset), east: $0.element.0, north: $0.element.1) }
-        return try RoadNetwork(packs: [RoadFixture.build([RoadFixture.way(1, ["highway": "residential"], nodes)])])
+    /// The road, and one more copy of it moved by each of `copies`.
+    static func network(copies: [(Double, Double)] = []) throws -> RoadNetwork {
+        let ways = ([(0.0, 0.0)] + copies).enumerated().map { k, offset in
+            let nodes = corners.enumerated().map {
+                N(id: Int64(10 * (k + 1) + $0.offset), east: $0.element.0 + offset.0, north: $0.element.1 + offset.1)
+            }
+            return RoadFixture.way(Int64(k + 1), ["highway": "residential"], nodes)
+        }
+        return try RoadNetwork(packs: [RoadFixture.build(ways)])
     }
 
-    /// Fixes every `spacing` metres along the road, moved by `shift`, with
-    /// the road's course and 10 m/s.
-    static func track(shift: (Double, Double) = (0, 0), spacing: Double = 20) -> [FixOffsetScan.Fix] {
+    /// Fixes every `spacing` metres along the polyline `path` (by default
+    /// the road), moved by `shift`, with the polyline's course and 10 m/s.
+    static func track(shift: (Double, Double) = (0, 0), spacing: Double = 20,
+                      along path: [(Double, Double)] = corners) -> [FixOffsetScan.Fix] {
         var fixes: [FixOffsetScan.Fix] = []
         var t = 0.0
-        for (a, b) in zip(corners, corners.dropFirst()) {
+        for (a, b) in zip(path, path.dropFirst()) {
             let dx = b.0 - a.0, dy = b.1 - a.1
             let length = (dx * dx + dy * dy).squareRoot()
             let course = FixOffsetScan.bearing(east: dx, north: dy)
@@ -38,7 +55,7 @@ import Testing
     }
 
     @Test func findsTheConstantShiftOfAShiftedTrack() throws {
-        let w = try #require(FixOffsetScan.scan(Self.track(shift: (150, -220)), roads: Self.network()))
+        let w = try #require(FixOffsetScan.scan(Self.track(shift: (150, -220)), roads: Self.network(), options: Self.fast))
         #expect(abs(w.best.east + 150) <= 2 && abs(w.best.north - 220) <= 2)
         #expect(w.bestScore.meanM < 2)
         #expect(w.recorded.meanM > 50)
@@ -48,7 +65,7 @@ import Testing
     }
 
     @Test func aTrackOnItsRoadHasNoOffset() throws {
-        let w = try #require(FixOffsetScan.scan(Self.track(), roads: Self.network()))
+        let w = try #require(FixOffsetScan.scan(Self.track(), roads: Self.network(), options: Self.fast))
         #expect(w.best.lengthM < 2)
         #expect(w.recorded.meanM < 1)
         #expect(!w.offRoad && !w.found)
@@ -57,8 +74,48 @@ import Testing
         #expect(w.recordedRank < 0.01)
     }
 
+    /// 20 m east and 20 m north of the road: the mean (~18 m) passes
+    /// `offRoadMinM`, but almost no other shift does as well (one road in an
+    /// empty area), so the rank keeps the window "on roads".
+    @Test func aSmallOffsetWithALowRankIsOnRoads() throws {
+        let options = Self.fast
+        let w = try #require(FixOffsetScan.scan(Self.track(shift: (20, 20)), roads: Self.network(), options: options))
+        #expect(w.recorded.value(options.statistic) >= options.offRoadMinM)
+        #expect(w.recordedRank < options.offRoadMinRank)
+        #expect(!w.offRoad && !w.found)
+        #expect(FixOffsetScan.text(w).hasSuffix("on roads"))
+    }
+
+    /// The road mirrored north–south matches no shift of the road: off roads
+    /// (every fix capped, rank 100 %), and the best shift (one leg laid on
+    /// the road) keeps far more than half the mean.
+    @Test func aTrackOfAnotherShapeIsOffRoadsWithNoShiftFitting() throws {
+        let options = Self.fast
+        let mirrored = Self.corners.map { ($0.0, -$0.1) }
+        let w = try #require(FixOffsetScan.scan(Self.track(along: mirrored), roads: Self.network(), options: options))
+        #expect(w.recorded.value(options.statistic) >= options.offRoadMinM && w.recordedRank >= options.offRoadMinRank)
+        #expect(w.best.lengthM >= options.foundMinShiftM)
+        #expect(w.bestScore.value(options.statistic) > options.foundRatio * w.recorded.value(options.statistic))
+        #expect(w.offRoad && !w.found)
+        #expect(FixOffsetScan.text(w).hasSuffix("OFF ROADS, no shift fits"))
+    }
+
+    /// Two copies of the road 140 m apart (north): the shifted track fits
+    /// both, so the runner-up is as good as the best. Both fits lie on the
+    /// 20 m coarse grid (the runner-up is not refined).
+    @Test func aShiftFittingTwoPlacesIsNotUnique() throws {
+        let w = try #require(FixOffsetScan.scan(Self.track(shift: (160, -220)), roads: Self.network(copies: [(0, 140)]), options: Self.fast))
+        #expect(w.bestScore.meanM < 2)
+        let runner = try #require(w.runnerUp)
+        let other = [(-160.0, 220.0), (-160, 360)].first { abs($0.0 - w.best.east) > 5 || abs($0.1 - w.best.north) > 5 }!
+        #expect(abs(runner.east - other.0) <= 10 && abs(runner.north - other.1) <= 10)
+        #expect(try #require(w.runnerUpScore).meanM < 2)
+        #expect(w.offRoad && w.found && !w.unique)
+        #expect(FixOffsetScan.text(w).hasSuffix("OFF ROADS, shift fits, not unique"))
+    }
+
     @Test func aTestedShiftIsScoredAndRanked() throws {
-        var options = FixOffsetScan.Options()
+        var options = Self.fast
         options.tested = [FixOffsetScan.Shift(east: -150, north: 220), FixOffsetScan.Shift(east: 200, north: 200)]
         let w = try #require(FixOffsetScan.scan(Self.track(shift: (150, -220)), roads: Self.network(), options: options))
         #expect(w.tested.count == 2)
@@ -105,7 +162,7 @@ import Testing
     }
 
     @Test func tooFewFixesAreNotScanned() throws {
-        #expect(FixOffsetScan.scan(Array(Self.track().prefix(4)), roads: try Self.network()) == nil)
+        #expect(FixOffsetScan.scan(Array(Self.track().prefix(4)), roads: try Self.network(), options: Self.fast) == nil)
     }
 
     @Test func cleanFixesFilterBySourceAndAccuracy() {
