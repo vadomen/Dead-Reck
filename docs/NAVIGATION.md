@@ -718,8 +718,11 @@ pack whose identity changed or whose header's content hash is not the
 verified one, then selects every pack whose coverage (`COVR`, else the
 bounding box) intersects the request's circle and builds their
 `RoadNetwork`; packs that cannot be used together (different grids, the
-same pack twice) are refused as a set. `RoadPackSelector` is the
-synchronous form over fixed packs (`replay_nav --as-live --roads`).
+same pack twice) are refused as a set. `RoadPackSelection.attempt` does
+the same and also records the attempt: each pack file's state and
+coverage, and the outcome. That record becomes the sidecar's
+`roadsSelection` line. `RoadPackSelector` is the synchronous form over
+fixed packs (`replay_nav --as-live --roads`).
 Everything is Sendable values and pure functions, callable off the main
 actor. Data: © OpenStreetMap contributors, ODbL 1.0.
 
@@ -748,7 +751,11 @@ update in a recording:
   line (`t`, `afterInputs`, each pack's content hash, format, OSM timestamp
   and grid, and `roadSetHash`), and estimates carry `onRoadShare`.
   `replay_nav --as-live --roads <same packs> --compare <sidecar>` attaches
-  at that `afterInputs` ([NAV_SIDECAR.md](NAV_SIDECAR.md)).
+  at that `afterInputs` ([NAV_SIDECAR.md](NAV_SIDECAR.md)). Each selection
+  attempt can be recorded as a `roadsSelection` line, diagnostic only, with
+  the outcome, the pack files seen and why none attached. Core writes it
+  through `LiveNavigationRun.finishSelection` and `unfinishedSelectionLine`,
+  and `replay_nav --write-sidecar` writes these lines.
 - **Diagnostics** (Settings): a Road packs section lists each pack
   (verified, or the refusal reason; size, OSM date, hash prefix, and
   "cached" or "verified in x s"). Below it: "Recording uses" (the pack

@@ -28,6 +28,7 @@ are written as the strings `"inf"`, `"-inf"` and `"nan"`.
 | `estimate` | each whole second of session time, from the engine's initialisation on | `t`, `latitude`, `longitude`, `headingDeg`, `headingStdDeg`, `semiMajorM`, `semiMinorM`, `orientationDeg` (95 % ellipse), `converged`, `speedScale`, `droppedInputs`, `msPerStep`, `maxStepMs`, `onRoadShare` (v2, optional) |
 | `pin` | at each confirmed manual fix (`manualFix` row) | `t` (the fix's), `latitude`, `longitude` (where the driver put the pin), `mapSpanM`, `prior` (an `estimate` object: the engine just before it ingested the pin; absent when the pin initialised the engine) |
 | `roads` (v2) | once, when a road network becomes active | `t` (optional), `afterInputs`, `roads` (per pack: `contentHash`, `formatVersion`, `osmTimestamp`, `gridID`), `roadSetHash` |
+| `roadsSelection` (within v2) | once per road selection attempt, when its outcome is known | `t`, `afterInputs`, `recordedAfterInputs`, `request` (`radiusM`), `candidates` (per pack file: `name`, `state`, `reason` or `covering`; absent for `unfinished`), `outcome`, `packs` (optional), `reason` (optional) |
 
 - **seed** is `NavigationSeed.derive(header:)`: the 64-bit FNV-1a hash of the
   UTF-8 bytes of the header's `sessionID.uuidString`. It is a JSON integer up
@@ -71,6 +72,53 @@ are written as the strings `"inf"`, `"-inf"` and `"nan"`.
   - `roadSetHash`: FNV-1a 64 over the packs' content hashes in ascending
     order, 16 lowercase hex digits (`RoadNetwork.roadSetHashHex`).
   - Data: © OpenStreetMap contributors, ODbL 1.0.
+- **roadsSelection** (within v2, no version bump): one line per road
+  selection attempt, so a drive whose roads never attached can be
+  diagnosed afterwards. Diagnostic only: never an input to `--compare`.
+  Written where the outcome became known: in the app the selection runs
+  asynchronously, so the line can come some inputs after the request.
+  Several lines are allowed. Built by Core (`RoadPackSelection.attempt`,
+  `LiveNavigationRun.finishSelection`, `LiveNavigationRun.unfinishedSelectionLine`),
+  which the app and `replay_nav` share.
+  - `t`, `afterInputs`: the request's (`RoadSelectionRequest`), where the
+    attempt was raised: the engine's latest accepted arrival and the
+    inputs handed to the run then. A request is always raised after an
+    input, so `t` is never omitted.
+  - `recordedAfterInputs`: the inputs handed to the run when the outcome
+    was recorded, which is where the line sits in the file. In a
+    synchronous replay it equals `afterInputs`.
+  - `request`: `radiusM` only, the request's 95 % semi-major axis. The
+    request's centre is never written. Non-finite values follow the
+    string rule above.
+  - `candidates`: one per pack file the selection knew about. First the
+    verified packs in candidate order with `state` `"verified"` and
+    `covering` (their coverage intersects the request's circle; `false`
+    for an unusable request), then the files refused when they were
+    scanned or opened with `state` `"refused"` and `reason`. In the app
+    `name` is the file name. `replay_nav` uses the `--roads` file names in
+    name order, as the app's library lists them. Absent for `unfinished`.
+  - `outcome`, checked in this order:
+    - `unusableRequest`: the circle is unusable (non-finite, negative
+      radius, out of range).
+    - `noPacks`: no verified pack at all. There were no files, or every
+      file was refused at the scan (`candidates` tells which).
+    - `noneCovering`: verified packs exist, none covers the circle.
+    - `refused`: the covering set is not used, with `packs` and `reason`.
+      Either its network cannot be built (different grids, the same pack
+      twice), or the run refused this set before (it is not built again;
+      the earlier reason is repeated), or the run refused the attach
+      (`RoadAttachRefusal`, e.g. the config would change).
+    - `selected`: the covering set attached (`packs`: their names). Its
+      `roads` line follows immediately.
+    - `unfinished`: the attempt was still in flight when the recording
+      ended. The app writes it before closing the sidecar.
+    `outcome` and `state` are open string sets: a reader keeps a value
+    it does not know.
+  - `packs`: the pack names involved, for `selected` and `refused`.
+  - `reason`: why, for `refused`.
+  - Without packs to select from (no road pack library in the app; no
+    `--roads` in `replay_nav`) there are no attempts and no lines.
+  - Data: © OpenStreetMap contributors, ODbL 1.0.
 - **Not compared** by `--compare`:
   - `droppedInputs`: navigation inputs the live feed had dropped by then
     (`NavigationTap.droppedInputs`). The feed buffers 4096 inputs and drops the
@@ -87,7 +135,7 @@ are written as the strings `"inf"`, `"-inf"` and `"nan"`.
 | Version | Changes |
 |---|---|
 | 1 | Header, `estimate` and `pin` as above. Within v1, with no version bump: the header's optional `buildConfiguration`. |
-| 2 | N3.3: the `roads` line and the estimate's optional `onRoadShare`. The header is unchanged in shape (written at Start, before any position, so it cannot name the packs). The app always writes v2. A v1 reader refuses v2: it would skip the `roads` line and hide which packs the run used. |
+| 2 | N3.3: the `roads` line and the estimate's optional `onRoadShare`. The header is unchanged in shape (written at Start, before any position, so it cannot name the packs). The app always writes v2. A v1 reader refuses v2: it would skip the `roads` line and hide which packs the run used. Within v2, with no version bump: the `roadsSelection` line. It is a new line kind and diagnostic only, never an input to `--compare`, so a v2 reader that predates it skips and counts it (the new-line-kind rule below). |
 
 The rules for a change:
 - A new **optional** field that a reader can ignore without misreading
@@ -101,7 +149,8 @@ The rules for a change:
   `--compare` must check, or a change in what an existing field means.
   The road-pack hashes of v2 (the `roads` line) are such a change.
 - A new line kind is skipped and counted by older readers (`Unknown kinds`
-  below).
+  below). If it is diagnostic only, like `roadsSelection`, it stays in the
+  current version.
 
 ## Writing
 
@@ -115,6 +164,14 @@ The size is about 365 bytes per estimate, so about 1.3 MB per hour. That is
 more than the 100 KB/h the N4 plan estimated, because values are written at
 full precision for an exact compare.
 
+A `roadsSelection` line is about 230 bytes with one pack file, plus about
+60 per further file. While no pack covers the car, every position the
+engine uses raises an attempt. In the app, requests that arrive while one
+is in flight are merged. Replayed with one pack that never covers
+(`--write-sidecar`), drive-8 gets 1461 lines, 341 KB, about 45 % on top of
+its estimates over 35 minutes. Once roads attach there are no more
+attempts.
+
 ## Reading
 
 `NavSidecar.read(_:)` checks the following:
@@ -122,6 +179,8 @@ full precision for an exact compare.
   2); a newer version is refused.
 - A second `roads` line is refused (`duplicateRoadsLine`): a run attaches
   roads once.
+- `roadsSelection` lines are a known kind (`Contents.roadsSelections`, in
+  file order), any number of them; they are not counted as unknown.
 - A last line that does not decode is dropped and reported
   (`truncatedLastLine`). Any other bad line throws.
 - Unknown kinds are skipped and counted.
@@ -144,7 +203,15 @@ swift run -c release replay_nav <recording> --as-live --compare <recording>.nav.
 - unmatched lines;
 - the sidecar's `droppedInputs`;
 - the recording's navigation rows that failed to encode (`encodingFailed`
-  error rows: the live engine saw them, the file does not hold them).
+  error rows: the live engine saw them, the file does not hold them);
+- the road selection attempts (`roadsSelection`) of each side that has
+  them, under `Selection`: one compact row per attempt (`t`, `afterInputs`,
+  `recordedAfterInputs` if different, radius, outcome, packs and reason,
+  the candidates' counts and scan refusals). A run of consecutive attempts
+  that differ only in `t`, the input counts and the radius is folded into
+  its first row and a count, so a drive whose packs never cover stays
+  readable. They are printed, never compared: they change neither the
+  matching nor the verdict.
 
 A seed or config-hash mismatch is a warning, and the differing config keys are
 listed. When neither side used roads (no `roads` line in the sidecar, none
@@ -191,4 +258,5 @@ recording, with no drops. It uses the same loop with file order, the header
 seed and the default config, to check `--compare` end to end on a Mac. With
 `--roads` it attaches them by the live rule (the app with its packs ready),
 at the same input as the `--as-live` metrics replay, and writes the `roads`
-line there.
+line there. Each selection attempt is a `roadsSelection` line. The replay
+selects synchronously, so `recordedAfterInputs` equals `afterInputs`.

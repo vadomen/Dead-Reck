@@ -234,8 +234,9 @@ public enum NavigationReplay {
     /// The app's loop (`LiveNavigationRun`) over `inputs`; `emit` gets every
     /// sidecar line, the opening lines first. With `roads`: `.live` selects
     /// from them at each selection request (`RoadPackSelector`) and attaches
-    /// at once; `.afterInputs(k)` attaches the whole set after k inputs;
-    /// `.fromStart` gives it at init. Returns the finished run.
+    /// at once, each attempt a `roadsSelection` line; `.afterInputs(k)`
+    /// attaches the whole set after k inputs; `.fromStart` gives it at
+    /// init. Returns the finished run.
     @discardableResult
     public static func runLive(
         inputs: [NavigationInput], sessionID: UUID, config: NavigationConfig, appBuild: String = "replay",
@@ -258,7 +259,7 @@ public enum NavigationReplay {
         }
         var selector = roads.selector
         for input in inputs {
-            run.ingest(input, selectRoads: { selector.network(for: $0) }, emit: emit)
+            run.ingest(input, selector: &selector, emit: emit)
         }
         return run
     }
@@ -805,8 +806,13 @@ private struct ReplayRun {
     /// applies, on the same inputs.
     mutating func selectLive(before: RoadSelectionRule.Before) {
         guard selector != nil, let request = selectionRule.observe(engine, before: before, inputs: givenInputs),
-              let network = selector?.network(for: request) else { return }
-        if (try? engine.attachRoads(network)) != nil { attachedAfterInputs = givenInputs }
+              let attempt = selector?.attempt(for: request), let network = attempt.network else { return }
+        do {
+            try engine.attachRoads(network)
+            attachedAfterInputs = givenInputs
+        } catch {
+            selector?.remember(RoadPackSelection.Refusal(names: attempt.packs ?? [], reason: error.description))
+        }
     }
 
     /// An estimate whose matched edge is numbered in the engine's network,

@@ -31,6 +31,11 @@ import Foundation
 /// attach every line is the no-roads run's. `ingest(_:droppedInputs:selectRoads:emit:)`
 /// runs a synchronous selector at each request and attaches its network at
 /// once: the rule `replay_nav --as-live --roads` uses.
+/// `ingest(_:droppedInputs:selector:emit:)` does the same through a
+/// `RoadPackSelector` and records each attempt as a `roadsSelection` line
+/// (`finishSelection(_:emit:)`, which the app calls when its asynchronous
+/// selection finishes; `unfinishedSelectionLine(_:)` for one still in
+/// flight at the end). These lines never change any other line.
 ///
 /// Deterministic apart from the timing diagnostics: the same inputs, seed,
 /// config and attach point give the same lines, bit for bit.
@@ -114,10 +119,62 @@ public struct LiveNavigationRun: Sendable {
         emit(.roads(NavSidecar.Roads(attachment)))
     }
 
+    /// Records a finished road selection attempt, between two inputs: a
+    /// `selected` attempt's network is attached now (`attachRoads`). Then
+    /// `emit` gets the `roadsSelection` line (recorded after `inputs`
+    /// inputs) and, after a successful attach, the `roads` line right
+    /// after it. An attach the run refuses (`RoadAttachRefusal`) is
+    /// recorded as `refused` with the attempt's packs and the refusal's
+    /// description. Returns the line written: its `refusal` is the set to
+    /// remember so it is not built again.
+    @discardableResult
+    public mutating func finishSelection(_ attempt: RoadSelectionAttempt,
+                                         emit: (NavSidecar.Line) -> Void) -> NavSidecar.RoadsSelection {
+        var record = attempt.line(recordedAfterInputs: inputs)
+        var roadsLines: [NavSidecar.Line] = []
+        if let network = attempt.network {
+            do {
+                try attachRoads(network) { roadsLines.append($0) }
+            } catch {
+                record.outcome = .refused
+                record.reason = error.description
+            }
+        }
+        emit(.roadsSelection(record))
+        for line in roadsLines { emit(line) }
+        return record
+    }
+
+    /// The `roadsSelection` line of an attempt for `request` still in
+    /// flight when the run ends (`unfinished`, recorded after `inputs`
+    /// inputs). Write it before closing the sidecar.
+    public func unfinishedSelectionLine(_ request: RoadSelectionRequest) -> NavSidecar.Line {
+        .roadsSelection(NavSidecar.RoadsSelection(unfinished: request, recordedAfterInputs: inputs))
+    }
+
+    /// `ingest(_:droppedInputs:emit:)`, then, if it raised a selection
+    /// request, `selector` is asked at once and the attempt is finished
+    /// before the next input (`finishSelection`): the `roadsSelection` line,
+    /// and the `roads` line if its network attached. An attach the run
+    /// refuses is remembered by the selector. The rule `replay_nav
+    /// --as-live --roads` and `--write-sidecar` use.
+    public mutating func ingest(
+        _ input: NavigationInput, droppedInputs: Int = 0, selector: inout RoadPackSelector,
+        emit: (NavSidecar.Line) -> Void
+    ) {
+        ingest(input, droppedInputs: droppedInputs, emit: emit)
+        guard let request = newSelectionRequest else { return }
+        let attempt = selector.attempt(for: request)
+        let record = finishSelection(attempt, emit: emit)
+        if attempt.network != nil, let refusal = record.refusal { selector.remember(refusal) }
+    }
+
     /// `ingest(_:droppedInputs:emit:)`, then, if it raised a selection
     /// request, `selectRoads` is asked at once and the network it returns
     /// (if any) is attached before the next input. A refused attach leaves
-    /// the run without roads; later requests ask again.
+    /// the run without roads; later requests ask again. Writes no
+    /// `roadsSelection` line (the closure tells no outcome): see
+    /// `ingest(_:droppedInputs:selector:emit:)`.
     public mutating func ingest(
         _ input: NavigationInput, droppedInputs: Int = 0,
         selectRoads: (RoadSelectionRequest) -> RoadNetwork?, emit: (NavSidecar.Line) -> Void

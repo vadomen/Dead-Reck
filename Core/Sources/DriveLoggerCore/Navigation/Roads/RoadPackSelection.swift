@@ -174,6 +174,51 @@ public enum RoadPackSelection {
         select(candidates, latitude: request.latitude, longitude: request.longitude, radiusM: request.radiusM)
     }
 
+    /// One selection attempt for `request`, recorded for the sidecar's
+    /// `roadsSelection` line (`RoadSelectionAttempt`). Pure and Sendable:
+    /// the app runs it off its actor, where it ran `select` before.
+    /// - `candidates`: the verified, opened packs (`candidates(from:).candidates`);
+    /// - `refusedAtScan`: the files refused when scanned or opened
+    ///   (`candidates(from:).refused`), listed in the line as refused;
+    /// - `knownRefusals`: pack sets this run refused before (a failed build
+    ///   or attach). A covering set equal to one of them (names, in
+    ///   candidate order) is not built again; its refusal is the outcome.
+    ///
+    /// The outcome, in this order: `unusableRequest` (no usable circle),
+    /// `noPacks` (no verified candidate), `noneCovering`, `refused` (known,
+    /// or the network cannot be built), else `selected` with the network.
+    public static func attempt(_ candidates: [Candidate], refusedAtScan: [Refusal] = [], request: RoadSelectionRequest,
+                               knownRefusals: [Refusal] = []) -> RoadSelectionAttempt {
+        let chosen = covering(candidates, latitude: request.latitude, longitude: request.longitude,
+                              radiusM: request.radiusM)
+        let covered = Set(chosen ?? [])
+        var listed = candidates.indices.map { i in
+            NavSidecar.RoadsSelection.Candidate(name: candidates[i].name, state: .verified, covering: covered.contains(i))
+        }
+        for refusal in refusedAtScan {
+            for name in refusal.names {
+                listed.append(NavSidecar.RoadsSelection.Candidate(name: name, state: .refused, reason: refusal.reason))
+            }
+        }
+        func made(_ outcome: NavSidecar.RoadsSelection.Outcome, network: RoadNetwork? = nil, packs: [String]? = nil,
+                  reason: String? = nil) -> RoadSelectionAttempt {
+            RoadSelectionAttempt(request: request, candidates: listed, outcome: outcome, network: network,
+                                 packs: packs, reason: reason)
+        }
+        guard let chosen else { return made(.unusableRequest) }
+        guard !candidates.isEmpty else { return made(.noPacks) }
+        guard !chosen.isEmpty else { return made(.noneCovering) }
+        let names = chosen.map { candidates[$0].name }
+        if let known = knownRefusals.first(where: { $0.names == names }) {
+            return made(.refused, packs: known.names, reason: known.reason)
+        }
+        switch build(candidates, chosen) {
+        case .selected(let network, let names): return made(.selected, network: network, packs: names)
+        case .refused(let refusal): return made(.refused, packs: refusal.names, reason: refusal.reason)
+        case .noneCovering, .unusableRequest: return made(.noneCovering)  // not reached: chosen is not empty
+        }
+    }
+
     static func build(_ candidates: [Candidate], _ chosen: [Int]) -> Outcome {
         guard !chosen.isEmpty else { return .noneCovering }
         let names = chosen.map { candidates[$0].name }
@@ -185,37 +230,100 @@ public enum RoadPackSelection {
     }
 }
 
-/// A synchronous selector over fixed candidates (`replay_nav --as-live
-/// --roads`, tests; the app wraps the same calls in an actor): at each
-/// request it selects the covering packs and returns their network. A set
-/// already refused is not built again; its refusal is returned again.
-public struct RoadPackSelector: Sendable {
-    public let candidates: [RoadPackSelection.Candidate]
-    /// The latest outcome (diagnostics); nil before the first request.
-    public private(set) var lastOutcome: RoadPackSelection.Outcome?
-    /// Requests answered so far.
-    public private(set) var requests = 0
-    private var refused: [(set: [Int], refusal: RoadPackSelection.Refusal)] = []
+/// One road selection attempt (`RoadPackSelection.attempt`): what was
+/// decided off the run, and the `roadsSelection` line it becomes. Hand it
+/// to `LiveNavigationRun.finishSelection(_:emit:)`, which attaches the
+/// network of a `selected` attempt and writes the line (and the `roads`
+/// line after it).
+public struct RoadSelectionAttempt: Sendable {
+    public let request: RoadSelectionRequest
+    /// The line's `candidates`.
+    public let candidates: [NavSidecar.RoadsSelection.Candidate]
+    /// Never `unfinished` (that is `NavSidecar.RoadsSelection(unfinished:recordedAfterInputs:)`).
+    public let outcome: NavSidecar.RoadsSelection.Outcome
+    /// The covering packs' network, for `selected` only.
+    public let network: RoadNetwork?
+    /// The pack names involved, for `selected` and `refused`.
+    public let packs: [String]?
+    /// Why, for `refused`.
+    public let reason: String?
 
-    public init(candidates: [RoadPackSelection.Candidate]) {
+    public init(request: RoadSelectionRequest, candidates: [NavSidecar.RoadsSelection.Candidate],
+                outcome: NavSidecar.RoadsSelection.Outcome, network: RoadNetwork?, packs: [String]?, reason: String?) {
+        self.request = request
         self.candidates = candidates
+        self.outcome = outcome
+        self.network = network
+        self.packs = packs
+        self.reason = reason
     }
 
-    /// The network to attach for `request`, or nil.
-    public mutating func network(for request: RoadSelectionRequest) -> RoadNetwork? {
+    /// The line as decided, recorded after `recordedAfterInputs` inputs.
+    /// (A `selected` attempt whose attach the run refuses is recorded by
+    /// `LiveNavigationRun.finishSelection` as `refused`.)
+    public func line(recordedAfterInputs: Int) -> NavSidecar.RoadsSelection {
+        NavSidecar.RoadsSelection(t: request.t, afterInputs: request.afterInputs,
+                                  recordedAfterInputs: recordedAfterInputs,
+                                  request: NavSidecar.RoadsSelection.Request(radiusM: request.radiusM),
+                                  candidates: candidates, outcome: outcome, packs: packs, reason: reason)
+    }
+}
+
+/// A synchronous selector over fixed candidates (`replay_nav --as-live
+/// --roads`, tests; the app runs the same `RoadPackSelection.attempt` off
+/// its actor): at each request it selects the covering packs and returns
+/// the attempt, with their network if selected. A set already refused (a
+/// failed build, or an attach refused and passed to `remember`) is not
+/// built again; its refusal is returned again.
+public struct RoadPackSelector: Sendable {
+    public let candidates: [RoadPackSelection.Candidate]
+    /// Files refused before selection; listed in each attempt's line.
+    public let refusedAtScan: [RoadPackSelection.Refusal]
+    /// The latest attempt (diagnostics); nil before the first request.
+    public private(set) var lastAttempt: RoadSelectionAttempt?
+    /// Requests answered so far.
+    public private(set) var requests = 0
+    /// Pack sets refused so far.
+    public private(set) var knownRefusals: [RoadPackSelection.Refusal] = []
+
+    public init(candidates: [RoadPackSelection.Candidate], refusedAtScan: [RoadPackSelection.Refusal] = []) {
+        self.candidates = candidates
+        self.refusedAtScan = refusedAtScan
+    }
+
+    /// The latest outcome (diagnostics); nil before the first request.
+    public var lastOutcome: RoadPackSelection.Outcome? {
+        guard let attempt = lastAttempt else { return nil }
+        switch attempt.outcome {
+        case .selected:
+            if let network = attempt.network { return .selected(network, names: attempt.packs ?? []) }
+            return nil
+        case .refused: return .refused(RoadPackSelection.Refusal(names: attempt.packs ?? [], reason: attempt.reason ?? ""))
+        case .unusableRequest: return .unusableRequest
+        default: return .noneCovering
+        }
+    }
+
+    /// The attempt for `request`. A refused set is remembered.
+    public mutating func attempt(for request: RoadSelectionRequest) -> RoadSelectionAttempt {
         requests += 1
-        guard let chosen = RoadPackSelection.covering(candidates, latitude: request.latitude,
-                                                      longitude: request.longitude, radiusM: request.radiusM) else {
-            lastOutcome = .unusableRequest
-            return nil
+        let attempt = RoadPackSelection.attempt(candidates, refusedAtScan: refusedAtScan, request: request,
+                                                knownRefusals: knownRefusals)
+        if attempt.outcome == .refused, let packs = attempt.packs, let reason = attempt.reason {
+            remember(RoadPackSelection.Refusal(names: packs, reason: reason))
         }
-        if let known = refused.first(where: { $0.set == chosen }) {
-            lastOutcome = .refused(known.refusal)
-            return nil
-        }
-        let outcome = RoadPackSelection.build(candidates, chosen)
-        if case .refused(let refusal) = outcome { refused.append((chosen, refusal)) }
-        lastOutcome = outcome
-        return outcome.network
+        lastAttempt = attempt
+        return attempt
+    }
+
+    /// The network to attach for `request`, or nil (`attempt(for:)`).
+    public mutating func network(for request: RoadSelectionRequest) -> RoadNetwork? {
+        attempt(for: request).network
+    }
+
+    /// A refused set (an attach the run refused): not built again.
+    public mutating func remember(_ refusal: RoadPackSelection.Refusal) {
+        guard !knownRefusals.contains(where: { $0.names == refusal.names }) else { return }
+        knownRefusals.append(refusal)
     }
 }

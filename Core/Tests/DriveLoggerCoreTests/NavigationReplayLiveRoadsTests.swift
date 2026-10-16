@@ -31,7 +31,7 @@ struct NavigationReplayLiveRoadsTests {
         return options
     }
 
-    @Test("As live with roads: LiveNavigationRun with a synchronous selector equals liveLines (the --write-sidecar loop) byte for byte; the metrics replay attaches at the same input")
+    @Test("As live with roads: LiveNavigationRun with a synchronous selector equals liveLines (the --write-sidecar loop) byte for byte, roadsSelection line included; without it (closure path) every other line is the same; the metrics replay attaches at the same input")
     func liveSelectionMatchesReplay() throws {
         let inputs = Attach.inputs()
         let (near, far) = try Self.packs()
@@ -39,12 +39,13 @@ struct NavigationReplayLiveRoadsTests {
 
         // The app's loop with packs ready: a selector over the given packs.
         var run = LiveNavigationRun(sessionID: Attach.sessionID, config: Attach.config(), appBuild: "replay")
-        var selector = RoadPackSelector(candidates: try [near, far].map {
-            try RoadPackSelection.Candidate(name: NavigationSeed.hex($0.contentHash), pack: $0)
-        })
+        // The replay's selector (canonical candidate order, named by content
+        // hash): the order shows in the roadsSelection line's candidates.
+        var selector = given.selector
+        #expect(selector.candidates.map(\.name) == given.network.packs.map { NavigationSeed.hex($0.contentHash) })
         var lines = run.openingLines
         for input in inputs {
-            run.ingest(input, selectRoads: { selector.network(for: $0) }) { lines.append($0) }
+            run.ingest(input, selector: &selector) { lines.append($0) }
         }
         let roads = try #require(run.roads)
         // Only the pack under the car is selected, at the first request.
@@ -58,6 +59,18 @@ struct NavigationReplayLiveRoadsTests {
         let a = try Attach.stripped(lines).map { try NavSidecar.encode($0, with: encoder) }
         let b = try Attach.stripped(replayed).map { try NavSidecar.encode($0, with: encoder) }
         #expect(a == b)
+        // The closure path (no roadsSelection lines) gives every other line
+        // byte for byte.
+        var closureRun = LiveNavigationRun(sessionID: Attach.sessionID, config: Attach.config(), appBuild: "replay")
+        var closureSelector = RoadPackSelector(candidates: selector.candidates)
+        var closureLines = closureRun.openingLines
+        for input in inputs {
+            closureRun.ingest(input, selectRoads: { closureSelector.network(for: $0) }) { closureLines.append($0) }
+        }
+        let withoutSelection = replayed.filter { if case .roadsSelection = $0 { false } else { true } }
+        #expect(withoutSelection.count == replayed.count - 1)
+        #expect(try Attach.stripped(closureLines).map { try NavSidecar.encode($0, with: encoder) }
+                == (try Attach.stripped(withoutSelection).map { try NavSidecar.encode($0, with: encoder) }))
         #expect(replayed.contains { if case .roads(let r) = $0 { r.afterInputs == roads.afterInputs } else { false } })
 
         // The metrics replay attaches the same set after the same input.

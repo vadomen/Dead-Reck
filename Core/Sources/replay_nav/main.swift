@@ -55,6 +55,9 @@ import Foundation
 // the app would have written for this recording with no drops (the same
 // loop: file order, header seed, default config, --roads attached by the
 // live rule; one log only), e.g. to check --compare end to end on a Mac.
+// With --roads each selection attempt is a `roadsSelection` line (packs
+// named by file name); --compare prints both sides' attempts and never
+// compares them.
 //
 // Inputs are fed in arrival order; the engine never sees a fix the GPS mode
 // or --hold-out-acc withholds, and is scored only against information it did
@@ -197,15 +200,19 @@ if wrongRoadTolerance != nil && roadPaths.isEmpty {
 var roads: ReplayRoadSet?
 if !roadPaths.isEmpty {
     var packs: [RoadPack] = []
+    var names: [UInt64: String] = [:]
     for path in roadPaths {
         do {
-            packs.append(try RoadPack(contentsOf: URL(fileURLWithPath: path), verify: true))
+            let url = URL(fileURLWithPath: path)
+            let pack = try RoadPack(contentsOf: url, verify: true)
+            packs.append(pack)
+            names[pack.contentHash] = url.lastPathComponent
         } catch {
             fail("cannot read road pack \(path): \(error)", status: 1)
         }
     }
     do {
-        roads = ReplayRoadSet(try RoadNetwork(packs: packs))
+        roads = ReplayRoadSet(try RoadNetwork(packs: packs), names: names)
     } catch {
         fail("cannot use these road packs together: \(error)", status: 2)
     }
@@ -323,11 +330,13 @@ for path in paths {
         do {
             let writer = try NavSidecarWriter(url: URL(fileURLWithPath: writeSidecarPath))
             var count = 0
+            var selections = 0
             let run = NavigationReplay.runLive(
                 inputs: NavigationReplay.fileOrderInputs(from: events), sessionID: header.sessionID,
                 config: NavigationConfig(seed: NavigationSeed.derive(header: header)), appBuild: "replay_nav",
                 roads: roads, attach: .live
             ) { line in
+                if case .roadsSelection = line { selections += 1 }
                 writer.append(line)
                 count += 1
                 if count >= 1_000 { writer.flush(); count = 0 }
@@ -336,7 +345,8 @@ for path in paths {
             if let failure = writer.failure { fail("cannot write \(writeSidecarPath): \(failure)", status: 1) }
             print("Sidecar       wrote \(writeSidecarPath): \(run.estimates) estimates, \(writer.bytesWritten) bytes (as the app would, no drops)"
                   + (roads == nil ? "" : run.roads.map { "; roads attached after \($0.afterInputs) inputs, roadSetHash \($0.network.roadSetHashHex)" }
-                     ?? "; no roads attached (no given pack covered a selection request)"))
+                     ?? "; no roads attached (no given pack covered a selection request)")
+                  + (roads == nil ? "" : "; \(selections) roadsSelection line(s)"))
         } catch {
             fail("cannot write \(writeSidecarPath): \(error)", status: 1)
         }

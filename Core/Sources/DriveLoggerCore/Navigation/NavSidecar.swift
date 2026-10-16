@@ -17,6 +17,8 @@ import Foundation
 /// - `roads` (v2): written once, when a road network became active: when
 ///   (`t`, `afterInputs`) and which packs. A v2 sidecar without it used no
 ///   roads.
+/// - `roadsSelection` (within v2, no bump): one per road selection attempt,
+///   how it ended and which pack files it saw; diagnostic, never compared.
 ///
 /// Times are session-clock nanoseconds (`t`, like the log). Doubles are
 /// written at full precision so a replay can match them bit for bit;
@@ -185,12 +187,154 @@ public enum NavSidecar {
         }
     }
 
+    /// One road selection attempt and how it ended (diagnostic, within v2
+    /// with no version bump; never compared). Written where the outcome
+    /// became known, so possibly some inputs after the request; one line
+    /// per attempt, as many as there were. Holds the request's radius but
+    /// never its centre. Built by `RoadSelectionAttempt.line(recordedAfterInputs:)`
+    /// through `LiveNavigationRun.finishSelection(_:emit:)`, or
+    /// `LiveNavigationRun.unfinishedSelectionLine(_:)`.
+    /// Data: © OpenStreetMap contributors, ODbL 1.0.
+    public struct RoadsSelection: Hashable, Sendable, Codable {
+        /// What of the request is recorded: its radius only, no position.
+        public struct Request: Hashable, Sendable, Codable {
+            /// The request's 95 % semi-major axis, metres.
+            public var radiusM: Double
+
+            public init(radiusM: Double) {
+                self.radiusM = radiusM
+            }
+        }
+
+        /// A candidate's state. An open string set: a reader keeps a value
+        /// it does not know.
+        public struct State: RawRepresentable, Hashable, Sendable, Codable {
+            public var rawValue: String
+            public init(rawValue: String) { self.rawValue = rawValue }
+
+            /// Verified and opened: selectable.
+            public static let verified = State(rawValue: "verified")
+            /// Refused when the packs were scanned or opened (`reason`).
+            public static let refused = State(rawValue: "refused")
+        }
+
+        /// One pack file the selection knew about.
+        public struct Candidate: Hashable, Sendable, Codable {
+            /// The file name (`RoadPackSelection.Candidate.name`).
+            public var name: String
+            public var state: State
+            /// Why it was refused; nil (omitted) when verified.
+            public var reason: String?
+            /// Verified only: its coverage intersects the request's circle
+            /// (false for an unusable request); nil (omitted) when refused.
+            public var covering: Bool?
+
+            public init(name: String, state: State, reason: String? = nil, covering: Bool? = nil) {
+                self.name = name
+                self.state = state
+                self.reason = reason
+                self.covering = covering
+            }
+        }
+
+        /// How an attempt ended. An open string set.
+        public struct Outcome: RawRepresentable, Hashable, Sendable, Codable {
+            public var rawValue: String
+            public init(rawValue: String) { self.rawValue = rawValue }
+
+            /// The covering packs were selected and attached (a `roads`
+            /// line follows at once). `packs`: their names.
+            public static let selected = Outcome(rawValue: "selected")
+            /// Verified packs exist, none covers the circle.
+            public static let noneCovering = Outcome(rawValue: "noneCovering")
+            /// The covering set is not used: its network cannot be built,
+            /// it was refused before (not built again), or the run refused
+            /// the attach. `packs` and `reason`.
+            public static let refused = Outcome(rawValue: "refused")
+            /// The request's circle is unusable (non-finite or out of range).
+            public static let unusableRequest = Outcome(rawValue: "unusableRequest")
+            /// No verified pack at all (no file, or every file refused when
+            /// scanned: `candidates` tells which).
+            public static let noPacks = Outcome(rawValue: "noPacks")
+            /// Still in flight when the recording ended; `candidates`
+            /// omitted (not known).
+            public static let unfinished = Outcome(rawValue: "unfinished")
+        }
+
+        /// The request's `t`: the engine's latest accepted arrival when it
+        /// was raised (always after an input, so never omitted).
+        public var t: MonotonicTimestamp
+        /// The request's `afterInputs`: inputs handed to the run when it
+        /// was raised.
+        public var afterInputs: Int
+        /// Inputs handed to the run when the outcome was recorded: where
+        /// this line sits in the file. ≥ `afterInputs`; equal for a
+        /// synchronous selection (`replay_nav`).
+        public var recordedAfterInputs: Int
+        public var request: Request
+        /// Per pack file, verified ones first (in candidate order), then
+        /// those refused at the scan; nil (omitted) for `unfinished`.
+        public var candidates: [Candidate]?
+        public var outcome: Outcome
+        /// The pack names involved, for `selected` and `refused`; nil
+        /// (omitted) otherwise.
+        public var packs: [String]?
+        /// Why, for `refused`; nil (omitted) otherwise.
+        public var reason: String?
+
+        public init(t: MonotonicTimestamp, afterInputs: Int, recordedAfterInputs: Int, request: Request,
+                    candidates: [Candidate]?, outcome: Outcome, packs: [String]? = nil, reason: String? = nil) {
+            self.t = t
+            self.afterInputs = afterInputs
+            self.recordedAfterInputs = recordedAfterInputs
+            self.request = request
+            self.candidates = candidates
+            self.outcome = outcome
+            self.packs = packs
+            self.reason = reason
+        }
+
+        /// The attempt for `request`, still in flight when the run ended.
+        public init(unfinished request: RoadSelectionRequest, recordedAfterInputs: Int) {
+            self.init(t: request.t, afterInputs: request.afterInputs, recordedAfterInputs: recordedAfterInputs,
+                      request: Request(radiusM: request.radiusM), candidates: nil, outcome: .unfinished)
+        }
+
+        /// The refused pack set and why, for `refused`; else nil. What a
+        /// caller remembers so the set is not built again.
+        public var refusal: RoadPackSelection.Refusal? {
+            outcome == .refused ? RoadPackSelection.Refusal(names: packs ?? [], reason: reason ?? "") : nil
+        }
+
+        /// One line for `replay_nav --compare`: "t 12.3 s after 45 inputs
+        /// (recorded after 47), radius 1414 m: selected a.roadpack".
+        public var summary: String {
+            var text = String(format: "t %.1f s after %d inputs", t.seconds, afterInputs)
+            if recordedAfterInputs != afterInputs { text += " (recorded after \(recordedAfterInputs))" }
+            text += String(format: ", radius %.0f m: ", request.radiusM) + outcome.rawValue
+            if let packs, !packs.isEmpty { text += " " + packs.joined(separator: ", ") }
+            if let reason { text += ": " + reason }
+            if let candidates {
+                let verified = candidates.filter { $0.state == .verified }
+                let refused = candidates.filter { $0.state == .refused }
+                text += " [\(verified.count) verified, \(verified.filter { $0.covering == true }.count) covering"
+                if !refused.isEmpty {
+                    text += "; refused: " + refused.map { "\($0.name) (\($0.reason ?? "no reason"))" }.joined(separator: ", ")
+                }
+                text += "]"
+            }
+            return text
+        }
+    }
+
     public enum Line: Hashable, Sendable, Codable {
         case header(Header)
         case estimate(Estimate)
         case pin(Pin)
         /// v2.
         case roads(Roads)
+        /// Within v2 (no bump): one road selection attempt. Diagnostic.
+        case roadsSelection(RoadsSelection)
         /// A kind this reader does not know (a later version); skipped.
         case unrecognized(kind: String)
 
@@ -200,6 +344,7 @@ public enum NavSidecar {
             case .estimate: "estimate"
             case .pin: "pin"
             case .roads: "roads"
+            case .roadsSelection: "roadsSelection"
             case .unrecognized(let kind): kind
             }
         }
@@ -213,6 +358,7 @@ public enum NavSidecar {
             case "estimate": self = .estimate(try Estimate(from: decoder))
             case "pin": self = .pin(try Pin(from: decoder))
             case "roads": self = .roads(try Roads(from: decoder))
+            case "roadsSelection": self = .roadsSelection(try RoadsSelection(from: decoder))
             default: self = .unrecognized(kind: kind)
             }
         }
@@ -223,6 +369,7 @@ public enum NavSidecar {
             case .estimate(let value): try value.encode(to: encoder)
             case .pin(let value): try value.encode(to: encoder)
             case .roads(let value): try value.encode(to: encoder)
+            case .roadsSelection(let value): try value.encode(to: encoder)
             case .unrecognized: break
             }
             var container = encoder.container(keyedBy: Key.self)
@@ -276,6 +423,9 @@ public enum NavSidecar {
         /// v2: the road network the run attached; nil when it used none
         /// (and always for v1).
         public var roads: Roads?
+        /// The road selection attempts (`roadsSelection` lines), in file
+        /// order; diagnostic, never compared.
+        public var roadsSelections: [RoadsSelection] = []
         /// Lines of a kind this reader does not know, skipped.
         public var unrecognizedLines: Int
         /// The last line was cut short (the app was killed mid-write) and
@@ -306,6 +456,7 @@ public enum NavSidecar {
         var estimates: [Estimate] = []
         var pins: [Pin] = []
         var roads: Roads?
+        var selections: [RoadsSelection] = []
         var unrecognized = 0
         var truncated = false
         for (index, bytes) in lines.enumerated() {
@@ -332,11 +483,12 @@ public enum NavSidecar {
             case .roads(let value):
                 guard roads == nil else { throw ReadError.duplicateRoadsLine(number: index + 1) }
                 roads = value
+            case .roadsSelection(let value): selections.append(value)
             case .header, .unrecognized: unrecognized += 1
             }
         }
         guard let header else { throw ReadError.missingHeader }
-        return Contents(header: header, estimates: estimates, pins: pins, roads: roads,
+        return Contents(header: header, estimates: estimates, pins: pins, roads: roads, roadsSelections: selections,
                         unrecognizedLines: unrecognized, truncatedLastLine: truncated)
     }
 }
