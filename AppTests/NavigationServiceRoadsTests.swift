@@ -221,4 +221,129 @@ struct NavigationServiceRoadsTests {
         #expect(contents.roads == nil)
         #expect(await service.finished.first?.roadPackNames == [])
     }
+
+    // MARK: roadsSelection lines
+
+    /// The recording's `roadsSelection` outcomes, in file order.
+    func outcomes(_ feed: RecordingNavigationFeed) throws -> [NavSidecar.RoadsSelection.Outcome] {
+        try NavSidecar.read(contentsOf: feed.sidecarURL).roadsSelections.map(\.outcome)
+    }
+
+    @Test("A selected attempt writes roadsSelection, then roads, right after it")
+    func selectedLine() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let dir = try RoadPackFixture.directory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try RoadPackFixture.write(try RoadPackFixture.data(), named: "fixture.roadpack", in: dir)
+        let service = NavigationService(library: library(dir))
+        let (feed, tap) = makeFeed(6, scratch: scratch)
+        let task = service.start(feed)
+        for event in Self.events(1...2) { tap.record(event) }
+        #expect(await waitUntil { await service.roadsStatus().inUse })
+        for event in Self.events(2.5...7) { tap.record(event) }
+        tap.finish()
+        await task.value
+
+        #expect(try outcomes(feed) == [.selected])
+        let contents = try NavSidecar.read(contentsOf: feed.sidecarURL)
+        let line = try #require(contents.roadsSelections.first)
+        #expect(line.packs == ["fixture.roadpack"] && line.candidates?.first?.covering == true)
+        #expect(contents.roads != nil)
+        let text = try String(contentsOf: feed.sidecarURL, encoding: .utf8)
+        let kinds = text.split(separator: "\n").compactMap { $0.contains("\"roadsSelection\"") ? "s" : $0.contains("\"roads\"") ? "r" : nil }
+        #expect(kinds.joined() == "sr", "roadsSelection is followed by roads")
+    }
+
+    @Test("A pack that covers nowhere near the fix: noneCovering")
+    func noneCoveringLine() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let dir = try RoadPackFixture.directory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try RoadPackFixture.write(try RoadPackFixture.data(latShiftE7: 1_000_000), named: "far.roadpack", in: dir)
+        let service = NavigationService(library: library(dir))
+        let (feed, tap) = makeFeed(7, scratch: scratch)
+        let task = service.start(feed)
+        for event in Self.events(1...2) { tap.record(event) }
+        #expect(await waitUntil { await service.attemptOutcomes.count >= 1 })
+        for event in Self.events(2.5...7) { tap.record(event) }
+        tap.finish()
+        await task.value
+
+        let found = try outcomes(feed)
+        #expect(found.first == .noneCovering && !found.contains(.selected))
+        #expect(try NavSidecar.read(contentsOf: feed.sidecarURL).roads == nil)
+    }
+
+    @Test("A refused set writes refused; the same set refused again is written again, not rebuilt")
+    func refusedLines() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let dir = try RoadPackFixture.directory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try RoadPackFixture.write(try RoadPackFixture.data(cellSizeM: 64), named: "a.roadpack", in: dir)
+        try RoadPackFixture.write(try RoadPackFixture.data(cellSizeM: 128), named: "b.roadpack", in: dir)
+        let service = NavigationService(library: library(dir))
+        let (feed, tap) = makeFeed(8, scratch: scratch)
+        let task = service.start(feed)
+        for event in Self.events(1...2) { tap.record(event) }
+        #expect(await waitUntil { await service.attemptOutcomes.count >= 1 })
+        for event in Self.events(2.5...4) { tap.record(event) }
+        #expect(await waitUntil { await service.attemptOutcomes.count >= 2 })
+        tap.finish()
+        await task.value
+
+        let lines = try NavSidecar.read(contentsOf: feed.sidecarURL).roadsSelections
+        #expect(lines.count >= 2 && lines.allSatisfy { $0.outcome == .refused })
+        #expect(lines.allSatisfy { $0.packs == ["a.roadpack", "b.roadpack"] && $0.reason != nil })
+        #expect(Set(lines.compactMap(\.reason)).count == 1, "the repeat carries the remembered reason")
+    }
+
+    @Test("An empty library writes noPacks")
+    func noPacksLine() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let dir = try RoadPackFixture.directory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let service = NavigationService(library: library(dir))
+        let (feed, tap) = makeFeed(9, scratch: scratch)
+        let task = service.start(feed)
+        for event in Self.events(1...2) { tap.record(event) }
+        #expect(await waitUntil { await service.attemptOutcomes.count >= 1 })
+        for event in Self.events(2.5...7) { tap.record(event) }
+        tap.finish()
+        await task.value
+
+        let found = try outcomes(feed)
+        #expect(found.first == .noPacks && found.allSatisfy { $0 == .noPacks || $0 == .unfinished })
+    }
+
+    @Test("A recording that ends with a selection in flight writes unfinished, before the sidecar closes")
+    func unfinishedLine() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let dir = try RoadPackFixture.directory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try RoadPackFixture.write(try RoadPackFixture.data(), named: "fixture.roadpack", in: dir)
+        let gate = DispatchSemaphore(value: 0)
+        let urls = RoadPackLibrary.listing(dir)
+        let slow = RoadPackLibrary(source: {
+            _ = gate.wait(timeout: .now() + 20)
+            gate.signal()
+            return urls
+        }, cacheURL: nil)
+        let service = NavigationService(library: slow)
+        let (feed, tap) = makeFeed(0, scratch: scratch)
+        let task = service.start(feed)
+        for event in Self.events(1...3) { tap.record(event) }
+        tap.finish()
+        await task.value
+        gate.signal()
+        _ = await slow.candidates()
+        try await Task.sleep(for: .milliseconds(100))
+
+        #expect(try outcomes(feed) == [.unfinished])
+        #expect(try NavSidecar.read(contentsOf: feed.sidecarURL).roads == nil)
+    }
 }

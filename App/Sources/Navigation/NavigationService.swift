@@ -52,12 +52,15 @@ actor NavigationService {
         /// Bumped per selection started; a result with another token is stale.
         var token = 0
         var inFlight: Task<Void, Never>?
+        /// The request `inFlight` is selecting for; the `unfinished`
+        /// `roadsSelection` line at the end of the recording names it.
+        var inFlightRequest: RoadSelectionRequest?
         /// The latest request that arrived while one was in flight.
         var pending: RoadSelectionRequest?
         var names: [String] = []
         var refusal: String?
         /// Covering sets (file names, in candidate order) already refused.
-        var refusedSets: Set<[String]> = []
+        var knownRefusals: [RoadPackSelection.Refusal] = []
     }
 
     /// What Diagnostics shows about roads in the recording.
@@ -96,6 +99,9 @@ actor NavigationService {
     /// Engines built so far (one per recording).
     private(set) var runsStarted = 0
     private(set) var finished: [Finished] = []
+    /// Outcome of every selection attempt written so far, all recordings
+    /// (the `unfinished` ones too); lets tests wait for an attempt.
+    private(set) var attemptOutcomes: [NavSidecar.RoadsSelection.Outcome] = []
 
     init(flushInterval: Duration = .seconds(10), library: RoadPackLibrary? = nil) {
         self.flushInterval = flushInterval
@@ -180,69 +186,50 @@ actor NavigationService {
         roadStates[generation] = state
     }
 
-    private enum Selection: Sendable {
-        case outcome(RoadPackSelection.Outcome)
-        case alreadyRefused
-    }
-
     private func startSelection(_ request: RoadSelectionRequest, generation: Int, state: inout RoadsState) {
         guard let library else { return }
         state.token += 1
-        let token = state.token, refused = state.refusedSets
+        let token = state.token, known = state.knownRefusals
         state.pending = nil
+        state.inFlightRequest = request
         // Candidates (awaiting a scan), selection and the network build all
         // run off this actor; only the attach comes back.
         state.inFlight = Task.detached(priority: .utility) { [self] in
             let set = await library.candidates()
             guard !Task.isCancelled else { return }
-            let selection = Self.select(set.candidates, request: request, refusedSets: refused)
+            let attempt = RoadPackSelection.attempt(set.candidates, refusedAtScan: set.refused, request: request,
+                                                    knownRefusals: known)
             guard !Task.isCancelled else { return }
-            await selectionFinished(selection, generation: generation, token: token)
+            await selectionFinished(attempt, generation: generation, token: token)
         }
     }
 
-    private nonisolated static func select(
-        _ candidates: [RoadPackSelection.Candidate], request: RoadSelectionRequest, refusedSets: Set<[String]>
-    ) -> Selection {
-        if let chosen = RoadPackSelection.covering(candidates, latitude: request.latitude,
-                                                   longitude: request.longitude, radiusM: request.radiusM),
-           !chosen.isEmpty, refusedSets.contains(chosen.map { candidates[$0].name }) {
-            return .alreadyRefused
-        }
-        return .outcome(RoadPackSelection.select(candidates, request: request))
-    }
-
-    /// Back on the actor, between two inputs: attach, or note why not. A
-    /// result for an ended recording or a superseded selection is dropped.
-    private func selectionFinished(_ selection: Selection, generation: Int, token: Int) {
+    /// Back on the actor, between two inputs: attach, or note why not, and
+    /// write the `roadsSelection` line (then `roads` after a successful
+    /// attach). A result for an ended recording or a superseded selection
+    /// is dropped. The request pending behind this one is not an attempt.
+    private func selectionFinished(_ attempt: RoadSelectionAttempt, generation: Int, token: Int) {
         guard var state = roadStates[generation], state.token == token, var run = runs[generation] else { return }
         state.inFlight = nil
-        func refuse(_ names: [String], _ reason: String) {
-            state.refusal = (names.isEmpty ? "" : names.joined(separator: ", ") + ": ") + reason
-            state.refusedSets.insert(names)
-        }
-        if case .outcome(let outcome) = selection {
-            switch outcome {
-            case .unusableRequest, .noneCovering:
-                break
-            case .refused(let refusal):
-                refuse(refusal.names, refusal.reason)
-            case .selected(let network, let names):
-                runs[generation] = nil
-                let writer = run.writer
-                do {
-                    try run.live.attachRoads(network) { writer?.append($0) }
-                    writer?.flush()
-                    run.lastFlush = ContinuousClock.now
-                    state.names = names
-                    state.refusal = nil
-                    state.pending = nil
-                } catch {
-                    refuse(names, String(describing: error))
-                }
-                runs[generation] = run
+        state.inFlightRequest = nil
+        runs[generation] = nil
+        let writer = run.writer
+        let record = run.live.finishSelection(attempt) { writer?.append($0) }
+        attemptOutcomes.append(record.outcome)
+        if let refusal = record.refusal {
+            state.refusal = (refusal.names.isEmpty ? "" : refusal.names.joined(separator: ", ") + ": ") + refusal.reason
+            if !state.knownRefusals.contains(where: { $0.names == refusal.names }) {
+                state.knownRefusals.append(refusal)
             }
         }
+        if record.outcome == .selected {
+            writer?.flush()
+            run.lastFlush = ContinuousClock.now
+            state.names = record.packs ?? []
+            state.refusal = nil
+            state.pending = nil
+        }
+        runs[generation] = run
         if run.live.roads == nil, let pending = state.pending {
             startSelection(pending, generation: generation, state: &state)
         }
@@ -272,9 +259,14 @@ actor NavigationService {
 
     private func end(_ generation: Int) {
         guard let run = runs.removeValue(forKey: generation) else { return }
-        run.writer?.close()
         let state = roadStates.removeValue(forKey: generation)
         state?.inFlight?.cancel()
+        // A selection still in flight is an attempt that never finished.
+        if state?.inFlight != nil, let request = state?.inFlightRequest {
+            run.writer?.append(run.live.unfinishedSelectionLine(request))
+            attemptOutcomes.append(.unfinished)
+        }
+        run.writer?.close()
         let roads = run.live.roads
         finished.append(Finished(
             generation: generation,

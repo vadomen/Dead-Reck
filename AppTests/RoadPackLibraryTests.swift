@@ -12,13 +12,13 @@ enum RoadPackFixture {
     /// A one-road pack around (0.001, 0.002) degrees. A different
     /// `cellSizeM` gives a different grid, so two such packs cannot be
     /// combined.
-    static func data(cellSizeM: Double = 64, osmTimestamp: Int64 = 1_700_000_000) throws -> Data {
-        let grid = RoadGrid(southWest: RoadPoint(latE7: -100_000, lonE7: -100_000),
-                            northEast: RoadPoint(latE7: 100_000, lonE7: 100_000), cellSizeM: cellSizeM)
+    static func data(cellSizeM: Double = 64, osmTimestamp: Int64 = 1_700_000_000, latShiftE7: Int32 = 0) throws -> Data {
+        let grid = RoadGrid(southWest: RoadPoint(latE7: latShiftE7 - 100_000, lonE7: -100_000),
+                            northEast: RoadPoint(latE7: latShiftE7 + 100_000, lonE7: 100_000), cellSizeM: cellSizeM)
         let graph = RoadGraph(edges: [RoadGraph.Edge(
             fromNode: 1, toNode: 2,
-            points: [RoadPoint(latE7: 0, lonE7: 0), RoadPoint(latE7: 10_000, lonE7: 20_000),
-                     RoadPoint(latE7: 20_000, lonE7: 40_000)],
+            points: [RoadPoint(latE7: latShiftE7, lonE7: 0), RoadPoint(latE7: latShiftE7 + 10_000, lonE7: 20_000),
+                     RoadPoint(latE7: latShiftE7 + 20_000, lonE7: 40_000)],
             osmWayID: 10, wayPointOffset: 0, highwayClass: .residential)])
         return try RoadPackWriter(grid: grid, osmTimestamp: osmTimestamp).write(graph)
     }

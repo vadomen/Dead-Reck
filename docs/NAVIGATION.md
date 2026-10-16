@@ -738,15 +738,19 @@ update in a recording:
   costs one `stat`. No pack is bundled or downloaded.
 - **Selection and attach.** `NavigationService` hands each
   `RoadSelectionRequest` of the recording's `LiveNavigationRun` to a
-  detached task. The task takes the library's candidates and calls
-  `RoadPackSelection.select`, which also builds the `RoadNetwork`. Back on
-  the actor, between two inputs, the service calls
-  `LiveNavigationRun.attachRoads`. The selection is asynchronous, so the
-  live attach can come some inputs after the request; `replay_nav --as-live`
-  attaches at the request itself. A request that arrives during a selection
-  replaces the pending one. A refused set is remembered with its reason and
-  not built again. Recording and the sensor streams never wait for any of
-  it; until the attach the run is the no-roads run.
+  detached task. The task takes the library's candidates (and the files
+  refused at scan) and calls `RoadPackSelection.attempt`, which also builds
+  the `RoadNetwork`. Back on the actor, between two inputs, the service calls
+  `LiveNavigationRun.finishSelection`, which attaches a selected network and
+  writes the `roadsSelection` line (then `roads` after a successful attach).
+  The selection is asynchronous, so the live attach can come some inputs
+  after the request; `replay_nav --as-live` attaches at the request itself.
+  A request that arrives during a selection replaces the pending one (it is
+  not an attempt and writes no line). A refused set is remembered with its
+  reason and not built again; a repeat writes `refused` again. A selection
+  still in flight when the recording ends is written as `unfinished`,
+  before the sidecar closes. Recording and the sensor streams never wait for
+  any of it; until the attach the run is the no-roads run.
 - **Sidecar.** The app writes sidecar v2. The attach writes its `roads`
   line (`t`, `afterInputs`, each pack's content hash, format, OSM timestamp
   and grid, and `roadSetHash`), and estimates carry `onRoadShare`.
