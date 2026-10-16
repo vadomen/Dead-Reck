@@ -109,6 +109,17 @@ struct RoadPackLibraryTests {
 
 @Suite("Roads diagnostics text")
 struct RoadsDiagnosticsTextTests {
+    @Test("durations: milliseconds below 1 s, seconds with one decimal above")
+    func durationFormatting() {
+        #expect(RoadsDiagnosticsText.duration(0.042) == "42 ms")
+        #expect(RoadsDiagnosticsText.duration(0) == "0 ms")
+        #expect(RoadsDiagnosticsText.duration(0.0004) == "0 ms")
+        #expect(RoadsDiagnosticsText.duration(0.9994) == "999 ms")
+        #expect(RoadsDiagnosticsText.duration(0.9996) == "1.0 s")
+        #expect(RoadsDiagnosticsText.duration(1.0) == "1.0 s")
+        #expect(RoadsDiagnosticsText.duration(12.34) == "12.3 s")
+    }
+
     @Test("The attribution shows exactly when a pack is in use")
     func attribution() {
         #expect(!RoadsDiagnosticsText.attributionVisible(packsInUse: 0))

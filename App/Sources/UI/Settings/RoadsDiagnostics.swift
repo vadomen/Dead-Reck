@@ -25,9 +25,17 @@ enum RoadsDiagnosticsText {
         if pack.cacheHit {
             parts.append("cached")
         } else if let s = pack.verifySeconds {
-            parts.append(String(format: "verified in %.1f s", s))
+            parts.append("verified in " + duration(s))
         }
         return parts.joined(separator: " · ")
+    }
+
+    /// Below 1 s whole milliseconds ("42 ms"), else seconds with one decimal ("1.2 s").
+    /// A value that would round up to 1000 ms shows as "1.0 s".
+    static func duration(_ seconds: TimeInterval) -> String {
+        let ms = (max(seconds, 0) * 1000).rounded()
+        if ms < 1000 { return "\(Int(ms)) ms" }
+        return String(format: "%.1f s", seconds)
     }
 
     /// Which packs the recording uses and since when, else why none.
