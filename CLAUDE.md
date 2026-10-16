@@ -122,6 +122,15 @@ xcodebuild -project DriveLogger.xcodeproj -scheme DriveLogger \
   -destination 'generic/platform=iOS Simulator' build-for-testing
 ```
 
+Copy road packs (`osm/packs/*.roadpack`) to the connected iPhone's `Documents/RoadPacks/`.
+It skips packs whose size and sha256 match the git-ignored stamp `osm/.push_packs_stamps.tsv`
+and the phone's listing, and refuses (override `--force`) when a log on the phone changed in the
+last 30 s, a heuristic: never copy during a recording, packs are memory-mapped:
+
+```bash
+scripts/push_packs.sh [--dry-run] [--force] [--device <id>]
+```
+
 Regenerate the project:
 
 ```bash
