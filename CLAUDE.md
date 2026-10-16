@@ -165,6 +165,13 @@ cp Config/Local.xcconfig.example Config/Local.xcconfig
 Simulator builds and `swift test` work without it — they are deliberately
 unsigned, so the project builds on a machine with no signing identity.
 
+For a device test drive, pick the **`DriveLogger-Release`** scheme in Xcode: it
+builds the same targets as `DriveLogger` but runs and profiles in Release, so the
+sidecar's `msPerStep` and other timings are meaningful (Debug is `-Onone`). It is
+generated from `project.yml` and committed; don't edit a scheme locally to switch
+the Run configuration — `xcodegen generate` overwrites it. Tests stay on the
+`DriveLogger` scheme.
+
 **A team ID goes in `Config/Local.xcconfig` and nowhere else.** Not in
 `project.yml`, not in `Signing.xcconfig`, not in the generated `.xcodeproj`.
 

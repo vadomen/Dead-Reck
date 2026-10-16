@@ -116,3 +116,19 @@ schemes:
       config: Debug
     archive:
       config: Release
+  # Device test drives: same build as DriveLogger, but Run uses Release, so
+  # msPerStep and the other timings in the sidecar mean something (Debug is
+  # -Onone). No test action; tests stay on the DriveLogger scheme.
+  DriveLogger-Release:
+    build:
+      targets:
+        DriveLogger: all
+        DriveLoggerAppTests: [test]
+    run:
+      config: Release
+    profile:
+      config: Release
+    analyze:
+      config: Release
+    archive:
+      config: Release
