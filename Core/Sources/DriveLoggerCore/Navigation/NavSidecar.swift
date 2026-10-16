@@ -17,8 +17,10 @@ import Foundation
 /// - `roads` (v2): written once, when a road network became active: when
 ///   (`t`, `afterInputs`) and which packs. A v2 sidecar without it used no
 ///   roads.
-/// - `roadsSelection` (within v2, no bump): one per road selection attempt,
-///   how it ended and which pack files it saw; diagnostic, never compared.
+/// - `roadsSelection` (within v2, no bump): a road selection attempt, how it
+///   ended and which pack files it saw, written when the outcome or the
+///   candidates change; identical repeats are folded into one line with a
+///   count (`RoadsSelectionLog`). Diagnostic, never compared.
 ///
 /// Times are session-clock nanoseconds (`t`, like the log). Doubles are
 /// written at full precision so a replay can match them bit for bit;
@@ -188,12 +190,16 @@ public enum NavSidecar {
     }
 
     /// One road selection attempt and how it ended (diagnostic, within v2
-    /// with no version bump; never compared). Written where the outcome
-    /// became known, so possibly some inputs after the request; one line
-    /// per attempt, as many as there were. Holds the request's radius but
-    /// never its centre. Built by `RoadSelectionAttempt.line(recordedAfterInputs:)`
-    /// through `LiveNavigationRun.finishSelection(_:emit:)`, or
-    /// `LiveNavigationRun.unfinishedSelectionLine(_:)`.
+    /// with no version bump; never compared), or a run of identical repeats
+    /// of the line before it (`repeats`, `firstT`). Written where the
+    /// outcome became known, so possibly some inputs after the request.
+    /// An attempt `isRepeat(of:)` the last line written is counted, not
+    /// written; the repeats are written as one line when an attempt differs,
+    /// at an attach, and at the end (`RoadsSelectionLog`). Holds the
+    /// request's radius but never its centre. Built by
+    /// `RoadSelectionAttempt.line(recordedAfterInputs:)` through
+    /// `LiveNavigationRun.finishSelection(_:emit:)` and
+    /// `LiveNavigationRun.closingLines(inFlight:)`.
     /// Data: © OpenStreetMap contributors, ODbL 1.0.
     public struct RoadsSelection: Hashable, Sendable, Codable {
         /// What of the request is recorded: its radius only, no position.
@@ -268,8 +274,10 @@ public enum NavSidecar {
         /// was raised.
         public var afterInputs: Int
         /// Inputs handed to the run when the outcome was recorded: where
-        /// this line sits in the file. ≥ `afterInputs`; equal for a
-        /// synchronous selection (`replay_nav`).
+        /// this line sits in the file, except for a line of repeats, which
+        /// carries its last repeat's and is written later (at the next
+        /// line or the end). ≥ `afterInputs`; equal for a synchronous
+        /// selection (`replay_nav`).
         public var recordedAfterInputs: Int
         public var request: Request
         /// Per pack file, verified ones first (in candidate order), then
@@ -281,9 +289,21 @@ public enum NavSidecar {
         public var packs: [String]?
         /// Why, for `refused`; nil (omitted) otherwise.
         public var reason: String?
+        /// The attempts this line stands for, ≥ 2, when it folds a run of
+        /// repeats (`RoadsSelectionLog`); nil (omitted) for one attempt.
+        /// Every other field is the last repeat's; the repeats before it are
+        /// the same attempt (`isRepeat(of:)`) and differ only in `t`, the
+        /// input counts and the radius, which are not kept. Optional,
+        /// within v2.
+        public var repeats: Int?
+        /// With `repeats`: the request `t` of the first of the attempts this
+        /// line stands for (`t` is the last one's); nil (omitted) otherwise.
+        /// Optional, within v2.
+        public var firstT: MonotonicTimestamp?
 
         public init(t: MonotonicTimestamp, afterInputs: Int, recordedAfterInputs: Int, request: Request,
-                    candidates: [Candidate]?, outcome: Outcome, packs: [String]? = nil, reason: String? = nil) {
+                    candidates: [Candidate]?, outcome: Outcome, packs: [String]? = nil, reason: String? = nil,
+                    repeats: Int? = nil, firstT: MonotonicTimestamp? = nil) {
             self.t = t
             self.afterInputs = afterInputs
             self.recordedAfterInputs = recordedAfterInputs
@@ -292,6 +312,21 @@ public enum NavSidecar {
             self.outcome = outcome
             self.packs = packs
             self.reason = reason
+            self.repeats = repeats
+            self.firstT = firstT
+        }
+
+        /// The attempts this line stands for: `repeats`, else 1.
+        public var attempts: Int { max(repeats ?? 1, 1) }
+
+        /// The same attempt as `other`: the same outcome, packs, reason and
+        /// candidates (names, states, reasons and `covering`). The one
+        /// definition of "same attempt", for writing (`RoadsSelectionLog`)
+        /// and for folding rows in `replay_nav --compare`
+        /// (`SidecarComparison.selectionRows`).
+        public func isRepeat(of other: RoadsSelection) -> Bool {
+            outcome == other.outcome && packs == other.packs && reason == other.reason
+                && candidates == other.candidates
         }
 
         /// The attempt for `request`, still in flight when the run ended.
@@ -307,7 +342,8 @@ public enum NavSidecar {
         }
 
         /// One line for `replay_nav --compare`: "t 12.3 s after 45 inputs
-        /// (recorded after 47), radius 1414 m: selected a.roadpack".
+        /// (recorded after 47), radius 1414 m: selected a.roadpack"; a line
+        /// of repeats ends in "(×N, t a–b s)" (`firstT`, `t`).
         public var summary: String {
             var text = String(format: "t %.1f s after %d inputs", t.seconds, afterInputs)
             if recordedAfterInputs != afterInputs { text += " (recorded after \(recordedAfterInputs))" }
@@ -323,7 +359,62 @@ public enum NavSidecar {
                 }
                 text += "]"
             }
+            if attempts > 1 {
+                text += String(format: " (×%d, t %.1f–%.1f s)", attempts, (firstT ?? t).seconds, t.seconds)
+            }
             return text
+        }
+    }
+
+    /// Which `roadsSelection` lines a run writes (within v2): the first
+    /// attempt at once, then an attempt only when it is not a repeat
+    /// (`RoadsSelection.isRepeat(of:)`) of the last line written. Repeats
+    /// are counted and written as one line (the last repeat's, with
+    /// `repeats` and `firstT`; a single repeat is a plain line) before the
+    /// next line written, or by `flush()` at the end. `LiveNavigationRun`
+    /// owns one, so the app and `replay_nav` write the same lines.
+    public struct RoadsSelectionLog: Hashable, Sendable {
+        /// The last line written; repeats are measured against it.
+        public private(set) var lastWritten: RoadsSelection?
+        /// The repeats counted since, as the line `flush()` would write.
+        public private(set) var pending: RoadsSelection?
+        /// Attempts recorded (`record`), the unfinished one included.
+        public private(set) var attempts = 0
+        /// Lines returned to write (`record` and `flush`).
+        public private(set) var lines = 0
+
+        public init() {}
+
+        /// Records one attempt; returns the lines to write now, in order:
+        /// none for a repeat, else the pending repeats' line (if any) and
+        /// then `attempt`. `alwaysWrite`: write it even if it is a repeat
+        /// (an attach, whose `roads` line must follow its own line).
+        public mutating func record(_ attempt: RoadsSelection, alwaysWrite: Bool = false) -> [RoadsSelection] {
+            attempts += 1
+            if !alwaysWrite, let last = lastWritten, attempt.isRepeat(of: last) {
+                if let earlier = pending {
+                    var folded = attempt
+                    folded.repeats = earlier.attempts + attempt.attempts
+                    folded.firstT = earlier.firstT ?? earlier.t
+                    pending = folded
+                } else {
+                    pending = attempt
+                }
+                return []
+            }
+            var out = flush().map { [$0] } ?? []
+            out.append(attempt)
+            lastWritten = attempt
+            lines += 1
+            return out
+        }
+
+        /// The pending repeats' line, if any, now (at the end of the run).
+        public mutating func flush() -> RoadsSelection? {
+            guard let line = pending else { return nil }
+            pending = nil
+            lines += 1
+            return line
         }
     }
 
@@ -333,7 +424,8 @@ public enum NavSidecar {
         case pin(Pin)
         /// v2.
         case roads(Roads)
-        /// Within v2 (no bump): one road selection attempt. Diagnostic.
+        /// Within v2 (no bump): one road selection attempt, or a run of
+        /// repeats of the line before it. Diagnostic.
         case roadsSelection(RoadsSelection)
         /// A kind this reader does not know (a later version); skipped.
         case unrecognized(kind: String)
@@ -423,8 +515,9 @@ public enum NavSidecar {
         /// v2: the road network the run attached; nil when it used none
         /// (and always for v1).
         public var roads: Roads?
-        /// The road selection attempts (`roadsSelection` lines), in file
-        /// order; diagnostic, never compared.
+        /// The `roadsSelection` lines, in file order (a line may stand for
+        /// several attempts: `RoadsSelection.attempts`); diagnostic, never
+        /// compared.
         public var roadsSelections: [RoadsSelection] = []
         /// Lines of a kind this reader does not know, skipped.
         public var unrecognizedLines: Int

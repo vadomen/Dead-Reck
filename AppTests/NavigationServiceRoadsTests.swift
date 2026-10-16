@@ -13,7 +13,8 @@ import Testing
 struct NavigationServiceRoadsTests {
     static func header(_ n: Int) -> LogHeader {
         LogHeader(
-            sessionID: UUID(uuidString: "00000000-0000-4000-8000-0000000000C\(n)")!,
+            // C0…C9 as before for n < 10; n up to 63 stays a valid UUID.
+            sessionID: UUID(uuidString: String(format: "00000000-0000-4000-8000-0000000000%02lX", 0xC0 + n))!,
             startedAt: Date(timeIntervalSince1970: 0), referenceUptimeSeconds: 100,
             app: AppIdentity(name: "DriveLogger", version: "0.0", build: "7"),
             device: DeviceIdentity(model: "test", systemName: "iOS", systemVersion: "17"))
@@ -266,7 +267,7 @@ struct NavigationServiceRoadsTests {
         let (feed, tap) = makeFeed(7, scratch: scratch)
         let task = service.start(feed)
         for event in Self.events(1...2) { tap.record(event) }
-        #expect(await waitUntil { await service.attemptOutcomes.count >= 1 })
+        #expect(await waitUntil { await service.selectionAttempts >= 1 })
         for event in Self.events(2.5...7) { tap.record(event) }
         tap.finish()
         await task.value
@@ -276,7 +277,7 @@ struct NavigationServiceRoadsTests {
         #expect(try NavSidecar.read(contentsOf: feed.sidecarURL).roads == nil)
     }
 
-    @Test("A refused set writes refused; the same set refused again is written again, not rebuilt")
+    @Test("A refused set writes refused; the same set refused again is not rebuilt and, being a repeat, is counted and written at the end")
     func refusedLines() async throws {
         let scratch = try ScratchStore()
         defer { scratch.remove() }
@@ -288,16 +289,58 @@ struct NavigationServiceRoadsTests {
         let (feed, tap) = makeFeed(8, scratch: scratch)
         let task = service.start(feed)
         for event in Self.events(1...2) { tap.record(event) }
-        #expect(await waitUntil { await service.attemptOutcomes.count >= 1 })
+        #expect(await waitUntil { await service.selectionAttempts >= 1 })
         for event in Self.events(2.5...4) { tap.record(event) }
-        #expect(await waitUntil { await service.attemptOutcomes.count >= 2 })
+        #expect(await waitUntil { await service.selectionAttempts >= 2 })
         tap.finish()
         await task.value
 
         let lines = try NavSidecar.read(contentsOf: feed.sidecarURL).roadsSelections
-        #expect(lines.count >= 2 && lines.allSatisfy { $0.outcome == .refused })
-        #expect(lines.allSatisfy { $0.packs == ["a.roadpack", "b.roadpack"] && $0.reason != nil })
-        #expect(Set(lines.compactMap(\.reason)).count == 1, "the repeat carries the remembered reason")
+        let refused = lines.filter { $0.outcome != .unfinished }
+        #expect(refused.count == 2 && refused.allSatisfy { $0.outcome == .refused })
+        #expect(refused.allSatisfy { $0.packs == ["a.roadpack", "b.roadpack"] && $0.reason != nil })
+        #expect(Set(refused.compactMap(\.reason)).count == 1, "the repeat carries the remembered reason")
+        #expect(refused[0].repeats == nil && refused[1].isRepeat(of: refused[0]))
+        let finished = try #require(await service.finished.first)
+        #expect(lines.reduce(0) { $0 + $1.attempts } == finished.selectionAttempts && finished.selectionAttempts >= 2)
+        #expect(lines.count == finished.selectionLines)
+    }
+
+    @Test("Identical attempts: the first line at once, the repeats as one line flushed at the end of the recording (after the last estimate, before any unfinished line)")
+    func repeatsFlushedAtEnd() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let dir = try RoadPackFixture.directory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let service = NavigationService(library: library(dir))
+        let (feed, tap) = makeFeed(10, scratch: scratch)
+        let task = service.start(feed)
+        // One fix per batch, each attempt finished before the next fix.
+        for event in Self.events(1...2) { tap.record(event) }
+        #expect(await waitUntil { await service.selectionAttempts >= 1 })
+        for event in Self.events(2.5...4) { tap.record(event) }
+        #expect(await waitUntil { await service.selectionAttempts >= 2 })
+        for event in Self.events(4.5...6) { tap.record(event) }
+        #expect(await waitUntil { await service.selectionAttempts >= 3 })
+        #expect(await service.lastAttemptOutcome == .noPacks)
+        tap.finish()
+        await task.value
+
+        let lines = try NavSidecar.read(contentsOf: feed.sidecarURL).roadsSelections
+        let finished = try #require(await service.finished.first)
+        #expect(lines.reduce(0) { $0 + $1.attempts } == finished.selectionAttempts && finished.selectionAttempts >= 3)
+        #expect(lines.count == finished.selectionLines)
+        let noPacks = lines.filter { $0.outcome == .noPacks }
+        #expect(noPacks.count == 2 && lines.prefix(2) == noPacks[...], "the noPacks lines come first")
+        #expect(lines.dropFirst(2).allSatisfy { $0.outcome == .unfinished } && lines.count <= 3)
+        let first = try #require(noPacks.first), repeats = try #require(noPacks.last)
+        #expect(first.repeats == nil && first.firstT == nil)
+        #expect((repeats.repeats ?? 0) >= 2 && repeats.firstT.map { $0 > first.t && $0 < repeats.t } == true)
+        // The repeats line was written at the end: after every estimate.
+        let text = try String(contentsOf: feed.sidecarURL, encoding: .utf8).split(separator: "\n")
+        let lastEstimate = try #require(text.lastIndex { $0.contains(#""kind":"estimate""#) })
+        let repeatsLine = try #require(text.firstIndex { $0.contains(#""repeats":"#) })
+        #expect(repeatsLine > lastEstimate, "flushed at the end, not where the repeats happened")
     }
 
     @Test("An empty library writes noPacks")
@@ -310,7 +353,7 @@ struct NavigationServiceRoadsTests {
         let (feed, tap) = makeFeed(9, scratch: scratch)
         let task = service.start(feed)
         for event in Self.events(1...2) { tap.record(event) }
-        #expect(await waitUntil { await service.attemptOutcomes.count >= 1 })
+        #expect(await waitUntil { await service.selectionAttempts >= 1 })
         for event in Self.events(2.5...7) { tap.record(event) }
         tap.finish()
         await task.value

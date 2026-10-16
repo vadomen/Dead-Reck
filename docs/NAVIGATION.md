@@ -742,24 +742,29 @@ update in a recording:
   refused at scan) and calls `RoadPackSelection.attempt`, which also builds
   the `RoadNetwork`. Back on the actor, between two inputs, the service calls
   `LiveNavigationRun.finishSelection`, which attaches a selected network and
-  writes the `roadsSelection` line (then `roads` after a successful attach).
+  records the attempt for the `roadsSelection` lines (then writes `roads`
+  after a successful attach).
   The selection is asynchronous, so the live attach can come some inputs
   after the request; `replay_nav --as-live` attaches at the request itself.
   A request that arrives during a selection replaces the pending one (it is
   not an attempt and writes no line). A refused set is remembered with its
-  reason and not built again; a repeat writes `refused` again. A selection
-  still in flight when the recording ends is written as `unfinished`,
-  before the sidecar closes. Recording and the sensor streams never wait for
+  reason and not built again; a repeat is `refused` again. At the end the
+  repeats still pending are written, then a selection still in flight as
+  `unfinished`, before the sidecar closes. Recording and the sensor streams never wait for
   any of it; until the attach the run is the no-roads run.
 - **Sidecar.** The app writes sidecar v2. The attach writes its `roads`
   line (`t`, `afterInputs`, each pack's content hash, format, OSM timestamp
   and grid, and `roadSetHash`), and estimates carry `onRoadShare`.
   `replay_nav --as-live --roads <same packs> --compare <sidecar>` attaches
-  at that `afterInputs` ([NAV_SIDECAR.md](NAV_SIDECAR.md)). Each selection
-  attempt can be recorded as a `roadsSelection` line, diagnostic only, with
-  the outcome, the pack files seen and why none attached. Core writes it
-  through `LiveNavigationRun.finishSelection` and `unfinishedSelectionLine`,
-  and `replay_nav --write-sidecar` writes these lines.
+  at that `afterInputs` ([NAV_SIDECAR.md](NAV_SIDECAR.md)). The selection
+  attempts are recorded as `roadsSelection` lines, diagnostic only, with
+  the outcome, the pack files seen and why none attached. A line is written
+  when the outcome or the candidates change. Identical repeats are counted
+  and written as one line with `repeats` and `firstT`: at the next change,
+  at an attach, or at the end. Core does this
+  (`NavSidecar.RoadsSelectionLog`, through `LiveNavigationRun.finishSelection`
+  and `closingLines(inFlight:)`), and `replay_nav --write-sidecar` writes
+  the same lines.
 - **Diagnostics** (Settings): a Road packs section lists each pack
   (verified, or the refusal reason; size, OSM date, hash prefix, and
   "cached" or "verified in x s"). Below it: "Recording uses" (the pack

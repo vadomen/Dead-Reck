@@ -55,8 +55,9 @@ import Foundation
 // the app would have written for this recording with no drops (the same
 // loop: file order, header seed, default config, --roads attached by the
 // live rule; one log only), e.g. to check --compare end to end on a Mac.
-// With --roads each selection attempt is a `roadsSelection` line (packs
-// named by file name); --compare prints both sides' attempts and never
+// With --roads the selection attempts are `roadsSelection` lines (packs
+// named by file name; identical repeats folded into one line with a count,
+// as the app writes them); --compare prints both sides' attempts and never
 // compares them.
 //
 // Inputs are fed in arrival order; the engine never sees a fix the GPS mode
@@ -346,7 +347,7 @@ for path in paths {
             print("Sidecar       wrote \(writeSidecarPath): \(run.estimates) estimates, \(writer.bytesWritten) bytes (as the app would, no drops)"
                   + (roads == nil ? "" : run.roads.map { "; roads attached after \($0.afterInputs) inputs, roadSetHash \($0.network.roadSetHashHex)" }
                      ?? "; no roads attached (no given pack covered a selection request)")
-                  + (roads == nil ? "" : "; \(selections) roadsSelection line(s)"))
+                  + (roads == nil ? "" : "; \(selections) roadsSelection line(s) for \(run.selectionLog.attempts) attempt(s)"))
         } catch {
             fail("cannot write \(writeSidecarPath): \(error)", status: 1)
         }
