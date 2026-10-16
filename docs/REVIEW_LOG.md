@@ -684,3 +684,22 @@ Tests: Core passes 843 tests in 114 suites, 36 known issues (test 3); one of fiv
 ### Run 32 summary
 
 4 rounds; round 4 still had a MAJOR (a missing test), resolved by the user's decision above. Findings: 5 MAJOR confirmed and fixed (R32.1-1, R32.1-2, R32.3-1, R32.4-1: regression tests for new logic; R32.2-1: pre-existing rule-4 race, fixed by the user's decision, closes R5.1-4), 0 rejected, 1 MINOR fixed (R32.2-2), 20 MINOR deferred (R32.1-3..9, R32.2-3, R32.2-4, R32.3-2, R32.3-3, R32.4-2..10). Final: Core 843 tests in 114 suites pass (36 known issues, test 3); app 293 tests pass apart from the pre-existing link-loss flake R32.2-4; simulator build succeeds.
+
+## Run 33: roads selection diagnostics — roadsSelection sidecar line and roadPacks lifecycle row (main..roads-selection-log, 8e74eff..1f2d912), started 2026-10-16
+
+### Round 1
+
+Reviewer: one fresh `reviewer` (opus) on the whole range. Checks: Core imports Foundation only; frozen fixtures untouched, `roadPacks` pinned in the v3 suite; no coordinates in the new line; drive-8 `--write-sidecar` base vs HEAD identical apart from timing fields, with and without roads, after removing the `roadsSelection` lines; a never-covering pack vs no roads identical after removing them; `--compare` verdict unchanged. Result: 0 BLOCKER / 0 MAJOR / 4 MINOR.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R33.1-1 | MINOR | `Core/Sources/DriveLoggerCore/Navigation/Roads/RoadPackSelection.swift:211-212`: the documented outcome order (unusableRequest before noPacks) is untested; moving the noPacks guard first survives. An unusable request with an empty library would be labelled noPacks (diagnostic label only). Fix: `attempt([], request: bad)` expects `.unusableRequest`. | DEFERRED | backlog. |
+| R33.1-2 | MINOR | `Core/Sources/DriveLoggerCore/Navigation/Replay/SidecarComparison.swift:292-294`: the `--compare` fold rule's candidates equality is untested; dropping it survives, so a pack refused mid-drive could be folded into "(and N more like it)" (printout only). | DEFERRED | backlog. |
+| R33.1-3 | MINOR | `AppTests/NavigationServiceRoadsTests.swift:279-301`: `refusedLines` ("written again, not rebuilt") cannot tell a remembered refused set from a rebuilt one (same reason text); removing `state.knownRefusals.append` (`NavigationService.swift:226-228`) would survive. R32.4-7's app-level attach-refusal path is still unreached (Core covers it in `finishSelectionAttachAndRefusal`). | DEFERRED | backlog. |
+| R33.1-4 | MINOR | `App/Sources/Navigation/NavigationService.swift:104, 220, 272`: the test-only `attemptOutcomes` array lives in the production actor and is never cleared: with no covering pack about one entry per second, ~58 KB per recorded hour for the process lifetime. Fix: cap, reset at begin, or keep a counter plus last outcome. | DEFERRED | backlog. |
+
+Tests: Core passes 850 tests in 115 suites, 36 known issues (test 3). App: 304 tests in 48 suites pass. Simulator build succeeds.
+
+### Run 33 summary
+
+1 round; 0 BLOCKER / MAJOR. Findings: 0 fixed, 0 rejected, 4 MINOR deferred (R33.1-1 to R33.1-4). Final: Core 850 tests in 115 suites pass (36 known issues, test 3); app 304 tests in 48 suites pass; simulator build succeeds.
