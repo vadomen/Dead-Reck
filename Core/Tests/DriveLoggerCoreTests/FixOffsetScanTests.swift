@@ -64,6 +64,18 @@ import Testing
         #expect(FixOffsetScan.text(w).hasSuffix("OFF ROADS, shift fits, unique"))
     }
 
+    /// A shift shorter than `foundMinShiftM` is not an offset, however well
+    /// it fits (an ordinary GNSS bias). The 266 m shift with the minimum
+    /// raised to 300 m stands in for a short shift.
+    @Test func aShiftShorterThanTheMinimumIsNotFound() throws {
+        var options = Self.fast
+        options.foundMinShiftM = 300
+        let w = try #require(FixOffsetScan.scan(Self.track(shift: (150, -220)), roads: Self.network(), options: options))
+        #expect(w.bestScore.meanM < 2 && w.best.lengthM < 300)
+        #expect(w.offRoad && !w.found)
+        #expect(FixOffsetScan.text(w).hasSuffix("OFF ROADS, no shift fits"))
+    }
+
     @Test func aTrackOnItsRoadHasNoOffset() throws {
         let w = try #require(FixOffsetScan.scan(Self.track(), roads: Self.network(), options: Self.fast))
         #expect(w.best.lengthM < 2)
