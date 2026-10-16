@@ -143,6 +143,11 @@ public struct SidecarComparison: Hashable, Sendable {
     /// Config keys that differ but are road-only and inert because neither
     /// side used roads (N3-CMPHASH): named, never blamed.
     public var inertConfigDifferences: [String] = []
+    /// The road selection attempts (`roadsSelection` lines) of the sidecar
+    /// and of the replay, in order. Printed, never compared: they change
+    /// neither matching nor the verdict.
+    public var sidecarSelections: [NavSidecar.RoadsSelection] = []
+    public var replaySelections: [NavSidecar.RoadsSelection] = []
 
     /// Roads were in use on either side.
     public var roadsInUse: Bool { sidecarRoads != nil || replayRoads != nil }
@@ -208,8 +213,13 @@ public struct SidecarComparison: Hashable, Sendable {
         sidecarRoads = sidecar.roads
         self.givenRoadSetHash = givenRoadSetHash
         for line in replay {
-            if case .roads(let roads) = line { replayRoads = roads }
+            switch line {
+            case .roads(let roads): replayRoads = roads
+            case .roadsSelection(let selection): replaySelections.append(selection)
+            default: break
+            }
         }
+        sidecarSelections = sidecar.roadsSelections
         droppedInputs = sidecar.droppedInputs
         truncatedLastLine = sidecar.truncatedLastLine
         configHashMismatch = sidecar.header.configHash != replayConfig.hashHex
@@ -274,6 +284,29 @@ public struct SidecarComparison: Hashable, Sendable {
         }.sorted()
     }
 
+    /// One row per attempt (`RoadsSelection.summary`), except that a run of
+    /// consecutive attempts that differ only in `t`, the input counts and
+    /// the radius is folded into its first row and a count, so a drive
+    /// whose packs never cover stays readable.
+    static func selectionRows(_ selections: [NavSidecar.RoadsSelection]) -> [String] {
+        func same(_ a: NavSidecar.RoadsSelection, _ b: NavSidecar.RoadsSelection) -> Bool {
+            a.outcome == b.outcome && a.packs == b.packs && a.reason == b.reason && a.candidates == b.candidates
+        }
+        var rows: [String] = []
+        var index = 0
+        while index < selections.count {
+            var end = index + 1
+            while end < selections.count && same(selections[index], selections[end]) { end += 1 }
+            var row = "              " + selections[index].summary
+            if end - index > 1 {
+                row += String(format: " (and %d more like it to t %.1f s)", end - index - 1, selections[end - 1].t.seconds)
+            }
+            rows.append(row)
+            index = end
+        }
+        return rows
+    }
+
     /// Human-readable report: one block for `replay_nav`.
     public func report(tolerance: Tolerance) -> String {
         func row(_ name: String, _ d: Differences) -> String {
@@ -302,6 +335,10 @@ public struct SidecarComparison: Hashable, Sendable {
         }
         if let roadsMismatch {
             lines.append("Warning       roads: \(roadsMismatch); no exact verdict without the same packs")
+        }
+        for (side, selections) in [("sidecar", sidecarSelections), ("replay", replaySelections)] where !selections.isEmpty {
+            lines.append("Selection     \(side): \(selections.count) attempt(s), not compared")
+            lines += Self.selectionRows(selections)
         }
         if configBlamed {
             lines.append("Warning       config hash differs from the sidecar's; keys: "

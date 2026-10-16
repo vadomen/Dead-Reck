@@ -111,6 +111,11 @@ struct RecordingNavigationFeed: Sendable {
     let sidecarURL: URL
     /// The tap behind `inputs`.
     let tap: NavigationTap
+    /// Writes the `roadPacks` lifecycle row with this `detail` if the
+    /// recording is still running; called by the navigation service when
+    /// its library scan finishes. Does nothing after Stop and after the
+    /// first call. Default: no-op (feeds built without a session).
+    var recordRoadPacks: @Sendable (String) -> Void = { _ in }
 
     var inputs: AsyncStream<NavigationInput> { tap.inputs }
     /// Inputs dropped so far because the consumer fell behind.
@@ -155,7 +160,9 @@ struct RecordingNavigationFeed: Sendable {
 /// OBD: …` when started without a polling link), the replayed start-up
 /// init (`link`, `elm`, `adapter`; above), `locationAuthorization` (one per
 /// `LocationAuthorizationReporting` source, after the source rows: phone
-/// builds), `calibrationStart` /
+/// builds), `roadPacks` (once, when the road-pack library scan started at
+/// Start finishes while the recording is still running; none after Stop and
+/// none without a library), `calibrationStart` /
 /// `calibrationEnd`, `stop` (detail = stop reason), `manualFix` (format v3,
 /// `stageManualFix`, written when its undo window closes or at Stop), `background` /
 /// `foreground`, `memoryWarning`, `thermalState` (at start when not nominal,
@@ -520,7 +527,10 @@ final class RecordingSession {
             clock: clock,
             recordingURL: url,
             sidecarURL: LogStore.navSidecarURL(for: url),
-            tap: navigationTap
+            tap: navigationTap,
+            recordRoadPacks: { [weak self] detail in
+                Task { @MainActor in self?.recordRoadPacks(detail, in: rec) }
+            }
         ))
 
         rec.record(LifecycleSample(.start, detail: polling ? nil : "without OBD: link \(Self.describe(link.state))"))
@@ -822,6 +832,17 @@ final class RecordingSession {
                 rec.sink.record(row)
             }
         }
+    }
+
+    /// The `roadPacks` row: the road-pack library scan the navigation
+    /// service started at Start, written when it finishes. Only while `rec`
+    /// is still the running recording (never after Stop began: a scan that
+    /// finishes later leaves no row) and at most once.
+    private func recordRoadPacks(_ detail: String, in rec: ActiveRecording) {
+        guard recording === rec, state == .calibrating || state == .recording,
+              rec.isWritable, !rec.roadPacksRecorded else { return }
+        rec.roadPacksRecorded = true
+        rec.record(LifecycleSample(.roadPacks, detail: detail))
     }
 
     /// After `startSources`: one `locationAuthorization` row per source that
@@ -1248,6 +1269,8 @@ private final class ActiveRecording {
     var backgroundSources: Set<ObjectIdentifier> = []
     /// The `backgroundRiskDetail` row has been written.
     var backgroundRiskRecorded = false
+    /// The `roadPacks` row has been written (once per recording).
+    var roadPacksRecorded = false
     var statsTimer: Task<Void, Never>?
     var statsTick: Task<Void, Never>?
     var liveTimer: Task<Void, Never>?

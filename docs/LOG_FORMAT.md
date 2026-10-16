@@ -416,7 +416,7 @@ No format version change: no new kind, field or string.
 
 | Field | Meaning |
 |---|---|
-| `event` | `start`, `stop`, `pause`, `resume`, `background`, `foreground`, `calibrationStart`, `calibrationEnd`, `error`, `memoryWarning`, `thermalState`, `protectedDataUnavailable`, `lowDiskSpace`, `locationAuthorization` (since M4). Calibration is the first phase of a recording: the samples between `calibrationStart` and `calibrationEnd` were taken with the car and phone still. |
+| `event` | `start`, `stop`, `pause`, `resume`, `background`, `foreground`, `calibrationStart`, `calibrationEnd`, `error`, `memoryWarning`, `thermalState`, `protectedDataUnavailable`, `lowDiskSpace`, `locationAuthorization` (since M4), `roadPacks`. Calibration is the first phase of a recording: the samples between `calibrationStart` and `calibrationEnd` were taken with the car and phone still. |
 | `detail` | Optional free text (error description, thermal state name, stop reason). An event that couldn't be encoded (e.g. a NaN or infinite value) is replaced by an `error` row at the same `t` with detail `encodingFailed <kind>: <description>`. |
 
 What the app writes (all at `clock.now()` when written):
@@ -434,6 +434,7 @@ What the app writes (all at `clock.now()` when written):
 | `error` | `<source> failed to start: <error>` | A sensor source threw when started. |
 | `locationAuthorization` | `authorizationStatus=<status>, accuracyAuthorization=<accuracy>, backgroundActivitySession=<held\|none>` | Phone builds, at start, after the source rows (also when location is unavailable). Informational, not an error. `<status>`: `notDetermined`, `restricted`, `denied`, `authorizedWhenInUse`, `authorizedAlways`; `<accuracy>`: `full`, `reduced` (an unknown future value is written `unknown(<raw>)`). `held`: `referenceLocation` started and holds a `CLBackgroundActivitySession`; iOS gives no confirmation that it keeps the app running. `none`: it does not (not started, or unavailable). |
 | `locationAuthorization` | `authorizationStatus=<status>, accuracyAuthorization=<accuracy>` | Location authorisation changed while recording (e.g. the permission prompt answered after Start, precise location turned off). A change to denied or restricted is also followed by the `referenceLocation: authorization … while recording` error below. |
+| `roadPacks` | `<n> found, <m> verified` plus `; <file>: <reason>` per refused file (names sorted), e.g. `2 found, 1 verified; old.roadpack: <reason>`; `none in Documents/RoadPacks` when the folder is empty or missing | Once per recording (app builds with a road-pack library), when the scan started at Start finishes while the recording is still running; no row if it finishes after Stop. Carries no coordinates. Informational, not an error. |
 | `error` | `no background location session; recording may pause while locked` | The source that keeps the app running with the phone locked (`referenceLocation`, holding a background location session) is unavailable or did not start at start — location denied or restricted — or became unavailable during the recording (an authorisation change, or a `kCLErrorDenied` while authorisation reads denied or restricted; never for a `kCLErrorDenied` while authorised). At most once per recording; written right after the source rows at start, or when the loss is noticed. The recording goes on; while the phone was locked, rows may stop and resume (look for a jump in `stats` `t`). Never written by simulator builds, which have no such source. |
 | `error` | `<source>: <error>` | A sensor reported an error while running; once per distinct error per source. Also `rawIMU: magnetometer unavailable; recording accel and gyro only`, and `referenceLocation: authorization denied while recording; no more reference fixes` (or `restricted`). Since M4 a CoreLocation error carries the authorisation read when it arrived: `referenceLocation: <error> (authorizationStatus=<status>, accuracyAuthorization=<accuracy>)`, e.g. `referenceLocation: Error Domain=kCLErrorDomain Code=1 "(null)" (authorizationStatus=authorizedWhenInUse, accuracyAuthorization=full)`. `Code=1` (`kCLErrorDenied`) can be transient: the source keeps running, and only when authorisation reads `denied`/`restricted` does it lead to the background-risk row. |
 | `error` | `writer queue peaked at <n> events, more than 2 s of data (<m>)` | The writer fell behind in that `stats` window (written after the `stats` row). |
@@ -581,6 +582,11 @@ M4 added the `lifecycle` value `locationAuthorization` (`event` is an open
 string set, pinned in Core as `LifecycleSample.Event.locationAuthorization`)
 and the start-up init rows at the head of a recording (existing kinds and
 strings only).
+
+Within v3, without a version bump (read unchanged by every v3 reader): the
+`lifecycle` value `roadPacks` (`event` is an open string set, pinned in Core as
+`LifecycleSample.Event.roadPacks`), the road-pack library scan result, once
+per recording.
 
 Every version stays readable. v2 only adds optional fields, so DriveLogger
 decodes a v1 file into the same types with those fields absent. v3 only adds a

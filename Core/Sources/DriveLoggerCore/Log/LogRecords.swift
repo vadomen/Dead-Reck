@@ -312,6 +312,13 @@ public struct LifecycleSample: Hashable, Sendable, Codable {
         /// without a version bump: `event` is an open string set, so older
         /// readers decode the row unchanged.
         case locationAuthorization
+        /// The road-pack library scan, once per recording, when the scan the
+        /// navigation service starts at Start finishes while recording.
+        /// `detail` is free text, `<n> found, <m> verified` plus
+        /// `; <file>: <reason>` per refused file, or
+        /// `none in Documents/RoadPacks`. Added to v3 without a version bump,
+        /// like `locationAuthorization`: `event` is an open string set.
+        case roadPacks
     }
 
     /// Why a recording ended through the normal stop path: the `detail` of

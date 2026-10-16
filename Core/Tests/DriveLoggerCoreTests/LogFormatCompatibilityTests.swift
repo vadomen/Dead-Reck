@@ -490,5 +490,8 @@ struct LogFormatCompatibilityV3Tests {
         #expect(LogEventKind.manualFix.rawValue == "manualFix")
         let sources: [(ManualFixSample.SpeedSource, String)] = [(.obd, "obd"), (.gps, "gps"), (.unknown, "unknown")]
         for (value, string) in sources { #expect(value.rawValue == string) }
+        // Added within v3 (open string set; no version bump), like
+        // `locationAuthorization` within v2.
+        #expect(LifecycleSample.Event.roadPacks.rawValue == "roadPacks")
     }
 }

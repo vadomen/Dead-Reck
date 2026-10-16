@@ -11,9 +11,18 @@ import Foundation
 /// order (ascending content hash), the identity a result records.
 public struct ReplayRoadSet: Hashable, Sendable {
     public let network: RoadNetwork
+    /// File names by content hash (`replay_nav --roads`): how the
+    /// selector names the packs in `roadsSelection` lines, as the app
+    /// names them. Not part of the set's identity.
+    public let names: [UInt64: String]
 
     public init(_ network: RoadNetwork) {
+        self.init(network, names: [:])
+    }
+
+    public init(_ network: RoadNetwork, names: [UInt64: String]) {
         self.network = network
+        self.names = names
     }
 
     public static func == (a: ReplayRoadSet, b: ReplayRoadSet) -> Bool {
@@ -38,14 +47,19 @@ public struct ReplayRoadSet: Hashable, Sendable {
     public var labelSuffix: String { "roads-" + String(roadSetHashHex.prefix(8)) }
 
     /// A selector over these packs (`ReplayRoadAttach.live`), each named by
-    /// its content hash. A pack whose coverage cannot be read covers
-    /// nothing.
+    /// its file name (`names`), else its content hash. With every pack
+    /// named, candidates are in file-name order, as the app's library
+    /// lists them; else in canonical order. The order changes only the
+    /// `roadsSelection` lines: the network is canonical either way. A pack
+    /// whose coverage cannot be read covers nothing.
     public var selector: RoadPackSelector {
-        RoadPackSelector(candidates: network.packs.map { pack in
-            let name = NavigationSeed.hex(pack.contentHash)
+        var candidates = network.packs.map { pack in
+            let name = names[pack.contentHash] ?? NavigationSeed.hex(pack.contentHash)
             let coverage = (try? RoadPackCoverage(pack: pack)) ?? RoadPackCoverage(rings: nil, bounds: nil)
             return RoadPackSelection.Candidate(name: name, pack: pack, coverage: coverage)
-        })
+        }
+        if network.packs.allSatisfy({ names[$0.contentHash] != nil }) { candidates.sort { $0.name < $1.name } }
+        return RoadPackSelector(candidates: candidates)
     }
 }
 

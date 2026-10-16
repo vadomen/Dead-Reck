@@ -40,7 +40,7 @@ struct LogFormatCurrentStateTests {
         // Raise these only after adding the new strings to the frozen suite of
         // the version that introduces them.
         #expect(LogEventKind.allCases.count == 14)
-        #expect(LifecycleSample.Event.allCases.count == 14)
+        #expect(LifecycleSample.Event.allCases.count == 15)
         // `stop` details; pinned with the low-disk prefixes in
         // `LifecycleDetailTests` (R3-4).
         #expect(LifecycleSample.StopReason.allCases.count == 2)
