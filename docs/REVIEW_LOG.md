@@ -659,3 +659,28 @@ Reviewers: two fresh `reviewer` (opus): A3 Core (late-attach sidecars on real dr
 | R32.3-3 | MINOR | `AppTests/RecordingSessionTests.swift:272-273`: the "second report writes nothing" step runs after `await failing.value`, when `recording` is nil, so it never reaches the `stopRowQueued` check; deleting `rec.stopRowQueued = true` (`RecordingSession.swift:1091`) keeps the test green. | DEFERRED | backlog. |
 
 Tests: Core passes 842 tests in 114 suites, 36 known issues (test 3). App unchanged since round 2 (2d05d59); its link-loss tests ran 15 iterations clean on n3.3.
+
+Round 3 commit: 6e02554.
+
+### Round 4
+
+Reviewers: two fresh `reviewer` (opus), both told to hunt untested new branches by mutation: A4 Core (mutations run in a scratch copy of Core because an app-test run was using the worktree); C4 app and logger (static). Result: 0 BLOCKER / 1 MAJOR / 9 MINOR. Round 4 is the loop's last; the user decided (2026-10-16): add the test for R32.4-1, defer the MINORs, merge without a round 5.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R32.4-1 | MAJOR | `NavigationReplay.swift:912`: road scoring of withheld clean fixes under `--as-live --roads` maps the matched edge into the given set's numbering (`estimate.map(inTruthFrame)`); untested (the mapping test has no withheld fix). Removing it moved scored fixes onto the far pack's edge (≈ 8 km) with every test green; it would silently corrupt wrong-road verdicts in metrics.json. | CONFIRMED | regression test added (round 4 commit). |
+| R32.4-2 | MINOR | `RoadPackCatalog.swift:213`: re-storing a cache hit is untested; without it every other launch fully re-verifies every pack. | DEFERRED | backlog. |
+| R32.4-3 | MINOR | `RoadPackSelection.swift:205`: `RoadPackSelector`'s refused-set cache is untested (cost only: a network build per request). | DEFERRED | backlog. |
+| R32.4-4 | MINOR | `RoadPackCatalog.swift:136`: the cache-version check is untested (matters after a future cache version bump). | DEFERRED | backlog. |
+| R32.4-5 | MINOR | `LiveNavigationRun.swift:137`: resetting `newSelectionRequest` before the time-jump guard is untested; without it the app re-requests the previous circle after a rejected input (duplicate selection only). | DEFERRED | backlog. |
+| R32.4-6 | MINOR | `SidecarComparison` `configBlamed`: the "hash differs but no keys parsed" branch is untested (explanation text only). | DEFERRED | backlog. |
+| R32.4-7 | MINOR | `NavigationService.swift:222, 241`: no app test reaches the attach-refusal catch or the refused-set memo (a `configWouldChange` set would be rebuilt every fix, or Diagnostics would show "looking for a pack" instead of the reason). | DEFERRED | backlog. |
+| R32.4-8 | MINOR | `NavigationService.swift:176, 246`: keeping the latest request during a selection and starting it afterwards is untested; a regression loses that request until the next fix. | DEFERRED | backlog. |
+| R32.4-9 | MINOR | `RoadPackLibrary.swift:96`: a rescan requested during a scan (`rescanQueued`) is untested. | DEFERRED | backlog. |
+| R32.4-10 | MINOR | `RoadsDiagnostics.swift:28`: "verified in %.1f s" shows 0.0 s for a 30–49 ms verify, too coarse for the D2 comparison with the Mac's 70.5 / 29.3 ms; show ms below 1 s. | DEFERRED | backlog. |
+
+Tests: Core passes 843 tests in 114 suites, 36 known issues (test 3); one of five full runs during the fix failed once in "Navigation N4 B0" (wall-clock assert, known T-2). App unchanged since round 2; two full runs at 6e02554: one pass, one failure in the known link-loss test (R32.2-4, reproduced on main).
+
+### Run 32 summary
+
+4 rounds; round 4 still had a MAJOR (a missing test), resolved by the user's decision above. Findings: 5 MAJOR confirmed and fixed (R32.1-1, R32.1-2, R32.3-1, R32.4-1: regression tests for new logic; R32.2-1: pre-existing rule-4 race, fixed by the user's decision, closes R5.1-4), 0 rejected, 1 MINOR fixed (R32.2-2), 20 MINOR deferred (R32.1-3..9, R32.2-3, R32.2-4, R32.3-2, R32.3-3, R32.4-2..10). Final: Core 843 tests in 114 suites pass (36 known issues, test 3); app 293 tests pass apart from the pre-existing link-loss flake R32.2-4; simulator build succeeds.

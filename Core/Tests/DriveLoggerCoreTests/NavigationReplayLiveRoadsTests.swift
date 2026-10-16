@@ -89,6 +89,48 @@ struct NavigationReplayLiveRoadsTests {
         #expect(fromStart.roadsAttachedAfterInputs == nil && fromStart.attachedRoadSetHash == nil)
     }
 
+    /// R32.4-1: the road scoring of withheld clean fixes reports the matched
+    /// edge in the given set's numbering (the truth's), not the attached
+    /// subset's. Given [near, far], the live rule attaches only near, so the
+    /// engine numbers near as pack 0 while the given set may not.
+    @Test("As live with roads and withheld clean fixes: each scored fix's matched edge is renumbered into the given set (near's pack by content hash), close to the fix, and judged right")
+    func roadFixesRenumberedIntoGivenSet() throws {
+        let inputs = Attach.inputs()
+        let (near, far) = try Self.packs()
+        let given = ReplayRoadSet(try RoadNetwork(packs: [near, far]))
+        // Precondition: near is not pack 0 in the given set, so the attached
+        // subset's numbering (near = 0) would name the far pack.
+        let nearIndex = try #require(given.network.packs.firstIndex { $0.contentHash == near.contentHash })
+        #expect(nearIndex != 0)
+
+        var options = Self.options(given, attach: .live)
+        options.gps = .maskAfter(seconds: 10)
+        let result = NavigationReplay.run(logName: "live", inputs: inputs, options: options)
+        let attached = try #require(result.attachedRoadSetHash)
+        #expect(attached != given.roadSetHashHex)
+        #expect(attached == (try RoadNetwork(packs: [near])).roadSetHashHex)
+
+        let metrics = try #require(result.roadMetrics)
+        // The clean fixes after 10 s (to 20 s) are withheld; each is scored
+        // with the engine on the road (seed 33: nine, 11 s to 19 s).
+        let scored = metrics.fixes
+        #expect(scored.count == 9 && scored.allSatisfy { $0.matchedEdge != nil })
+        for fix in scored {
+            let matched = try #require(fix.matchedEdge)
+            #expect(given.network.packs[matched.pack].contentHash == near.contentHash, "t \(fix.t) pack \(matched.pack)")
+            #expect(fix.truthEdge == matched, "t \(fix.t) truth \(String(describing: fix.truthEdge)) matched \(matched)")
+            let d = try #require(fix.matchedEdgeDistanceM)
+            #expect(d < 10 && d < options.wrongRoadToleranceM, "t \(fix.t) distance \(d)")
+            #expect(fix.verdict == .right, "t \(fix.t)")
+        }
+        // Verdicts: every scored fix right, none wrong or off. (The verdict
+        // also accepts the same OSM way id, which the renumbering does not
+        // change; the pack, truth-edge and distance checks above are the
+        // ones that see the frame.)
+        #expect(metrics.count(.right).fixes == scored.count && metrics.scored == scored.count)
+        #expect(metrics.count(.wrong).fixes == 0 && metrics.count(.off).fixes == 0)
+    }
+
     /// R32.1-2: an input the engine rejects as an implausible forward time
     /// jump still counts as given (`LiveNavigationRun.inputs` counts it), so
     /// the metrics replay attaches after the same number of inputs.
