@@ -151,8 +151,14 @@ actor NavigationService {
         current = feed.generation
         runsStarted += 1
         roadStates[feed.generation] = RoadsState()
-        // Rescan the packs (cache hits are cheap); never awaited here.
-        if let library { Task(priority: .utility) { await library.rescan() } }
+        // Rescan the packs (cache hits are cheap); never awaited here. Its
+        // result goes into the recording once, as the `roadPacks` row.
+        if let library {
+            let report = feed.recordRoadPacks
+            Task(priority: .utility) {
+                report(RoadPackLibrary.roadPacksDetail(await library.rescan()))
+            }
+        }
     }
 
     private func ingest(_ input: NavigationInput, generation: Int) {

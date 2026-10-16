@@ -72,6 +72,8 @@ actor RoadPackLibrary {
     private var latest: ScanResult?
     private var scanTask: Task<Void, Never>?
     private var rescanQueued = false
+    /// `rescan()` callers waiting for scan number `target` (1-based).
+    private var waiters: [(target: Int, continuation: CheckedContinuation<[PackStatus], Never>)] = []
     private var scansCompleted = 0
     /// Scans started since init (tests).
     private(set) var scansStarted = 0
@@ -89,14 +91,33 @@ actor RoadPackLibrary {
 
     // MARK: Scanning
 
-    /// Starts a scan in the background and returns at once. During a scan,
-    /// queues exactly one more.
-    func rescan() {
-        guard scanTask == nil else {
+    /// Starts a scan in the background (during a scan, queues exactly one
+    /// more) and returns the packs that scan found once it has finished.
+    /// Callers that don't need the result wrap the call in a `Task`.
+    @discardableResult
+    func rescan() async -> [PackStatus] {
+        let target: Int
+        if scanTask == nil {
+            startScan()
+            target = scansStarted
+        } else {
             rescanQueued = true
-            return
+            target = scansStarted + 1
         }
-        startScan()
+        return await withCheckedContinuation { waiters.append((target, $0)) }
+    }
+
+    /// The `detail` of the `roadPacks` lifecycle row for a scan's `packs`:
+    /// `<n> found, <m> verified` plus `; <file>: <reason>` per refused file
+    /// (names sorted), or `none in Documents/RoadPacks` when there are none.
+    static func roadPacksDetail(_ packs: [PackStatus]) -> String {
+        guard !packs.isEmpty else { return "none in Documents/RoadPacks" }
+        let sorted = packs.sorted { $0.name < $1.name }
+        var text = "\(sorted.count) found, \(sorted.filter(\.verified).count) verified"
+        for pack in sorted where !pack.verified {
+            text += "; \(pack.name): \(pack.refusal ?? "refused")"
+        }
+        return text
     }
 
     private func startScan() {
@@ -116,6 +137,9 @@ actor RoadPackLibrary {
         scansCompleted += 1
         verifications += result.packs.filter { !$0.cacheHit && $0.sizeBytes != nil }.count
         scanTask = nil
+        let ready = waiters.filter { $0.target <= scansCompleted }
+        waiters.removeAll { $0.target <= scansCompleted }
+        for waiter in ready { waiter.continuation.resume(returning: result.packs) }
         if rescanQueued {
             rescanQueued = false
             startScan()

@@ -90,7 +90,7 @@ final class RoadsDiagnosticsModel {
 
     /// While Diagnostics is visible: rescan once, then refresh every 2 s.
     func run() async {
-        await library?.rescan()
+        if let library { Task(priority: .utility) { await library.rescan() } }
         while !Task.isCancelled {
             await refresh()
             try? await Task.sleep(for: .seconds(2))
