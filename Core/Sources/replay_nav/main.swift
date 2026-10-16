@@ -9,7 +9,29 @@ import Foundation
 //       [--as-live | --file-order] [--compare <log.nav.jsonl> [--tolerance <m>] [--heading-tolerance <deg>]]
 //       [--write-sidecar <out.nav.jsonl>] [--pin-pair-window <s>] [--strict]
 //       [--roads <pack.roadpack>]... [--wrong-road-tolerance <m>]
+//       [--fix-offset <from>:<to>|auto[:<len>:<step>]]... [--fix-source any|accessory|phone]
+//       [--fix-offset-max <m>] [--fix-offset-step <m>] [--fix-max-acc <m>] [--fix-offset-stat mean|median]
+//       [--fix-offset-course <deg>|off] [--fix-offset-test <m>@<deg>]... [--fix-offset-trace]
 //
+// --fix-offset (repeatable, needs --roads): analysis only, no engine, no
+// metrics files. For each window of clean fixes (≤ 15 m, session seconds;
+// `auto` = sliding windows, default 60 s every 30 s) from --fix-source
+// (default any; accessory = `isProducedByAccessory` fixes, phone = the
+// rest), prints the capped distance-to-road distribution of the recorded
+// track, the best constant shift within ±--fix-offset-max (default 400 m,
+// coarse step --fix-offset-step, default 10 m, then 1 m) and where both
+// stand among every grid shift's score (`FixOffsetScan`); for each explicit
+// window also the fixes' dynamics (path vs OBD distance, speed vs OBD,
+// course change vs gyro yaw), and each pin against the time-nearest clean
+// fix. --fix-max-acc widens the accuracy limit (the run is then not the
+// clean-fix rule, and says so). Shifts are ranked by the mean capped
+// distance (--fix-offset-stat); a moving fix with a course counts only roads
+// within --fix-offset-course degrees of it (default 30, off: any road).
+// --fix-offset-test (repeatable) scores a hypothesis shift — e.g. a pin's
+// vector — in every window and ranks it among the grid shifts.
+// --fix-offset-trace: for each explicit window, every fix's time, accuracy,
+// speed and capped distance to the nearest road as recorded.
+// Only relative metres and bearings are printed, never a position.
 // --roads (repeatable, N3.2): road packs, in any order (the network sorts
 // them by content hash, so the order given changes nothing; the same pack
 // twice is refused); the engine runs its road update against them, the run is scored with the road metrics and its
@@ -83,6 +105,9 @@ let usage = """
            [--as-live | --file-order] [--compare <sidecar.nav.jsonl> [--tolerance <m>] [--heading-tolerance <deg>]]
            [--write-sidecar <out.nav.jsonl>] [--pin-pair-window <s>] [--strict]
            [--roads <pack.roadpack>]... [--wrong-road-tolerance <m>]
+           [--fix-offset <from>:<to>|auto[:<len>:<step>]]... [--fix-source any|accessory|phone]
+           [--fix-offset-max <m>] [--fix-offset-step <m>] [--fix-max-acc <m>] [--fix-offset-stat mean|median]
+           [--fix-offset-course <deg>|off] [--fix-offset-test <m>@<deg>]... [--fix-offset-trace]
     """
 
 var arguments = Array(CommandLine.arguments.dropFirst())
@@ -105,6 +130,12 @@ var pinPairWindow = NavigationReplay.defaultPinPairWindowS
 var strict = false
 var roadPaths: [String] = []
 var wrongRoadTolerance: Double?
+enum FixOffsetWindow { case explicit(Double, Double), auto(lengthS: Double, stepS: Double) }
+var fixOffsetWindows: [FixOffsetWindow] = []
+var fixSource = FixOffsetScan.Source.any
+var fixOffsetOptions = FixOffsetScan.Options()
+var fixMaxAccuracy = NavigationReplay.cleanFixTruthAccM
+var fixOffsetTrace = false
 
 func number(_ text: String, _ flag: String) -> Double {
     guard let value = Double(text), value.isFinite else { fail("\(flag) needs a number, got \(text)\n\(usage)", status: 2) }
@@ -174,6 +205,57 @@ while !arguments.isEmpty {
         let metres = number(value(), argument)
         guard metres >= 0 else { fail("--wrong-road-tolerance must be >= 0\n\(usage)", status: 2) }
         wrongRoadTolerance = metres
+    case "--fix-offset":
+        let text = value()
+        let parts = text.split(separator: ":").map(String.init)
+        if parts.first == "auto" {
+            guard parts.count == 1 || parts.count == 3 else { fail("--fix-offset auto[:<len>:<step>]\n\(usage)", status: 2) }
+            let length = parts.count == 3 ? number(parts[1], argument) : 60
+            let step = parts.count == 3 ? number(parts[2], argument) : 30
+            guard length > 0, step > 0 else { fail("--fix-offset auto needs a positive length and step\n\(usage)", status: 2) }
+            fixOffsetWindows.append(.auto(lengthS: length, stepS: step))
+        } else {
+            guard parts.count == 2 else { fail("--fix-offset needs <from>:<to> or auto\n\(usage)", status: 2) }
+            let from = number(parts[0], argument), to = number(parts[1], argument)
+            guard to > from else { fail("--fix-offset \(text): <to> must be after <from>\n\(usage)", status: 2) }
+            fixOffsetWindows.append(.explicit(from, to))
+        }
+    case "--fix-source":
+        let name = value()
+        guard let source = FixOffsetScan.Source(rawValue: name) else { fail("unknown --fix-source \(name)\n\(usage)", status: 2) }
+        fixSource = source
+    case "--fix-offset-max":
+        let metres = number(value(), argument)
+        guard metres > 0 else { fail("--fix-offset-max must be > 0\n\(usage)", status: 2) }
+        fixOffsetOptions.maxShiftM = metres
+    case "--fix-offset-step":
+        let metres = number(value(), argument)
+        guard metres >= 1 else { fail("--fix-offset-step must be >= 1\n\(usage)", status: 2) }
+        fixOffsetOptions.coarseStepM = metres
+    case "--fix-max-acc":
+        let metres = number(value(), argument)
+        guard metres > 0 else { fail("--fix-max-acc must be > 0\n\(usage)", status: 2) }
+        fixMaxAccuracy = metres
+    case "--fix-offset-stat":
+        let name = value()
+        guard let statistic = FixOffsetScan.Statistic(rawValue: name) else { fail("unknown --fix-offset-stat \(name)\n\(usage)", status: 2) }
+        fixOffsetOptions.statistic = statistic
+    case "--fix-offset-course":
+        let text = value()
+        if text == "off" {
+            fixOffsetOptions.courseToleranceDeg = nil
+        } else {
+            let degrees = number(text, argument)
+            guard degrees > 0, degrees <= 90 else { fail("--fix-offset-course must be in (0, 90] or off\n\(usage)", status: 2) }
+            fixOffsetOptions.courseToleranceDeg = degrees
+        }
+    case "--fix-offset-trace":
+        fixOffsetTrace = true
+    case "--fix-offset-test":
+        let parts = value().split(separator: "@").map(String.init)
+        guard parts.count == 2 else { fail("--fix-offset-test needs <m>@<deg>\n\(usage)", status: 2) }
+        let metres = number(parts[0], argument), degrees = number(parts[1], argument) * .pi / 180
+        fixOffsetOptions.tested.append(FixOffsetScan.Shift(east: metres * sin(degrees), north: metres * cos(degrees)))
     case "-h", "--help":
         print(usage)
         exit(EXIT_SUCCESS)
@@ -217,6 +299,73 @@ if !roadPaths.isEmpty {
     } catch {
         fail("cannot use these road packs together: \(error)", status: 2)
     }
+}
+
+// --fix-offset: the constant-offset scan only, then stop.
+if !fixOffsetWindows.isEmpty {
+    guard let network = roads?.network else { fail("--fix-offset needs --roads\n\(usage)", status: 2) }
+    print(ReplayReport.roadsText(roads!.packs, roadSetHash: roads!.roadSetHashHex))
+    print("Fix offset    fixes ≤ \(fixMaxAccuracy) m\(fixMaxAccuracy == NavigationReplay.cleanFixTruthAccM ? " (clean)" : " (not the clean-fix rule)"), source \(fixSource.rawValue); shifts ±\(fixOffsetOptions.maxShiftM) m step \(fixOffsetOptions.coarseStepM) m then \(fixOffsetOptions.fineStepM) m; distances capped at \(fixOffsetOptions.capM) m; ranked by \(fixOffsetOptions.statistic.rawValue); course gate \(fixOffsetOptions.courseToleranceDeg.map { "\($0)° at ≥ \(fixOffsetOptions.courseMinSpeedMps) m/s" } ?? "off")")
+    print("              mean/p50/p90 = capped distance to the nearest road; rank = share of grid shifts scoring ≤ the recorded track")
+    for path in paths {
+        let url = URL(fileURLWithPath: path)
+        let events: [LogEvent]
+        do {
+            let reader = try LogFileReader(url: url, recovery: strict ? .strict : .skipMalformedLines)
+            events = Array(reader)
+            print("\nRead          \(url.lastPathComponent): \(ReplayReport.readText(reader.report))")
+        } catch {
+            fail("cannot read \(path): \(error)", status: 1)
+        }
+        let all = FixOffsetScan.cleanFixes(from: events, maxAccuracyM: fixMaxAccuracy)
+        let fixes = all.filter { fixSource.admits($0.accessory) }
+        let accessory = all.filter { $0.accessory == true }.count
+        print("Fixes         \(all.count) (accessory \(accessory), other \(all.count - accessory)); scanned \(fixes.count)")
+        guard !fixes.isEmpty else { continue }
+        let obd = FixOffsetScan.obdSpeed(from: events)
+        let yaw = FixOffsetScan.yawRate(from: events)
+        var explicitWindows: [(Double, Double)] = []
+        print(FixOffsetScan.windowHeader)
+        for request in fixOffsetWindows {
+            let windows: [(from: Double, to: Double)]
+            switch request {
+            case .explicit(let from, let to):
+                windows = [(from, to)]
+                explicitWindows.append((from, to))
+            case .auto(let length, let step):
+                windows = FixOffsetScan.slidingWindows(over: fixes, lengthS: length, stepS: step)
+            }
+            for w in windows {
+                let inside = fixes.filter { $0.t >= w.from && $0.t < w.to }
+                if let result = FixOffsetScan.scan(inside, roads: network, options: fixOffsetOptions) {
+                    print(FixOffsetScan.text(result))
+                    FixOffsetScan.testedText(result).forEach { print($0) }
+                } else {
+                    print(String(format: "%.1f–%.1f", w.from, w.to) + "  \(inside.count) fixes: too few to scan")
+                }
+            }
+        }
+        for (from, to) in explicitWindows {
+            let inside = fixes.filter { $0.t >= from && $0.t < to }
+            guard inside.count >= 2 else { continue }
+            if fixOffsetTrace, let w = FixOffsetScan.scan(inside, roads: network, options: fixOffsetOptions) {
+                print(String(format: "Trace         %.1f–%.1f s: t s, accuracy m, speed m/s, distance to road m (recorded)", from, to))
+                for (fix, d) in zip(inside, w.recordedDistancesM) {
+                    print(String(format: "  %8.1f  %5.1f  %5.1f  %5.1f", fix.t, fix.accuracyM, fix.speed, d))
+                }
+            }
+            print(String(format: "Dynamics      %.1f–%.1f s: ", from, to) + FixOffsetScan.text(FixOffsetScan.dynamics(inside, obdSpeed: obd, yawRate: yaw)))
+        }
+        let pins: [(t: Double, latitude: Double, longitude: Double)] = events.compactMap { event in
+            guard case .manualFix(let pin) = event.payload else { return nil }
+            return (event.timestamp.seconds, pin.latitude, pin.longitude)
+        }
+        for check in FixOffsetScan.pinChecks(pins: pins, fixes: fixes) {
+            print("Pin           " + FixOffsetScan.text(check))
+        }
+        if pins.count > 0 { print("Pins          \(pins.count), of which \(FixOffsetScan.pinChecks(pins: pins, fixes: fixes).count) within 5 s of a scanned fix") }
+    }
+    exit(EXIT_SUCCESS)
 }
 
 // --set: patch numeric config fields through the config's JSON form, so

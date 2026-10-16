@@ -726,3 +726,53 @@ Tests: Core passes 862 tests in 116 suites, 36 known issues (test 3). App: 317 t
 ### Run 34 summary
 
 1 round; 0 BLOCKER / MAJOR. Findings: 0 fixed, 0 rejected, 6 MINOR deferred (R34.1-1 to R34.1-6). Final: Core 862 tests in 116 suites pass (36 known issues, test 3); app 317 tests in 49 suites pass; simulator build succeeds. Not verified: whether `devicectl copy to --destination Documents/RoadPacks/<name>` with a file source writes exactly that path (needs a real copy to the phone).
+
+## Run 35: constant-offset GNSS check — replay_nav --fix-offset, drive-10 report, N3-FIXPIN (main..fix-offset-check, 3e2374b), started 2026-10-16
+
+Commits: 3e2374b `FixOffsetScan`, `replay_nav --fix-offset`, tests, docs/NAVIGATION.md "Constant-offset GNSS check", BACKLOG N3-FIXPIN.
+
+### Round 1
+
+Reviewer: one fresh reviewer on the whole range; mutation runs M1–M3 on `FixOffsetScanTests`; bit-identical check of clean `--gps mask-after 230 --seed 1` main against branch (GeoJSON byte-identical, metrics differ only in timings). Result: 0 BLOCKER / 1 MAJOR / 4 MINOR.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R35.1-1 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/Replay/FixOffsetScan.swift:491-492`: `RoadField`'s neighbour-cell search is untested; querying only the point's own cell survives all 9 tests (the course-gate expectation `> 80 && <= 100` is met by the cap itself). A regression would inflate every recorded distance and rank silently. | CONFIRMED, FIXED | Test-only (no bug): `distancesSearchTheNeighbouringCells` (side neighbours incl. negative cells, diagonal); gated case now expects 60.2 m. Own-cell-only mutant: 4 failures; no-diagonal mutant: 1. |
+| R35.1-2 | MINOR | `FixOffsetScan.swift:345-353`: the 2 s OBD hold cap in `dynamics` is untested (mutant survives; the test feeds OBD every 0.5 s). Fix: a case with a > 2 s reply gap. | DEFERRED | backlog. |
+| R35.1-3 | MINOR | `FixOffsetScan.swift:216`: the `RoadField` margin ignores `options.tested`; a hypothesis longer than `maxShiftM + coarseStepM` is scored against a field missing roads (drive-10, `--fix-offset-test 326@70`: 17.4 / 17.6 / 21.7 m mean at `--fix-offset-max` 400 / 100 / 50). Fix: include the largest tested shift in the margin, or refuse it. | DEFERRED | backlog. |
+| R35.1-4 | MINOR | `docs/NAVIGATION.md` "Constant-offset GNSS check": pin 2's vector (326 m @70°) is measured against a stationary 20–50 m fix (`--fix-max-acc 50`), not a clean one; the doc does not say so. | DEFERRED | backlog. |
+| R35.1-5 | MINOR | `FixOffsetScan.swift:39, 129, 309`: "runner-up's median" (it is `statistic`); `Tested.rank` doc inverted (it counts shifts scoring at least as well); unused public `fixes(_:from:to:)` uses `t <= to`, the CLI `t < to`. | DEFERRED | backlog. |
+
+Tests: Core passes 872 tests in 117 suites, 36 known issues (test 3). App/ unchanged.
+
+### Round 2
+
+Reviewer: one fresh reviewer on the whole range; R35.1-1 verified fixed (own-cell mutant killed); mutations on the verdict rules. Result: 0 BLOCKER / 1 MAJOR / 2 MINOR.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R35.2-1 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/Replay/FixOffsetScan.swift:271-276`: the verdict rules are untested beyond "on roads" and "shift fits, unique": dropping the rank condition from `offRoad` and forcing `unique = true` both survive; "no shift fits" and "not unique" are never produced. | CONFIRMED, FIXED | Test-only (no bug): `aSmallOffsetWithALowRankIsOnRoads`, `aTrackOfAnotherShapeIsOffRoadsWithNoShiftFitting`, `aShiftFittingTwoPlacesIsNotUnique`; rank-gate, unique and found mutants killed. The scan tests now run on a 20 m / 2 m grid with default thresholds (`fast`): at the default grid the extra scans made the wall-clock check of NavigationB0Tests R13.1-6c fail under the parallel debug run (2 of 2 full runs). |
+| R35.2-2 | MINOR | `FixOffsetScan.swift:297-305` with `replay_nav/main.swift` `--fix-offset auto`: the step is only checked > 0; `auto:60:1e-15` never advances `from` (infinite loop, memory grows), a tiny step gives millions of windows. Fix: a minimum step, or `first + k·step` with a cap. | DEFERRED | backlog. |
+| R35.2-3 | MINOR | `Core/Sources/replay_nav/main.swift` `--fix-offset` block: exits 0 before engine-only flags (`--compare`, `--write-sidecar`, `--out`, `--truth`, `--gps`, `--set`) are used, silently; a script would read `--compare` as passed. Fix: refuse them with `--fix-offset` (status 2). | DEFERRED | backlog. |
+
+Tests: Core passes 875 tests in 117 suites, 36 known issues (test 3), two full runs. App/ unchanged.
+
+### Round 3
+
+Reviewer: one fresh reviewer; round 2's `fast` grid checked sound (the suite also passes at the default 10 m / 1 m grid, and the 20 m grid makes the fine refinement find the true shift); mutations M1–M3. Result: 0 BLOCKER / 1 MAJOR / 0 MINOR.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R35.3-1 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/Replay/FixOffsetScan.swift:272`: the `best.shift.lengthM >= foundMinShiftM` clause of `found` is untested (dropping it survives); a short shift that halves the mean (an ordinary bias) would be reported as an offset. | CONFIRMED, FIXED | Test-only: `aShiftShorterThanTheMinimumIsNotFound` (266 m shift, minimum raised to 300 m); the mutant fails it (2 issues). Fixed inline (a five-line test). |
+
+Tests: Core passes 876 tests in 117 suites, 36 known issues (test 3). App/ unchanged.
+
+### Round 4
+
+Reviewer: one fresh reviewer on round 3's change (13c35b1..29ca7ab); the minimum-shift mutant is killed by `aShiftShorterThanTheMinimumIsNotFound`. Result: 0 BLOCKER / 0 MAJOR / 0 MINOR.
+
+Tests: Core passes 876 tests in 117 suites, 36 known issues (test 3). App/ unchanged.
+
+### Run 35 summary
+
+4 rounds; 3 MAJOR fixed (R35.1-1, R35.2-1, R35.3-1, all test gaps, no production change), 0 rejected, 6 MINOR deferred (R35.1-2 to R35.1-5, R35.2-2, R35.2-3). Final: Core 876 tests in 117 suites pass (36 known issues, test 3); app unchanged. Engine untouched: clean `--gps mask-after 230 --seed 1` GeoJSON byte-identical between main and the branch (round 1).
