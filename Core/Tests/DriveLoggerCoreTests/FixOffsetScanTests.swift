@@ -72,14 +72,36 @@ import Testing
         let plane = LocalTangentPlane(latitude: 0, longitude: 0)
         let field = RoadField(roads: net, plane: plane, points: [(0, 0)], marginM: 1_000, capM: 100)
         // 5 m north of the first (east-running) segment.
-        #expect(abs(field.distance(east: -350, north: -195) - 5) < 0.1)
-        // Moving north there, the east-running segment does not count; the
-        // diagonal one (course ~18°) is ~95 m away along x.
+        #expect(abs(field.distance(east: -260, north: -195) - 5) < 0.1)
+        // Moving north there, the east-running segments do not count; the
+        // diagonal one (course ~18°) does, nearest at its start corner
+        // (-200, -200): √(60² + 5²) ≈ 60.2 m, below the cap.
         let north = (0.0, 1.0)
-        let gated = field.distance(east: -350, north: -195, course: north, minAbsCos: cos(30 * .pi / 180))
-        #expect(gated > 80 && gated <= 100)
+        let gated = field.distance(east: -260, north: -195, course: north, minAbsCos: cos(30 * .pi / 180))
+        #expect(abs(gated - (60.0 * 60 + 5 * 5).squareRoot()) < 0.5)
         // Far from every road: the cap.
         #expect(field.distance(east: 2_000, north: 2_000) == 100)
+    }
+
+    /// Cells are floor(v / capM) from the (0, 0) anchor: each road below is
+    /// listed only in a cell next to its query point's, never in it.
+    @Test func distancesSearchTheNeighbouringCells() throws {
+        let net = try RoadNetwork(packs: [RoadFixture.build([
+            // East-running at north 105 (cell y 1) and at north −105 (cell y −2).
+            RoadFixture.way(1, ["highway": "residential"], [N(id: 10, east: -50, north: 105), N(id: 11, east: 250, north: 105)]),
+            RoadFixture.way(2, ["highway": "residential"], [N(id: 20, east: -50, north: -105), N(id: 21, east: 250, north: -105)]),
+            // A short north-running stub inside cell (6, 6) only.
+            RoadFixture.way(3, ["highway": "residential"], [N(id: 30, east: 605, north: 605), N(id: 31, east: 605, north: 650)]),
+        ])])
+        let points: [(east: Double, north: Double)] = [(50, 95), (50, -95), (595, 595)]
+        let field = RoadField(roads: net, plane: LocalTangentPlane(latitude: 0, longitude: 0), points: points,
+                              marginM: 1_000, capM: 100)
+        // Cell (0, 0), road in (0, 1).
+        #expect(abs(field.distance(east: 50, north: 95) - 10) < 0.1)
+        // Cell (0, −1), road in (0, −2).
+        #expect(abs(field.distance(east: 50, north: -95) - 10) < 0.1)
+        // Diagonal: cell (5, 5), stub in (6, 6), nearest at its end (605, 605).
+        #expect(abs(field.distance(east: 595, north: 595) - 200.0.squareRoot()) < 0.1)
     }
 
     @Test func tooFewFixesAreNotScanned() throws {
