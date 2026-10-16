@@ -776,3 +776,22 @@ Tests: Core passes 876 tests in 117 suites, 36 known issues (test 3). App/ uncha
 ### Run 35 summary
 
 4 rounds; 3 MAJOR fixed (R35.1-1, R35.2-1, R35.3-1, all test gaps, no production change), 0 rejected, 6 MINOR deferred (R35.1-2 to R35.1-5, R35.2-2, R35.2-3). Final: Core 876 tests in 117 suites pass (36 known issues, test 3); app unchanged. Engine untouched: clean `--gps mask-after 230 --seed 1` GeoJSON byte-identical between main and the branch (round 1).
+
+## Run 36: app icon, UX-9/UX-10, D1 drive-11 record (main..docs-ux9-d1, ab4ec07..9fd454b), started 2026-10-16
+
+Commits: ab4ec07 app icon (1024 px universal, no alpha); 8c8a21f docs/BACKLOG_UX.md UX-9, UX-10 (OPEN); 9fd454b docs/PLAN.md §6 D1 drive-11 (NOT claimed).
+
+### Round 1
+
+Reviewer: one fresh reviewer (sonnet) on the whole range. Checked the icon asset, the 7-column table rows, the code/doc references (FollowSpan cap 1000 m and heading-up only, PinPrecision.maxSpanM 300 m, FixOffsetScan, NAVIGATION.md "Constant-offset GNSS check", N3-FIXPIN, the "no new event kinds" constraint) and privacy (no coordinates or place names). It re-checked every drive-11 figure against the log and sidecar. Result: 0 BLOCKER / 0 MAJOR / 2 MINOR.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R36.1-1 | MINOR | `docs/BACKLOG_UX.md:42` (UX-10): "on drive-10 the semi-major reached ~480 m"; the drive-10 sidecar peaks at 500.5 m (the FollowSpan cut-off is 455 m, so the argument still holds). | DEFERRED | backlog. |
+| R36.1-2 | MINOR | `docs/PLAN.md:779` (D1, drive-11): only `maxStepMs` is called over the 2 ms limit, but the sidecar `msPerStep` (an EMA) is also 12.0 ms at 34 s and 4.4 ms at 35 s right after roads attach, then below 1.8 ms. | DEFERRED | backlog. |
+
+Tests: Core passes 876 tests in 117 suites, 36 known issues (test 3). The simulator app build succeeded (icon).
+
+### Run 36 summary
+
+1 round; 0 fixed, 0 rejected, 2 MINOR deferred (R36.1-1, R36.1-2).
