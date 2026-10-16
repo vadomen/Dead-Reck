@@ -233,8 +233,9 @@ public enum RoadPackSelection {
 /// One road selection attempt (`RoadPackSelection.attempt`): what was
 /// decided off the run, and the `roadsSelection` line it becomes. Hand it
 /// to `LiveNavigationRun.finishSelection(_:emit:)`, which attaches the
-/// network of a `selected` attempt and writes the line (and the `roads`
-/// line after it).
+/// network of a `selected` attempt and writes the line unless it repeats
+/// the last one written (then it is counted; an attach's line is always
+/// written, and the `roads` line after it).
 public struct RoadSelectionAttempt: Sendable {
     public let request: RoadSelectionRequest
     /// The line's `candidates`.

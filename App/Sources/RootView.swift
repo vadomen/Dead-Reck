@@ -9,6 +9,7 @@ struct RootView: View {
     @State private var sessions: SessionsViewModel
     @State private var console: ConsoleViewModel
     @State private var roads: RoadsDiagnosticsModel
+    @State private var roadsWarning: RoadsWarningModel
     private let session: RecordingSession
     private let services: AppServices
     @State private var nav: AppNavigation
@@ -23,6 +24,17 @@ struct RootView: View {
         _sessions = State(initialValue: SessionsViewModel(services: services))
         _console = State(initialValue: ConsoleViewModel(services: services))
         _roads = State(initialValue: RoadsDiagnosticsModel(library: services.roadPacks, service: service))
+        let library = services.roadPacks
+        _roadsWarning = State(initialValue: RoadsWarningModel(source: {
+            let roads = await service.roadsStatus()
+            guard roads.recording else { return nil }
+            let status = await library.status()
+            return RoadsWarning.message(
+                recording: roads.recording, libraryScanned: status.scansCompleted > 0 && !status.scanning,
+                verifiedPacks: status.packs.filter(\.verified).count, roadsAttached: roads.inUse,
+                lastOutcome: roads.lastOutcome
+            )
+        }))
         var initial = AppNavigation()
         #if DEBUG
         // `-uiTab N` opens a tab at launch (simulator screenshots), N in tab order:
@@ -40,7 +52,9 @@ struct RootView: View {
                     services.sensors.sources.lazy
                         .compactMap { $0 as? any CachedLocationProviding }.first?.cachedLocation
                 },
-                onStart: { nav.openRecordingSettings() }
+                onStart: { nav.openRecordingSettings() },
+                onOpenDiagnostics: { nav.tab = .settings; nav.settingsPath = [] },
+                roadsWarning: roadsWarning
             )
         } sessions: {
             SessionsScreen(model: sessions)
@@ -54,5 +68,6 @@ struct RootView: View {
         // Ingest at the root so the track keeps filling on other tabs. The
         // feed is its own view so only it observes the 16 Hz `live` status.
         .background(MapFeed(session: session, model: map))
+        .task { await roadsWarning.run() }
     }
 }

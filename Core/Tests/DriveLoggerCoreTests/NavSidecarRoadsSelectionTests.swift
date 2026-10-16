@@ -4,9 +4,10 @@ import Testing
 @testable import DriveLoggerCore
 @testable import RoadPackBuild
 
-/// The sidecar's `roadsSelection` line (within v2, no version bump): one
-/// line per road selection attempt and how it ended, built by
-/// `RoadPackSelection.attempt` and `LiveNavigationRun.finishSelection`.
+/// The sidecar's `roadsSelection` line (within v2, no version bump): a
+/// road selection attempt and how it ended, built by
+/// `RoadPackSelection.attempt` and `LiveNavigationRun.finishSelection`;
+/// identical repeats share one line (NavSidecarRoadsSelectionRepeatsTests).
 /// Diagnostic only: it never changes another line nor the compare verdict.
 /// Synthetic packs and drive near (0, 0) only.
 @Suite("Navigation sidecar roadsSelection line")
@@ -133,7 +134,8 @@ struct NavSidecarRoadsSelectionTests {
         #expect(Set(unfinishedObject.keys) == ["afterInputs", "kind", "outcome", "recordedAfterInputs", "request", "t"])
         var run = LiveNavigationRun(sessionID: Attach.sessionID, config: Attach.config(), appBuild: "t")
         for input in Attach.inputs()[..<50] { run.ingest(input) { _ in } }
-        #expect(run.unfinishedSelectionLine(here) == .roadsSelection(Selection(unfinished: here, recordedAfterInputs: 50)))
+        #expect(run.closingLines(inFlight: here) == [.roadsSelection(Selection(unfinished: here, recordedAfterInputs: 50))])
+        #expect(run.selectionLog.attempts == 1 && run.selectionLog.lines == 1)
     }
 
     @Test("finishSelection: a selected attempt attaches; its roadsSelection line comes right before the roads line; an attach the run refuses is a refused line with that reason and no roads line")
@@ -186,27 +188,36 @@ struct NavSidecarRoadsSelectionTests {
         try Self.expectCommon(refused, raised, recordedAfterInputs: atFinish, "attach refused")
 
         // The synchronous selector remembers the attach refusal: the set is
-        // not built again, the next request is refused with the same reason.
+        // not built again, the next request is refused with the same reason,
+        // so every later attempt repeats the first: one line, then one line
+        // for the repeats at the end.
         var selector = RoadPackSelector(candidates: [narrow])
         var sync = LiveNavigationRun(sessionID: Attach.sessionID, config: Attach.config(), appBuild: "t")
         var selections: [Selection] = []
         for input in inputs {
             sync.ingest(input, selector: &selector) { if case .roadsSelection(let s) = $0 { selections.append(s) } }
         }
-        #expect(selections.count == selector.requests && selections.count > 1 && sync.roads == nil)
+        #expect(selections.count == 1 && selections[0].repeats == nil)
+        for line in sync.closingLines() { if case .roadsSelection(let s) = line { selections.append(s) } }
+        #expect(selector.requests > 2 && sync.roads == nil)
+        #expect(selections.count == 2 && selections[1].repeats == selector.requests - 1)
+        #expect(selections.reduce(0) { $0 + $1.attempts } == selector.requests && sync.selectionLog.attempts == selector.requests)
         #expect(selections.allSatisfy { $0.outcome == .refused && $0.reason == refused.reason })
         #expect(selections.allSatisfy { $0.afterInputs == $0.recordedAfterInputs })
         #expect(selector.knownRefusals == [RoadPackSelection.Refusal(names: ["narrow.roadpack"], reason: refused.reason ?? "")])
     }
 
-    @Test("No packs: every request of a run gives a noPacks line with empty candidates; no roads line")
+    @Test("No packs: every request of a run is a noPacks attempt with empty candidates, the first one line, the repeats one line at the end; no roads line")
     func noPacksRun() throws {
         var selector = RoadPackSelector(candidates: [])
         var run = LiveNavigationRun(sessionID: Attach.sessionID, config: Attach.config(), appBuild: "t")
         var lines: [NavSidecar.Line] = []
         for input in Attach.inputs() { run.ingest(input, selector: &selector) { lines.append($0) } }
+        lines += run.closingLines()
         let selections = lines.compactMap { if case .roadsSelection(let s) = $0 { s } else { nil } }
-        #expect(!selections.isEmpty && selections.count == selector.requests)
+        #expect(selector.requests > 2 && selections.count == 2)
+        #expect(selections[0].repeats == nil && selections[1].repeats == selector.requests - 1)
+        #expect(selections.reduce(0) { $0 + $1.attempts } == selector.requests)
         #expect(selections.allSatisfy { $0.outcome == .noPacks && $0.candidates == [] })
         #expect(!lines.contains { $0.kind == "roads" } && run.roads == nil)
         // The first attempt is the engine's first initialisation.
@@ -280,7 +291,8 @@ struct NavSidecarRoadsSelectionTests {
         let far = NavigationReplay.liveLines(inputs: inputs, sessionID: Attach.sessionID, config: Attach.config(),
                                              roads: try Self.farSet(), attach: .live)
         let selections = far.compactMap { if case .roadsSelection(let s) = $0 { s } else { nil } }
-        #expect(selections.count > 1 && selections.allSatisfy { $0.outcome == .noneCovering })
+        #expect(selections.count == 2 && selections.allSatisfy { $0.outcome == .noneCovering })
+        #expect(selections.reduce(0) { $0 + $1.attempts } > 2, "the repeats are folded into the second line")
         #expect(!none.contains { if case .roadsSelection = $0 { true } else { false } })
         let rest = far.filter { if case .roadsSelection = $0 { false } else { true } }
         #expect(rest.count == none.count && rest.count == far.count - selections.count)
@@ -289,8 +301,15 @@ struct NavSidecarRoadsSelectionTests {
                 == (try Attach.stripped(none).map { try NavSidecar.encode($0, with: encoder) }))
         // The pinned no-roads digest (N3.3) still holds.
         #expect(try Attach.digest(rest) == Attach.noRoadsDigest)
-        // Each selection line sits where its request was raised (synchronous).
+        // Each attempt is recorded where its request was raised (synchronous);
+        // the repeats line carries the last repeat's counts and is written
+        // last, at the end of the run.
         #expect(selections.allSatisfy { $0.recordedAfterInputs == $0.afterInputs })
+        guard case .roadsSelection(let last) = far.last else {
+            Issue.record("the repeats line is the last line")
+            return
+        }
+        #expect(last == selections[1])
     }
 
     @Test("replay_nav names: with file names for every pack the selector names and orders candidates by file name (as the app's library); the set's identity and network ignore names")

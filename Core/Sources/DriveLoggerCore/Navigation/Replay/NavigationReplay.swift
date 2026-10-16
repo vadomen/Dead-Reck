@@ -234,9 +234,11 @@ public enum NavigationReplay {
     /// The app's loop (`LiveNavigationRun`) over `inputs`; `emit` gets every
     /// sidecar line, the opening lines first. With `roads`: `.live` selects
     /// from them at each selection request (`RoadPackSelector`) and attaches
-    /// at once, each attempt a `roadsSelection` line; `.afterInputs(k)`
-    /// attaches the whole set after k inputs; `.fromStart` gives it at
-    /// init. Returns the finished run.
+    /// at once, recording each attempt for the `roadsSelection` lines
+    /// (repeats folded, the pending ones written last:
+    /// `LiveNavigationRun.closingLines(inFlight:)`, as the app at stop);
+    /// `.afterInputs(k)` attaches the whole set after k inputs; `.fromStart`
+    /// gives it at init. Returns the finished run.
     @discardableResult
     public static func runLive(
         inputs: [NavigationInput], sessionID: UUID, config: NavigationConfig, appBuild: String = "replay",
@@ -261,6 +263,7 @@ public enum NavigationReplay {
         for input in inputs {
             run.ingest(input, selector: &selector, emit: emit)
         }
+        for line in run.closingLines(inFlight: nil) { emit(line) }
         return run
     }
 

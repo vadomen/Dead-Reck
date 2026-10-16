@@ -143,8 +143,9 @@ public struct SidecarComparison: Hashable, Sendable {
     /// Config keys that differ but are road-only and inert because neither
     /// side used roads (N3-CMPHASH): named, never blamed.
     public var inertConfigDifferences: [String] = []
-    /// The road selection attempts (`roadsSelection` lines) of the sidecar
-    /// and of the replay, in order. Printed, never compared: they change
+    /// The `roadsSelection` lines of the sidecar and of the replay, in
+    /// order (a line may stand for several attempts:
+    /// `RoadsSelection.attempts`). Printed, never compared: they change
     /// neither matching nor the verdict.
     public var sidecarSelections: [NavSidecar.RoadsSelection] = []
     public var replaySelections: [NavSidecar.RoadsSelection] = []
@@ -284,22 +285,23 @@ public struct SidecarComparison: Hashable, Sendable {
         }.sorted()
     }
 
-    /// One row per attempt (`RoadsSelection.summary`), except that a run of
-    /// consecutive attempts that differ only in `t`, the input counts and
-    /// the radius is folded into its first row and a count, so a drive
-    /// whose packs never cover stays readable.
+    /// One row per line (`RoadsSelection.summary`, which shows a line's
+    /// repeat count), except that a run of consecutive lines of the same
+    /// attempt (`RoadsSelection.isRepeat(of:)`, the rule the writer folds
+    /// repeats by) is folded into its first row and the number of attempts
+    /// the others stand for, so a drive whose packs never cover stays
+    /// readable: a sidecar written one line per attempt (before repeats were
+    /// folded) and one with repeat lines give the same row.
     static func selectionRows(_ selections: [NavSidecar.RoadsSelection]) -> [String] {
-        func same(_ a: NavSidecar.RoadsSelection, _ b: NavSidecar.RoadsSelection) -> Bool {
-            a.outcome == b.outcome && a.packs == b.packs && a.reason == b.reason && a.candidates == b.candidates
-        }
         var rows: [String] = []
         var index = 0
         while index < selections.count {
             var end = index + 1
-            while end < selections.count && same(selections[index], selections[end]) { end += 1 }
+            while end < selections.count && selections[end].isRepeat(of: selections[index]) { end += 1 }
             var row = "              " + selections[index].summary
             if end - index > 1 {
-                row += String(format: " (and %d more like it to t %.1f s)", end - index - 1, selections[end - 1].t.seconds)
+                let more = selections[(index + 1)..<end].reduce(0) { $0 + $1.attempts }
+                row += String(format: " (and %d more like it to t %.1f s)", more, selections[end - 1].t.seconds)
             }
             rows.append(row)
             index = end
@@ -337,7 +339,9 @@ public struct SidecarComparison: Hashable, Sendable {
             lines.append("Warning       roads: \(roadsMismatch); no exact verdict without the same packs")
         }
         for (side, selections) in [("sidecar", sidecarSelections), ("replay", replaySelections)] where !selections.isEmpty {
-            lines.append("Selection     \(side): \(selections.count) attempt(s), not compared")
+            let attempts = selections.reduce(0) { $0 + $1.attempts }
+            lines.append("Selection     \(side): \(attempts) attempt(s)"
+                         + (attempts == selections.count ? "" : " in \(selections.count) line(s)") + ", not compared")
             lines += Self.selectionRows(selections)
         }
         if configBlamed {

@@ -14,9 +14,11 @@ import Foundation
 /// - consumes the feed's inputs in file order and ingests each; a manual
 ///   fix is the engine's own position reset;
 /// - writes the sidecar `feed.sidecarURL` (`NavSidecar`, docs/NAV_SIDECAR.md):
-///   the header at once, then estimates and pins, buffered and flushed
-///   every `flushInterval` (10 s) on the actor, and flushed and closed when
-///   the feed's stream ends (stop or write failure);
+///   the header at once, then estimates, pins and road lines, buffered and
+///   flushed every `flushInterval` (10 s) on the actor, and, when the
+///   feed's stream ends (stop or write failure), the closing
+///   `roadsSelection` lines (`LiveNavigationRun.closingLines`), flushed and
+///   closed;
 /// - answers `snapshot(at:)` for the map and the debug overlay.
 ///
 /// The per-recording loop is Core's `LiveNavigationRun`, the same code
@@ -45,6 +47,11 @@ actor NavigationService {
         var roadSetHashPrefix: String?
         var roadsActiveAtS: Double?
         var roadsRefusal: String?
+        /// Road selection attempts recorded (the `unfinished` one too), and
+        /// the `roadsSelection` lines written for them: identical repeats
+        /// share one line (`NavSidecar.RoadsSelectionLog`).
+        var selectionAttempts = 0
+        var selectionLines = 0
     }
 
     /// Selection state of one recording's roads (N3.3 item 5).
@@ -61,6 +68,8 @@ actor NavigationService {
         var refusal: String?
         /// Covering sets (file names, in candidate order) already refused.
         var knownRefusals: [RoadPackSelection.Refusal] = []
+        /// How the latest finished attempt of this recording ended.
+        var lastOutcome: NavSidecar.RoadsSelection.Outcome?
     }
 
     /// What Diagnostics shows about roads in the recording.
@@ -75,6 +84,9 @@ actor NavigationService {
         var refusal: String?
         var selectionPending = false
         var onRoadShare: Double?
+        /// How the latest selection attempt of this recording ended; nil
+        /// before the first (the map's roads warning reads it).
+        var lastOutcome: NavSidecar.RoadsSelection.Outcome?
 
         var inUse: Bool { !packNames.isEmpty }
         static let none = RoadsStatus()
@@ -99,9 +111,12 @@ actor NavigationService {
     /// Engines built so far (one per recording).
     private(set) var runsStarted = 0
     private(set) var finished: [Finished] = []
-    /// Outcome of every selection attempt written so far, all recordings
-    /// (the `unfinished` ones too); lets tests wait for an attempt.
-    private(set) var attemptOutcomes: [NavSidecar.RoadsSelection.Outcome] = []
+    /// Selection attempts finished so far, all recordings (the
+    /// `unfinished` ones too), and the latest one's outcome: lets tests wait
+    /// for an attempt, which with repeats folded may write no line.
+    /// Bounded: a count, not a list.
+    private(set) var selectionAttempts = 0
+    private(set) var lastAttemptOutcome: NavSidecar.RoadsSelection.Outcome?
 
     init(flushInterval: Duration = .seconds(10), library: RoadPackLibrary? = nil) {
         self.flushInterval = flushInterval
@@ -211,9 +226,11 @@ actor NavigationService {
     }
 
     /// Back on the actor, between two inputs: attach, or note why not, and
-    /// write the `roadsSelection` line (then `roads` after a successful
-    /// attach). A result for an ended recording or a superseded selection
-    /// is dropped. The request pending behind this one is not an attempt.
+    /// record the attempt (`LiveNavigationRun.finishSelection`: its
+    /// `roadsSelection` line unless it repeats the last one written, then
+    /// `roads` after a successful attach). A result for an ended recording
+    /// or a superseded selection is dropped. The request pending behind
+    /// this one is not an attempt.
     private func selectionFinished(_ attempt: RoadSelectionAttempt, generation: Int, token: Int) {
         guard var state = roadStates[generation], state.token == token, var run = runs[generation] else { return }
         state.inFlight = nil
@@ -221,7 +238,9 @@ actor NavigationService {
         runs[generation] = nil
         let writer = run.writer
         let record = run.live.finishSelection(attempt) { writer?.append($0) }
-        attemptOutcomes.append(record.outcome)
+        selectionAttempts += 1
+        lastAttemptOutcome = record.outcome
+        state.lastOutcome = record.outcome
         if let refusal = record.refusal {
             state.refusal = (refusal.names.isEmpty ? "" : refusal.names.joined(separator: ", ") + ": ") + refusal.reason
             if !state.knownRefusals.contains(where: { $0.names == refusal.names }) {
@@ -247,7 +266,8 @@ actor NavigationService {
         if let generation = current, let run = runs[generation] {
             let state = roadStates[generation]
             var status = RoadsStatus(recording: true, refusal: state?.refusal,
-                                     selectionPending: run.live.roads == nil && run.live.selectionRequest != nil)
+                                     selectionPending: run.live.roads == nil && run.live.selectionRequest != nil,
+                                     lastOutcome: state?.lastOutcome)
             if let roads = run.live.roads {
                 status.packNames = state?.names ?? []
                 status.packHashPrefixes = roads.network.packs.map { String(NavigationSeed.hex($0.contentHash).prefix(8)) }
@@ -264,13 +284,17 @@ actor NavigationService {
     }
 
     private func end(_ generation: Int) {
-        guard let run = runs.removeValue(forKey: generation) else { return }
+        guard var run = runs.removeValue(forKey: generation) else { return }
         let state = roadStates.removeValue(forKey: generation)
         state?.inFlight?.cancel()
-        // A selection still in flight is an attempt that never finished.
-        if state?.inFlight != nil, let request = state?.inFlightRequest {
-            run.writer?.append(run.live.unfinishedSelectionLine(request))
-            attemptOutcomes.append(.unfinished)
+        // The pending repeats' line, then the `unfinished` line of a
+        // selection still in flight (an attempt that never finished), then
+        // close.
+        let inFlight = state?.inFlight != nil ? state?.inFlightRequest : nil
+        for line in run.live.closingLines(inFlight: inFlight) { run.writer?.append(line) }
+        if inFlight != nil {
+            selectionAttempts += 1
+            lastAttemptOutcome = .unfinished
         }
         run.writer?.close()
         let roads = run.live.roads
@@ -288,7 +312,9 @@ actor NavigationService {
             roadPackHashPrefixes: roads?.network.packs.map { String(NavigationSeed.hex($0.contentHash).prefix(8)) } ?? [],
             roadSetHashPrefix: roads.map { String($0.network.roadSetHashHex.prefix(8)) },
             roadsActiveAtS: roads.map { $0.t?.seconds ?? 0 },
-            roadsRefusal: state?.refusal
+            roadsRefusal: state?.refusal,
+            selectionAttempts: run.live.selectionLog.attempts,
+            selectionLines: run.live.selectionLog.lines
         ))
         if current == generation { current = nil }
     }

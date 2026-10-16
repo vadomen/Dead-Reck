@@ -694,12 +694,35 @@ Reviewer: one fresh `reviewer` (opus) on the whole range. Checks: Core imports F
 | ID | Tag | Finding | Status | Note |
 |---|---|---|---|---|
 | R33.1-1 | MINOR | `Core/Sources/DriveLoggerCore/Navigation/Roads/RoadPackSelection.swift:211-212`: the documented outcome order (unusableRequest before noPacks) is untested; moving the noPacks guard first survives. An unusable request with an empty library would be labelled noPacks (diagnostic label only). Fix: `attempt([], request: bad)` expects `.unusableRequest`. | DEFERRED | backlog. |
-| R33.1-2 | MINOR | `Core/Sources/DriveLoggerCore/Navigation/Replay/SidecarComparison.swift:292-294`: the `--compare` fold rule's candidates equality is untested; dropping it survives, so a pack refused mid-drive could be folded into "(and N more like it)" (printout only). | DEFERRED | backlog. |
+| R33.1-2 | MINOR | `Core/Sources/DriveLoggerCore/Navigation/Replay/SidecarComparison.swift:292-294`: the `--compare` fold rule's candidates equality is untested; dropping it survives, so a pack refused mid-drive could be folded into "(and N more like it)" (printout only). | FIXED | Fixed after the run (branch `road-packs-ux`, with the `roadsSelection` repeat folding): the fold rule is `RoadsSelection.isRepeat(of:)`, shared with the writer; `refusalsWithDifferentCandidatesNotFolded` checks two refusals with different candidates are neither folded on write nor by `--compare`. |
 | R33.1-3 | MINOR | `AppTests/NavigationServiceRoadsTests.swift:279-301`: `refusedLines` ("written again, not rebuilt") cannot tell a remembered refused set from a rebuilt one (same reason text); removing `state.knownRefusals.append` (`NavigationService.swift:226-228`) would survive. R32.4-7's app-level attach-refusal path is still unreached (Core covers it in `finishSelectionAttachAndRefusal`). | DEFERRED | backlog. |
-| R33.1-4 | MINOR | `App/Sources/Navigation/NavigationService.swift:104, 220, 272`: the test-only `attemptOutcomes` array lives in the production actor and is never cleared: with no covering pack about one entry per second, ~58 KB per recorded hour for the process lifetime. Fix: cap, reset at begin, or keep a counter plus last outcome. | DEFERRED | backlog. |
+| R33.1-4 | MINOR | `App/Sources/Navigation/NavigationService.swift:104, 220, 272`: the test-only `attemptOutcomes` array lives in the production actor and is never cleared: with no covering pack about one entry per second, ~58 KB per recorded hour for the process lifetime. Fix: cap, reset at begin, or keep a counter plus last outcome. | FIXED | Fixed after the run (branch `road-packs-ux`, with the `roadsSelection` repeat folding): a count (`selectionAttempts`) and the last outcome (`lastAttemptOutcome`); per-recording counts in `Finished`; `NavigationServiceRoadsTests` wait on the count. |
 
 Tests: Core passes 850 tests in 115 suites, 36 known issues (test 3). App: 304 tests in 48 suites pass. Simulator build succeeds.
 
 ### Run 33 summary
 
 1 round; 0 BLOCKER / MAJOR. Findings: 0 fixed, 0 rejected, 4 MINOR deferred (R33.1-1 to R33.1-4). Final: Core 850 tests in 115 suites pass (36 known issues, test 3); app 304 tests in 48 suites pass; simulator build succeeds.
+
+## Run 34: road-pack warning, push_packs.sh, Release scheme, roadsSelection repeats (main..road-packs-ux, d0b6817..1fe35c5), started 2026-10-16
+
+Commits: d0b6817 DriveLogger-Release scheme, e7ade4f UX-8 backlog row, 2b5d039 `scripts/push_packs.sh`, 0289279 roadsSelection repeats folding, 1fe35c5 map road-pack warning.
+
+### Round 1
+
+Reviewers: two fresh parallel reviewers on the range, part A on the Core sidecar dedupe (`roadsSelection` repeats folding), part B on the app warning, the script, the scheme and the docs. Result: 0 BLOCKER / 0 MAJOR / 6 MINOR.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R34.1-1 | MINOR | `Core/Sources/DriveLoggerCore/Navigation/NavSidecar.swift:328`: the `outcome` clause of `RoadsSelection.isRepeat(of:)` is untested; dropping it survives (mutation run). An `unusableRequest` attempt has the same candidates as a `noneCovering` one (all `covering: false`, no packs/reason), so without the clause it would be folded into the `noneCovering` repeats and its outcome lost from the sidecar and `--compare` rows (diagnostic only). Fix: test noneCovering, then unusableRequest (same candidates), then noneCovering gives 3 lines and 3 compare rows. | DEFERRED | backlog. |
+| R34.1-2 | MINOR | `docs/NAV_SIDECAR.md:100-102`: "its `recordedAfterInputs` (the last repeat's) can be smaller than that of the line before it" is false: the roadsSelection line before a repeats line is the one it repeats, recorded earlier (drive-8: 4 then 277623). Fix: "can be smaller than the inputs handed to the run where it sits in the file (it is written later, at the next written line or at stop)". | DEFERRED | backlog. |
+| R34.1-3 | MINOR | `App/Sources/Navigation/NavigationService.swift:171-176` with `App/Sources/RootView.swift:29-36`: a false "No road packs — roads off" can flash ~1 s at Start: `begin()` reports recording at once but the rescan runs in a `.utility` Task, so a poll before the rescan sets `scanTask` sees the previous (0 verified) scan as finished and idle, e.g. launch scan found nothing, packs pushed while the app is open, then Start. Fix: count the library as scanned only after this recording's own rescan returned (a per-recording flag in RoadsState/RoadsStatus); test with a slow library source. | DEFERRED | backlog. |
+| R34.1-4 | MINOR | `App/Sources/Navigation/NavigationService.swift:243, 270`: per-recording `RoadsStatus.lastOutcome` is untested; returning the service-wide `lastAttemptOutcome` would show the previous drive's warning at the next Start and all tests pass. Fix: `NavigationServiceRoadsTests` case: recording 1 ends noneCovering, recording 2's `lastOutcome` is nil before its first attempt. | DEFERRED | backlog. |
+| R34.1-5 | MINOR | `AppTests/RoadsWarningTests.swift:71-76`: `modelWritesOnlyChanges` runs one refresh from nil and never checks that an unchanged value causes no write. Fix: count observation changes across two equal refreshes (withObservationTracking), or rename. | DEFERRED | backlog. |
+| R34.1-6 | MINOR | `scripts/push_packs.sh:68-70`: a `PRODUCT_BUNDLE_IDENTIFIER` containing `$(…)` is passed to devicectl literally: the listing fails with the misleading "app never launched, phone locked" warning, recording detection is off, every copy fails (nothing unsafe). Fix: die when the value contains `$(`. | DEFERRED | backlog. |
+
+Tests: Core passes 862 tests in 116 suites, 36 known issues (test 3). App: 317 tests in 49 suites pass. Simulator build succeeds.
+
+### Run 34 summary
+
+1 round; 0 BLOCKER / MAJOR. Findings: 0 fixed, 0 rejected, 6 MINOR deferred (R34.1-1 to R34.1-6). Final: Core 862 tests in 116 suites pass (36 known issues, test 3); app 317 tests in 49 suites pass; simulator build succeeds. Not verified: whether `devicectl copy to --destination Documents/RoadPacks/<name>` with a file source writes exactly that path (needs a real copy to the phone).

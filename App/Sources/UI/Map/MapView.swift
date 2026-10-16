@@ -49,6 +49,9 @@ struct MapScreen: View {
     var cachedLocation: @MainActor () -> CachedLocation?
     /// Start was tapped: the app opens Settings, Recording.
     var onStart: () -> Void = {}
+    /// The roads warning was tapped: the app opens Settings (Diagnostics).
+    var onOpenDiagnostics: () -> Void = {}
+    var roadsWarning: RoadsWarningModel?
     @Environment(\.scenePhase) private var scenePhase
     @State private var thermal = ProcessInfo.processInfo.thermalState
 
@@ -72,6 +75,8 @@ struct MapScreen: View {
             cachedLocation: cachedLocation,
             navigation: navigation,
             showNavStats: $showNavStats,
+            roadsWarning: roadsWarning?.message,
+            onRoadsWarningTap: onOpenDiagnostics,
             recordingControl: AnyView(MapRecordingButton(session: session, onStart: onStart, onStop: { [session] in await session.stop() }))
         )
         .onReceive(NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)) { _ in
@@ -214,6 +219,9 @@ struct GPSMapView: View {
     /// Live dead reckoning; nil in previews of the plain reference map.
     var navigation: NavigationFeed?
     @Binding var showNavStats: Bool
+    /// One line when roads are off for a fixable reason (`RoadsWarning`).
+    var roadsWarning: String?
+    var onRoadsWarningTap: () -> Void
     /// Start button or recording indicator, left of the map controls. A view
     /// of its own (it reads the recorder), so this view stays plain values.
     var recordingControl: AnyView?
@@ -267,6 +275,8 @@ struct GPSMapView: View {
         initialToast: MapToast? = nil,
         navigation: NavigationFeed? = nil,
         showNavStats: Binding<Bool> = .constant(false),
+        roadsWarning: String? = nil,
+        onRoadsWarningTap: @escaping () -> Void = {},
         recordingControl: AnyView? = nil
     ) {
         self.track = track
@@ -287,6 +297,8 @@ struct GPSMapView: View {
         self.cachedLocation = cachedLocation
         self.navigation = navigation
         self._showNavStats = showNavStats
+        self.roadsWarning = roadsWarning
+        self.onRoadsWarningTap = onRoadsWarningTap
         self.recordingControl = recordingControl
         self._toast = State(initialValue: initialToast)
     }
@@ -420,6 +432,10 @@ struct GPSMapView: View {
         }
         .overlay(alignment: .bottom) {
             VStack(alignment: .trailing, spacing: 8) {
+                // Above the fix toast and the controls: stacked, never overlapping.
+                if let roadsWarning {
+                    roadsWarningView(roadsWarning)
+                }
                 if let toast {
                     toastView(toast)
                 }
@@ -521,6 +537,25 @@ struct GPSMapView: View {
     private func show(_ kind: MapToast.Kind) {
         toastSerial += 1
         toast = MapToast(kind: kind, serial: toastSerial)
+    }
+
+    /// Same look as the other toasts (material capsule, headline weight), one
+    /// line; tap opens Settings, where Diagnostics lists the packs.
+    private func roadsWarningView(_ text: String) -> some View {
+        Button(action: onRoadsWarningTap) {
+            Label(text, systemImage: "road.lanes")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .padding(.horizontal, 16)
+                .frame(minHeight: 44)
+                .background(.regularMaterial, in: Capsule())
+                .overlay(Capsule().strokeBorder(Color.orange, lineWidth: 2))
+        }
+        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity)
+        .accessibilityLabel(text)
     }
 
     @ViewBuilder
@@ -1165,5 +1200,38 @@ extension MapPreviewData {
             display: MapPreviewData.nav(converged: false, heading: nil), stats: MapPreviewData.navStats
         ),
         showNavStats: .constant(true)
+    )
+}
+
+#Preview("Roads warning: no packs") {
+    GPSMapView(
+        track: MapPreviewData.track,
+        latest: MapPreviewData.fix(59, accuracy: 12, gapAfter: 60),
+        lastFixInstant: .now, isReceiving: true, thermal: .nominal, isLive: true,
+        follow: .constant(FollowController(following: true)),
+        roadsWarning: RoadsWarning.noPacks
+    )
+}
+
+#Preview("Roads warning: none covering, with Fix recorded toast") {
+    GPSMapView(
+        track: MapPreviewData.track,
+        latest: MapPreviewData.fix(59, accuracy: 12, gapAfter: 60),
+        lastFixInstant: .now, isReceiving: true, thermal: .nominal, isLive: true,
+        follow: .constant(FollowController(following: false)),
+        manualFixes: MapPreviewData.confirmed, pendingFixIDs: [1],
+        manual: ManualFixMarking.unavailable,
+        initialToast: MapToast(kind: .recorded(id: 1)),
+        roadsWarning: RoadsWarning.noneCovering
+    )
+}
+
+#Preview("Roads warning: refused") {
+    GPSMapView(
+        track: MapPreviewData.track,
+        latest: MapPreviewData.fix(59, accuracy: 12, gapAfter: 60),
+        lastFixInstant: .now, isReceiving: true, thermal: .nominal, isLive: true,
+        follow: .constant(FollowController(following: true)),
+        roadsWarning: RoadsWarning.refused
     )
 }

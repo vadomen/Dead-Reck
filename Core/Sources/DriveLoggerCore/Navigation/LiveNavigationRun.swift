@@ -32,10 +32,14 @@ import Foundation
 /// runs a synchronous selector at each request and attaches its network at
 /// once: the rule `replay_nav --as-live --roads` uses.
 /// `ingest(_:droppedInputs:selector:emit:)` does the same through a
-/// `RoadPackSelector` and records each attempt as a `roadsSelection` line
-/// (`finishSelection(_:emit:)`, which the app calls when its asynchronous
-/// selection finishes; `unfinishedSelectionLine(_:)` for one still in
-/// flight at the end). These lines never change any other line.
+/// `RoadPackSelector` and records each attempt for the `roadsSelection`
+/// lines (`finishSelection(_:emit:)`, which the app calls when its
+/// asynchronous selection finishes). A line is written when the outcome or
+/// the candidates change; identical repeats are counted and written as one
+/// line on the next change, at an attach, or at the end
+/// (`closingLines(inFlight:)`, with the `unfinished` line of an attempt
+/// still in flight): `selectionLog`. These lines never change any other
+/// line.
 ///
 /// Deterministic apart from the timing diagnostics: the same inputs, seed,
 /// config and attach point give the same lines, bit for bit.
@@ -58,6 +62,8 @@ public struct LiveNavigationRun: Sendable {
     public private(set) var roads: RoadAttachment?
     /// The latest refused attach, if any.
     public private(set) var roadsRefusal: RoadAttachRefusal?
+    /// Which `roadsSelection` lines were written, and the repeats pending.
+    public private(set) var selectionLog = NavSidecar.RoadsSelectionLog()
 
     /// The latest selection request; nil before the first and once a
     /// network is attached.
@@ -121,12 +127,14 @@ public struct LiveNavigationRun: Sendable {
 
     /// Records a finished road selection attempt, between two inputs: a
     /// `selected` attempt's network is attached now (`attachRoads`). Then
-    /// `emit` gets the `roadsSelection` line (recorded after `inputs`
-    /// inputs) and, after a successful attach, the `roads` line right
-    /// after it. An attach the run refuses (`RoadAttachRefusal`) is
-    /// recorded as `refused` with the attempt's packs and the refusal's
-    /// description. Returns the line written: its `refusal` is the set to
-    /// remember so it is not built again.
+    /// `emit` gets the `roadsSelection` lines `selectionLog` writes for it
+    /// (recorded after `inputs` inputs): none for a repeat of the last line
+    /// written, else the pending repeats' line and then the attempt's; and,
+    /// after a successful attach, whose line is always written, the `roads`
+    /// line right after it. An attach the run refuses (`RoadAttachRefusal`)
+    /// is recorded as `refused` with the attempt's packs and the refusal's
+    /// description. Returns the attempt's line, written or not: its
+    /// `refusal` is the set to remember so it is not built again.
     @discardableResult
     public mutating func finishSelection(_ attempt: RoadSelectionAttempt,
                                          emit: (NavSidecar.Line) -> Void) -> NavSidecar.RoadsSelection {
@@ -140,24 +148,34 @@ public struct LiveNavigationRun: Sendable {
                 record.reason = error.description
             }
         }
-        emit(.roadsSelection(record))
+        for line in selectionLog.record(record, alwaysWrite: !roadsLines.isEmpty) { emit(.roadsSelection(line)) }
         for line in roadsLines { emit(line) }
         return record
     }
 
-    /// The `roadsSelection` line of an attempt for `request` still in
-    /// flight when the run ends (`unfinished`, recorded after `inputs`
-    /// inputs). Write it before closing the sidecar.
-    public func unfinishedSelectionLine(_ request: RoadSelectionRequest) -> NavSidecar.Line {
-        .roadsSelection(NavSidecar.RoadsSelection(unfinished: request, recordedAfterInputs: inputs))
+    /// The lines that close the run's `roadsSelection` record, to write
+    /// last, before closing the sidecar: the pending repeats' line, if any,
+    /// then, for `inFlight`, the `unfinished` line of an attempt for that
+    /// request still in flight (recorded after `inputs` inputs, counted as
+    /// an attempt). Call once, at the end.
+    public mutating func closingLines(inFlight request: RoadSelectionRequest? = nil) -> [NavSidecar.Line] {
+        let lines: [NavSidecar.RoadsSelection]
+        if let request {
+            lines = selectionLog.record(NavSidecar.RoadsSelection(unfinished: request, recordedAfterInputs: inputs),
+                                        alwaysWrite: true)
+        } else {
+            lines = selectionLog.flush().map { [$0] } ?? []
+        }
+        return lines.map { .roadsSelection($0) }
     }
 
     /// `ingest(_:droppedInputs:emit:)`, then, if it raised a selection
     /// request, `selector` is asked at once and the attempt is finished
-    /// before the next input (`finishSelection`): the `roadsSelection` line,
-    /// and the `roads` line if its network attached. An attach the run
-    /// refuses is remembered by the selector. The rule `replay_nav
-    /// --as-live --roads` and `--write-sidecar` use.
+    /// before the next input (`finishSelection`): its `roadsSelection`
+    /// lines, and the `roads` line if its network attached. An attach the
+    /// run refuses is remembered by the selector. The rule `replay_nav
+    /// --as-live --roads` and `--write-sidecar` use; end with
+    /// `closingLines(inFlight: nil)`.
     public mutating func ingest(
         _ input: NavigationInput, droppedInputs: Int = 0, selector: inout RoadPackSelector,
         emit: (NavSidecar.Line) -> Void
