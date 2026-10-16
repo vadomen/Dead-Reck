@@ -38,6 +38,43 @@ actor NavigationService {
         let sidecarBytes: Int
         let sidecarLinesLost: Int
         let sidecarFailure: String?
+        /// Roads (N3.3): the pack files used, their hash prefixes, when they
+        /// became active (session seconds), and a refused set's reason.
+        var roadPackNames: [String] = []
+        var roadPackHashPrefixes: [String] = []
+        var roadSetHashPrefix: String?
+        var roadsActiveAtS: Double?
+        var roadsRefusal: String?
+    }
+
+    /// Selection state of one recording's roads (N3.3 item 5).
+    private struct RoadsState {
+        /// Bumped per selection started; a result with another token is stale.
+        var token = 0
+        var inFlight: Task<Void, Never>?
+        /// The latest request that arrived while one was in flight.
+        var pending: RoadSelectionRequest?
+        var names: [String] = []
+        var refusal: String?
+        /// Covering sets (file names, in candidate order) already refused.
+        var refusedSets: Set<[String]> = []
+    }
+
+    /// What Diagnostics shows about roads in the recording.
+    struct RoadsStatus: Sendable, Hashable {
+        /// A recording is navigating (else this is the last finished one).
+        var recording = false
+        var packNames: [String] = []
+        var packHashPrefixes: [String] = []
+        var roadSetHashPrefix: String?
+        /// Session time at which roads became active.
+        var activeAtSessionS: Double?
+        var refusal: String?
+        var selectionPending = false
+        var onRoadShare: Double?
+
+        var inUse: Bool { !packNames.isEmpty }
+        static let none = RoadsStatus()
     }
 
     private struct Run {
@@ -49,15 +86,20 @@ actor NavigationService {
     }
 
     let flushInterval: Duration
+    /// Where road packs come from; nil: no roads (every recording is the
+    /// no-roads run).
+    private let library: RoadPackLibrary?
     private var runs: [Int: Run] = [:]
+    private var roadStates: [Int: RoadsState] = [:]
     /// The newest recording's generation; snapshots follow it.
     private var current: Int?
     /// Engines built so far (one per recording).
     private(set) var runsStarted = 0
     private(set) var finished: [Finished] = []
 
-    init(flushInterval: Duration = .seconds(10)) {
+    init(flushInterval: Duration = .seconds(10), library: RoadPackLibrary? = nil) {
         self.flushInterval = flushInterval
+        self.library = library
     }
 
     /// The `onNavigationFeed` hook's body: starts the task that consumes
@@ -96,12 +138,15 @@ actor NavigationService {
         } catch {
             openFailure = String(describing: error)
         }
-        writer?.append(.header(live.header))
+        for line in live.openingLines { writer?.append(line) }
         writer?.flush()
         runs[feed.generation] = Run(feed: feed, live: live, writer: writer, openFailure: openFailure,
                                     lastFlush: ContinuousClock.now)
         current = feed.generation
         runsStarted += 1
+        roadStates[feed.generation] = RoadsState()
+        // Rescan the packs (cache hits are cheap); never awaited here.
+        if let library { Task(priority: .utility) { await library.rescan() } }
     }
 
     private func ingest(_ input: NavigationInput, generation: Int) {
@@ -116,12 +161,121 @@ actor NavigationService {
             writer?.flush()
             run.lastFlush = now
         }
+        let request = run.live.newSelectionRequest
         runs[generation] = run
+        if let request { requestRoads(request, generation: generation) }
+    }
+
+    // MARK: Roads
+
+    /// The run raised a selection request (no network attached). One
+    /// selection at a time; a request during one replaces the pending one.
+    private func requestRoads(_ request: RoadSelectionRequest, generation: Int) {
+        guard library != nil, runs[generation]?.live.roads == nil, var state = roadStates[generation] else { return }
+        if state.inFlight != nil {
+            state.pending = request
+        } else {
+            startSelection(request, generation: generation, state: &state)
+        }
+        roadStates[generation] = state
+    }
+
+    private enum Selection: Sendable {
+        case outcome(RoadPackSelection.Outcome)
+        case alreadyRefused
+    }
+
+    private func startSelection(_ request: RoadSelectionRequest, generation: Int, state: inout RoadsState) {
+        guard let library else { return }
+        state.token += 1
+        let token = state.token, refused = state.refusedSets
+        state.pending = nil
+        // Candidates (awaiting a scan), selection and the network build all
+        // run off this actor; only the attach comes back.
+        state.inFlight = Task.detached(priority: .utility) { [self] in
+            let set = await library.candidates()
+            guard !Task.isCancelled else { return }
+            let selection = Self.select(set.candidates, request: request, refusedSets: refused)
+            guard !Task.isCancelled else { return }
+            await selectionFinished(selection, generation: generation, token: token)
+        }
+    }
+
+    private nonisolated static func select(
+        _ candidates: [RoadPackSelection.Candidate], request: RoadSelectionRequest, refusedSets: Set<[String]>
+    ) -> Selection {
+        if let chosen = RoadPackSelection.covering(candidates, latitude: request.latitude,
+                                                   longitude: request.longitude, radiusM: request.radiusM),
+           !chosen.isEmpty, refusedSets.contains(chosen.map { candidates[$0].name }) {
+            return .alreadyRefused
+        }
+        return .outcome(RoadPackSelection.select(candidates, request: request))
+    }
+
+    /// Back on the actor, between two inputs: attach, or note why not. A
+    /// result for an ended recording or a superseded selection is dropped.
+    private func selectionFinished(_ selection: Selection, generation: Int, token: Int) {
+        guard var state = roadStates[generation], state.token == token, var run = runs[generation] else { return }
+        state.inFlight = nil
+        func refuse(_ names: [String], _ reason: String) {
+            state.refusal = (names.isEmpty ? "" : names.joined(separator: ", ") + ": ") + reason
+            state.refusedSets.insert(names)
+        }
+        if case .outcome(let outcome) = selection {
+            switch outcome {
+            case .unusableRequest, .noneCovering:
+                break
+            case .refused(let refusal):
+                refuse(refusal.names, refusal.reason)
+            case .selected(let network, let names):
+                runs[generation] = nil
+                let writer = run.writer
+                do {
+                    try run.live.attachRoads(network) { writer?.append($0) }
+                    writer?.flush()
+                    run.lastFlush = ContinuousClock.now
+                    state.names = names
+                    state.refusal = nil
+                    state.pending = nil
+                } catch {
+                    refuse(names, String(describing: error))
+                }
+                runs[generation] = run
+            }
+        }
+        if run.live.roads == nil, let pending = state.pending {
+            startSelection(pending, generation: generation, state: &state)
+        }
+        roadStates[generation] = state
+    }
+
+    /// Roads in the newest recording (else the last finished one).
+    func roadsStatus() -> RoadsStatus {
+        if let generation = current, let run = runs[generation] {
+            let state = roadStates[generation]
+            var status = RoadsStatus(recording: true, refusal: state?.refusal,
+                                     selectionPending: run.live.roads == nil && run.live.selectionRequest != nil)
+            if let roads = run.live.roads {
+                status.packNames = state?.names ?? []
+                status.packHashPrefixes = roads.network.packs.map { String(NavigationSeed.hex($0.contentHash).prefix(8)) }
+                status.roadSetHashPrefix = String(roads.network.roadSetHashHex.prefix(8))
+                status.activeAtSessionS = roads.t?.seconds ?? 0
+                status.onRoadShare = run.live.engine.estimate(at: run.feed.clock.now())?.onRoadShare
+            }
+            return status
+        }
+        guard let last = finished.last else { return .none }
+        return RoadsStatus(recording: false, packNames: last.roadPackNames, packHashPrefixes: last.roadPackHashPrefixes,
+                           roadSetHashPrefix: last.roadSetHashPrefix, activeAtSessionS: last.roadsActiveAtS,
+                           refusal: last.roadsRefusal)
     }
 
     private func end(_ generation: Int) {
         guard let run = runs.removeValue(forKey: generation) else { return }
         run.writer?.close()
+        let state = roadStates.removeValue(forKey: generation)
+        state?.inFlight?.cancel()
+        let roads = run.live.roads
         finished.append(Finished(
             generation: generation,
             sessionID: run.live.sessionID,
@@ -131,7 +285,12 @@ actor NavigationService {
             droppedInputs: run.feed.droppedInputs,
             sidecarBytes: run.writer?.bytesWritten ?? 0,
             sidecarLinesLost: run.writer?.linesLost ?? 0,
-            sidecarFailure: run.openFailure ?? run.writer?.failure
+            sidecarFailure: run.openFailure ?? run.writer?.failure,
+            roadPackNames: roads == nil ? [] : state?.names ?? [],
+            roadPackHashPrefixes: roads?.network.packs.map { String(NavigationSeed.hex($0.contentHash).prefix(8)) } ?? [],
+            roadSetHashPrefix: roads.map { String($0.network.roadSetHashHex.prefix(8)) },
+            roadsActiveAtS: roads.map { $0.t?.seconds ?? 0 },
+            roadsRefusal: state?.refusal
         ))
         if current == generation { current = nil }
     }

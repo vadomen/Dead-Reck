@@ -573,8 +573,9 @@ policy (the doc comment on `RecordingSession` is authoritative):
    `canStart == false`, `startBlocker == .lowDiskSpace(…)`; `start` re-checks
    and throws it before creating anything. An unreadable volume does not
    block start.
-4. A write failure on `failures` (`ENOSPC`, I/O error): `lifecycle` `error`
-   row, `finish()`, `failed(reason:unwrittenEvents:)` — so the user sees it
+4. A write failure on `failures` (`ENOSPC`, I/O error): stop every source,
+   then the `lifecycle` `error` row (nothing after it, R32.2-1), `finish()`,
+   `failed(reason:unwrittenEvents:)` — so the user sees it
    even if the row never reached the disk. The only way into `failed`,
    including when the final `finish()` of any stop (user or rule 2) fails;
    then no further row is written (R3-3).
@@ -773,3 +774,7 @@ Replay only the current connection's init (M6.1-1) and remembered poll plan and 
 4. **Heading-up and the ellipse:** in heading-up after a GPS or OBD dropout the ellipse still widens the view beyond the speed-based zoom, and returns when it shrinks.
 5. **No speed:** with OBD and GPS both stale (tunnel) the zoom holds its last value instead of snapping to 250 m. Cold start (no speed yet) is 250 m.
 6. **Double tap:** at 80 km/h and above (span over 300 m) the first double tap on the map says "Zoom in…" and zooms; the second passes.
+
+### Added by N3.3, roads live (not verified on a device)
+1. **D1, a 30 min city drive with a region pack:** copy a region pack (and the national one, if used) to `Documents/RoadPacks/` via Finder, check Settings → Diagnostics lists it as Verified, then record a 30 min city drive. Diagnostics shows "Recording uses" with the pack names and the time roads became active, the on-road share and "© OpenStreetMap contributors". The sidecar's `msPerStep` and `maxStepMs` stay ≤ 2 ms per 10 Hz step with roads, road-update steps included, and the sidecar has a `roads` line. Note the Memory row (`phys_footprint`) before the recording, after roads become active and at the end, and CPU and thermal state (Diagnostics' thermal row, or the stats line under the map speed). Mac references (docs/NAVIGATION.md, "N3.3: roads live"): 0.08–0.12 ms/step with roads; national + region-A add 0.73 MB of footprint at load, and the engine's road state about 2–2.4 MB of heap by the end of a drive. **NOT claimed.**
+2. **D2, pack verify and load time on the phone:** after copying a pack, Diagnostics shows it as Verified with "verified in x s"; note x for each pack (Mac, warm file cache: national 70.5 ms, region-A 29.3 ms). Relaunch the app: the same packs show "cached" and are not verified again. Re-copying a pack via Finder (new modification date) verifies it again. A truncated or corrupt pack shows "Refused: …" and the recording runs without it. **NOT claimed.**

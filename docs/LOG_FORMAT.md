@@ -452,9 +452,10 @@ the `stop` row is written, so no sensor or link row follows it; the final
 `stats` row is the last line of a cleanly stopped file.
 
 A **write failure** (`ENOSPC`, an I/O error, a failed `fsync`) ends the
-recording: an `error` row with detail `write failed: <description>` is
-written — it may not reach the disk — and the file is closed, with no `stop`
-row and no final `stats` row. If the failure happens while a normal stop is
+recording: every sensor source is stopped, then an `error` row with detail
+`write failed: <description>` is written — it may not reach the disk — and
+the file is closed, with no `stop` row and no final `stats` row. No row of any
+kind follows the `error` row. If the failure happens while a normal stop is
 already under way, the `stop` row may be present, and the `error` row may sit
 just before it or be missing; a failure in the very last write of a stop
 leaves the `stop` row but no further row. **The app's state (failed, with the

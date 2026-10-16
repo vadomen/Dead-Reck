@@ -8,6 +8,7 @@ struct RootView: View {
     @State private var navigation: NavigationFeed
     @State private var sessions: SessionsViewModel
     @State private var console: ConsoleViewModel
+    @State private var roads: RoadsDiagnosticsModel
     private let session: RecordingSession
     private let services: AppServices
     @State private var nav: AppNavigation
@@ -21,6 +22,7 @@ struct RootView: View {
         _navigation = State(initialValue: NavigationFeed(source: { await service.snapshot() }))
         _sessions = State(initialValue: SessionsViewModel(services: services))
         _console = State(initialValue: ConsoleViewModel(services: services))
+        _roads = State(initialValue: RoadsDiagnosticsModel(library: services.roadPacks, service: service))
         var initial = AppNavigation()
         #if DEBUG
         // `-uiTab N` opens a tab at launch (simulator screenshots), N in tab order:
@@ -43,7 +45,7 @@ struct RootView: View {
         } sessions: {
             SessionsScreen(model: sessions)
         } settings: {
-            SettingsScreen(path: $nav.settingsPath) {
+            SettingsScreen(path: $nav.settingsPath, roads: roads) {
                 RecordingScreen(model: recording)
             } console: {
                 ConsoleScreen(model: console)

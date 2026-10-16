@@ -80,6 +80,9 @@ public struct ReplayOptions: Hashable, Sendable {
     /// N3.2); nil runs no road code at all, and every output is as before
     /// roads existed.
     public var roads: ReplayRoadSet?
+    /// When the engine gets `roads` (N3.3): from the start (N3.2), the
+    /// live rule, or after a sidecar's `afterInputs`. Unused without roads.
+    public var roadAttach = ReplayRoadAttach.fromStart
     /// `replay_nav --wrong-road-tolerance`: a matched edge that is not the
     /// truth's road still counts as right when the truth fix is within this
     /// many metres of it (parallel geometry of one road, junction stubs).
@@ -99,6 +102,22 @@ public struct ReplayOptions: Hashable, Sendable {
         if let roads { label += "-" + roads.labelSuffix }
         return label
     }
+}
+
+/// When a replay's engine gets its road network (N3.3).
+public enum ReplayRoadAttach: Hashable, Sendable {
+    /// From the first input: `NavigationEngine(config:roads:)`, the N3.2
+    /// replays. Not what the app does.
+    case fromStart
+    /// As the app with its packs ready (`replay_nav --as-live --roads`):
+    /// the engine starts without roads; at each selection request
+    /// (`RoadSelectionRule`) the packs covering the request's circle are
+    /// selected from the given ones (`RoadPackSelector`) and attached at
+    /// once, at that input boundary.
+    case live
+    /// The whole given set, attached after this many inputs given to the
+    /// engine (a sidecar's `roads` line, `replay_nav --compare`).
+    case afterInputs(Int)
 }
 
 /// Why a fix was not given to the engine.
@@ -201,16 +220,47 @@ public enum NavigationReplay {
 
     /// The sidecar lines `LiveNavigationRun` produces for `inputs` (in the
     /// order given), as the app would have written them with no drops: the
-    /// reference for `--compare`.
+    /// reference for `--compare`. `roads`/`attach`: see `runLive`.
     public static func liveLines(
-        inputs: [NavigationInput], sessionID: UUID, config: NavigationConfig, appBuild: String = "replay"
+        inputs: [NavigationInput], sessionID: UUID, config: NavigationConfig, appBuild: String = "replay",
+        roads: ReplayRoadSet? = nil, attach: ReplayRoadAttach = .live
     ) -> [NavSidecar.Line] {
-        var run = LiveNavigationRun(sessionID: sessionID, config: config, appBuild: appBuild)
-        var lines: [NavSidecar.Line] = [.header(run.header)]
-        for input in inputs {
-            run.ingest(input) { lines.append($0) }
-        }
+        var lines: [NavSidecar.Line] = []
+        runLive(inputs: inputs, sessionID: sessionID, config: config, appBuild: appBuild, roads: roads,
+                attach: attach) { lines.append($0) }
         return lines
+    }
+
+    /// The app's loop (`LiveNavigationRun`) over `inputs`; `emit` gets every
+    /// sidecar line, the opening lines first. With `roads`: `.live` selects
+    /// from them at each selection request (`RoadPackSelector`) and attaches
+    /// at once; `.afterInputs(k)` attaches the whole set after k inputs;
+    /// `.fromStart` gives it at init. Returns the finished run.
+    @discardableResult
+    public static func runLive(
+        inputs: [NavigationInput], sessionID: UUID, config: NavigationConfig, appBuild: String = "replay",
+        roads: ReplayRoadSet? = nil, attach: ReplayRoadAttach = .live, emit: (NavSidecar.Line) -> Void
+    ) -> LiveNavigationRun {
+        var run = LiveNavigationRun(sessionID: sessionID, config: config, appBuild: appBuild,
+                                    roads: attach == .fromStart ? roads?.network : nil)
+        for line in run.openingLines { emit(line) }
+        guard let roads, attach != .fromStart else {
+            for input in inputs { run.ingest(input, emit: emit) }
+            return run
+        }
+        if case .afterInputs(let k) = attach {
+            for input in inputs {
+                if run.inputs == k { try? run.attachRoads(roads.network, emit: emit) }
+                run.ingest(input, emit: emit)
+            }
+            if run.inputs == k { try? run.attachRoads(roads.network, emit: emit) }
+            return run
+        }
+        var selector = roads.selector
+        for input in inputs {
+            run.ingest(input, selectRoads: { selector.network(for: $0) }, emit: emit)
+        }
+        return run
     }
 
     // MARK: Pin scoring (replay-side, looks ahead)
@@ -558,6 +608,13 @@ public struct ReplayResult: Hashable, Sendable, Codable {
     /// The matched edge every `ellipseIntervalS` (GeoJSON only); empty
     /// without roads.
     public var matchedEdges: [MatchedEdgeSample] = []
+    /// With roads attached as live (N3.3, `ReplayRoadAttach.live` or
+    /// `.afterInputs`): the number of inputs given to the engine before the
+    /// network was attached, and the attached set's roadSetHash (a live
+    /// selection may attach a subset of `roads`); nil when none was
+    /// attached, and for `.fromStart`.
+    public var roadsAttachedAfterInputs: Int? = nil
+    public var attachedRoadSetHash: String? = nil
 
     public var heldOutFixes: [Fix] { fixes.filter { $0.withheld == .heldOut } }
 }
@@ -617,12 +674,22 @@ private struct ReplayRun {
     var onRoadShareSum = 0.0
     var matchedEdges: [ReplayResult.MatchedEdgeSample] = []
 
+    /// Roads attached as live (`ReplayRoadAttach.live`, `.afterInputs`):
+    /// inputs given to the engine so far (`LiveNavigationRun.inputs`), the
+    /// selection rule, the selector, and when the network was attached.
+    var givenInputs = 0
+    var selectionRule = RoadSelectionRule()
+    var selector: RoadPackSelector?
+    var attachedAfterInputs: Int?
+
     init(logName: String, inputs: [NavigationInput], options: ReplayOptions, truth: TruthFile.Entry?) {
         self.logName = logName
         self.inputs = inputs
         self.options = options
         self.truth = truth
-        engine = NavigationEngine(config: options.config, roads: options.roads?.network)
+        let fromStart = options.roadAttach == .fromStart
+        engine = NavigationEngine(config: options.config, roads: fromStart ? options.roads?.network : nil)
+        if options.roads != nil, options.roadAttach == .live { selector = options.roads?.selector }
         motionStart = NavigationReplay.motionStart(inputs)
         scoreUntilNs = truth?.scoreUntilT.map { MonotonicTimestamp(seconds: $0).nanoseconds }
         roadTruth = options.roads.map { RoadTruthMatcher(network: $0.network) }
@@ -659,7 +726,11 @@ private struct ReplayRun {
             // engine never receives. Its pending checkpoints are dropped.
             guard engine.accepts(input) else {
                 skippedInputs.insert(index)
-                if reason == nil { engine.ingest(input) }
+                if reason == nil {
+                    attachIfDue()
+                    engine.ingest(input)
+                    givenInputs += 1
+                }
                 continue
             }
             endNs = arrival
@@ -695,9 +766,13 @@ private struct ReplayRun {
                                  offsetKmh: options.config.obdSpeedOffsetKmh)
             }
             let rejectedBefore = engine.counters.fixesRejectedOffRoad
+            attachIfDue()
+            let before = RoadSelectionRule.Before(engine)
             let start = clock.now
             engine.ingest(input)
             let elapsed = clock.now - start
+            givenInputs += 1
+            selectLive(before: before)
             if engine.counters.fixesRejectedOffRoad != rejectedBefore, case .location = input {
                 fixes[fixes.count - 1].rejectedOffRoad = true
             }
@@ -705,6 +780,7 @@ private struct ReplayRun {
             engineNs += ns
             maxIngestNs = max(maxIngestNs, ns)
         }
+        attachIfDue()
         // The end is the last input on the timeline: the last one, unless
         // trailing inputs were skipped (then the truth `end` is scored there).
         while nextCheckpoint < schedule.count {
@@ -716,6 +792,35 @@ private struct ReplayRun {
         sampleTrack(at: endNs, withEllipse: true)
 
         return finish(firstNs: firstNs, lastNs: endNs)
+    }
+
+    /// `.afterInputs(k)`: the given set, before the engine's input k + 1.
+    mutating func attachIfDue() {
+        guard case .afterInputs(let k) = options.roadAttach, givenInputs == k, attachedAfterInputs == nil,
+              let network = options.roads?.network else { return }
+        if (try? engine.attachRoads(network)) != nil { attachedAfterInputs = k }
+    }
+
+    /// `.live`: the rule `LiveNavigationRun.ingest(_:droppedInputs:selectRoads:emit:)`
+    /// applies, on the same inputs.
+    mutating func selectLive(before: RoadSelectionRule.Before) {
+        guard selector != nil, let request = selectionRule.observe(engine, before: before, inputs: givenInputs),
+              let network = selector?.network(for: request) else { return }
+        if (try? engine.attachRoads(network)) != nil { attachedAfterInputs = givenInputs }
+    }
+
+    /// An estimate whose matched edge is numbered in the engine's network,
+    /// renumbered into the given set's (the truth matcher's): a live
+    /// selection may attach a subset of the given packs.
+    func inTruthFrame(_ estimate: NavigationEstimate) -> NavigationEstimate {
+        guard var edge = estimate.matchedEdge, let attached = engine.roadNetwork, let given = options.roads?.network,
+              attached !== given else { return estimate }
+        let hash = attached.packs[edge.pack].contentHash
+        guard let index = given.packs.firstIndex(where: { $0.contentHash == hash }) else { return estimate }
+        edge.pack = index
+        var out = estimate
+        out.matchedEdge = edge
+        return out
     }
 
     mutating func buildSchedule(lastNs: Int64) -> [Scheduled] {
@@ -804,7 +909,7 @@ private struct ReplayRun {
         }
         if roadTruth != nil, !afterCutoff, item.kind == .cleanFix, let index = item.inputIndex,
            case .location(let sample, _) = inputs[index] {
-            scoreRoad(sample, checkpoint: checkpoint, estimate: estimate)
+            scoreRoad(sample, checkpoint: checkpoint, estimate: estimate.map(inTruthFrame))
         }
         checkpoints.append(checkpoint)
     }
@@ -991,7 +1096,7 @@ private struct ReplayRun {
             }
         }
         guard withEllipse else { return }
-        if let matcher = roadTruth, let edge = estimate.matchedEdge {
+        if let matcher = roadTruth, let edge = inTruthFrame(estimate).matchedEdge {
             matchedEdges.append(ReplayResult.MatchedEdgeSample(
                 t: t.seconds, onRoadShare: estimate.onRoadShare, edge: edge, roadClass: matcher.roadClass(of: edge),
                 points: matcher.points(of: edge).map { [$0.latitude, $0.longitude] }
@@ -1054,6 +1159,8 @@ private struct ReplayRun {
             result.roadSetHash = roads.roadSetHashHex
             result.roadMetrics = finishRoadMetrics()
             result.matchedEdges = matchedEdges
+            result.roadsAttachedAfterInputs = attachedAfterInputs
+            result.attachedRoadSetHash = attachedAfterInputs == nil ? nil : engine.roadNetwork?.roadSetHashHex
         }
         return result
     }

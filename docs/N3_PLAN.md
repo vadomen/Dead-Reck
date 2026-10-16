@@ -816,9 +816,30 @@ docs/N3_ROAD_OFFROAD.md.
 - The adoption replays are repeated as live.
 - The device items D1–D2 are added to PLAN.md §6, not claimed.
 
+**Amendment (decided by the user 2026-10-15).** Additions to N3.3; the items above stand.
+- **Developer pack bridge (temporary).** The app reads `*.roadpack` from `Documents/RoadPacks/` (copied via Finder → iPhone → Files; `UIFileSharingEnabled` and `LSSupportsOpeningDocumentsInPlace` are already in Info.plist). Settings → Diagnostics lists the packs found (verified yes/no or the refusal reason, size, OSM date, hash prefix), which packs the current recording uses and when roads became active, and "© OpenStreetMap contributors" whenever a pack is in use. Consistent with Q1: no pack is bundled or downloaded. The loader does not depend on where the files come from; N3.4's import into Application Support replaces only the source.
+- **Verification cache.** Each pack is verified once (content hash and structure), off the main actor. The cache key is the file's identity (name, size, modification date), not the content hash, because a content-hash key would need the full read the cache exists to skip. The value holds the content hash, verified yes/no, verify time, OSM date, bounds and grid ID. A file re-copied via Finder gets a new modification date and is verified again.
+- **Pack selection when the first fix is about 1414 m.** The "first usable position" is the engine's own estimate right after it first initialises: its centre and the semi-major axis of its 95 % ellipse. Every verified pack whose coverage (`COVR` if present, else its bounding box) intersects that circle is selected. If none does, selection is repeated at each later accepted position until one does. Once a network is attached it stays for the recording; a second initialisation (a manual-fix reset of the cloud) keeps it and does not re-run selection. A wrong choice costs at most the no-roads result; it must not stall or crash the run.
+- **Config unchanged by a pack set.** If `config.validated(roads:)` would change any key for the selected packs, that pack set is refused (reason shown in Diagnostics) and the recording continues without roads; the config never changes mid-run. With today's packs it is a no-op.
+- **Roads becoming active mid-run.** Loading never delays the start of recording or of the sensor streams. Until the network is ready the run proceeds without roads, and its output up to that point is identical to the no-roads run. The network is attached at an input boundary.
+- **Sidecar v2 (replaces the header fields above).** The header is written at Start, before any position exists, so it cannot name the packs. The app always writes v2. A `roads` line is written once, when roads become active: `t`, `afterInputs` (inputs ingested before the attach), per pack `contentHash`, `formatVersion`, `osmTimestamp` and grid ID, and `roadSetHash`. A v2 sidecar without a `roads` line means no roads were used. Estimates add `onRoadShare`. v1 readers refuse v2.
+- **A corrupt or truncated pack** is refused at load (structure check or verification), with the reason in Diagnostics, and the run continues without it.
+- **replay_nav:** `--roads` is allowed with `--as-live --compare` (attaching at the sidecar's `afterInputs`) and with `--write-sidecar`. Compare warns on a `roadSetHash` mismatch and gives no exact verdict without the same packs. N3-CMPHASH (road-only keys inert without roads) is closed in the same change.
+- **Exit additions:** Mac memory of national + region-A after building the `RoadNetwork` (mapped and heap reported separately, with build time); the phone's number stays open for D1.
+
+**N3.3 implemented (2026-10-15); device items open.** Items 0–6 are in: the plan amendment, the
+mid-run attach, sidecar v2, the pack catalog and selection, `replay_nav --roads` with `--as-live`,
+`--compare` and `--write-sidecar`, and the app wiring. The adoption replays were repeated as live, and every
+criterion passes as live with and without roads (docs/NAVIGATION.md, "N3.3: roads live (2026-10-15)").
+The live attach equals roads from the start on every acceptance run. The Mac memory of national +
+region-A is measured: mapped and heap separately, with build time. N2-2 (`convergedHeadingStdDeg`)
+is reported, with no change. Open: D1 and D2 (docs/PLAN.md §6, not claimed), including the phone's
+memory number.
+
 ### N3.4 — pack in the app, and display
 
 **Deliverables:**
+- **Replaces the N3.3 developer bridge** (`Documents/RoadPacks/`, see the N3.3 amendment); the loader and verification cache stay, only the file source changes.
 - **Getting packs onto the phone (decided, Q1):** import via Files or AirDrop
   (`UIDocumentPicker`, "Open in DriveLogger"), stored in Application Support. No pack is
   bundled and none is downloaded. A pack is at most 150 MB; import refuses a larger one. It is verified

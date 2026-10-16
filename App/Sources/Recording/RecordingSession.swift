@@ -213,10 +213,12 @@ struct RecordingNavigationFeed: Sendable {
 ///    remains the backstop.
 /// 4. **Write failures** — anything on `LogFileWriter.failures` (`ENOSPC`,
 ///    I/O errors, a failed truncate or `fsync`), each reported once by the
-///    writer (R1-9): write a `lifecycle` `error` row (detail `write failed:
-///    …`; it may not reach the disk), stop every source, call `finish()`,
-///    enter `failed(reason:unwrittenEvents:)`. No `stop` row and no final
-///    `stats` row. While *stopping* — from the moment `stop()` is called
+///    writer (R1-9): stop every source, then write a `lifecycle` `error` row
+///    (detail `write failed: …`; it may not reach the disk), both before the
+///    first suspension, so no row of any kind follows it (R32.2-1); call
+///    `finish()`, enter `failed(reason:unwrittenEvents:)`. No `stop` row and
+///    no final `stats` row; a `stats` row in flight and a pending manual fix
+///    are dropped. While *stopping* — from the moment `stop()` is called
 ///    (it sets `stopping` synchronously, R4.1-1), or while any end path is
 ///    in progress — a delivered failure only writes its `error` row and is
 ///    remembered; the stop path then ends in `failed` (R3-2). A final `finish()` that reports a `failure` — after any stop,
@@ -1027,6 +1029,8 @@ final class RecordingSession {
 
     private func performFail(_ rec: ActiveRecording, failure: LogWriteError) async {
         state = .stopping
+        // Already done by `handleWriteFailure` before the error row
+        // (R32.2-1); repeated here so this path stands on its own.
         quiesce(rec)
         rec.stopRowQueued = true   // no row of any kind after the error row
         dropPendingManualFixes(rec)
@@ -1076,7 +1080,15 @@ final class RecordingSession {
             rec.pendingFailure = rec.pendingFailure ?? failure
             return
         }
+        // Synchronously, before the end path's first suspension (R32.2-1,
+        // R5.1-4): stop every source, then the error row, then nothing. A
+        // source ticking on its own queue, a link row, a manual fix or an
+        // in-flight `stats` row would otherwise land after the error row
+        // until `performFail` runs. `performFail`'s own `quiesce` is then a
+        // no-op, and a second report writes no row.
+        quiesce(rec)
         rec.record(LifecycleSample(.error, detail: "write failed: \(Self.describe(failure))"))
+        rec.stopRowQueued = true
         await end(rec) { session in await session.performFail(rec, failure: failure) }
     }
 

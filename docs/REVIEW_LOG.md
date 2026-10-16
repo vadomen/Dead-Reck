@@ -610,3 +610,77 @@ Tests: Core passes 819 tests in 110 suites, 36 known issues (test 3 known FAIL a
 ### Run 31 summary
 
 1 round, round 1 clean. Findings: 0 fixed, 0 rejected, 4 MINOR deferred (R31.1-1 to R31.1-4). Final: Core 819 tests in 110 suites pass, 36 known issues (test 3); App unchanged.
+
+## Run 32: N3.3 roads in the live engine, developer pack bridge (main..n3.3, 4e29b3e), started 2026-10-15
+
+### Round 1
+
+Reviewers: three fresh `reviewer` (opus) on disjoint sets: A engine, live loop and sidecar; B replay, compare, pack catalog and selection, docs; C app. Result: 0 BLOCKER / 2 MAJOR / 7 MINOR.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R32.1-1 | MAJOR | `RoadAttach.swift:88-91`: no test pins a `RoadSelectionRequest`'s contents (centre and radius = the estimate at `latestArrival` and its 95 % semi-major axis); test (a) checks only finiteness. Mutation semiMajorM → semiMinorM survives every suite; an elongated cloud would then miss a pack and roads never attach. | CONFIRMED | regression test added (round 1 commit). |
+| R32.1-2 | MAJOR | `NavigationReplay.swift:729-733`: the input count for an input the engine rejects as a time jump is untested; removing `givenInputs += 1` survives, and the metrics replay would attach one input later than `LiveNavigationRun` after such an input. | CONFIRMED | regression test added (round 1 commit). |
+| R32.1-3 | MINOR | `docs/NAV_SIDECAR.md:64` and `RoadAttachment.t` doc (`RoadAttach.swift:118-121`) say `t` is the arrival of the last input before the attach; it is the latest (largest) accepted arrival (`NavigationEngine.swift:285`). Informational: replay attaches by `afterInputs`. | DEFERRED | backlog. |
+| R32.1-4 | MINOR | `docs/NAV_SIDECAR.md:52` and `Estimate.onRoadShare` doc (`NavSidecar.swift:88-91`): the key is also omitted with roads attached when the cloud was too wide to engage at the last attempt (drive-8: 10 of 2092 seconds). Readers should rely on the `roads` line. | DEFERRED | backlog. |
+| R32.1-5 | MINOR | `replay_nav --compare` attaches the metrics replay at the sidecar's `afterInputs` but keeps the from-start (or live-rule) mode label, so it overwrites that row in metrics.json and its GeoJSON (`main.swift:262`, `NavigationReplay.swift:98-104`, `ReplayReport.swift:95`). | DEFERRED | backlog. |
+| R32.1-6 | MINOR | `RoadPackCatalog.swift:218-223`: the "file changed during verification" branch is untested (needs an injectable identity reader). | DEFERRED | backlog. |
+| R32.1-7 | MINOR | `App/Sources/Navigation/MemoryFootprint.swift:12`: `task_self_trap()` leaks a send right per call (Diagnostics polls every 2 s; saturates after about 36 h). Use `mach_task_self_`. | DEFERRED | backlog. |
+| R32.1-8 | MINOR | Packs are memory-mapped directly from `Documents/RoadPacks` and held for the drive (`RoadPack.swift:64`, `RoadPackLibrary.swift:132-133`); a pack overwritten or truncated in place during a recording could SIGBUS. Not verified whether Finder/Files overwrite in place. Fix: clone into a private directory before mapping (N3.4 import into Application Support is the natural place). | DEFERRED | backlog; test-drive instructions say not to copy packs during a recording. |
+| R32.1-9 | MINOR | `RoadsDiagnostics.swift:34-41`: with no recording running, "Recording uses" shows the last finished recording's packs unlabelled. Label it "Last recording used". | DEFERRED | backlog. |
+
+Tests: Core passes 839 tests in 114 suites at 4e29b3e, 36 known issues (test 3). App: 292 tests; `RecordingSessionTests` "A write failure: error row, finish, failed; no stop row (rule 4)" failed in 2 of 4 runs at 4e29b3e (RecordingSession is not in the range; baseline on main pending).
+
+Round 1 commit: 4482802.
+
+### Round 2
+
+Reviewers: two fresh `reviewer` (opus): A2 Core (engine, live loop, sidecar, replay, compare, catalog, selection, replay_nav); C2 app, with the `RecordingSessionTests` failure as its primary question. Result: 0 BLOCKER / 1 MAJOR / 3 MINOR.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R32.2-1 | MAJOR | `App/Sources/Recording/RecordingSession.swift` `handleWriteFailure`: the rule-4 `error` row was written before the sources were quiesced and before `stopRowQueued` was set (both only in `performFail`, after a main-actor hop), so sample or `stats` rows could land after it; `writeFailureEntersFailed` failed 2 of 8 app-test runs (pre-existing, same as R5.1-4; the range's main-actor test replays widened the gap). | CONFIRMED | Fixed (user decision 2026-10-15: fix in this branch): quiesce, then the error row, then `stopRowQueued`, before the first suspension; rule 4 in docs/LOG_FORMAT.md and docs/PLAN.md now reads "stop every source, then the error row". Regression test `writeFailureQuiescesBeforeErrorRow` fails before, passes after. `NavigationServiceRoadsTests.comparison` moved off the main actor. Closes R5.1-4. |
+| R32.2-2 | MINOR | `AppTests/NavigationServiceRoadsTests.swift:191` `lateResultDropped`: one `gate.signal()` can leave a second scan blocked 20 s. | FIXED | in the round 2 commit (the gate passes the signal on). |
+| R32.2-3 | MINOR | `Core/Sources/replay_nav/main.swift:248, 358-361`: when the live attach is refused because the config would change (only `--compare --set <road key>`), replay_nav prints a clamp note that does not apply and "Roads attach none (no selection request met a covering pack set)"; the same fallback text is printed for a set refused at build time; each used fix rebuilds the network (selector caches only build refusals). | DEFERRED | backlog. |
+| R32.2-4 | MINOR | Link-loss tests flaky: `OBDLinkServiceTests.swift:283` ("Link loss: disconnected → reconnecting → connected…") and `StartupInitRecordingTests.swift:348` ("Real link dropped before Start (reconnecting)…"): after `central.loseLink()` the dropped session's "→ failed (transport closed)" event sometimes never arrives; 2 of 4 full runs, and once in 15 iterations of the two tests alone. Outside the range; reproduced on main: `StartupInitRecordingTests.swift:348` failed 1 of 15 iterations on main (0 of 15 on n3.3). | DEFERRED | backlog. |
+
+Tests: Core passes 841 tests in 114 suites, 36 known issues (test 3). App: 293 tests; 4 full runs: 2 pass, 2 fail on one link-loss test each (R32.2-4); `writeFailureEntersFailed` and the new `writeFailureQuiescesBeforeErrorRow` pass in all 4. Simulator build succeeds.
+
+Round 2 commit: 2d05d59.
+
+### Round 3
+
+Reviewers: two fresh `reviewer` (opus): A3 Core (late-attach sidecars on real drives compared exactly, metrics merge, doc numbers); C3 app and the round-2 logger change. Result: 0 BLOCKER / 1 MAJOR / 2 MINOR.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R32.3-1 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/Replay/SidecarComparison.swift:104` (and the `onRoadShare` difference at :75-79): no test covers `onRoadShare` in the exact verdict; deleting the term leaves every test green, so a sidecar differing only in `onRoadShare` would be reported "PASS (exact)". | CONFIRMED | regression test added (round 3 commit). |
+| R32.3-2 | MINOR | `App/Sources/Recording/RecordingSession.swift:548-550`: the `calibrationEnd` row in `start()` is guarded by `state == .calibrating` but not `rec.isWritable`; a write failure during calibration whose sleep continuation is already queued can write `calibrationEnd` after the rule-4 error row (one main-actor turn; pre-existing window, but contradicts the new "no row of any kind follows the error row" in docs/LOG_FORMAT.md). | DEFERRED | backlog. |
+| R32.3-3 | MINOR | `AppTests/RecordingSessionTests.swift:272-273`: the "second report writes nothing" step runs after `await failing.value`, when `recording` is nil, so it never reaches the `stopRowQueued` check; deleting `rec.stopRowQueued = true` (`RecordingSession.swift:1091`) keeps the test green. | DEFERRED | backlog. |
+
+Tests: Core passes 842 tests in 114 suites, 36 known issues (test 3). App unchanged since round 2 (2d05d59); its link-loss tests ran 15 iterations clean on n3.3.
+
+Round 3 commit: 6e02554.
+
+### Round 4
+
+Reviewers: two fresh `reviewer` (opus), both told to hunt untested new branches by mutation: A4 Core (mutations run in a scratch copy of Core because an app-test run was using the worktree); C4 app and logger (static). Result: 0 BLOCKER / 1 MAJOR / 9 MINOR. Round 4 is the loop's last; the user decided (2026-10-16): add the test for R32.4-1, defer the MINORs, merge without a round 5.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R32.4-1 | MAJOR | `NavigationReplay.swift:912`: road scoring of withheld clean fixes under `--as-live --roads` maps the matched edge into the given set's numbering (`estimate.map(inTruthFrame)`); untested (the mapping test has no withheld fix). Removing it moved scored fixes onto the far pack's edge (≈ 8 km) with every test green; it would silently corrupt wrong-road verdicts in metrics.json. | CONFIRMED | regression test added (round 4 commit). |
+| R32.4-2 | MINOR | `RoadPackCatalog.swift:213`: re-storing a cache hit is untested; without it every other launch fully re-verifies every pack. | DEFERRED | backlog. |
+| R32.4-3 | MINOR | `RoadPackSelection.swift:205`: `RoadPackSelector`'s refused-set cache is untested (cost only: a network build per request). | DEFERRED | backlog. |
+| R32.4-4 | MINOR | `RoadPackCatalog.swift:136`: the cache-version check is untested (matters after a future cache version bump). | DEFERRED | backlog. |
+| R32.4-5 | MINOR | `LiveNavigationRun.swift:137`: resetting `newSelectionRequest` before the time-jump guard is untested; without it the app re-requests the previous circle after a rejected input (duplicate selection only). | DEFERRED | backlog. |
+| R32.4-6 | MINOR | `SidecarComparison` `configBlamed`: the "hash differs but no keys parsed" branch is untested (explanation text only). | DEFERRED | backlog. |
+| R32.4-7 | MINOR | `NavigationService.swift:222, 241`: no app test reaches the attach-refusal catch or the refused-set memo (a `configWouldChange` set would be rebuilt every fix, or Diagnostics would show "looking for a pack" instead of the reason). | DEFERRED | backlog. |
+| R32.4-8 | MINOR | `NavigationService.swift:176, 246`: keeping the latest request during a selection and starting it afterwards is untested; a regression loses that request until the next fix. | DEFERRED | backlog. |
+| R32.4-9 | MINOR | `RoadPackLibrary.swift:96`: a rescan requested during a scan (`rescanQueued`) is untested. | DEFERRED | backlog. |
+| R32.4-10 | MINOR | `RoadsDiagnostics.swift:28`: "verified in %.1f s" shows 0.0 s for a 30–49 ms verify, too coarse for the D2 comparison with the Mac's 70.5 / 29.3 ms; show ms below 1 s. | DEFERRED | backlog. |
+
+Tests: Core passes 843 tests in 114 suites, 36 known issues (test 3); one of five full runs during the fix failed once in "Navigation N4 B0" (wall-clock assert, known T-2). App unchanged since round 2; two full runs at 6e02554: one pass, one failure in the known link-loss test (R32.2-4, reproduced on main).
+
+### Run 32 summary
+
+4 rounds; round 4 still had a MAJOR (a missing test), resolved by the user's decision above. Findings: 5 MAJOR confirmed and fixed (R32.1-1, R32.1-2, R32.3-1, R32.4-1: regression tests for new logic; R32.2-1: pre-existing rule-4 race, fixed by the user's decision, closes R5.1-4), 0 rejected, 1 MINOR fixed (R32.2-2), 20 MINOR deferred (R32.1-3..9, R32.2-3, R32.2-4, R32.3-2, R32.3-3, R32.4-2..10). Final: Core 843 tests in 114 suites pass (36 known issues, test 3); app 293 tests pass apart from the pre-existing link-loss flake R32.2-4; simulator build succeeds.

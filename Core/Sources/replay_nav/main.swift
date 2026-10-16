@@ -14,8 +14,19 @@ import Foundation
 // them by content hash, so the order given changes nothing; the same pack
 // twice is refused); the engine runs its road update against them, the run is scored with the road metrics and its
 // mode label gets -roads-<first 8 hex of roadSetHash>. Each pack is fully
-// verified on load. Not with --compare or --write-sidecar: the app's live
-// loop has no roads until N3.3. --wrong-road-tolerance m (default 20): a
+// verified on load. When the engine gets them (N3.3, `ReplayRoadAttach`):
+// - by default from the first input (the N3.2 replays);
+// - with --as-live, and always for --write-sidecar: as the app with its
+//   packs ready. The engine starts without roads; at each selection request
+//   (the engine's first initialisation, then each position it uses until a
+//   network is attached) the given packs covering the estimate's 95 % circle
+//   are selected and attached at once. The metrics replay and the written
+//   sidecar attach at the same input;
+// - with --compare: at the sidecar's `roads` line (`afterInputs`), the whole
+//   given set; with a sidecar that used no roads, the live rule above. A
+//   roadSetHash that differs from the sidecar's, or packs on one side only,
+//   is a warning naming the hashes, and the verdict is never PASS (exact).
+// --wrong-road-tolerance m (default 20): a
 // matched edge that is not the truth's road still counts as right within m
 // metres of the truth fix. Data: © OpenStreetMap contributors, ODbL 1.0.
 //
@@ -38,10 +49,12 @@ import Foundation
 // order); the label gets -file-order. --compare: run the
 // app's per-recording loop (`LiveNavigationRun`) over the same inputs and
 // compare its 1 Hz estimates and pins with the sidecar the app wrote (one
-// log only); see docs/NAV_SIDECAR.md. --write-sidecar: write the sidecar
+// log only; sidecar v1 or v2); see docs/NAV_SIDECAR.md. Without roads on
+// either side, config keys that differ only in road-only keys are named as
+// inert, not blamed (N3-CMPHASH). --write-sidecar: write the sidecar
 // the app would have written for this recording with no drops (the same
-// loop: file order, header seed, default config; one log only), e.g. to
-// check --compare end to end on a Mac.
+// loop: file order, header seed, default config, --roads attached by the
+// live rule; one log only), e.g. to check --compare end to end on a Mac.
 //
 // Inputs are fed in arrival order; the engine never sees a fix the GPS mode
 // or --hold-out-acc withholds, and is scored only against information it did
@@ -175,9 +188,6 @@ if asLive {
 if (comparePath != nil || writeSidecarPath != nil) && paths.count != 1 {
     fail("--compare and --write-sidecar take exactly one log\n\(usage)", status: 2)
 }
-if !roadPaths.isEmpty && (comparePath != nil || writeSidecarPath != nil) {
-    fail("--roads cannot be combined with --compare or --write-sidecar: the app's live loop has no roads (N3.3)\n\(usage)", status: 2)
-}
 if wrongRoadTolerance != nil && roadPaths.isEmpty {
     print("note: --wrong-road-tolerance has no effect without --roads")
 }
@@ -237,8 +247,25 @@ if let reason = validated.invalidReason {
 for change in ReplayReport.configChanges(from: config, to: validated) {
     print("note: config validation clamps \(change); the engine runs with the clamped value")
 }
+// --compare: the sidecar is read first; its roads line decides when the
+// replay attaches the given packs.
+var compareContents: NavSidecar.Contents?
+if let comparePath {
+    do {
+        compareContents = try NavSidecar.read(contentsOf: URL(fileURLWithPath: comparePath))
+    } catch {
+        fail("cannot read sidecar \(comparePath): \(error)", status: 1)
+    }
+}
+var roadAttach = ReplayRoadAttach.fromStart
+if let contents = compareContents {
+    roadAttach = contents.roads.map { .afterInputs($0.afterInputs) } ?? .live
+} else if asLive {
+    roadAttach = .live
+}
 var baseOptions = ReplayOptions(gps: gps, holdOutAccuracyM: holdOut, config: config)
 baseOptions.roads = roads
+baseOptions.roadAttach = roadAttach
 if let wrongRoadTolerance { baseOptions.wrongRoadToleranceM = wrongRoadTolerance }
 baseOptions.asLive = asLive
 baseOptions.fileOrder = asLive || fileOrder
@@ -291,19 +318,25 @@ for path in paths {
     }
     inputs = baseOptions.fileOrder ? NavigationReplay.fileOrderInputs(from: events) : NavigationReplay.inputs(from: events)
     if let writeSidecarPath {
-        // Exactly the app's loop: file order, header seed, default config.
-        var run = LiveNavigationRun(header: header, appBuild: "replay_nav")
+        // Exactly the app's loop: file order, header seed, default config,
+        // the given packs attached by the live rule.
         do {
             let writer = try NavSidecarWriter(url: URL(fileURLWithPath: writeSidecarPath))
-            writer.append(.header(run.header))
             var count = 0
-            for input in NavigationReplay.fileOrderInputs(from: events) {
-                run.ingest(input) { writer.append($0); count += 1 }
+            let run = NavigationReplay.runLive(
+                inputs: NavigationReplay.fileOrderInputs(from: events), sessionID: header.sessionID,
+                config: NavigationConfig(seed: NavigationSeed.derive(header: header)), appBuild: "replay_nav",
+                roads: roads, attach: .live
+            ) { line in
+                writer.append(line)
+                count += 1
                 if count >= 1_000 { writer.flush(); count = 0 }
             }
             writer.close()
             if let failure = writer.failure { fail("cannot write \(writeSidecarPath): \(failure)", status: 1) }
-            print("Sidecar       wrote \(writeSidecarPath): \(run.estimates) estimates, \(writer.bytesWritten) bytes (as the app would, no drops)")
+            print("Sidecar       wrote \(writeSidecarPath): \(run.estimates) estimates, \(writer.bytesWritten) bytes (as the app would, no drops)"
+                  + (roads == nil ? "" : run.roads.map { "; roads attached after \($0.afterInputs) inputs, roadSetHash \($0.network.roadSetHashHex)" }
+                     ?? "; no roads attached (no given pack covered a selection request)"))
         } catch {
             fail("cannot write \(writeSidecarPath): \(error)", status: 1)
         }
@@ -321,7 +354,13 @@ for path in paths {
     if result.counters.inputsRejectedTimeJump > 0 {
         print("note: \(result.counters.inputsRejectedTimeJump) input(s) rejected as implausible forward time jumps")
     }
-    print(ReplayReport.summary(result))
+    print(ReplayReport.summary(result), terminator: "")
+    if roads != nil && options.roadAttach != .fromStart {
+        print("Roads attach  " + (result.roadsAttachedAfterInputs.map {
+            "after \($0) inputs given to the engine, roadSetHash \(result.attachedRoadSetHash ?? "n/a")"
+        } ?? "none (no selection request met a covering pack set)"))
+    }
+    print("")
     metrics.append(ReplayMetrics(result))
     let stem = name.hasSuffix(".jsonl.gz") ? String(name.dropLast(9)) : name
     let geoURL = outDirectory.appendingPathComponent("\(stem)-\(options.label).geojson")
@@ -332,13 +371,7 @@ for path in paths {
         fail("cannot write \(geoURL.path): \(error)", status: 1)
     }
 
-    if let comparePath {
-        let contents: NavSidecar.Contents
-        do {
-            contents = try NavSidecar.read(contentsOf: URL(fileURLWithPath: comparePath))
-        } catch {
-            fail("cannot read sidecar \(comparePath): \(error)", status: 1)
-        }
+    if let comparePath, let contents = compareContents {
         if contents.header.sessionID != header.sessionID {
             print("Warning       the sidecar's sessionID is not this recording's")
         }
@@ -348,12 +381,14 @@ for path in paths {
             guard case .location(let sample, let t) = input else { return true }
             return NavigationReplay.withholdReason(sample, at: t, options: options, motionStart: motionStart) == nil
         }
-        let lines = NavigationReplay.liveLines(inputs: given, sessionID: header.sessionID, config: options.config)
+        let lines = NavigationReplay.liveLines(inputs: given, sessionID: header.sessionID, config: options.config,
+                                               roads: roads, attach: options.roadAttach)
         let comparison = SidecarComparison(
             sidecar: contents, replay: lines, replayConfig: NavigationEngine(config: options.config).config,
-            encodingFailures: NavigationReplay.encodingFailures(in: events).count
+            encodingFailures: NavigationReplay.encodingFailures(in: events).count,
+            givenRoadSetHash: roads?.roadSetHashHex
         )
-        print("Sidecar       \(URL(fileURLWithPath: comparePath).lastPathComponent): \(contents.estimates.count) estimates, \(contents.pins.count) pins, app build \(contents.header.appBuild) (\(contents.header.buildConfiguration ?? "build configuration not recorded"))\(asLive ? "" : fileOrder ? " (--file-order, not --as-live)" : " (not --as-live: arrival order)")")
+        print("Sidecar       \(URL(fileURLWithPath: comparePath).lastPathComponent): v\(contents.header.sidecarVersion), \(contents.estimates.count) estimates, \(contents.pins.count) pins, app build \(contents.header.appBuild) (\(contents.header.buildConfiguration ?? "build configuration not recorded"))\(asLive ? "" : fileOrder ? " (--file-order, not --as-live)" : " (not --as-live: arrival order)")")
         print(comparison.report(tolerance: tolerance))
         if !comparison.passes(tolerance) { compareFailed = true }
     }

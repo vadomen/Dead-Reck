@@ -13,14 +13,19 @@ import Foundation
 ///   initialised, as `NavigationEngine.estimate(at:)` returned it at that
 ///   grid instant;
 /// - `pin`: the estimate at a confirmed manual fix, the prior just before
-///   the engine ingested it.
+///   the engine ingested it;
+/// - `roads` (v2): written once, when a road network became active: when
+///   (`t`, `afterInputs`) and which packs. A v2 sidecar without it used no
+///   roads.
 ///
 /// Times are session-clock nanoseconds (`t`, like the log). Doubles are
 /// written at full precision so a replay can match them bit for bit;
 /// non-finite values as the strings "inf", "-inf", "nan".
 public enum NavSidecar {
     /// The version `LiveNavigationRun` writes. A reader refuses a newer one.
-    public static let version = 1
+    /// 2 (N3.3): the `roads` line and `Estimate.onRoadShare`; a v1 reader
+    /// would skip the roads line and hide which packs the run used.
+    public static let version = 2
 
     public struct Header: Hashable, Sendable, Codable {
         public var sidecarVersion: Int
@@ -80,6 +85,10 @@ public enum NavSidecar {
         /// Diagnostics only; nil in a replay.
         public var msPerStep: Double?
         public var maxStepMs: Double?
+        /// v2: `NavigationEstimate.onRoadShare`, the weight share on a road
+        /// at the last road update; nil (key omitted) without roads or
+        /// before the first road update, so a no-roads line is a v1 line.
+        public var onRoadShare: Double?
 
         public init(_ estimate: NavigationEstimate, droppedInputs: Int = 0,
                     msPerStep: Double? = nil, maxStepMs: Double? = nil) {
@@ -96,6 +105,7 @@ public enum NavSidecar {
             self.droppedInputs = droppedInputs
             self.msPerStep = msPerStep
             self.maxStepMs = maxStepMs
+            onRoadShare = estimate.onRoadShare
         }
 
         public var ellipse: ErrorEllipse {
@@ -124,10 +134,63 @@ public enum NavSidecar {
         }
     }
 
+    /// v2: the road network a run attached, written once when it became
+    /// active (N3.3). Data: © OpenStreetMap contributors, ODbL 1.0.
+    public struct Roads: Hashable, Sendable, Codable {
+        /// One pack, as `replay_nav` results record it: hashes as 16
+        /// lowercase hex digits.
+        public struct Pack: Hashable, Sendable, Codable {
+            public var contentHash: String
+            public var formatVersion: Int
+            /// The OSM data's replication timestamp, Unix seconds (0 unknown).
+            public var osmTimestamp: Int64
+            public var gridID: String
+
+            public init(contentHash: String, formatVersion: Int, osmTimestamp: Int64, gridID: String) {
+                self.contentHash = contentHash
+                self.formatVersion = formatVersion
+                self.osmTimestamp = osmTimestamp
+                self.gridID = gridID
+            }
+
+            public init(_ pack: RoadPack) {
+                self.init(contentHash: NavigationSeed.hex(pack.contentHash), formatVersion: Int(pack.formatVersion),
+                          osmTimestamp: pack.osmTimestamp, gridID: NavigationSeed.hex(pack.gridID))
+            }
+        }
+
+        /// The engine's latest accepted arrival at the attach
+        /// (`RoadAttachment.t`); nil (key omitted) for an attach before the
+        /// first input.
+        public var t: MonotonicTimestamp?
+        /// Inputs the run had ingested before the attach: the network is
+        /// used from input `afterInputs + 1` (1-based, file order) on.
+        public var afterInputs: Int
+        /// Per pack, in canonical order (ascending content hash).
+        public var roads: [Pack]
+        /// FNV-1a 64 over the packs' content hashes in ascending order, 16
+        /// hex digits (`RoadNetwork.roadSetHashHex`).
+        public var roadSetHash: String
+
+        public init(t: MonotonicTimestamp?, afterInputs: Int, roads: [Pack], roadSetHash: String) {
+            self.t = t
+            self.afterInputs = afterInputs
+            self.roads = roads
+            self.roadSetHash = roadSetHash
+        }
+
+        public init(_ attachment: RoadAttachment) {
+            self.init(t: attachment.t, afterInputs: attachment.afterInputs,
+                      roads: attachment.network.packs.map(Pack.init), roadSetHash: attachment.network.roadSetHashHex)
+        }
+    }
+
     public enum Line: Hashable, Sendable, Codable {
         case header(Header)
         case estimate(Estimate)
         case pin(Pin)
+        /// v2.
+        case roads(Roads)
         /// A kind this reader does not know (a later version); skipped.
         case unrecognized(kind: String)
 
@@ -136,6 +199,7 @@ public enum NavSidecar {
             case .header: "header"
             case .estimate: "estimate"
             case .pin: "pin"
+            case .roads: "roads"
             case .unrecognized(let kind): kind
             }
         }
@@ -148,6 +212,7 @@ public enum NavSidecar {
             case "header": self = .header(try Header(from: decoder))
             case "estimate": self = .estimate(try Estimate(from: decoder))
             case "pin": self = .pin(try Pin(from: decoder))
+            case "roads": self = .roads(try Roads(from: decoder))
             default: self = .unrecognized(kind: kind)
             }
         }
@@ -157,6 +222,7 @@ public enum NavSidecar {
             case .header(let value): try value.encode(to: encoder)
             case .estimate(let value): try value.encode(to: encoder)
             case .pin(let value): try value.encode(to: encoder)
+            case .roads(let value): try value.encode(to: encoder)
             case .unrecognized: break
             }
             var container = encoder.container(keyedBy: Key.self)
@@ -199,12 +265,17 @@ public enum NavSidecar {
         case unsupportedVersion(Int)
         /// A line other than the last one does not decode (1-based number).
         case malformedLine(number: Int, description: String)
+        /// A second `roads` line (1-based number): a run attaches roads once.
+        case duplicateRoadsLine(number: Int)
     }
 
     public struct Contents: Hashable, Sendable {
         public var header: Header
         public var estimates: [Estimate]
         public var pins: [Pin]
+        /// v2: the road network the run attached; nil when it used none
+        /// (and always for v1).
+        public var roads: Roads?
         /// Lines of a kind this reader does not know, skipped.
         public var unrecognizedLines: Int
         /// The last line was cut short (the app was killed mid-write) and
@@ -223,12 +294,18 @@ public enum NavSidecar {
     /// Parses a sidecar. A last line that does not decode is dropped and
     /// reported (`truncatedLastLine`); any other bad line throws.
     public static func read(_ data: Data) throws -> Contents {
+        try read(data, maxVersion: version)
+    }
+
+    /// `read(_:)` as a reader that knows versions up to `maxVersion`.
+    static func read(_ data: Data, maxVersion: Int) throws -> Contents {
         var lines = data.split(separator: 0x0A, omittingEmptySubsequences: false)
         if lines.last?.isEmpty == true { lines.removeLast() }
         let decoder = makeDecoder()
         var header: Header?
         var estimates: [Estimate] = []
         var pins: [Pin] = []
+        var roads: Roads?
         var unrecognized = 0
         var truncated = false
         for (index, bytes) in lines.enumerated() {
@@ -245,18 +322,21 @@ public enum NavSidecar {
             }
             if index == 0 {
                 guard case .header(let value) = line else { throw ReadError.missingHeader }
-                guard value.sidecarVersion <= version else { throw ReadError.unsupportedVersion(value.sidecarVersion) }
+                guard value.sidecarVersion <= maxVersion else { throw ReadError.unsupportedVersion(value.sidecarVersion) }
                 header = value
                 continue
             }
             switch line {
             case .estimate(let value): estimates.append(value)
             case .pin(let value): pins.append(value)
+            case .roads(let value):
+                guard roads == nil else { throw ReadError.duplicateRoadsLine(number: index + 1) }
+                roads = value
             case .header, .unrecognized: unrecognized += 1
             }
         }
         guard let header else { throw ReadError.missingHeader }
-        return Contents(header: header, estimates: estimates, pins: pins,
+        return Contents(header: header, estimates: estimates, pins: pins, roads: roads,
                         unrecognizedLines: unrecognized, truncatedLastLine: truncated)
     }
 }

@@ -455,9 +455,10 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   `LogRecovery.strict` and stops with status 3 on any damage, a truncated
   tail included, before `metrics.json` and `metrics.md` are updated. Every
   acceptance drive reads clean.
-- **Roads** (N3.2b; replay only, refused with `--compare` and
-  `--write-sidecar`): `--roads` (repeatable, each pack fully verified) gives
-  the engine `NavigationEngine(config:roads:)`. **Pack order does not matter**
+- **Roads** (N3.2b): `--roads` (repeatable, each pack fully verified) gives
+  the engine `NavigationEngine(config:roads:)`, from the first input. With
+  `--as-live`, `--compare` or `--write-sidecar` the packs are attached the
+  way the app attaches them (N3.3, `ReplayRoadAttach`, next bullets). **Pack order does not matter**
   (N3.2c item 7): `RoadNetwork` sorts the packs by ascending content hash, so
   the same set in any order gives bit-identical results, one `roadSetHash`
   (FNV-1a 64 over the sorted content hashes), one label and one `roads` list.
@@ -498,7 +499,15 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   that arrived in the meantime, not at its samples' own `t`. The normal replay
   sorts by arrival, `max(receivedT, t)`, so the two differ in a few late
   samples per batch, which changes the bits (not the accuracy). The mode label
-  gets `-as-live`.
+  gets `-as-live`. With `--roads` (N3.3) the engine starts without roads and
+  attaches them by the live rule with the packs ready: at each selection
+  request (`RoadSelectionRule`) the given packs covering the estimate's 95 %
+  circle are selected (`RoadPackSelector`) and attached at that input
+  boundary. The summary's `Roads attach` line and `metrics.json`
+  (`roadsAttachedAfterInputs`, `attachedRoadSetHash`) record when and which
+  set; `roads`/`roadSetHash` stay the given set (the road truth's). The
+  written sidecar (`--write-sidecar`, always this rule) attaches at the same
+  input.
 - `--file-order`: inputs in file order, as `--as-live`, but with any
   `--seed`, `--particles` and `--set`: a seed sweep of the live order. The
   mode label gets `-file-order`.
@@ -509,7 +518,13 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   `droppedInputs` and any navigation rows that failed to encode. It passes
   when the result is exact, or within `--tolerance` (default 1 m) and
   `--heading-tolerance` (default 0.1°). Exit status 4 on a failure. A seed or
-  config-hash mismatch is a warning. Format and verdicts:
+  config-hash mismatch is a warning; without roads on either side, keys that
+  differ only in road-only keys are named inert, not blamed (N3-CMPHASH).
+  With `--roads`: a sidecar `roads` line attaches the given set at its
+  `afterInputs` (the metrics replay too); a sidecar without one gets the live
+  rule. A `roadSetHash` that differs, or packs on one side only, is a warning
+  naming the hashes, and the verdict is never PASS (exact). Format and
+  verdicts:
   [NAV_SIDECAR.md](NAV_SIDECAR.md).
 - `--write-sidecar <path>` (one log): writes the sidecar the app would have
   written for the recording with no drops (same loop, file order, header seed,
@@ -668,6 +683,82 @@ For every recording it:
 - answers `snapshot(at:)` with a `NavigationSnapshot` (estimate, ellipse,
   heading, `converged`, `initialized`, ms/step, ESS, heading std, speed scale,
   `droppedInputs`) on the recording's session clock.
+
+**Roads attached mid-run (N3.3).** `LiveNavigationRun` starts without roads
+unless a network is given at init. `NavigationEngine.attachRoads(_:)`
+attaches one between two inputs, once, before or after initialisation: the
+road state starts cleared (as a reseed leaves it), and nothing else changes,
+so every line before the attach is the no-roads run's, and an attach before
+the first input equals `init(config:roads:)`. It is refused, engine
+unchanged, when a network is already attached or when
+`config.validated(roads:)` would change any key: the config never changes
+mid-run. The selection rule (`RoadSelectionRule`): the run raises a
+`RoadSelectionRequest` (the estimate's centre and 95 % semi-major axis)
+after the ingest at which the engine first initialises and, while no
+network is attached, after every ingest in which it used a position (a fix,
+a released held fix, a manual fix). Once a network is attached no request
+is raised again, a manual reset of the cloud included. The attach's
+`afterInputs` is the run's `inputs` then; its `t` is the engine's latest
+accepted arrival (`NavigationEngine.latestArrival`), nil for an attach
+before the first input.
+
+**Pack catalog and selection (N3.3, Core).**
+`RoadPackCatalog(urls:cache:)` takes the pack files a caller offers (it
+chooses the directory) and a `RoadPackVerificationCache`, keyed by file
+identity (name, size, modification date), not by content hash. A cache hit
+is not verified again; a miss is opened with full verification
+(`RoadPack(contentsOf:verify: true)`) and timed. A truncated, corrupt or
+structurally bad pack is refused with its reason (cached too, until the
+file changes); a file that cannot be read is listed and not cached. The
+value holds the content hash, verified yes/no and the reason, the verify
+time, OSM timestamp, format version, bounds (E7) and grid ID; the caller
+persists it as JSON (`encoded()`, `init(data:)`). `RoadPackSelection`
+opens the usable packs memory-mapped without full verification, refusing a
+pack whose identity changed or whose header's content hash is not the
+verified one, then selects every pack whose coverage (`COVR`, else the
+bounding box) intersects the request's circle and builds their
+`RoadNetwork`; packs that cannot be used together (different grids, the
+same pack twice) are refused as a set. `RoadPackSelector` is the
+synchronous form over fixed packs (`replay_nav --as-live --roads`).
+Everything is Sendable values and pure functions, callable off the main
+actor. Data: © OpenStreetMap contributors, ODbL 1.0.
+
+**Live roads in the app (N3.3).** The path from a pack file to a road
+update in a recording:
+- **Library.** `App/Sources/Navigation/RoadPackLibrary.swift`, an actor,
+  lists the `*.roadpack` files of `Documents/RoadPacks/` (the developer
+  bridge: Finder → iPhone → Files; N3.4 replaces only this source) and
+  verifies each once through `RoadPackCatalog`. The verification cache is
+  `Application Support/RoadPackVerification.json`, keyed by file identity.
+  Listing, verification and opening run in a detached `.utility` task, at
+  launch, when a recording starts and when Diagnostics appears; a cache hit
+  costs one `stat`. No pack is bundled or downloaded.
+- **Selection and attach.** `NavigationService` hands each
+  `RoadSelectionRequest` of the recording's `LiveNavigationRun` to a
+  detached task. The task takes the library's candidates and calls
+  `RoadPackSelection.select`, which also builds the `RoadNetwork`. Back on
+  the actor, between two inputs, the service calls
+  `LiveNavigationRun.attachRoads`. The selection is asynchronous, so the
+  live attach can come some inputs after the request; `replay_nav --as-live`
+  attaches at the request itself. A request that arrives during a selection
+  replaces the pending one. A refused set is remembered with its reason and
+  not built again. Recording and the sensor streams never wait for any of
+  it; until the attach the run is the no-roads run.
+- **Sidecar.** The app writes sidecar v2. The attach writes its `roads`
+  line (`t`, `afterInputs`, each pack's content hash, format, OSM timestamp
+  and grid, and `roadSetHash`), and estimates carry `onRoadShare`.
+  `replay_nav --as-live --roads <same packs> --compare <sidecar>` attaches
+  at that `afterInputs` ([NAV_SIDECAR.md](NAV_SIDECAR.md)).
+- **Diagnostics** (Settings): a Road packs section lists each pack
+  (verified, or the refusal reason; size, OSM date, hash prefix, and
+  "cached" or "verified in x s"). Below it: "Recording uses" (the pack
+  names and the session time roads became active; else none, a refusal
+  reason, or "looking for a pack"), the on-road share, and "© OpenStreetMap
+  contributors" while a pack is in use. The Memory row is the app's
+  `phys_footprint`, for D1.
+
+The as-live replays with roads, the Mac memory numbers and the late-attach
+check are in "N3.3: roads live (2026-10-15)" below.
 
 N4 B acceptance and the as-live table: moved to [docs/archive/NAVIGATION-history.md](archive/NAVIGATION-history.md).
 
@@ -2051,6 +2142,257 @@ courses and matched edges, reseeds after convergence, weights, the probe's
 counter cross-check): logs/n3sc/ (git-ignored; `table.md`, `dist.md`,
 `course-vs-ref.txt`, `frozen.txt`, `run.sh`, `identity.py`, `table.py`,
 `frozen.py`, the offline `probe/`).
+
+### N3.3: roads live (2026-10-15)
+
+**The adoption replays repeated as live** (N3.3 exit). Release build of
+89ba3ee (items 0–5) on the Mac. Every acceptance run with its acceptance
+flags, run as `--as-live` (file order, the header's seed, the default
+config, which is the N3.2 decision's) with `--roads` national + region-A and
+the live attach rule, and again without `--roads`. One seed per drive: the
+header's. The N3.2 columns are seeds 1–5 in arrival order: logs/n32dec for
+the seven older drives, and the N3-SLC baseline (logs/n3sc, key 0 after the
+revert, equal to logs/n32dec on the older drives) for drive-9. Gated value
+and consistency as in "N3.2 decision": metres for clean-long, clean and
+manual, % of distance for the rest, consistency with the truth's σ. Each
+cell is one as-live run, so the adoption rule (a mean over seeds 1–5) does
+not apply to it; the criteria do.
+
+With roads:
+
+| drive | N3.2, seeds 1–5: mean (range) | as live | inside the N3.2 range | consistency + σ, N3.2 mean → as live | criterion, as live | converged, as live | attach: afterInputs, t | ms/step, max ingest |
+|---|---|---|---|---|---|---|---|---|
+| clean-long | 19.38 (19.22–19.50) m | 19.31 m | yes | 100.0 → 100.0 % | PASS | 0.02 km | 3, 0.04 s | 0.095, 1.00 ms |
+| clean | 14.39 (11.81–18.82) m | 16.17 m | yes | 100.0 → 100.0 % | PASS | 0.03 km | 3, 0.04 s | 0.093, 1.02 ms |
+| manual | 7.23 (5.81–10.02) m | 6.92 m | yes | 100.0 → 100.0 % | PASS | 1.70 km (N3.2: 1.52–1.58) | 11756, 86.61 s | 0.110, 4.49 ms |
+| jammed-A | 0.177 (0.170–0.182) % | 0.178 % | yes | 100.0 → 100.0 % | PASS | 0.84 km | 4, 0.04 s | 0.119, 1.25 ms |
+| jammed-B | 0.201 (0.171–0.245) % | 0.178 % | yes | 100.0 → 100.0 % | PASS | 0.43 km | 7, 0.06 s | 0.115, 1.23 ms |
+| drive-7 | 0.130 (0.123–0.148) % | 0.151 % | **no** | 96.3 → 92.7 % | PASS | 0.14 km | 2, 0.05 s | 0.115, 1.05 ms |
+| drive-8 | 0.186 (0.184–0.188) % | 0.185 % | yes | 100.0 → 100.0 % | PASS | 0.66 km | 4, 0.06 s | 0.112, 1.09 ms |
+| drive-9 (1) | 0.042 (0.033–0.051) % | 0.067 % | **no** | 100.0 → 100.0 % | PASS | 2.51 km | 20, 0.17 s | 0.079, 1.11 ms |
+| drive-9 (2) | 0.043 (0.033–0.054) % | 0.077 % | **no** | 100.0 → 100.0 % | PASS | 2.51 km | 19, 0.17 s | 0.079, 1.37 ms |
+| manual-3 (sanity) | 68.37 (66.50–70.20) m | 68.26 m | yes | 66.7 → 66.7 % | not gated | 0.80 km (N3.2: 0.41–0.48) | 7, 0.09 s | 0.112, 1.44 ms |
+
+Without roads (no attach; ms/step measured with two replays running in
+parallel):
+
+| drive | N3.2, seeds 1–5: mean (range) | as live | inside the N3.2 range | consistency + σ, N3.2 mean → as live | criterion, as live | converged, as live | ms/step, max ingest |
+|---|---|---|---|---|---|---|---|
+| clean-long | 19.42 (18.09–20.29) m | 19.19 m | yes | 100.0 → 100.0 % | PASS | 0.02 km | 0.069, 0.30 ms |
+| clean | 12.98 (10.67–16.46) m | 13.59 m | yes | 100.0 → 100.0 % | PASS | 0.03 km | 0.068, 0.48 ms |
+| manual | 50.50 (47.39–57.51) m | 53.66 m | yes | 100.0 → 100.0 % | PASS | 7.27 km | 0.073, 0.31 ms |
+| jammed-A | 1.137 (1.012–1.259) % | 1.290 % | **no** | 100.0 → 100.0 % | PASS | 8.15 km | 0.075, 0.29 ms |
+| jammed-B | 1.068 (0.940–1.374) % | 1.389 % | **no** | 100.0 → 100.0 % | PASS | 5.18 km | 0.069, 0.24 ms |
+| drive-7 | 1.128 (1.073–1.231) % | 1.141 % | yes | 99.6 → 99.6 % | PASS | 0.60 km | 0.072, 0.25 ms |
+| drive-8 | 1.482 (1.371–1.596) % | 1.422 % | yes | 100.0 → 100.0 % | PASS | 6.62 km | 0.072, 0.26 ms |
+| drive-9 (1) | 10.212 (10.022–10.373) % | 10.050 % | yes | 75.0 → 75.0 % | not gated without roads | 3.37 km | 0.053, 0.25 ms |
+| drive-9 (2) | 8.380 (8.278–8.513) % | 8.357 % | yes | 75.0 → 75.0 % | not gated without roads | 3.37 km | 0.051, 0.25 ms |
+| manual-3 (sanity) | 232.03 (229.41–234.69) m | 230.52 m | yes | 66.7 → 66.7 % | not gated | 1.72 km | 0.075, 0.27 ms |
+
+- **Every criterion passes as live**, with and without roads. With roads:
+  clean-long 19.31 m and clean 16.17 m (≤ 30 m), manual's truth point
+  6.92 m (≤ 200 m) and convergence 1.70 km (≤ 2 km), jammed-A and
+  jammed-B 0.178 %, drive-7 0.151 %, drive-8 0.185 %, drive-9 0.067 % and
+  0.077 % (≤ 2.5 %).
+- **The attach point changed nothing.** On every run the live rule attaches
+  both packs at the engine's first initialisation: after 2–20 inputs, at
+  0.04–0.17 s. manual's attach comes after 11756 inputs, at 86.61 s, but
+  that is its first initialisation too: the first fix the hold-out lets
+  through arrives then. Before initialisation the engine has no particles, so the
+  attach equals roads from the first input. Checked: `--file-order --seed
+  header --roads` (roads from the start) gives byte-identical GeoJSON on all
+  ten runs, after the mode label. Its `metrics.json` differs only in the
+  attach fields and timing. Without roads, as live equals `--file-order
+  --seed header` in the same way.
+- **So the difference from N3.2 is the seed and the input order.** A
+  single seed outside a five-seed range is not unusual: a sixth draw falls
+  outside the range of five with probability 2/6. To separate the two,
+  the same release build also ran file order with seeds 1–5 and arrival
+  order with the header's seed. Rows where as live is outside the range:
+
+  | drive | roads | arrival order, seeds 1–5 (N3.2) | file order, seeds 1–5 | arrival order, header seed | file order, header seed (as live) |
+  |---|---|---|---|---|---|
+  | drive-7 | yes | 0.130 (0.123–0.148) %; 96.3 % | 0.195 (0.149–0.285) %; 91.3 % | 0.255 %; 85.7 % | 0.151 %; 92.7 % |
+  | drive-9 (1) | yes | 0.042 (0.033–0.051) % | 0.046 (0.039–0.055) % | 0.032 % | 0.067 % |
+  | drive-9 (2) | yes | 0.043 (0.033–0.054) % | 0.044 (0.038–0.052) % | 0.034 % | 0.077 % |
+  | jammed-A | no | 1.137 (1.012–1.259) % | 1.133 (1.003–1.272) % | 1.284 % | 1.290 % |
+  | jammed-B | no | 1.068 (0.940–1.374) % | 1.076 (0.927–1.387) % | 1.383 % | 1.389 % |
+
+  (drive-7 cells: gated value; consistency with the truth's σ. Every other
+  cell's consistency is the same in all columns: 100 %.)
+  - **drive-7 with roads:** its spread is wider than the five N3.2 seeds
+    showed. Over twelve runs (N3.2's five, file order's five and the two
+    header-seed runs) the worst
+    withheld clean fix is 0.123–0.285 % and consistency 85.7–97.8 %, all
+    under the 2.5 % criterion by more than 2 pp. As live, it has 253 of
+    273 checkpoints inside, the same as N3.2's seed 4 (252) and inside its
+    per-seed range (252–267). Its 20 misses are the known 706 s pin (210 m)
+    and 19 clean fixes at 2068–2086 s: the service-road end that is the
+    N3.2 decision's regression case. Its worst fix is 28.4 m at 1980 s
+    (18.79 km). File order looks worse than arrival order on this drive
+    (means 0.195 against 0.130 %, consistency 91.3 against 96.3 %). With
+    five seeds each that is not shown to be systematic.
+  - **drive-9 with roads:** 9.2 m and 10.6 m at the truth point (13.71 km),
+    against 4.5–7.4 m on the N3.2 seeds. File order with seeds 1–5
+    (0.038–0.055 %) and the header's seed in arrival order (0.032 and
+    0.034 %) both stay close to the N3.2 range, so this is the draw of
+    this seed with this order. The truth point's
+    own σ is 40.4 m.
+  - **jammed-A and jammed-B without roads:** the header's seed in arrival
+    order gives nearly the same (1.284 and 1.383 %), so it is the seed, not
+    the order.
+- **A later attach** (the app selects asynchronously, see "Live in the app"):
+  the same as-live runs with the roads attached after the first input
+  arriving 1, 10 or 60 s after the first initialisation (a throwaway tool
+  over `ReplayRoadAttach.afterInputs`; at 0 s it reproduces as live
+  exactly). Gated value; consistency with the truth's σ:
+
+  | drive | as live (attach at first initialisation) | + 1 s | + 10 s | + 60 s |
+  |---|---|---|---|---|
+  | clean-long | 19.31 m; 100 % | 19.26 m; 100 % | 19.29 m; 100 % | 19.32 m; 100 % |
+  | clean | 16.17 m; 100 % | 16.17 m; 100 % | 16.17 m; 100 % | 10.65 m; 100 % |
+  | manual | 6.92 m; 100 % | 6.92 m; 100 % | 6.92 m; 100 % | 6.92 m; 100 % |
+  | jammed-A | 0.178 %; 100 % | 0.178 %; 100 % | 0.175 %; 100 % | 0.173 %; 100 % |
+  | jammed-B | 0.178 %; 100 % | 0.178 %; 100 % | 0.178 %; 100 % | 0.209 %; 100 % |
+  | drive-7 | 0.151 %; 92.7 % | 0.135 %; 93.0 % | 0.144 %; 92.3 % | 0.163 %; 92.3 % |
+  | drive-8 | 0.185 %; 100 % | 0.185 %; 100 % | 0.185 %; 100 % | 0.184 %; 100 % |
+  | drive-9 (1) | 0.067 %; 100 % | 0.067 %; 100 % | 0.067 %; 100 % | 0.067 %; 100 % |
+  | drive-9 (2) | 0.077 %; 100 % | 0.077 %; 100 % | 0.077 %; 100 % | 0.077 %; 100 % |
+  | manual-3 (sanity) | 68.26 m; 66.7 % | 68.26 m; 66.7 % | 68.26 m; 66.7 % | 67.42 m; 66.7 % |
+
+  An attach up to a minute late stays within the seed spread above, or
+  better (clean at + 60 s: 10.65 m), and changes no verdict.
+- **Timing** (with roads, the as-live set run alone): 0.079–0.119 ms/step,
+  as on N3.2's seed 1 (0.078–0.119), under the 0.15 ms target. The largest
+  single ingest is 1.00–1.44 ms, except manual's 4.49 ms. Arrival order
+  with seed 1 has it too (4.70 ms), so it does not come from the live
+  attach.
+- **Build check.** The same binary in arrival order, seed 1, with roads
+  gives byte-identical GeoJSON to the N3-SLC baseline on all nine runs. Its
+  `metrics.json` differs only in timing and in the pins' new
+  `prior.onRoadShare` (sidecar v2, N3.3 item 2).
+
+**Memory and verify time on the Mac** (N3.3 exit addition; M1 Pro, release,
+warm file cache). A throwaway probe in logs/n33/tools, not committed,
+measured `phys_footprint` and `resident_size` (`task_info`), heap in use
+(`malloc_zone_statistics`) and `vmmap --summary`, before and after each
+step:
+
+| | national | region-A | both |
+|---|---:|---:|---:|
+| file size | 41.28 MB | 17.27 MB | 58.55 MB |
+| shape points / edges / grid cells | 425,413 / 56,163 / 1,342,432 | 318,061 / 86,671 / 106,345 | |
+| `COVR` ring points | 81,653 | 2,078 | 83,731 |
+| open: memory-map and structure check | 0.4 ms | 0.3 ms | 0.6–1.3 ms |
+| `RoadNetwork(packs:)` build | 1.4 ms | 0.8 ms | 2.0–4.0 ms |
+| heap after the build (malloc in use) | +0.63 MB | +0.02 MB | +0.65 MB |
+| `phys_footprint` after open and build | +0.70 MB | +0.06 MB | +0.73 MB |
+| mapped, virtual / resident (vmmap "mapped file") | 39.5 / 4.0 MiB | 16.5 / 2.6 MiB | 55.9 / 6.6 MiB |
+| full verify (`RoadPack(contentsOf:verify: true)`), median of 5 | 70.5 ms | 29.3 ms | |
+
+- **What is copied to the heap (from the code).** `RoadPack` maps the file
+  (`NSData`, `.alwaysMapped`) and reads every record in place. It keeps
+  only the header fields, the section table (a few entries) and section
+  offsets. `RoadNetwork` copies two things:
+  - each pack's `COVR` rings into `[[RoadPoint]]`, 8 B per point: 0.67 MB
+    for these two packs, almost all of it national's 81,653-point ring.
+    That is the +0.65 MB measured.
+  - each pack's bounding box (16 B).
+
+  Computing the bounding box (`pointBounds()`) reads every shape point
+  once, so after the build the `PNTS` sections are resident (6.6 MiB). They
+  are clean file-backed pages that the system can drop, and they are not
+  in `phys_footprint`. Everything else stays mapped and is paged in on
+  demand.
+- **In the app** the selection candidates (`RoadPackSelection.Candidate`)
+  hold a second copy of the rings (`RoadPackCoverage`, measured +0.66 MB),
+  so the rings cost about 1.3 MB with these packs.
+- **While driving**, the engine's road state adds heap: the matcher's cell
+  cache (at most 4096 cells of segments converted to the local plane), the
+  per-update store and the per-particle road fields. At the end of
+  drive-8 (as live, `--gps mask-after 785`) the engine held 4.94 MB with
+  roads against 2.54 MB without; drive-7 (mask-after 1800): 4.47 against
+  2.54 MB. These are the heap freed when the engine is released.
+- **The phone's numbers stay open for D1** (memory from the Diagnostics
+  Memory row) and D2 (verify time, the "verified in x s" row) in
+  docs/PLAN.md §6. These Mac times use a warm file cache; a cold read was
+  not measured.
+
+**`convergedHeadingStdDeg` (N2-2): report only, no change.** The key and
+the backlog status are unchanged.
+- **What the key does.** `converged` is heading std <
+  `convergedHeadingStdDeg` (10°). It sets only the estimate's flag, which
+  drives the app's display ("calibrating heading", heading-up, the ellipse
+  rule) and the replay's convergence distance. No engine state reads it.
+  So every threshold can be evaluated exactly from a run's 1 Hz track
+  (heading and heading std). Checked: at 10° the offline rule reproduces
+  every run's `convergedT`.
+- **Convergence distance by threshold** (the replay's rule: std under the
+  threshold for 30 s; as live, km of OBD distance). clean and clean-long
+  converge at 0.01–0.10 km at every threshold, with or without roads,
+  from the GNSS courses they receive before the mask.
+
+  | drive | roads 3° | 5° | **10°** | 15° | 20° | no roads 5° | **10°** | 15° |
+  |---|---:|---:|---:|---:|---:|---:|---:|---:|
+  | manual | 1.94 | 1.87 | **1.70** | 1.55 | 1.52 | 7.86 | **7.27** | 5.32 |
+  | jammed-A | 0.98 | 0.94 | **0.84** | 0.73 | 0.69 | never | **8.15** | 6.29 |
+  | jammed-B | 0.82 | 0.55 | **0.43** | 0.38 | 0.29 | never | **5.18** | 4.79 |
+  | drive-7 | 0.46 | 0.28 | **0.14** | 0.14 | 0.14 | 2.68 | **0.60** | 0.60 |
+  | drive-8 | 0.73 | 0.70 | **0.66** | 0.65 | 0.64 | 6.62 | **6.62** | 5.62 |
+  | drive-9 (1), (2) | 2.87 | 2.84 | **2.51** | 2.45 | 2.43 | 3.37 | **3.37** | 3.37 |
+  | manual-3 | 1.32 | 0.84 | **0.80** | 0.79 | 0.77 | 6.35 | **1.72** | 1.72 |
+
+  N3.2's seeds 1–5 show the same pattern: with roads, each threshold's
+  distance stays within about 0.2 km across seeds from 5° up, and within
+  0.3 km at 3° except on manual (1.52–2.41 km).
+- **With roads the std falls steeply.** It goes from 20° to 3° within
+  0.1–0.6 km on every drive in the table. So 5° or 15° instead of 10°
+  moves the convergence distance by at most 0.33 km (drive-9 at 5°) and
+  0.15 km (manual at 15°). manual's ≤ 2 km criterion passes at 5°, 10°
+  and 15°. Without roads the threshold matters: 15° would call convergence
+  1.0–2.0 km earlier on manual, jammed-A and drive-8, and 5° never
+  converges on jammed-A or jammed-B.
+- **Heading against truth.** The truth is the withheld clean GNSS courses:
+  accuracy ≤ 15 m, speed ≥ 5 m/s, courseAccuracy ≤ 10°. They exist on
+  clean and clean-long after the mask, drive-7 after 1869 s and drive-8
+  after 785 s.
+  - With roads, as live: the std there is 0–5°. |error| has a median of
+    0.4–0.9°, p95 1.3–2.2° and a maximum of 3.4°, and 96–100 % of errors
+    are within 2 std. On N3.2's seeds clean has 82 % within 2 std at
+    std < 2° (median 0.6°, maximum 2.8°).
+  - Without roads: on drive-7 the std is 2–5°, the median error 2.4° and
+    the maximum 4.6° (4.8° over N3.2's seeds). On drive-8 the std is
+    0–10° (mostly 2–10°), the median 1.9–2.3° per std bin and the maximum
+    5.0° (5.1°).
+- **No truth at the moment `converged` first goes true.** With roads, no
+  jammed drive has a heading truth there. jammed-A, jammed-B, manual,
+  manual-3 and drive-9 have no clean course at all. drive-7's clean fixes
+  begin 30 min after it converges. drive-8's first withheld course comes
+  689 s after it converges, with an error of 1.6° at a std of 1.1°. clean
+  and clean-long converge on the GNSS course they receive, not on roads.
+  The evidence is indirect: a wrong converged heading could not leave
+  manual's truth point 6.9 m off (converged at 1.70 km) or the jammed ends
+  at 0.18 %.
+- **Diagnostic, roads with no position after the start** (not an
+  acceptance mode): clean with every fix after motion start withheld
+  (`--gps mask-after-motion 0`), with roads, as live and seeds 1–5.
+  - Heading std stays above 30° to the end and `converged` never goes
+    true.
+  - The mean heading is 179° off: the cloud runs both ways along the road
+    and the estimate goes the wrong way (3.3–3.4 km at the end).
+  - Roads alone do not give the direction of travel, and the std says so.
+  - The same run on clean-long is not usable: its one pre-session fix is
+    at speed and carries a course.
+- **Reading, for the user's decision:** nothing here argues for changing
+  10°. With roads any value from 5° to 15° gives about the same convergence
+  distance, and the converged heading is accurate wherever truth exists.
+  The threshold matters only without roads, where these runs add no
+  heading truth at the moment of convergence.
+
+Outputs, scripts and tables (git-ignored): logs/n33/ (`acc/` the replays,
+`table.md`, `decomp.md`, `late.md`, `attach_info.txt`; `mem.txt`,
+`mem-engine.txt`; `n22/` the N2-2 analysis and diagnostic runs; `tools/` the
+probes; `bin/` the binary).
 
 ## Known limitations and options
 

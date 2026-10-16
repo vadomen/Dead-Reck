@@ -171,6 +171,8 @@ public struct NavigationEngine: Sendable {
 
     // Roads (N3.2). nil without a road network.
     private(set) var roads: RoadMatcher?
+    /// The matcher's cell cache size, kept for `attachRoads`.
+    private let roadCacheCapacity: Int
     /// Mean distance driven since the last road update (Δs), metres.
     private(set) var roadDistanceM = 0.0
     /// Grid time of the last road update attempt (skips included).
@@ -214,6 +216,7 @@ public struct NavigationEngine: Sendable {
         if let reason = config.invalidReason { preconditionFailure(reason) }
         self.config = config
         self.roads = roads.map { RoadMatcher(network: $0, cacheCapacity: roadCacheCapacity) }
+        self.roadCacheCapacity = roadCacheCapacity
         roadIntervalNs = Int64((config.roadUpdateIntervalS * 1e9).rounded())
         rng = NavigationRandom(seed: config.seed)
         stepNs = Int64((1_000_000_000 / config.stepHz).rounded())
@@ -225,6 +228,46 @@ public struct NavigationEngine: Sendable {
             ? Int((config.lateManualFixWindowS * config.stepHz).rounded(.up)) + 1 : 0
         motionRing = ParticleMotionRing(capacity: ringSlots)
         preInitSteps = PreInitSteps(capacity: ringSlots)
+    }
+
+    // MARK: Roads attached to a running engine (N3.3)
+
+    /// The road network the engine matches against; nil without roads.
+    public var roadNetwork: RoadNetwork? { roads?.network }
+
+    /// The latest accepted arrival (an input `accepts(_:)` took); nil before
+    /// the first input. A rejected forward jump does not move it.
+    public var latestArrival: MonotonicTimestamp? { lastInputNs.map { MonotonicTimestamp(nanoseconds: $0) } }
+
+    /// Attaches `network` to an engine that has none, between two inputs,
+    /// before or after initialisation (N3.3, docs/N3_PLAN.md amendment).
+    ///
+    /// The road state starts as a reseed leaves it: every particle on no
+    /// edge, level unknown, 0 m off-road; the distance since the last road
+    /// update, the last attempt and the on-road share start fresh. Nothing
+    /// else changes, and no random number is drawn, so the engine's state
+    /// up to the attach is the no-roads state, and attaching before the
+    /// first input equals `init(config:roads:)` with the same network.
+    ///
+    /// Refused, engine unchanged: when the engine already has roads, or
+    /// when `config.validated(roads: network)` differs from `config` in any
+    /// key (a pack whose guaranteed radius is under `roadSearchRadiusM`).
+    /// The config never changes mid-run.
+    public mutating func attachRoads(_ network: RoadNetwork) throws(RoadAttachRefusal) {
+        guard roads == nil else { throw .alreadyAttached }
+        let keys = config.differingKeys(config.validated(roads: network))
+        guard keys.isEmpty else { throw .configWouldChange(keys: keys) }
+        roads = RoadMatcher(network: network, cacheCapacity: roadCacheCapacity)
+        if isInitialized {
+            let n = east.count
+            roadEdge = [UInt32](repeating: RoadMatcher.noEdge, count: n)
+            roadLevel = [Int8](repeating: RoadGeometry.unknownLevel, count: n)
+            offRoadM = [Double](repeating: 0, count: n)
+        }
+        roadDistanceM = 0
+        lastRoadAttemptNs = nil
+        roadShare = nil
+        roadMatchedEdge = nil
     }
 
     // MARK: Ingest
