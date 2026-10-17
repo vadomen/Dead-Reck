@@ -376,3 +376,41 @@ Tests: `cd Core && swift test` 955 passed, 36 known issues; simulator build OK; 
 ### Run 48 summary
 
 1 round; 0 fixed, 0 rejected, 3 MINOR deferred (R48.1-1..3).
+
+## Run 49: backlog sweep nav batch 1 (cbeb19e..80aaaf7, branch sweep-nav1), started 2026-10-17
+
+Commits: 80aaaf7 R16.1-2 / R16.2-1 `build_roads` argument checks and bench-after-verify, R17.1-2 `build_packs.sh` name checks, R18.1-3 / R32.1-5 replay labels (pair window, sidecar/live attach), R19.1-2 max error by checkpoint kind (clean-fix max columns), R35.1-3 fix-offset field margin, R35.2-3 `--fix-offset` refuses engine-run flags.
+
+### Round 1
+
+Reviewer: one fresh reviewer (opus), checks 6, 8–13 and compatibility with older runs and scripts. Bit-identical re-run on the clean drive (release, seed 1, roads): GeoJSON `cmp`-identical, metrics differ only in timing and the new key. build_packs.sh name check run on 8 configs. Mutations: author's `maxErrorByKind` one re-run and killed; `maxErrorByKind` decode dropped killed; five `--fixpin-*` members dropped from `engineOnlyFlags` survived. Result: 0 BLOCKER / 0 MAJOR / 2 MINOR.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R49.1-1 | MINOR | `FixOffsetScanTests.swift:160`: only `--fixpin-inject` of the six `--fixpin-*` members of `engineOnlyFlags` is tested; dropping the other five survives, so R35.2-3's silent ignore could return for them. | DEFERRED | docs/BACKLOG.md (nav TEST-ONLY batch) |
+| R49.1-2 | MINOR | `NavigationReplay.swift:1404`: `KindMaxError` sits between `EllipseConsistency`'s doc comment and its struct, so the R13.1-8 "one denominator" rule documents the wrong type and `EllipseConsistency` has none. | DEFERRED | docs/BACKLOG.md (nav TEST-ONLY batch) |
+
+Tests: `cd Core && swift test` 965 passed, 36 known issues; release `NavigationRoadPerfTests|NavigationB0Tests` 9 passed.
+
+### Run 49 summary
+
+1 round; 0 fixed, 0 rejected, 2 MINOR deferred (R49.1-1, R49.1-2).
+
+## Run 50: backlog sweep ios-ui batch 2 (64d4a0c..2b1586b, branch sweep-ui2), started 2026-10-17
+
+Commits: 2b1586b R48.1-3 connect wording when no connection is held while recording, R26.2-3 dead `followDistance` removed, M10.1-6 follow-resume loop and heading resets extracted and tested, M10.1-5 / R34.1-5 write counters, R26.2-2 and R5.2-4 tests, R48.1-1 heading-up `mapSpanM` range corrected, R48.1-2 bounded test loops.
+
+### Round 1
+
+Reviewer: one fresh reviewer (sonnet), checks 6, 8–11 by reading (the mutants worktree was assigned to another review). Every ELM `.failed` path stops polling first, so "Connect" in `.failed` replaces a dead session; the M10.1-6 extraction matches the old code line for line; the R48.1-1 range checks out (peak √(1+r²)·H at atan r). The orchestrator ran the author's 3 App mutations in `../dead-reck-mutants`: stationary guard removed → "Stationary is assigned only when it flips" fails; `abs(log(…))` → `log(…)` → "A falling wanted distance also wants a write" fails; `!holdsConnection` dropped → "The confirmation says connect when no adapter is held" fails. Result: 0 BLOCKER / 0 MAJOR / 2 MINOR.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R50.1-1 | MINOR | `docs/NAVIGATION.md:220` still says the heading-up logged span "can be up to about 2.2× too large … so it is safe"; R48.1-1 corrected that elsewhere (0.5×–1.15×, can understate). | DEFERRED | docs/BACKLOG.md |
+| R50.1-2 | MINOR | `ConsoleViewModel.swift:149`: the connect message says "Earlier parts of it stay without."; false when the recording had OBD before the link was lost. | DEFERRED | docs/BACKLOG.md |
+
+Tests: `cd Core && swift test` 956 passed, 36 known issues; simulator build OK; full AppTests 355 passed (author).
+
+### Run 50 summary
+
+1 round; 0 fixed, 0 rejected, 2 MINOR deferred (R50.1-1, R50.1-2).
