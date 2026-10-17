@@ -732,6 +732,154 @@ struct ELMSessionBoundaryTests {
         #expect(await harness.session.state == .failed)
     }
 
+    // R32.2-4, other half (R45.1-1): bytes already buffered in `incoming`
+    // when the transport closes are recorded before the `failed` row
+    // (LOG_FORMAT, PLAN §6 item 10). The gate keeps them from the reader
+    // until shutdown has asked `isClosed`, so they are provably still
+    // buffered when shutdown runs. Unsolicited text, because its row is
+    // emitted in the reader's own step; an in-flight reply that a close
+    // overtakes is `replyThenStreamEnd` (R45.1-2).
+    @Test("Shutdown right after the transport closed still records the bytes buffered in incoming")
+    func shutdownAfterTransportLostDrainsBufferedBytes() async throws {
+        let clock = TestClock()
+        let mock = MockELMAdapter(rules: MockELMAdapter.Rule.touaregInstant, uptime: clock, clock: clock)
+        let transport = GatedTransport(mock: mock)
+        let session = ELMSession(transport: transport, configuration: .fastTest, uptime: clock, clock: clock)
+        let log = EventLog.start(session.events)
+        _ = try await drive(clock) { try await session.initialise() }
+        let gate = transport.gate
+
+        await gate.hold()
+        let stale = "7E803410D3C\r\r>"
+        await mock.emitUnsolicited(stale)
+        #expect(await waitReal { await gate.bufferedText == stale }, "delivered and held at the gate")
+        await mock.disconnect()
+
+        let shutdown = Task { await session.shutdown() }
+        #expect(await waitReal { await gate.closedQueries == 1 }, "shutdown saw the closed transport")
+        // A shutdown that doesn't drain the reader finishes in this window.
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(await gate.bufferedText == stale, "still buffered while shutdown runs")
+        await gate.release()
+        await shutdown.value
+        #expect(await waitReal { await log.finished })
+
+        let events = await log.events
+        let rowIndex = try #require(events.firstIndex {
+            if case .exchange(let exchange) = $0 { exchange.tx.isEmpty && exchange.rx == "7E803410D3C\r\r" } else { false }
+        }, "the buffered bytes have an unsolicited row")
+        let failedIndex = try #require(events.lastIndex {
+            if case .state(_, .failed, "transport closed", _) = $0 { true } else { false }
+        })
+        #expect(rowIndex < failedIndex, "recorded before the loss")
+        #expect(failedIndex == events.indices.last, "the loss is the last row")
+        #expect(!(await log.transitions).contains { $0.to == .idle }, "not recorded as a shutdown")
+        #expect(await session.state == .failed)
+    }
+
+    // R45.1-2: the last notification and the disconnect, relayed
+    // back-to-back, reach the reader in one step: the reply resolves the
+    // command in flight and `incoming` ends before `run()` resumes to record
+    // it. Its row (and a poll's readings) must still be in the log, once,
+    // before `failed`. Repeated because the interleaving comes from the
+    // scheduler: before the fix it lost the row every time.
+    @Test(
+        "A reply delivered back-to-back with the end of incoming is recorded once, before failed",
+        arguments: [ELMPhase.manual, .poll]
+    )
+    func replyThenStreamEnd(phase: ELMPhase) async throws {
+        for _ in 0..<10 {
+            let clock = TestClock()
+            let mock = MockELMAdapter(rules: MockELMAdapter.Rule.touaregInstant, uptime: clock, clock: clock)
+            let transport = RelayTransport(mock: mock)
+            let relay = transport.relay
+            let session = ELMSession(transport: transport, configuration: .fastTest, uptime: clock, clock: clock)
+            let log = EventLog.start(session.events)
+            _ = try await drive(clock) { try await session.initialise() }
+
+            await relay.hold()
+            let manual: Task<ELMExchange, any Error>?
+            if phase == .manual {
+                manual = Task { try await session.sendManual("010D") }
+            } else {
+                manual = nil
+                try await session.startPolling(singlePlan([.vehicleSpeed]))
+            }
+            #expect(await waitReal { await relay.heldText.hasSuffix(">") }, "the reply is held")
+            let rx = String(await relay.heldText.dropLast())
+            await mock.disconnect()
+            await relay.flushAndFinish()
+            #expect(await waitReal { await log.finished })
+            _ = await manual?.result
+
+            try await expectReplyRecordedBeforeEnd(
+                session: session, log: log, mock: mock, phase: phase, rx: rx, end: (.failed, "transport closed")
+            )
+            #expect(await session.state == .failed)
+        }
+    }
+
+    // R45.1-2, the other window: the reply and the end of incoming land
+    // before `send` returns, so the reply is held on the flight, not yet
+    // handed to `run()`. Deterministic: `run()` can't resume until the
+    // send is released, after `events` has finished.
+    @Test("A reply and the end of incoming that land before send returns are recorded once, before failed")
+    func replyThenStreamEndBeforeSendReturns() async throws {
+        let clock = TestClock()
+        let mock = MockELMAdapter(rules: MockELMAdapter.Rule.touaregInstant, uptime: clock, clock: clock)
+        let transport = RelayTransport(mock: mock)
+        let relay = transport.relay
+        let session = ELMSession(transport: transport, configuration: .fastTest, uptime: clock, clock: clock)
+        let log = EventLog.start(session.events)
+        _ = try await drive(clock) { try await session.initialise() }
+
+        await relay.hold()
+        await relay.holdSends()
+        let manual = Task { try await session.sendManual("010D") }
+        #expect(await waitReal {
+            let held = await relay.heldText
+            let blocked = await relay.blockedSendCount
+            return held.hasSuffix(">") && blocked == 1
+        }, "the reply is held and send hasn't returned")
+        let rx = String(await relay.heldText.dropLast())
+        await mock.disconnect()
+        await relay.flushAndFinish()
+        #expect(await waitReal { await log.finished })
+        await relay.releaseSends()
+        _ = await manual.result
+
+        try await expectReplyRecordedBeforeEnd(
+            session: session, log: log, mock: mock, phase: .manual, rx: rx, end: (.failed, "transport closed")
+        )
+        #expect(await session.state == .failed)
+    }
+
+    // R45.1-2, shutdown's side: the reply has resolved a manual command
+    // (`send` held, so `run()` can't resume), and shutdown, which doesn't
+    // wait for manual commands, would finish `events` first.
+    @Test("Shutdown while a resolved reply waits for run() records it once, before idle")
+    func shutdownRecordsResolvedReply() async throws {
+        let clock = TestClock()
+        let mock = MockELMAdapter(rules: MockELMAdapter.Rule.touaregInstant, uptime: clock, clock: clock)
+        let transport = RelayTransport(mock: mock)
+        let relay = transport.relay
+        let session = ELMSession(transport: transport, configuration: .fastTest, uptime: clock, clock: clock)
+        let log = EventLog.start(session.events)
+        _ = try await drive(clock) { try await session.initialise() }
+
+        await relay.holdSends()
+        let manual = Task { try await session.sendManual("010D") }
+        #expect(await waitReal { await session.hasUnrecordedReply }, "the reply resolved the command")
+        await session.shutdown()
+        #expect(await waitReal { await log.finished })
+        await relay.releaseSends()
+        await #expect(throws: ELMSessionError.cancelled) { try await manual.value }
+
+        try await expectReplyRecordedBeforeEnd(
+            session: session, log: log, mock: mock, phase: .manual, rx: "7E803410D3C\r\r", end: (.idle, "shutdown")
+        )
+    }
+
     @Test("stopPolling returns to ready and polling can restart")
     func stopAndRestart() async throws {
         let harness = SessionHarness(rules: pacedRules())
@@ -744,5 +892,54 @@ struct ELMSessionBoundaryTests {
         try await harness.session.startPolling(singlePlan())
         await harness.run { await $0.readings.count >= count + 2 }
         try await harness.stopPolling()
+    }
+}
+
+/// R45.1-2: `phase`'s reply is recorded exactly once, with `rx` (and its
+/// readings, for a poll), before the `end` transition, which is the very
+/// last event. Every command on the wire has its row, in order; one more
+/// may follow for a command whose write the loss cut short (abandoned in
+/// flight: `timeout`, no `rx`), which is the path where `run()` resumed
+/// before the loss. A second row written after `events` finished is
+/// dropped from the stream but still takes a `seq`, which the next session
+/// on the link would start after: `nextSeq` must follow the last row.
+private func expectReplyRecordedBeforeEnd(
+    session: ELMSession,
+    log: EventLog,
+    mock: MockELMAdapter,
+    phase: ELMPhase,
+    rx: String,
+    end: (state: ELMState, reason: String),
+    sourceLocation: SourceLocation = #_sourceLocation
+) async throws {
+    let events = await log.events
+    let sent = await mock.sentCommands
+    let rows = await log.exchanges
+    let replied = rows.filter { $0.phase == phase && $0.rx != nil }
+    #expect(replied.count == 1, "the reply recorded once", sourceLocation: sourceLocation)
+    let row = try #require(replied.first, sourceLocation: sourceLocation)
+    #expect(row.tx == "010D" && row.rx == rx && row.outcome == .ok, sourceLocation: sourceLocation)
+    #expect(rows.map(\.tx).starts(with: sent), "a row per command sent, in order", sourceLocation: sourceLocation)
+    #expect(
+        rows.dropFirst(sent.count).allSatisfy { $0.outcome == .timeout && $0.rx == nil },
+        "nothing else but a write cut short", sourceLocation: sourceLocation
+    )
+    let rowIndex = try #require(events.lastIndex {
+        if case .exchange(let exchange) = $0 { exchange.seq == row.seq } else { false }
+    }, sourceLocation: sourceLocation)
+    let endIndex = try #require(events.lastIndex {
+        if case .state(_, end.state, end.reason, _) = $0 { true } else { false }
+    }, sourceLocation: sourceLocation)
+    #expect(rowIndex < endIndex, "the reply before the end", sourceLocation: sourceLocation)
+    #expect(endIndex == events.indices.last, "the end is the last event", sourceLocation: sourceLocation)
+    let lastSeq = try #require(rows.last?.seq, sourceLocation: sourceLocation)
+    #expect(await session.nextSeq == lastSeq + 1, "no row written after events finished", sourceLocation: sourceLocation)
+    if phase == .poll {
+        let readings = await log.readings.filter { $0.seq == row.seq }
+        #expect(readings.map(\.measurement.pid) == [.vehicleSpeed], "the reply's reading", sourceLocation: sourceLocation)
+        let readingIndex = events.lastIndex {
+            if case .reading(let reading) = $0 { reading.seq == row.seq } else { false }
+        }
+        #expect(readingIndex.map { $0 > rowIndex && $0 < endIndex } == true, sourceLocation: sourceLocation)
     }
 }

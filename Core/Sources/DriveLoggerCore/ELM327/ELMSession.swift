@@ -385,9 +385,37 @@ public actor ELMSession {
         /// `ATZ`: banner-shaped replies held in arrival order until an `ELM`
         /// banner or the end of the window decides.
         var bannerCandidates: [ELMRawReply] = []
+        /// Writes the reply's exchange row (and a poll's readings): `run()`'s
+        /// interpretation, kept here so link loss or shutdown can record a
+        /// reply `run()` hasn't yet (`UnrecordedReply`).
+        let record: (ELMRawReply, _ requestUptime: Double) -> RecordedReply
         var resolution: Resolution?
         var continuation: CheckedContinuation<Resolution, Never>?
         var timeoutTask: Task<Void, Never>?
+    }
+
+    /// A reply's row as written, and the value interpreted from it
+    /// (type-erased; `run()` casts it back). `value` is nil unless `ok`.
+    private struct RecordedReply {
+        let exchange: ELMExchange
+        let value: Any?
+    }
+
+    /// A reply that resolved the command in flight, until `run()` resumes
+    /// and records it (R45.1-2). The last notification and the end of
+    /// `incoming` can reach the reader in one step, and shutdown can run
+    /// before `run()` resumes too: both record it first (`recordUnrecordedReply`),
+    /// so its row and readings precede the `failed`/`idle` transition and
+    /// `events` finishing, and `run()` then writes no second row.
+    private struct UnrecordedReply {
+        let token: UInt64
+        let reply: ELMRawReply
+        /// The moment before the write until `send` returns, then the
+        /// transport's stamp (as `InFlight.requestUptime`).
+        var requestUptime: Double
+        let record: (ELMRawReply, _ requestUptime: Double) -> RecordedReply
+        /// Set when link loss or shutdown recorded the reply.
+        var recorded: RecordedReply?
     }
 
     private enum Acceptance {
@@ -414,6 +442,7 @@ public actor ELMSession {
         var requestUptime: Double
     }
 
+    private var unrecordedReply: UnrecordedReply?
     private var framer = ELMFramer()
     private var readerTask: Task<Void, Never>?
     private var transportClosed = false
@@ -588,7 +617,8 @@ public actor ELMSession {
     /// would — every delivered byte recorded, then `failed` with
     /// `transport closed` — rather than `idle`, whichever the caller noticed
     /// first: the link service shuts the session down on the BLE disconnect,
-    /// which can overtake the reader (R32.2-4).
+    /// which can overtake the reader (R32.2-4). A reply already in for the
+    /// command in flight is recorded before `idle` (R45.1-2).
     public func shutdown() async {
         guard !isShutdown else { return }
         if !transportClosed, let reader = readerTask, await transport.isClosed {
@@ -601,8 +631,13 @@ public actor ELMSession {
         initTask?.cancel()
         rateTask?.cancel()
         rateTask = nil
-        let abandoned = inFlight?.wire
+        // A flight its reply already resolved isn't abandoned: it is
+        // recorded just below.
+        let abandoned = inFlight.flatMap { $0.resolution == nil ? $0.wire : nil }
         abandonInFlight(with: .cancelled)
+        // Its reply in, but `run()` not yet resumed to record it: the
+        // awaits below needn't let it, and a manual command isn't awaited.
+        recordUnrecordedReply()
         finishOwedWait(nil, drained: false)
         releaseAllWaiters()
         await pollTask?.value
@@ -1421,7 +1456,10 @@ public actor ELMSession {
         let exchange: ELMExchange
         let decoded: [DecodedValue]?
         do {
-            (exchange, decoded) = try await perform(command, phase: .poll, timeout: plan.timeout) { raw in
+            (exchange, decoded) = try await perform(
+                command, phase: .poll, timeout: plan.timeout,
+                recorded: { exchange, decoded in self.emitReadings(decoded, of: exchange) }
+            ) { raw in
                 Self.interpretPoll(raw, pids: pids, headers: headers)
             }
         } catch {
@@ -1430,17 +1468,7 @@ public actor ELMSession {
 
         switch exchange.outcome {
         case .ok:
-            for value in decoded ?? [] {
-                continuation.yield(.reading(OBDReading(
-                    seq: exchange.seq,
-                    command: exchange.tx,
-                    ecu: value.ecu,
-                    measurement: value.measurement,
-                    raw: exchange.rx ?? "",
-                    requestUptime: exchange.requestUptime,
-                    replyUptime: exchange.completedUptime
-                )))
-            }
+            // The readings went out with the row (`emitReadings`).
             okPIDs.formUnion((decoded ?? []).map(\.measurement.pid))
             okCommands.insert(exchange.tx)
             successfulPollsInWindow += 1
@@ -1468,6 +1496,21 @@ public actor ELMSession {
             return .noData
         default:
             return .failure(exchange.outcome.rawValue)
+        }
+    }
+
+    /// One reading per decoded value of an `ok` poll, right behind its row.
+    private func emitReadings(_ decoded: [DecodedValue], of exchange: ELMExchange) {
+        for value in decoded {
+            continuation.yield(.reading(OBDReading(
+                seq: exchange.seq,
+                command: exchange.tx,
+                ecu: value.ecu,
+                measurement: value.measurement,
+                raw: exchange.rx ?? "",
+                requestUptime: exchange.requestUptime,
+                replyUptime: exchange.completedUptime
+            )))
         }
     }
 
@@ -1652,7 +1695,8 @@ public actor ELMSession {
         _ command: ELM327Command,
         phase: ELMPhase,
         timeout: Duration,
-        interpret: (String) -> (outcome: ELMOutcome, value: Value?)
+        recorded: ((ELMExchange, Value) -> Void)? = nil,
+        interpret: @escaping (String) -> (outcome: ELMOutcome, value: Value?)
     ) async throws(ELMSessionError) -> (exchange: ELMExchange, value: Value?) {
         let validated: ValidatedELMCommand
         do {
@@ -1663,7 +1707,7 @@ public actor ELMSession {
             setState(.failed, reason: "\(command.wireFormat) rejected by the read-only guard: \(error)")
             throw error
         }
-        return try await run(validated, phase: phase, timeout: timeout, interpret: interpret)
+        return try await run(validated, phase: phase, timeout: timeout, recorded: recorded, interpret: interpret)
     }
 
     /// Test seam: fires the timeout of the command in flight and then, in
@@ -1687,12 +1731,15 @@ public actor ELMSession {
     }
 
     /// Takes the single command slot, sends, waits for the prompt or the
-    /// timeout, and emits the exchange.
+    /// timeout, and emits the exchange. `recorded` runs right after a
+    /// reply's row with the value of an `ok` one: a poll's readings, so
+    /// they go out with the row wherever it is written (R45.1-2).
     private func run<Value>(
         _ command: ValidatedELMCommand,
         phase: ELMPhase,
         timeout: Duration,
-        interpret: (String) -> (outcome: ELMOutcome, value: Value?)
+        recorded: ((ELMExchange, Value) -> Void)? = nil,
+        interpret: @escaping (String) -> (outcome: ELMOutcome, value: Value?)
     ) async throws(ELMSessionError) -> (exchange: ELMExchange, value: Value?) {
         try await acquireSlot()
         defer { releaseSlot() }
@@ -1716,14 +1763,9 @@ public actor ELMSession {
         } else {
             acceptance = .any
         }
-        let (requestUptime, resolution) = try await transact(command, phase: phase, timeout: timeout, acceptance: acceptance)
-        switch resolution {
-        case .reply(let reply):
-            // ATZ answered with a banner: the adapter is reset and replies
-            // line up with commands again.
-            if isReset { resynchronised() }
+        let record: (ELMRawReply, Double) -> RecordedReply = { reply, requestUptime in
             let (outcome, value) = interpret(reply.text)
-            let exchange = emitExchange(
+            let exchange = self.emitExchange(
                 phase: phase,
                 tx: command.wire,
                 requestUptime: requestUptime,
@@ -1731,7 +1773,29 @@ public actor ELMSession {
                 completedUptime: reply.completedUptime,
                 outcome: outcome
             )
-            return (exchange, outcome == .ok ? value : nil)
+            let kept = outcome == .ok ? value : nil
+            if let kept, let recorded { recorded(exchange, kept) }
+            return RecordedReply(exchange: exchange, value: kept)
+        }
+        let (requestUptime, resolution) = try await transact(
+            command, phase: phase, timeout: timeout, acceptance: acceptance, record: record
+        )
+        let unrecorded = unrecordedReply
+        unrecordedReply = nil
+        switch resolution {
+        case .reply(let reply):
+            if let early = unrecorded?.recorded {
+                // Link loss or shutdown recorded the reply while this waited
+                // to resume (R45.1-2): no second row. The session is closed,
+                // so the command ends like one abandoned in flight.
+                try checkOpen()
+                return (early.exchange, early.value as? Value)
+            }
+            // ATZ answered with a banner: the adapter is reset and replies
+            // line up with commands again.
+            if isReset { resynchronised() }
+            let written = record(reply, requestUptime)
+            return (written.exchange, written.value as? Value)
         case .timedOut(let exchange):
             // `timeoutFired` emitted the row and recorded the owed prompt in
             // the step that took the command off the wire.
@@ -1747,10 +1811,12 @@ public actor ELMSession {
         _ command: ValidatedELMCommand,
         phase: ELMPhase,
         timeout: Duration,
-        acceptance: Acceptance
+        acceptance: Acceptance,
+        record: @escaping (ELMRawReply, Double) -> RecordedReply
     ) async throws(ELMSessionError) -> (requestUptime: Double, resolution: Resolution) {
         try checkOpen()
         startReaderIfNeeded()
+        unrecordedReply = nil
         nextToken += 1
         let token = nextToken
         // The deadline is fixed before the write, so a slow write counts
@@ -1761,7 +1827,7 @@ public actor ELMSession {
         // while the write is still going uses the former.
         var flight = InFlight(
             token: token, wire: command.wire, phase: phase, acceptance: acceptance,
-            requestUptime: uptime.uptimeSeconds
+            requestUptime: uptime.uptimeSeconds, record: record
         )
         flight.timeoutTask = Task { [weak self] in
             do {
@@ -1778,12 +1844,17 @@ public actor ELMSession {
             requestUptime = try await transport.send(command)
         } catch {
             discardInFlight(token)
+            // Link loss may have recorded this command's reply before the
+            // write reported failing: that row stands, the command still
+            // ends with the error.
+            if unrecordedReply?.token == token { unrecordedReply = nil }
             if isShutdown { throw .cancelled }
             if transportClosed { throw .transport(.disconnected(nil)) }
             throw .transport(error as? ELMTransportError ?? .writeFailed(String(describing: error)))
         }
         lastSent = SentCommand(tx: command.wire, phase: phase, requestUptime: requestUptime)
         if inFlight?.token == token { inFlight?.requestUptime = requestUptime }
+        if unrecordedReply?.token == token { unrecordedReply?.requestUptime = requestUptime }
 
         // The reply (or the timeout) may already be in: a zero-latency
         // transport answers before `send` returns.
@@ -1807,6 +1878,11 @@ public actor ELMSession {
         guard var flight = inFlight, flight.token == token, flight.resolution == nil else { return false }
         flight.timeoutTask?.cancel()
         flight.timeoutTask = nil
+        if case .reply(let reply) = resolution {
+            unrecordedReply = UnrecordedReply(
+                token: token, reply: reply, requestUptime: flight.requestUptime, record: flight.record
+            )
+        }
         if let continuation = flight.continuation {
             inFlight = nil
             continuation.resume(returning: resolution)
@@ -2064,6 +2140,7 @@ public actor ELMSession {
         rateTask?.cancel()
         rateTask = nil
         abandonInFlight(with: .closed)
+        recordUnrecordedReply()
         finishOwedWait(nil, drained: false)
         recordPendingPartialReply()
         releaseAllWaiters()
@@ -2096,6 +2173,21 @@ public actor ELMSession {
         for reply in held { payLateOrUnsolicited(reply) }
         resolve(flight.token, with: resolution)
     }
+
+    /// Link loss or shutdown: writes the row (and a poll's readings) of a
+    /// reply that resolved the command in flight but that `run()` hasn't
+    /// recorded yet, so it reaches `events` before the final transition
+    /// (R45.1-2). Stamped as `run()` would: the transport's request stamp
+    /// if `send` has returned, else the moment before the write.
+    private func recordUnrecordedReply() {
+        guard var pending = unrecordedReply, pending.recorded == nil else { return }
+        pending.recorded = pending.record(pending.reply, pending.requestUptime)
+        unrecordedReply = pending
+    }
+
+    /// Test seam: a reply has resolved the command in flight and `run()`
+    /// hasn't recorded it yet.
+    var hasUnrecordedReply: Bool { unrecordedReply.map { $0.recorded == nil } ?? false }
 
     /// The late `>` for a command that already timed out: a `timeout`
     /// exchange with `rx`, attributed to that command.
