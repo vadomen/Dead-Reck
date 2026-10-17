@@ -219,3 +219,13 @@ Reviewer: one fresh reviewer (sonnet), lite run, checks 10 and 11, including the
 | R40.1-3 | MINOR | `.claude/skills/review-loop/SKILL.md` lite trigger omits `Config/` and `DriveLogger.xcodeproj`: a signing/build-setting-only range would get a lite review with no build. | FIXED | Both added to the trigger list in the round commit (lite rule). |
 
 Tests: Core not run: no file outside docs/ and .claude/ changed; App/ unchanged.
+
+### Round 2
+
+Reviewer: one fresh reviewer (sonnet), full path (the round-1 fix touched `.claude/settings.json`), re-review of 7211493..0f2105d: checks 10 and 11 and the new allow rule's scope (no deny/ask conflict; `git apply` refuses paths leaving the worktree without `--unsafe-paths`). R40.1-1..3 verified fixed. Result: 0 BLOCKER / 0 MAJOR / 0 MINOR.
+
+Tests: Core not run: no file outside docs/ and .claude/ changed; App/ unchanged.
+
+### Run 40 summary
+
+2 rounds; 3 fixed (R40.1-1..3), 0 rejected, 0 deferred.
