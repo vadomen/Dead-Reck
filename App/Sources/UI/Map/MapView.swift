@@ -328,13 +328,12 @@ struct GPSMapView: View {
             // Auto-resume: sleeps on the clock the deadline is on, ticks, and
             // sleeps again while a deadline remains. A new deadline restarts it.
             .task(id: follow.resumeDeadline) {
-                while let deadline = follow.resumeDeadline {
-                    if ContinuousClock.now < deadline {
-                        try? await Task.sleep(until: deadline, clock: .continuous)
-                        if Task.isCancelled { return }
-                    }
-                    if resumeIfDue() { return }
-                }
+                await FollowResumeLoop.run(
+                    deadline: { follow.resumeDeadline },
+                    now: { ContinuousClock.now },
+                    sleep: { try? await Task.sleep(until: $0, clock: .continuous) },
+                    resumeIfDue: { resumeIfDue() }
+                )
             }
             // Opening the map: frame on a fresh estimate, then one 100 ms loop
             // while the map is visible and the scene active: it polls the
@@ -352,13 +351,14 @@ struct GPSMapView: View {
             // Start: a toast from the previous recording would offer a dead Undo.
             .onChange(of: recordingFile) {
                 toast = nil
-                headingState.smoother = HeadingSmoother()
-                headingState.gate.reset()
-                headingState.publishPending = false
+                HeadingReset.newRecording(
+                    smoother: &headingState.smoother, gate: &headingState.gate,
+                    publishPending: &headingState.publishPending)
             }
             // No bearing: nothing to turn to; drop a stale smoothed heading.
             .onChange(of: bearing) { _, new in
-                if new == nil, effectiveBearing == nil { headingState.smoother = HeadingSmoother() }
+                HeadingReset.bearingChanged(
+                    to: new, effectiveBearing: effectiveBearing, smoother: &headingState.smoother)
             }
             .task(id: lastFixInstant) {
                 isStale = false

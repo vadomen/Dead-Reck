@@ -73,5 +73,20 @@ struct RoadsWarningTests {
         #expect(model.message == nil)
         await model.refresh()
         #expect(model.message == RoadsWarning.noPacks)
+        #expect(model.messageWrites == 1)
+        await model.refresh()
+        await model.refresh()
+        #expect(model.messageWrites == 1, "equal refreshes write nothing")
+    }
+
+    @Test @MainActor func modelWritesWhenTheLineChanges() async {
+        actor Box { var line: String? = RoadsWarning.noPacks; func set(_ l: String?) { line = l } }
+        let box = Box()
+        let model = RoadsWarningModel(source: { await box.line })
+        await model.refresh()
+        await box.set(nil)
+        await model.refresh()
+        #expect(model.message == nil)
+        #expect(model.messageWrites == 2)
     }
 }

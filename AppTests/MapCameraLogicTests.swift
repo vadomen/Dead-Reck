@@ -145,6 +145,112 @@ struct MapViewModelHeadingTests {
         #expect(changes.n == 1)
     }
 
+    @Test("Stationary is assigned only when it flips (the guard, not @Observable's dedup)")
+    func flipOnlyGuard() {
+        let m = MapViewModel()
+        m.setOBDSpeed(5, replyUptime: 1, now: 1)
+        m.setOBDSpeed(nil, replyUptime: nil, now: 1)
+        #expect(m.stationaryWrites == 0)
+        m.setOBDSpeed(0, replyUptime: 1, now: 1)
+        m.setOBDSpeed(0, replyUptime: 2, now: 2)
+        m.setOBDSpeed(0, replyUptime: 3, now: 3)
+        #expect(m.stationaryWrites == 1)
+        m.setOBDSpeed(4, replyUptime: 4, now: 4)
+        #expect(m.stationaryWrites == 2)
+    }
+
+    @Test("Resume loop: sleeps to the deadline, resumes once, and stops")
+    @MainActor
+    func resumeLoop() async {
+        var clock = base
+        var follow = FollowController()
+        follow.userGesture(at: clock)
+        var sleeps: [ContinuousClock.Instant] = []
+        await FollowResumeLoop.run(
+            deadline: { follow.resumeDeadline },
+            now: { clock },
+            sleep: { target in sleeps.append(target); clock = target },
+            resumeIfDue: { follow.tick(now: clock) }
+        )
+        #expect(follow.isFollowing)
+        #expect(sleeps == [base + FollowController.resumeDelay])
+    }
+
+    @Test("Resume loop: a deadline pushed while asleep sleeps again before resuming")
+    @MainActor
+    func resumeLoopPushed() async {
+        var clock = base
+        var follow = FollowController()
+        follow.userGesture(at: clock)
+        var sleeps = 0
+        await FollowResumeLoop.run(
+            deadline: { follow.resumeDeadline },
+            now: { clock },
+            sleep: { target in
+                sleeps += 1
+                if sleeps == 1 {
+                    // The driver touches the map just before the deadline.
+                    clock = target - .seconds(1)
+                    follow.cameraSettled(at: clock)
+                    clock = target
+                } else {
+                    clock = target
+                }
+            },
+            resumeIfDue: { follow.tick(now: clock) }
+        )
+        #expect(sleeps == 2)
+        #expect(follow.isFollowing)
+    }
+
+    @Test("Resume loop: a deadline already past resumes without sleeping; no deadline ends it")
+    @MainActor
+    func resumeLoopDue() async {
+        var follow = FollowController()
+        follow.userGesture(at: base)
+        var slept = false
+        await FollowResumeLoop.run(
+            deadline: { follow.resumeDeadline },
+            now: { base + .seconds(60) },
+            sleep: { _ in slept = true },
+            resumeIfDue: { follow.tick(now: base + .seconds(60)) }
+        )
+        #expect(follow.isFollowing && !slept)
+        var off = FollowController(following: false)
+        off.followTapped(at: base)
+        off.followTapped(at: base)   // manual off again: no deadline
+        await FollowResumeLoop.run(
+            deadline: { off.resumeDeadline }, now: { base },
+            sleep: { _ in slept = true }, resumeIfDue: { Issue.record("must not run"); return false }
+        )
+    }
+
+    @Test("A new recording clears smoother, gate and pending publish")
+    func resetNewRecording() {
+        var smoother = HeadingSmoother()
+        smoother.step(target: 200, frozen: false, dt: 0.1)
+        var gate = HeadingWriteGate()
+        _ = gate.admit(200, at: t(0))
+        var pending = true
+        HeadingReset.newRecording(smoother: &smoother, gate: &gate, publishPending: &pending)
+        #expect(smoother.heading == nil)
+        #expect(!pending)
+        let admitted = gate.admit(200, at: t(0.01))
+        #expect(admitted, "the gate was reset: the first write is admitted")
+    }
+
+    @Test("Losing the bearing drops the smoothed heading only when nothing else supplies one")
+    func resetNoBearing() {
+        var smoother = HeadingSmoother()
+        smoother.step(target: 200, frozen: false, dt: 0.1)
+        HeadingReset.bearingChanged(to: 90, effectiveBearing: 90, smoother: &smoother)
+        #expect(smoother.heading == 200)
+        HeadingReset.bearingChanged(to: nil, effectiveBearing: 150, smoother: &smoother)
+        #expect(smoother.heading == 200, "another source still gives a bearing")
+        HeadingReset.bearingChanged(to: nil, effectiveBearing: nil, smoother: &smoother)
+        #expect(smoother.heading == nil)
+    }
+
     @Test("A new recording file resets the bearing source and heading falls back to 0")
     func newFile() {
         let spy = SpySource()

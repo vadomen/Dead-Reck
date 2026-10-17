@@ -190,6 +190,29 @@ struct FollowZoomPrecedenceTests {
         #expect(other.autoWantsWrite(headingUp: true, semiMajorM: 200))
     }
 
+    @Test("A falling wanted distance also wants a write: |log| is symmetric (R26.2-2)")
+    func fallingDistanceWantsWrite() {
+        // The ellipse shrinks in heading-up.
+        var shrinking = settled(at: 10)
+        _ = shrinking.autoFollowDistance(headingUp: true, semiMajorM: 200)
+        #expect(!shrinking.autoWantsWrite(headingUp: true, semiMajorM: 200))
+        #expect(shrinking.autoWantsWrite(headingUp: true, semiMajorM: 100))
+        // The estimate goes away (semiMajorM nil): back to the plain distance.
+        var lost = settled(at: 10)
+        _ = lost.autoFollowDistance(headingUp: true, semiMajorM: 200)
+        #expect(lost.autoWantsWrite(headingUp: true, semiMajorM: nil))
+        // Heading-up switched off: no widening.
+        var northUp = settled(at: 10)
+        _ = northUp.autoFollowDistance(headingUp: true, semiMajorM: 200)
+        #expect(northUp.autoWantsWrite(headingUp: false, semiMajorM: 200))
+        // Zoom-in after a stop: the speed-based distance falls.
+        var stopped = settled(at: 110)
+        _ = stopped.autoFollowDistance(headingUp: false, semiMajorM: nil)
+        #expect(!stopped.autoWantsWrite(headingUp: false, semiMajorM: nil))
+        for _ in 0..<400 { stopped.step(speedKmh: 0, dt: 0.1) }
+        #expect(stopped.autoWantsWrite(headingUp: false, semiMajorM: nil))
+    }
+
     @Test("Cold start writes 250 m")
     func cold() {
         var zoom = FollowZoom()

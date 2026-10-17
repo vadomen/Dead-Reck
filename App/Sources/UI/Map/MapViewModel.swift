@@ -17,6 +17,9 @@ final class MapViewModel {
     /// OBD speed is exactly 0 km/h: heading-up holds still. Set only when it
     /// flips, so the 16 Hz status does not re-render the map.
     private(set) var isStationary = false
+    /// How many times `isStationary` was assigned (a test sees the guard;
+    /// `@Observable` would hide an equal write, M10.1-5).
+    @ObservationIgnored private(set) var stationaryWrites = 0
     /// The speed the info block shows and where it comes from (`MapSpeedRule`).
     /// Set only when it changes, so the 16 Hz status does not re-render the map.
     private(set) var speed = MapSpeedReadout.none
@@ -106,7 +109,10 @@ final class MapViewModel {
     /// ages an OBD reply or a fix out after `MapSpeedRule.maxOBDAgeS` / `maxGPSAgeS`.
     func setOBDSpeed(_ kmh: Double?, replyUptime: Double?, now: Double) {
         let stationary = StationaryRule.isStopped(kmh: kmh, replyUptime: replyUptime, now: now)
-        if stationary != isStationary { isStationary = stationary }
+        if stationary != isStationary {
+            isStationary = stationary
+            stationaryWrites += 1
+        }
         obdInput = (kmh, replyUptime.map { now - $0 })
         refreshSpeed()
     }

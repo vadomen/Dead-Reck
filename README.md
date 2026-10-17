@@ -310,7 +310,9 @@ Three tabs, portrait only.
   the bottom). A manual field and quick buttons send only the read-only
   queries (`ATI`, `AT@1`, `ATDP`, `ATDPN`, `ATRV`, mode 01). A rejected command
   is shown as rejected and never sent. After "link out of sync" a
-  Re-initialise button appears.
+  Re-initialise button appears. While a recording runs, Disconnect, Forget and
+  tapping another adapter ask first (dropping the OBD feed, or connecting so the
+  recording gains OBD from then on), and Scan is disabled.
 
 On the simulator the adapter and sensors are simulated and labelled so;
 Bluetooth or a sensor being unavailable is shown as a red or orange state, not
