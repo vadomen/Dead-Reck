@@ -84,6 +84,11 @@ struct RecordingContent: View {
                 .presentationDetents([.medium, .large])
         }
         .sensoryFeedback(.success, trigger: markCount)
+        // A sheet left open over a recording that ended would offer a mark
+        // nothing can write (R5.1-6).
+        .onChange(of: state.isActive) { _, active in
+            if !active { isMarkSheetPresented = false }
+        }
     }
 }
 
@@ -218,13 +223,13 @@ struct StartSection: View {
         VStack(alignment: .leading, spacing: 12) {
             if let blocker = state.blocker {
                 NoticeView(notice: .init(text: blocker.message, tone: .bad))
-                if blocker.offersRecordWithoutOBD {
-                    Toggle(
-                        "Record without OBD",
-                        isOn: Binding(get: { state.allowsRecordingWithoutOBD }, set: onRecordWithoutOBD)
-                    )
-                    .font(.headline)
-                }
+            }
+            if state.showsRecordWithoutOBD {
+                Toggle(
+                    "Record without OBD",
+                    isOn: Binding(get: { state.allowsRecordingWithoutOBD }, set: onRecordWithoutOBD)
+                )
+                .font(.headline)
             }
             ChecklistView(checklist: $checklist)
         }

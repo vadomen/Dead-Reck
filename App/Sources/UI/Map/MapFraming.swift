@@ -22,6 +22,30 @@ enum MapFraming {
     }
 }
 
+extension MapFraming {
+    /// Camera heading (degrees) beyond which the viewport counts as rotated.
+    static let rotatedHeadingThresholdDeg = 0.5
+
+    /// Visible span for the map's report, the same quantity in both modes
+    /// (M10.1-3): the viewport's height in metres, which is the N-S extent
+    /// of a north-up map.
+    ///
+    /// North-up: `region.span.latitudeDelta`. Rotated (heading-up): that
+    /// delta is the N-S extent of the rotated viewport's bounding box, up to
+    /// ~2.2x the viewport height depending on the heading, so the span is
+    /// derived from the camera distance instead (`distancePerSpan`, the same
+    /// approximation the follow camera uses). nil when not usable.
+    static func visibleSpanMeters(latitudeDelta: Double, cameraDistance: Double, heading: Double) -> Double? {
+        guard heading.isFinite else { return nil }
+        let turned = abs(HeadingSmoother.shortestDelta(from: 0, to: heading))
+        if turned <= rotatedHeadingThresholdDeg {
+            return visibleSpanMeters(latitudeDelta: latitudeDelta)
+        }
+        guard cameraDistance.isFinite, cameraDistance > 0 else { return nil }
+        return cameraDistance / distancePerSpan
+    }
+}
+
 /// A manual fix shown on the map. Drawn as pending until the recorder has
 /// written it (its undo window is over).
 struct ConfirmedFix: Hashable, Identifiable {

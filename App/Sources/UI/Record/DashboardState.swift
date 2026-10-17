@@ -36,6 +36,13 @@ struct DashboardState: Equatable {
     /// "SIMULATED ADAPTER · SIMULATED SENSORS" on the simulator.
     var simulationBadge: String?
 
+    /// Show the "Record without OBD" toggle (R5.1-2): while the blocker offers
+    /// it, and for as long as it is on, so the choice stays visible (the
+    /// blocker clears once it is on).
+    var showsRecordWithoutOBD: Bool {
+        allowsRecordingWithoutOBD || blocker?.offersRecordWithoutOBD == true
+    }
+
     var isActive: Bool {
         switch phase {
         case .calibrating, .recording, .stopping: true

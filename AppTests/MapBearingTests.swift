@@ -1,4 +1,5 @@
 import DriveLoggerCore
+import Foundation
 import Testing
 
 @testable import DriveLogger
@@ -55,6 +56,33 @@ struct MapBearingSourceTests {
         #expect(s.bearingDegrees == 100)
         s.reset()
         #expect(s.bearingDegrees == nil)
+    }
+}
+
+@Suite("MapViewModel bearing while locked (M10.1-2)")
+@MainActor
+struct MapViewModelLockedBearingTests {
+    private let file = URL(fileURLWithPath: "/tmp/locked.jsonl.gz")
+
+    @Test("A good course ingested while the scene is inactive reaches the bearing, nothing else changes")
+    func inactiveFeedsBearing() {
+        let model = MapViewModel()
+        model.ingest(fix(course: 10), file: file, isActive: true)
+        #expect(model.bearing == 10)
+        let before = (model.track.points.count, model.latest, model.lastFixInstant)
+        model.ingest(fix(course: 200), file: file, isActive: false)
+        #expect(model.bearing == 200, "the post-turn course from the locked stretch")
+        #expect(model.track.points.count == before.0 && model.latest == before.1 && model.lastFixInstant == before.2)
+    }
+
+    @Test("An inactive fix of another recording, or a poor course, does not touch the bearing")
+    func inactiveIgnoresOthers() {
+        let model = MapViewModel()
+        model.ingest(fix(course: 10), file: file, isActive: true)
+        model.ingest(fix(course: 99), file: URL(fileURLWithPath: "/tmp/other.jsonl.gz"), isActive: false)
+        model.ingest(fix(speed: 1, course: 99), file: file, isActive: false)
+        model.ingest(nil, file: file, isActive: false)
+        #expect(model.bearing == 10)
     }
 }
 

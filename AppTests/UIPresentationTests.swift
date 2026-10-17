@@ -171,6 +171,21 @@ struct DashboardStateTests {
         i.simulatedSensors = false
         #expect(DashboardState.make(i).simulationBadge == nil)
     }
+
+    @Test("The Record without OBD toggle is offered by the blocker and stays shown while it is on (R5.1-2)")
+    func recordWithoutOBDToggle() {
+        var i = inputs(link: .idle)
+        i.startBlocker = .obdNotReady
+        #expect(DashboardState.make(i).showsRecordWithoutOBD)
+        // On: the session's blocker clears, the choice must stay visible.
+        i.allowsRecordingWithoutOBD = true
+        i.startBlocker = nil
+        let on = DashboardState.make(i)
+        #expect(on.blocker == nil && on.showsRecordWithoutOBD)
+        // Off with a polling adapter: nothing to choose.
+        let polling = DashboardState.make(inputs())
+        #expect(!polling.showsRecordWithoutOBD)
+    }
 }
 
 @Suite("Start flow")
@@ -341,7 +356,9 @@ struct ConsoleTextTests {
     @Test("Re-initialise is offered only with a connection")
     func reinitialise() {
         #expect(ConsoleText.canReinitialise(.polling(protocolNumber: "6", voltage: nil)))
-        #expect(ConsoleText.canReinitialise(.failed(reason: "x")))
+        #expect(ConsoleText.canReinitialise(.ready))
+        #expect(!ConsoleText.canReinitialise(.failed(reason: "x")), "R5.1-7: reinitialise() does nothing without a connection")
+        #expect(!ConsoleText.canReinitialise(.reconnecting(attempt: 2)))
         #expect(!ConsoleText.canReinitialise(.initialising))
         #expect(!ConsoleText.canReinitialise(.idle))
         #expect(!ConsoleText.canReinitialise(.unavailable(reason: "off")))
@@ -430,6 +447,21 @@ struct ConsoleGatingTests {
         #expect(model.pendingChange == nil)
     }
 
+    @Test("While recording, a different adapter needs confirmation whatever the link state (R5.2-1)")
+    func connectWhileRecordingAnyState() {
+        let states: [OBDLinkState] = [.unavailable(reason: "Bluetooth is off"), .idle, .scanning, .failed(reason: "x")]
+        for state in states {
+            let (model, link) = make(.recording, link: state)
+            let current = UUID(), stale = UUID()
+            link.rememberedAdapterID = current
+            model.connect(stale)
+            #expect(link.connectCalls.isEmpty, "\(state)")
+            #expect(model.pendingChange == .connect(stale))
+            model.connect(current)
+            #expect(link.connectCalls == [current], "the targeted adapter is harmless")
+        }
+    }
+
     @Test("Scan is refused while recording and while an adapter is held")
     func scanRefused() {
         let (recording, link1) = make(.recording, link: .idle)
@@ -443,6 +475,18 @@ struct ConsoleGatingTests {
             #expect(!model.canScan)
             #expect(link.startScanCalls == 0)
         }
+
+        // R5.2-3: `.failed` is where an unusable adapter leaves the user.
+        let (failed, link3) = make(.idle, link: .failed(reason: "no usable UART characteristics"))
+        failed.scan()
+        #expect(failed.canScan)
+        #expect(link3.startScanCalls == 1)
+        let (failedRecording, link4) = make(.recording, link: .failed(reason: "x"))
+        failedRecording.scan()
+        #expect(!failedRecording.canScan && link4.startScanCalls == 0)
+        let (off, link5) = make(.idle, link: .unavailable(reason: "Bluetooth is off"))
+        off.scan()
+        #expect(!off.canScan && link5.startScanCalls == 0)
 
         let (idle, link2) = make(.idle, link: .idle)
         idle.scan()
@@ -482,5 +526,88 @@ struct ConsoleGatingTests {
         await model.start()
         #expect(link.stopScanCalls == 1)
         await session.stop()
+    }
+
+    private func makeStartModel(
+        _ scratch: ScratchStore, defaults d: UserDefaults, link: FakeLink
+    ) -> (RecordingViewModel, RecordingSession) {
+        let source = FakeSource()
+        let session = RecordingFixtures.session(link: link, sources: [source], store: scratch.store)
+        let model = RecordingViewModel(
+            session: session, link: link, sources: [source], simulatedSensors: false,
+            store: ChecklistStore(defaults: d)
+        )
+        model.checklist.mountConfirmed = true
+        model.checklist.orientationConfirmed = true
+        return (model, session)
+    }
+
+    @Test("Starting stops a scan that is pending while Bluetooth is off (R5.2-2)")
+    func startStopsPendingScan() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let suite = "drivelogger.test.\(UUID().uuidString)"
+        let d = try #require(UserDefaults(suiteName: suite))
+        defer { d.removePersistentDomain(forName: suite) }
+        let link = FakeLink()
+        link.state = .unavailable(reason: "Bluetooth is off")
+        let (model, session) = makeStartModel(scratch, defaults: d, link: link)
+        session.allowsRecordingWithoutOBD = true
+        await model.start()
+        #expect(link.stopScanCalls == 1)
+        await session.stop()
+    }
+
+    @Test("Stop during the keep-still phase frees Start at once; the next Start is not ignored and its checklist is not cleared by the first one (R5.1-3)")
+    func restartDuringCalibration() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let suite = "drivelogger.test.\(UUID().uuidString)"
+        let d = try #require(UserDefaults(suiteName: suite))
+        defer { d.removePersistentDomain(forName: suite) }
+        let (model, session) = makeStartModel(scratch, defaults: d, link: FakeLink())
+
+        let first = Task { await model.start() }   // 5 s calibration
+        while session.state != .calibrating { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(!model.checklist.mountConfirmed, "per-drive confirmations are reset before the wait")
+        await session.stop()
+        #expect(session.state == .idle)
+
+        model.checklist.mountConfirmed = true
+        model.checklist.orientationConfirmed = true
+        let second = Task { await model.start() }
+        while session.state != .calibrating { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(scratch.files.count == 2, "the re-Start was not ignored")
+        // The first start's calibration wait ends here, long before the second's.
+        await first.value
+        #expect(model.startError == nil)
+        await session.stop()
+        await second.value
+    }
+
+    @Test("A mark after a stop is neither confirmed nor counted, and closes the sheet (R5.1-6)")
+    func markWhenNotRecording() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let suite = "drivelogger.test.\(UUID().uuidString)"
+        let d = try #require(UserDefaults(suiteName: suite))
+        defer { d.removePersistentDomain(forName: suite) }
+        let (model, session) = makeStartModel(scratch, defaults: d, link: FakeLink())
+
+        model.isMarkSheetPresented = true
+        model.mark("tunnel")   // idle
+        #expect(model.lastMark == nil && model.markCount == 0 && !model.isMarkSheetPresented)
+
+        await model.start()
+        #expect(session.state == .recording)
+        model.isMarkSheetPresented = true
+        model.mark("tunnel")
+        #expect(model.lastMark == "tunnel" && model.markCount == 1 && !model.isMarkSheetPresented)
+        await session.stop()
+
+        model.isMarkSheetPresented = true
+        model.mark("late")
+        #expect(model.lastMark == "tunnel" && model.markCount == 1 && !model.isMarkSheetPresented)
+        #expect(RecordingViewModel.canMark(.calibrating) && !RecordingViewModel.canMark(.stopping))
     }
 }

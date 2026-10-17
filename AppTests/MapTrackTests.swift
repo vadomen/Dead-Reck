@@ -265,6 +265,26 @@ struct MapManualFixTests {
         #expect(MapFraming.visibleSpanMeters(latitudeDelta: .nan) == nil)
     }
 
+    @Test("Visible span means the viewport height in both modes (M10.1-3)")
+    func visibleSpanRotated() {
+        // A 1000 m tall, 500 m wide viewport turned 45 degrees: its bounding
+        // box is (1000 + 500) / sqrt 2 tall, which is what `latitudeDelta` reports.
+        let box = (1000.0 + 500.0) / 2.0.squareRoot() / 111_320
+        let distance = 1000 * MapFraming.distancePerSpan
+        let rotated = MapFraming.visibleSpanMeters(latitudeDelta: box, cameraDistance: distance, heading: 45)
+        #expect(rotated != nil && abs(rotated! - 1000) < 1e-6, "not the bounding box (~1061 m)")
+        let wrapped = MapFraming.visibleSpanMeters(latitudeDelta: box, cameraDistance: distance, heading: 315)
+        #expect(wrapped != nil && abs(wrapped! - 1000) < 1e-6)
+        // North-up (heading 0, 360, or within half a degree): the region itself.
+        for heading in [0.0, 360, 0.4, 359.8] {
+            #expect(MapFraming.visibleSpanMeters(latitudeDelta: 0.01, cameraDistance: distance, heading: heading) == 1113.2)
+        }
+        // Rotated without a usable distance, or a bad heading: unknown, so the pin is refused.
+        #expect(MapFraming.visibleSpanMeters(latitudeDelta: 0.01, cameraDistance: 0, heading: 90) == nil)
+        #expect(MapFraming.visibleSpanMeters(latitudeDelta: 0.01, cameraDistance: .nan, heading: 90) == nil)
+        #expect(MapFraming.visibleSpanMeters(latitudeDelta: 0.01, cameraDistance: distance, heading: .nan) == nil)
+    }
+
     @Test("Manual fixes are added by id, undone by id, and reset on a new file")
     func fixList() {
         let model = MapViewModel()

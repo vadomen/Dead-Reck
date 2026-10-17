@@ -34,9 +34,10 @@ final class NavigationFeed {
         self.source = source
     }
 
-    /// Previews and tests: fixed values, no service behind them.
-    init(display: NavDisplay?, stats: NavStatsDisplay? = nil) {
-        source = nil
+    /// Previews and tests: fixed values, no service behind them unless a
+    /// `source` is given (a test of the first poll after seeded values).
+    init(display: NavDisplay?, stats: NavStatsDisplay? = nil, source: Source? = nil) {
+        self.source = source
         self.display = display
         self.latest = display
         self.stats = stats
@@ -50,6 +51,17 @@ final class NavigationFeed {
         let snapshot = await source()
         guard !Task.isCancelled else { return false }
         return apply(snapshot, at: now)
+    }
+
+    /// Polls once and returns the estimate as of now, for framing the camera
+    /// when the map opens (R14.1-3). `latest` is written only while the loop
+    /// polls, so without this a Stop (or a later recording) that happened while
+    /// the map was away would be framed on the old estimate. nil without a
+    /// recording or an estimate. After a cancelled poll `latest` is unchanged:
+    /// the caller must check its own cancellation.
+    func refreshed(at now: ContinuousClock.Instant = .now) async -> NavDisplay? {
+        await poll(at: now)
+        return latest
     }
 
     /// Applies one snapshot (split from `poll` so tests need no service).
