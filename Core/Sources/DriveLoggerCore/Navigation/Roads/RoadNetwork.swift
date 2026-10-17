@@ -35,6 +35,12 @@ public final class RoadNetwork: @unchecked Sendable {
     /// coverage without `COVR` and for skipping packs in a key lookup.
     public let bounds: [(southWest: RoadPoint, northEast: RoadPoint)?]
     private let coverage: [[[RoadPoint]]?]
+    /// The order `covers` tries the packs in: cheapest test first (a
+    /// bounding box, then the fewest coverage vertices; ties by index). An
+    /// OR over packs, so the order changes only the time (N3-FIXPIN: a
+    /// national ring of ~80 k vertices took ~78 % of the road verdict).
+    /// Internal for the test that `covers` equals the canonical-order OR.
+    let coverageOrder: [Int]
 
     public static let attribution = RoadPackFormat.attribution
 
@@ -72,7 +78,13 @@ public final class RoadNetwork: @unchecked Sendable {
         gridID = first.gridID
         roadSetHash = RoadPackFormat.roadSetHash(packs.map(\.contentHash))
         bounds = packs.map { $0.pointBounds() }
-        coverage = try packs.map { try $0.coverageRings() }
+        let coverage = try packs.map { try $0.coverageRings() }
+        self.coverage = coverage
+        coverageOrder = coverage.indices.sorted { a, b in
+            let ca = coverage[a].map { $0.reduce(0) { $0 + $1.count } } ?? 0
+            let cb = coverage[b].map { $0.reduce(0) { $0 + $1.count } } ?? 0
+            return ca != cb ? ca < cb : a < b
+        }
     }
 
     public var roadSetHashHex: String { NavigationSeed.hex(roadSetHash) }
@@ -249,7 +261,7 @@ public final class RoadNetwork: @unchecked Sendable {
     /// polygon (even-odd) if present, else its shape-point bounding box.
     public func covers(latitude: Double, longitude: Double) -> Bool {
         let latE7 = latitude * 1e7, lonE7 = longitude * 1e7
-        for p in packs.indices {
+        for p in coverageOrder {
             if let rings = coverage[p] {
                 if Self.evenOddContains(rings: rings, latE7: latE7, lonE7: lonE7) { return true }
             } else if let b = bounds[p],

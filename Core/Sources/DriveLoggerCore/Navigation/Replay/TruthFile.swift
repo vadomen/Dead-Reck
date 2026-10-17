@@ -6,15 +6,20 @@ import Foundation
 /// Keyed by recording file name. Each entry may hold an `end` position (where
 /// the car stood at the last sample), `points` at session-clock times,
 /// `excludePins`: manual fixes of the recording that are not scored as truth
-/// (the engine still receives them), and `scoreUntilT`: the session-clock
-/// time after which nothing is scored (the engine still ingests every input
-/// after it). Unknown keys (notes, future fields) are ignored:
+/// (the engine still receives them), `excludeFixes`: session-clock ranges
+/// whose location fixes are never truth (scoring only, like the others),
+/// and `scoreUntilT`: the session-clock time after which nothing is scored
+/// (the engine still ingests every input after it). Unknown keys (notes,
+/// future fields) are ignored. A malformed entry (a wrong type, an
+/// `excludeFixes` range with `fromT` > `toT` or a non-finite bound) makes
+/// the whole file fail to decode:
 ///
 /// ```json
 /// { "<file name>": {
 ///     "end": { "latitude": …, "longitude": …, "sigmaM": 30, "source": "…" },
 ///     "points": [ { "t": 744.3, "latitude": …, "longitude": …, "sigmaM": 30, "source": "…" } ],
 ///     "excludePins": [ { "t": 100.25, "reason": "…" } ],
+///     "excludeFixes": [ { "fromT": 0.0, "toT": 251.0, "reason": "…" } ],
 ///     "scoreUntilT": 1500.0,
 ///     "note": "…" } }
 /// ```
@@ -70,6 +75,60 @@ public struct TruthFile: Hashable, Sendable {
     /// range (the earlier one on a tie).
     public static let excludePinToleranceS = 0.1
 
+    /// A session-clock range whose location fixes are never ground truth:
+    /// a fix whose event `t` satisfies `fromT` ≤ t ≤ `toT` (inclusive,
+    /// compared in whole nanoseconds as `MonotonicTimestamp(seconds:)`
+    /// rounds them) is neither a clean-fix checkpoint (in any GPS mode) nor
+    /// a clean fix of the offline road truth (residuals, wrong road,
+    /// unmapped). Scoring only: whether the engine receives the fix still
+    /// follows the GPS mode exactly as without the range. Manual fixes in
+    /// the range are not affected (`excludePins` is for them).
+    ///
+    /// Decoding refuses `fromT` > `toT` and a non-finite bound
+    /// (`DecodingError.dataCorrupted`), as for any malformed truth file; a
+    /// range built in code with such bounds matches no fix.
+    public struct ExcludedFixRange: Hashable, Sendable, Codable {
+        public var fromT: Double
+        public var toT: Double
+        public var reason: String?
+
+        public init(fromT: Double, toT: Double, reason: String? = nil) {
+            self.fromT = fromT
+            self.toT = toT
+            self.reason = reason
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case fromT, toT, reason
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            fromT = try c.decode(Double.self, forKey: .fromT)
+            toT = try c.decode(Double.self, forKey: .toT)
+            reason = try c.decodeIfPresent(String.self, forKey: .reason)
+            if let problem = problem {
+                throw DecodingError.dataCorrupted(DecodingError.Context(
+                    codingPath: decoder.codingPath, debugDescription: "excludeFixes range: \(problem)"))
+            }
+        }
+
+        /// Why the range is invalid, nil when it is valid.
+        public var problem: String? {
+            guard fromT.isFinite, toT.isFinite else { return "fromT \(fromT) and toT \(toT) must be finite" }
+            guard fromT <= toT else { return "fromT \(fromT) is after toT \(toT)" }
+            return nil
+        }
+
+        /// Whether a fix at event time `t` is in the range (inclusive); false
+        /// for an invalid range.
+        public func contains(_ t: MonotonicTimestamp) -> Bool {
+            guard problem == nil else { return false }
+            return t.nanoseconds >= MonotonicTimestamp(seconds: fromT).nanoseconds
+                && t.nanoseconds <= MonotonicTimestamp(seconds: toT).nanoseconds
+        }
+    }
+
     public struct Entry: Hashable, Sendable, Codable {
         public var end: Position?
         public var points: [Point]?
@@ -82,13 +141,23 @@ public struct TruthFile: Hashable, Sendable {
         /// input as without it. Optional so older files decode; nil scores
         /// the whole recording.
         public var scoreUntilT: Double?
+        /// Location fixes that are never truth, by event-time range
+        /// (`ExcludedFixRange`). Optional so older files decode; nil or
+        /// empty: every fix is as without it.
+        public var excludeFixes: [ExcludedFixRange]?
 
         public init(end: Position? = nil, points: [Point]? = nil, excludePins: [ExcludedPin]? = nil,
-                    scoreUntilT: Double? = nil) {
+                    scoreUntilT: Double? = nil, excludeFixes: [ExcludedFixRange]? = nil) {
             self.end = end
             self.points = points
             self.excludePins = excludePins
             self.scoreUntilT = scoreUntilT
+            self.excludeFixes = excludeFixes
+        }
+
+        /// Whether a location fix at event time `t` is excluded from truth.
+        public func excludesFix(at t: MonotonicTimestamp) -> Bool {
+            excludeFixes?.contains { $0.contains(t) } ?? false
         }
     }
 

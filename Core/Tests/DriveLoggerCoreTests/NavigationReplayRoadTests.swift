@@ -116,6 +116,37 @@ struct NavigationReplayRoadTests {
         #expect(c.rejectedFixes == b.rejectedFixes, "engine behaviour, listed as before")
     }
 
+    @Test("excludeFixes: fixes in the range are no road truth (road fixes, residuals of used and withheld fixes); the run is unchanged")
+    func excludeFixesRoads() throws {
+        let (_, inputs) = Self.northInputs()
+        let net = try Self.northStreet()
+        // 5…30 s: 5…10 s are used by the engine (mask-after 10), 11…30 s withheld.
+        let range = TruthFile.ExcludedFixRange(fromT: 5, toT: 30)
+        let base = NavigationReplay.run(logName: "synthetic", inputs: inputs, options: Self.options(roads: net))
+        let cut = NavigationReplay.run(logName: "synthetic", inputs: inputs, options: Self.options(roads: net),
+                                       truth: TruthFile.Entry(excludeFixes: [range]))
+        #expect("\(cut.track)" == "\(base.track)" && cut.counters == base.counters && cut.fixes == base.fixes)
+        #expect(cut.matchedEdges == base.matchedEdges)
+        let b = try #require(base.roadMetrics), c = try #require(cut.roadMetrics)
+        let removed = b.fixes.filter { $0.t >= 5 && $0.t <= 30 }
+        #expect(removed.count == 20, "withheld 11…30 s")
+        #expect(c.fixes.map(\.t) == b.fixes.filter { $0.t < 5 || $0.t > 30 }.map(\.t))
+        #expect(c.withheldCleanFixes == b.withheldCleanFixes - 20)
+        #expect(c.withheldCleanFixes == cut.checkpoints.filter { $0.kind == .cleanFix && $0.isScored }.count)
+        #expect(c.truth["matched"] == (b.truth["matched"] ?? 0) - removed.filter { $0.truth == .matched }.count)
+        #expect(c.trackSamples == b.trackSamples, "1 Hz on-road samples are the engine's, not fix truth")
+        let all = try #require(c.residualsAll), allBase = try #require(b.residualsAll)
+        let inRange = inputs.compactMap { input -> Double? in
+            guard case .location(let s, let t) = input, s.horizontalAccuracy <= 15,
+                  NavigationReplay.RoadTruth.course(of: s) != nil, range.contains(t) else { return nil }
+            return t.seconds
+        }
+        #expect(inRange.count == 26, "used 5…10 s and withheld 11…30 s, all with a course")
+        #expect(all.count == allBase.count - 26)
+        #expect(cut.fixesExcludedByTruth?.cleanFixes == 26 && cut.fixesExcludedByTruth?.cleanFixCheckpoints == 20)
+        #expect(c.rejectedFixes == b.rejectedFixes, "engine behaviour, listed as before")
+    }
+
     // MARK: Items 2-4: road metrics, the road set in every output, GeoJSON
 
     /// A north drive whose fixes before `maskS` sit `usedEast` m east of the

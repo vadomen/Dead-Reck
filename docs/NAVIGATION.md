@@ -289,6 +289,153 @@ updates reweight only by what heading and scale actually predict.
       replay set (Mac, release, 2000 particles): +0.007 ms/step, from
       snapshotting 2 × N Doubles per step. Max ingest went from 0.13–0.36 ms to
       0.25–0.66 ms (the resample remap; a reseed's reconstruction).
+- **Pin against a GNSS source** (N3-FIXPIN, both keys default off, not
+  adopted; nothing below runs while `roadFixPinCheck` and
+  `fixPinTwoPinCheck` are 0). A fix with a small claimed accuracy outweighs
+  a pin: drive-10's accessory fixes, a constant-offset copy of the track
+  ("Constant-offset GNSS check" below), pulled the cloud back after every
+  pin reset. This decides, at a pin, whether the pin or a GNSS source is
+  wrong, and down-weights the source when it is the source.
+  - **Sources.** Fixes with a valid speed, split by `accessory` (true:
+    accessory; false or nil: phone). Network fixes are never judged and are
+    untouched. Each source keeps its fixes of the last `fixPinWindowS`
+    (90 s): fix time, position as given (not latency-shifted) in the engine
+    plane, course when the engine would use it, claimed σ.
+  - **At a pin** that is not a refinement (engine-side, causal: the
+    previous pin's `t` within 3 s, mirroring the replay's scoring pair
+    rule), for each source with a fix in the window: d = pin − prior mean
+    (before the pin is ingested), significant when χ² of d against the
+    prior covariance + pin σ² is above 9. A not-significant d judges
+    nothing.
+  - **Road arbiter** (`roadFixPinCheck`, inert without roads): over the
+    source's ring fixes inside pack coverage (at least 20 fixes and 200 m
+    of fix path), the mean of min(distance to a heading-compatible road,
+    100 m) as given (A) and shifted by d (B), through the matcher's cell
+    cache (`RoadMatcher.nearestCompatibleDistance`; each fix's A and B are
+    cached, exact for a fixed shift and plane, so a recheck queries only
+    the fixes added since). Verdict pin when
+    A > `roadFixPinOffRoadM` (15), B ≤ 15 and A − B ≥ `roadFixPinMarginM`
+    (10); fixes in the mirror case; otherwise none.
+  - **Two-pin arbiter** (`fixPinTwoPinCheck`, with or without roads): per
+    source the last independent pin's d, covariance, OBD distance and gyro
+    yaw. A new significant pin: verdict pin when the χ² of d₁ − d₂ against
+    the summed covariances is ≤ 5.99, the OBD path between them is at least
+    `fixPinTwoPinMinPathM` (300 m) and |net heading change| at least
+    `fixPinTwoPinMinTurnDeg` (45°). One pin alone gives no verdict.
+  - **Down-weighted** (verdict pin from either): the source's position
+    update uses σ = max(σ_claimed, |d|) × `fixPinInflation` (1.0), tempered
+    like a network fix by its own time since its last fix (min(1, Δt /
+    60 s)). Course and speed stay at full weight. It never reseeds the
+    cloud (counted, `fixPinReseedsBlocked`). The road fix gate is unchanged
+    (it can only reject); once the cloud is back on the roads it may reject
+    a down-weighted source's off-road fixes whole, course and speed
+    included (counted, `fixPinRejectedOffRoadDownweighted…`). The pin's own
+    update (or reset) is kept: the following fixes are weak.
+  - **Verdict fixes:** counters only (a hook for N3MF-1).
+  - **Win-back** (offset cleared, never a permanent discard): (1) roads,
+    every 10 s while down-weighted, A vs B on the ring says "fixes"; (2)
+    agreement: Mahalanobis² < 9 against the source's *claimed* σ (σ²·I +
+    the estimate's covariance, not the inflated σ) for at least
+    `fixPinRestoreS` (30 s) and 15 consecutive fixes, a disagreeing fix
+    restarts the run; (3) a new independent pin within χ² 9 of the source's
+    newest fix (claimed σ² + pin σ²).
+  - **Output:** `NavigationEngine.lastFixPinDecision` per pin; replay
+    summary and `metrics.md` lines and the `metrics.json` key
+    `fixPinDecisions` only while a key is on (or a counter is not 0), so
+    key-off outputs are byte-identical. No sidecar or log-format change.
+    Relative metres and bearings only.
+  - **5-seed acceptance** (seeds 1–5, all acceptance drives, roads on and
+    off). Key off = main, byte-identical on every run; 0 false triggers
+    outside drive-10. drive-10, road key: gated error 21.35 % → 1.41 %,
+    pin-2 prior 327 → 22 m (inside its ellipse, 5 of 5 seeds). Margin: pin 1
+    road B = 14.86 m against the 15 m limit, 0.14 m (A = 33.09 m). Two-pin
+    key on drive-10: FAIL criterion, pin 2 stays out of its ellipse (327 m).
+    By construction: the two-pin verdict only decides AT pin 2, so pin 2's
+    own prior is never helped; it helps pins 3+ (priors 167 / 76 / 68 / 86 /
+    170 m against 191 / 135 / 193 / 39 / 212 keys off, no roads; the 436 s
+    pin got worse, see below). With the road key the road fix gate rejects
+    39 of the down-weighted source's fixes per seed (195 over 5 seeds),
+    course and speed included (BACKLOG N3-FIXPIN-GATE).
+  - **Injection study** (2026-10-17; replay only, `replay_nav
+    --fixpin-inject`, no engine or log change). Per case an engine snapshot,
+    the decisions come from the engine itself (a post-hoc recomputation of
+    the road verdict agrees in 4032 of 4032 cases). Sensitivity: every
+    accessory/phone fix in a window is shifted by d ∈ {100, 200, 335, 500} m
+    × 8 bearings, a genuine pin 90 s in. Specificity: genuine fixes, the
+    pin displaced by {30, 75, 150, 300} m × 8 bearings (a mis-tapped pin).
+    Applicable drives: clean-long, clean, drive-8 only, 21 pin times (8 / 5 /
+    8) over straight, junction and parallel roads. manual, manual-3, drive-9
+    and drive-10 after its spoofed span have no fix with a valid speed
+    (or none that is accurate), which the arbiter never judges. Seeds 1–3
+    are nearly identical (the verdict category differs in 2 of 2688 cases),
+    so the numbers are per seed.
+  - **Road key results** (roads on, one pin, offRoad 15 / margin 10).
+    Sensitivity, pin verdicts, all drives:
+
+    | d (m) | 100 | 200 | 335 | 500 | ≥ 200 |
+    |---|---|---|---|---|---|
+    | pin | 50 % | 80 % | 89 % | 86 % | 85 % (428/504) |
+
+    Per drive at d ≥ 200: clean-long 92 %, drive-8 93 %, clean 60 %.
+    Specificity: 2 false pins of 672 per seed, both at clean 415 s, where
+    the genuine ring itself is 52 m from mapped roads (likely unmapped, not
+    proven) and a displacement of 150 m @ 0° or 300 m @ 135° lands it near a
+    road. The other displaced pins give "fixes" or "none" (at 150 and 300 m
+    "fixes" in 79 % and 88 % of cases). Grid, d ≥ 200 sensitivity / false pins of
+    672 per seed: offRoad 12 / margin 5 89 % / 1; 12 / 10 87 % / 1; 15 / 5
+    and 15 / 10 85 % / 2; 20 / 5 and 20 / 10 78 % / 5. No cell reaches 90 %
+    with 0 false pins. Misses at d ≥ 200 (76 of 504): 43 shifted ring still
+    within 15 m of a mapped road (dense grid), 22 ring unmapped even
+    unshifted, 10 not significant, 1 margin. A / B against the limits: the
+    genuine ring's A is ≤ 10 m at every mapped pin time (a gap on that side
+    of 15 m), but the shifted ring's A is a continuum (12–15 m: 27 cases,
+    15–20 m: 57, 20–30 m: 122 of 613), so the 15 m line sits in a crowd
+    (a shift of 100–500 m often lands the ring within 15 m of some other
+    road). B of the shifted-back ring is ≤ 10 m in 581 of 613. When it
+    fires it works: end-of-window error median 4–6 m (clean-long, drive-8)
+    and 49–50 m (clean) against 200–500 m keys off.
+  - **Verdict, `roadFixPinCheck`: measured, not adopted.** Sensitivity 85 %
+    < 90 % at d ≥ 200, 2 false pins, and it fails at offRoad 12 and 20 too.
+    Default stays 0.
+  - **Two-pin results** (`fixPinTwoPinCheck`, roads off; with roads the
+    road key decides first). The one-pin cases cannot trigger it (it decides
+    at a second pin ≥ 300 m and ≥ 45° after the first), so it has its own
+    cases: pin 1 genuine, pin 2 genuine after the first turn meeting the
+    minimums, a genuine pin 3 60 s later. 5 of 21 pin times never meet the
+    minimums (clean-long 2 of 8, clean 3 of 5, drive-8 0 of 8): verdict
+    impossible, no case. Sensitivity (pin at pin 2): 100 % at d ≥ 200
+    (384 of 384 per seed), 92 % at d = 100 (not significant otherwise). Pin
+    3 prior median 8 m against 200–500 m keys off, better by > 5 m in every
+    case; at d = 100 no change (pin-2 χ² 8–11 is below the 25 reset, a tight
+    cloud takes a partial update). Specificity (pin 1 displaced, pin 2 as
+    named): genuine pin 2 0 false of 1536; car-frame variant (extra) 0 of
+    1536; same displacement on the map 0 false at 30 and 75 m and 100 %
+    false at 150 and 300 m (χ² 0.00 between the two pins): two pins
+    displaced alike are indistinguishable from a shifted source. At 300 m
+    the estimate is then held ~298 m off (keys off: 1 m). The key stays
+    off. Removal is not proposed: it adds something over no key (the
+    sensitivity above). Keep-or-drop is the user's call.
+  - **drive-10 436 s** (two-pin, no roads: the 436 s pin's prior is 39 m keys
+    off, 87 m key on). Both runs dead-reckon the same motion from 392 to 436 s (paths
+    234 / 236 m, separation constant at 47 m), and no GNSS-source fix exists
+    after 251 s, so the source is inert there. The 47 m is set by the 391 s
+    pin: keys off, the prior (191 m) lies beyond χ² 25 and resets the cloud
+    onto the pin; key on, the prior (68 m) is closer but overconfident, not
+    significant, and only updates (53 m of the error survives). The keys-off
+    reset has a χ² between 25 and 40: with `manualFixResetChi2` 40 or 60 it
+    disappears and the 435.5 s prior is 194 m (87 m key on). So the
+    regression is the luck of that reset, not an effect of the key; the
+    mechanism is the pin update / reset rule.
+  - **Timing.** The road verdict step on the Mac (drive-10 pin 1, release)
+    was 4.84 ms (key off 0.09 ms), 78 % of it in the coverage
+    point-in-polygon of the ring fixes against the national pack's single
+    ~80 k-vertex ring. `RoadNetwork.covers` now tests the cheapest pack first
+    (an OR over packs, so byte-identical: proof in commit 3e43317): 1.14 ms.
+    On the phone, with no new event kind: a one-off local Release build with
+    `roadFixPinCheck` 1 (never committed), a drive with at least one pin
+    while roads are attached. The sidecar's `configHash` identifies the
+    build; `estimate.msPerStep` / `maxStepMs` and the pin's
+    `prior.maxStepMs` give the verdict step cost.
 - **Local plane re-anchoring** (R13.1-3): the plane's east axis uses each
   point's own cos φ, so far from the anchor it is sheared, and true north tilts
   by about Δλ·sin φ (1.28° at 100 km east, latitude 55°). That would bias
@@ -377,7 +524,7 @@ Tried and rejected (worse on the replay set): moved to [docs/archive/NAVIGATION-
 ## Configuration (defaults)
 
 Every value is in `NavigationConfig`; `replay_nav` prints the full config with
-every result. The table lists the keys without roads; the 18 road keys
+every result. The table lists the keys without roads; the 21 road keys
 (`road…`, used only with `--roads`) and their defaults are in
 [docs/N3_PLAN.md](N3_PLAN.md), "Config keys" (R21.4-4). `roadCorrelationM`
 default 100 (was 30 until 2026-10-14; N3.2 decision, below).
@@ -421,6 +568,11 @@ default 100 (was 30 until 2026-10-14; N3.2 decision, below).
 | manualFixReactionS / manualFixUnknownSpeedMps | 1 / 10 | pin σ grows in quadrature by v × (τ + max(0, t − pressedT)) (N4MF-1); v for an `unknown` speed source |
 | manualFixResetChi2 | 25 | manual reset when every particle is further than this from the pin (χ², 2 dof) |
 | lateManualFixWindowS | 5 | per-particle motion ring for late manual fixes (R14.3-1); also the minimum length of the mean-motion history. 0 disables (mean shift for every pin). Clamped to 0–60 |
+| fixPinTwoPinCheck | 0 | N3-FIXPIN two-pin arbiter: 1 on, 0 off; other values refused |
+| fixPinWindowS | 90 | per-source fix ring for the pin checks, s; (0, 3600], else refused |
+| fixPinTwoPinMinPathM / fixPinTwoPinMinTurnDeg | 300 / 45 | two-pin verdict needs this OBD path and net gyro turn between the pins |
+| fixPinInflation | 1.0 | down-weighted σ = max(σ_claimed, \|offset\|) × this; > 0, else refused |
+| fixPinRestoreS | 30 | win-back by agreement after this long (and 15 consecutive fixes) |
 | resampleESSFraction | 0.5 | resampling threshold |
 | resampleHeadingJitterDeg / resampleScaleJitter | 0.2 / 0.0005 | jitter after resampling |
 | convergedHeadingStdDeg | 10 | `converged` threshold |
@@ -664,6 +816,7 @@ file name. The values here are illustrative:
     "end":    { "latitude": 0.0, "longitude": 0.0, "sigmaM": 30, "source": "…" },
     "points": [ { "t": 100.0, "latitude": 0.0, "longitude": 0.0, "sigmaM": 30, "source": "…" } ],
     "excludePins": [ { "t": 250.125, "reason": "doubtful tap" } ],
+    "excludeFixes": [ { "fromT": 0.0, "toT": 251.0, "reason": "shifted fixes" } ],
     "scoreUntilT": 1500.0,
     "note": "unknown keys are ignored" } }
 ```
@@ -691,6 +844,27 @@ checkpoint, as without a truth `end`. Distance is still to the last input.
 The summary ("Scored until"), `metrics.md` and `metrics.json`
 (`scoreUntilT`, `checkpointsAfterScoreUntil`) record the cutoff and the
 count; a run without it writes none of these keys, so its outputs are
+byte-identical to the build before it.
+
+`excludeFixes` (optional, N3-FIXPIN; session-clock seconds): location fixes
+that are never truth, for a recording whose GNSS fixes are known to be wrong
+while they claim to be clean (drive-10's constant-offset accessory fixes). A
+fix whose event `t` satisfies `fromT` ≤ `t` ≤ `toT` (inclusive, compared in
+whole nanoseconds) is, in every GPS mode, not a clean-fix checkpoint, and not
+a clean fix of the offline road truth (road fixes and their wrong / off /
+unmapped verdicts, and the residuals, which count used and withheld fixes
+alike). It is scoring only: whether the engine receives the fix still
+follows `--gps` and `--hold-out-acc` exactly as without it, so with
+`--gps use` the engine still ingests those fixes. Manual fixes in the range
+are not affected (`excludePins` is for them); the 1 Hz on-road samples are
+the engine's, not fix truth, and are not affected either. Several ranges may
+overlap. A range with `fromT` > `toT`, a missing bound or a non-numeric one
+fails the whole truth file (`replay_nav` stops with status 1, as for any
+malformed truth file); JSON cannot hold a non-finite bound. The summary
+("Fixes excl."), `metrics.md` and `metrics.json` (`fixesExcludedByTruth`:
+the ranges, the location fixes in them, how many of those are clean, and
+how many withheld clean-fix checkpoints they removed) record it; a run
+without it (absent or empty) writes none of these keys, so its outputs are
 byte-identical to the build before it.
 
 ## Live in the app (N4 B)

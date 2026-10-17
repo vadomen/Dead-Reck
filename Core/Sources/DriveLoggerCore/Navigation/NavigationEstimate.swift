@@ -197,6 +197,61 @@ public struct NavigationCounters: Hashable, Sendable, Codable {
     /// Road updates forced by a moving pin.
     public var roadPinAnchors = 0
 
+    // Pin against a GNSS source (N3-FIXPIN). All 0 while `roadFixPinCheck`
+    // and `fixPinTwoPinCheck` are off. Per source: accessory (CarPlay) and
+    // phone GNSS; network fixes are never judged.
+
+    /// Independent pins (not a refinement) whose offset from the prior was
+    /// significant (χ² > 9, 2 dof).
+    public var fixPinSignificantPins = 0
+    /// Road arbiter verdicts at a significant pin: pin (the source is
+    /// off-road and the pin's shift puts it on), fixes (the reverse;
+    /// counted only), none (neither, or too few fixes or path).
+    public var fixPinRoadVerdictPinAccessory = 0
+    public var fixPinRoadVerdictPinPhone = 0
+    public var fixPinRoadVerdictFixesAccessory = 0
+    public var fixPinRoadVerdictFixesPhone = 0
+    public var fixPinRoadVerdictNoneAccessory = 0
+    public var fixPinRoadVerdictNonePhone = 0
+    /// Two-pin arbiter verdicts at a significant pin with a previous
+    /// independent pin for the source: pin (both offsets agree, enough
+    /// path and turn between them) or none.
+    public var fixPinTwoPinVerdictPinAccessory = 0
+    public var fixPinTwoPinVerdictPinPhone = 0
+    public var fixPinTwoPinVerdictNoneAccessory = 0
+    public var fixPinTwoPinVerdictNonePhone = 0
+    /// Times a source was down-weighted (a "pin" verdict).
+    public var fixPinDownweightsAccessory = 0
+    public var fixPinDownweightsPhone = 0
+    /// Fixes whose position update was down-weighted (σ ≥ |offset|,
+    /// tempered); and, of those fixes, course and speed updates used at
+    /// full weight.
+    public var fixPinDownweightedFixesAccessory = 0
+    public var fixPinDownweightedFixesPhone = 0
+    public var fixPinCourseUpdatesDownweightedAccessory = 0
+    public var fixPinCourseUpdatesDownweightedPhone = 0
+    public var fixPinSpeedUpdatesDownweightedAccessory = 0
+    public var fixPinSpeedUpdatesDownweightedPhone = 0
+    /// Restores (win-back) by reason: roads (the road arbiter now says
+    /// "fixes"), agreement (the source's fixes agree with the estimate for
+    /// `fixPinRestoreS` and 15 fixes), pin (a new pin agrees with the source).
+    public var fixPinRestoresByRoadsAccessory = 0
+    public var fixPinRestoresByRoadsPhone = 0
+    public var fixPinRestoresByAgreementAccessory = 0
+    public var fixPinRestoresByAgreementPhone = 0
+    public var fixPinRestoresByPinAccessory = 0
+    public var fixPinRestoresByPinPhone = 0
+    /// Clean-fix reseeds a down-weighted source would have triggered.
+    public var fixPinReseedsBlocked = 0
+    /// Fixes of a down-weighted source the road fix gate rejected
+    /// (unchanged gate; their course and speed are lost with them).
+    public var fixPinRejectedOffRoadDownweightedAccessory = 0
+    public var fixPinRejectedOffRoadDownweightedPhone = 0
+    /// Win-back road re-evaluations run, and capped road distance queries
+    /// of the road arbiter (two per fix inside coverage): work measures.
+    public var fixPinRoadRechecks = 0
+    public var fixPinRoadDistanceQueries = 0
+
     /// The road counters' coding keys: the only keys a comparison against a
     /// pre-N3.2 `metrics.json` may treat as 0 when missing.
     public static let roadCounterKeys = [
@@ -217,6 +272,16 @@ extension NavigationCounters {
         case reanchors, coalescedSteps, macroSteps, inputsRejectedTimeJump
         case roadUpdates, roadUpdatesNoRoad, roadSplits, roadCandidateTests, roadLevelBlocked
         case fixesRejectedOffRoad, roadPinAnchors
+        case fixPinSignificantPins, fixPinRoadVerdictPinAccessory, fixPinRoadVerdictPinPhone
+        case fixPinRoadVerdictFixesAccessory, fixPinRoadVerdictFixesPhone, fixPinRoadVerdictNoneAccessory
+        case fixPinRoadVerdictNonePhone, fixPinTwoPinVerdictPinAccessory, fixPinTwoPinVerdictPinPhone
+        case fixPinTwoPinVerdictNoneAccessory, fixPinTwoPinVerdictNonePhone, fixPinDownweightsAccessory
+        case fixPinDownweightsPhone, fixPinDownweightedFixesAccessory, fixPinDownweightedFixesPhone
+        case fixPinCourseUpdatesDownweightedAccessory, fixPinCourseUpdatesDownweightedPhone, fixPinSpeedUpdatesDownweightedAccessory
+        case fixPinSpeedUpdatesDownweightedPhone, fixPinRestoresByRoadsAccessory, fixPinRestoresByRoadsPhone
+        case fixPinRestoresByAgreementAccessory, fixPinRestoresByAgreementPhone, fixPinRestoresByPinAccessory
+        case fixPinRestoresByPinPhone, fixPinReseedsBlocked, fixPinRoadRechecks
+        case fixPinRoadDistanceQueries, fixPinRejectedOffRoadDownweightedAccessory, fixPinRejectedOffRoadDownweightedPhone
     }
 
     /// Decodes counters written by any earlier build: a counter it did not
@@ -258,5 +323,109 @@ extension NavigationCounters {
         roadLevelBlocked = try value(.roadLevelBlocked)
         fixesRejectedOffRoad = try value(.fixesRejectedOffRoad)
         roadPinAnchors = try value(.roadPinAnchors)
+        fixPinSignificantPins = try value(.fixPinSignificantPins)
+        fixPinRoadVerdictPinAccessory = try value(.fixPinRoadVerdictPinAccessory)
+        fixPinRoadVerdictPinPhone = try value(.fixPinRoadVerdictPinPhone)
+        fixPinRoadVerdictFixesAccessory = try value(.fixPinRoadVerdictFixesAccessory)
+        fixPinRoadVerdictFixesPhone = try value(.fixPinRoadVerdictFixesPhone)
+        fixPinRoadVerdictNoneAccessory = try value(.fixPinRoadVerdictNoneAccessory)
+        fixPinRoadVerdictNonePhone = try value(.fixPinRoadVerdictNonePhone)
+        fixPinTwoPinVerdictPinAccessory = try value(.fixPinTwoPinVerdictPinAccessory)
+        fixPinTwoPinVerdictPinPhone = try value(.fixPinTwoPinVerdictPinPhone)
+        fixPinTwoPinVerdictNoneAccessory = try value(.fixPinTwoPinVerdictNoneAccessory)
+        fixPinTwoPinVerdictNonePhone = try value(.fixPinTwoPinVerdictNonePhone)
+        fixPinDownweightsAccessory = try value(.fixPinDownweightsAccessory)
+        fixPinDownweightsPhone = try value(.fixPinDownweightsPhone)
+        fixPinDownweightedFixesAccessory = try value(.fixPinDownweightedFixesAccessory)
+        fixPinDownweightedFixesPhone = try value(.fixPinDownweightedFixesPhone)
+        fixPinCourseUpdatesDownweightedAccessory = try value(.fixPinCourseUpdatesDownweightedAccessory)
+        fixPinCourseUpdatesDownweightedPhone = try value(.fixPinCourseUpdatesDownweightedPhone)
+        fixPinSpeedUpdatesDownweightedAccessory = try value(.fixPinSpeedUpdatesDownweightedAccessory)
+        fixPinSpeedUpdatesDownweightedPhone = try value(.fixPinSpeedUpdatesDownweightedPhone)
+        fixPinRestoresByRoadsAccessory = try value(.fixPinRestoresByRoadsAccessory)
+        fixPinRestoresByRoadsPhone = try value(.fixPinRestoresByRoadsPhone)
+        fixPinRestoresByAgreementAccessory = try value(.fixPinRestoresByAgreementAccessory)
+        fixPinRestoresByAgreementPhone = try value(.fixPinRestoresByAgreementPhone)
+        fixPinRestoresByPinAccessory = try value(.fixPinRestoresByPinAccessory)
+        fixPinRestoresByPinPhone = try value(.fixPinRestoresByPinPhone)
+        fixPinReseedsBlocked = try value(.fixPinReseedsBlocked)
+        fixPinRoadRechecks = try value(.fixPinRoadRechecks)
+        fixPinRoadDistanceQueries = try value(.fixPinRoadDistanceQueries)
+        fixPinRejectedOffRoadDownweightedAccessory = try value(.fixPinRejectedOffRoadDownweightedAccessory)
+        fixPinRejectedOffRoadDownweightedPhone = try value(.fixPinRejectedOffRoadDownweightedPhone)
+    }
+}
+
+extension NavigationCounters {
+    /// Every N3-FIXPIN counter's key, in declaration order.
+    public static let fixPinCounterKeys = [
+        "fixPinSignificantPins",
+        "fixPinRoadVerdictPinAccessory",
+        "fixPinRoadVerdictPinPhone",
+        "fixPinRoadVerdictFixesAccessory",
+        "fixPinRoadVerdictFixesPhone",
+        "fixPinRoadVerdictNoneAccessory",
+        "fixPinRoadVerdictNonePhone",
+        "fixPinTwoPinVerdictPinAccessory",
+        "fixPinTwoPinVerdictPinPhone",
+        "fixPinTwoPinVerdictNoneAccessory",
+        "fixPinTwoPinVerdictNonePhone",
+        "fixPinDownweightsAccessory",
+        "fixPinDownweightsPhone",
+        "fixPinDownweightedFixesAccessory",
+        "fixPinDownweightedFixesPhone",
+        "fixPinCourseUpdatesDownweightedAccessory",
+        "fixPinCourseUpdatesDownweightedPhone",
+        "fixPinSpeedUpdatesDownweightedAccessory",
+        "fixPinSpeedUpdatesDownweightedPhone",
+        "fixPinRestoresByRoadsAccessory",
+        "fixPinRestoresByRoadsPhone",
+        "fixPinRestoresByAgreementAccessory",
+        "fixPinRestoresByAgreementPhone",
+        "fixPinRestoresByPinAccessory",
+        "fixPinRestoresByPinPhone",
+        "fixPinReseedsBlocked",
+        "fixPinRoadRechecks",
+        "fixPinRoadDistanceQueries",
+        "fixPinRejectedOffRoadDownweightedAccessory",
+        "fixPinRejectedOffRoadDownweightedPhone",
+    ]
+
+    /// Whether any N3-FIXPIN counter is not 0.
+    public var anyFixPin: Bool {
+        fixPinSignificantPins != 0 || fixPinRoadVerdictPinAccessory != 0 || fixPinRoadVerdictPinPhone != 0
+            || fixPinRoadVerdictFixesAccessory != 0
+            || fixPinRoadVerdictFixesPhone != 0
+            || fixPinRoadVerdictNoneAccessory != 0
+            || fixPinRoadVerdictNonePhone != 0
+            || fixPinTwoPinVerdictPinAccessory != 0
+            || fixPinTwoPinVerdictPinPhone != 0
+            || fixPinTwoPinVerdictNoneAccessory != 0
+            || fixPinTwoPinVerdictNonePhone != 0
+            || fixPinDownweightsAccessory != 0
+            || fixPinDownweightsPhone != 0
+            || fixPinDownweightedFixesAccessory != 0
+            || fixPinDownweightedFixesPhone != 0
+            || fixPinCourseUpdatesDownweightedAccessory != 0
+            || fixPinCourseUpdatesDownweightedPhone != 0
+            || fixPinSpeedUpdatesDownweightedAccessory != 0
+            || fixPinSpeedUpdatesDownweightedPhone != 0
+            || fixPinRestoresByRoadsAccessory != 0
+            || fixPinRestoresByRoadsPhone != 0
+            || fixPinRestoresByAgreementAccessory != 0
+            || fixPinRestoresByAgreementPhone != 0
+            || fixPinRestoresByPinAccessory != 0
+            || fixPinRestoresByPinPhone != 0
+            || fixPinReseedsBlocked != 0
+            || fixPinRoadRechecks != 0
+            || fixPinRoadDistanceQueries != 0
+            || fixPinRejectedOffRoadDownweightedAccessory != 0
+            || fixPinRejectedOffRoadDownweightedPhone != 0
+    }
+
+    /// Adds 1 to the accessory or phone counter of a pair.
+    mutating func addFixPin(_ accessory: WritableKeyPath<NavigationCounters, Int>,
+                            _ phone: WritableKeyPath<NavigationCounters, Int>, _ kind: FixPinSource.Kind) {
+        self[keyPath: kind == .accessory ? accessory : phone] += 1
     }
 }

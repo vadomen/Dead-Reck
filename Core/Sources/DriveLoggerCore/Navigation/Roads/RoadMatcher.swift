@@ -385,6 +385,46 @@ struct RoadMatcher: Sendable {
         return false
     }
 
+    /// The distance from plane point p to the nearest segment, of any
+    /// level, heading-compatible with `course` (radians, plane frame) when
+    /// one is given, capped at `cap` metres: `cap` when none is nearer
+    /// (N3-FIXPIN road arbiter). Same cells, gate and geometry as
+    /// `anyCompatibleSegment`, so a distance ≤ r here is exactly
+    /// `anyCompatibleSegment(radius: r)` being true. The minimum over
+    /// segments does not depend on visiting order.
+    mutating func nearestCompatibleDistance(
+        east px: Double, north py: Double, cap: Double, course: Double?, cosHeadingGate: Double,
+        plane: LocalTangentPlane
+    ) -> Double {
+        let p = plane.geodetic(east: px, north: py)
+        let grid = network.grid
+        let f = grid.frame(latitude: p.latitude, longitude: p.longitude)
+        let reach = cap * 1.01 + 1
+        let lo = grid.cell(x: f.x - reach, y: f.y - reach), hi = grid.cell(x: f.x + reach, y: f.y + reach)
+        var best = cap * cap
+        let sinC = course.map(sin), cosC = course.map(cos)
+        var cy = lo.cy
+        while cy <= hi.cy {
+            var cx = lo.cx
+            while cx <= hi.cx {
+                let c = planeCell(cx: cx, cy: cy, plane: plane)
+                for j in 0..<c.count {
+                    if let sinC, let cosC {
+                        let dot = sinC * c.ux[j] + cosC * c.uy[j]
+                        guard c.oneway[j] ? dot >= cosHeadingGate : abs(dot) >= cosHeadingGate else { continue }
+                    }
+                    let n = Self.nearest(px: px, py: py, ax: c.ax[j], ay: c.ay[j], ux: c.ux[j], uy: c.uy[j], length: c.length[j])
+                    if n.distanceSquared < best { best = n.distanceSquared }
+                }
+                if cx == Int32.max { break }
+                cx += 1
+            }
+            if cy == Int32.max { break }
+            cy += 1
+        }
+        return best.squareRoot()
+    }
+
     // MARK: Cross-track update (Step 4)
 
     /// The road-frame update of one particle: across the road (c, along h)
