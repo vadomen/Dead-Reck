@@ -290,3 +290,13 @@ Reviewer: one fresh reviewer (opus), checks 1, 3, 4, 6–11, 13. Author mutation
 | R44.1-2 | MAJOR | `ELMSession.swift:1173`: B1-1's "selection only, not the ATAT comparison" limit is untested; default `retriesFirstTimeout` → `true` passes all ELMSession tests, so ATAT2 could be kept after a timed-out reply. | CONFIRMED, FIXED | `ELMSessionAdaptiveTimingTests.atat2FirstSampleTimeoutNotRetried`. |
 
 Tests: `cd Core && swift test` 940 tests in 124 suites passed, 36 known issues (KI-1). The fixer's mutation runs were blocked by the permission classifier; round 2 checks them.
+
+### Round 2
+
+Reviewer: one fresh reviewer (sonnet), re-review of 2a8f935..abb00d7: both fixer mutations run (no permission denial for the reviewer) and killed (`supportedPIDsFaultWithoutPrimaryFails` on all 4 cases; `atat2FirstSampleTimeoutNotRetried` with 7 issues); both tests assert what their names claim. Result: 0 BLOCKER / 0 MAJOR / 0 MINOR.
+
+Tests: unchanged since round 1 (940 passed, 36 known issues).
+
+### Run 44 summary
+
+2 rounds; 2 fixed (R44.1-1, R44.1-2), 0 rejected, 0 deferred.
