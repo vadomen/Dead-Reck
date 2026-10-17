@@ -310,6 +310,54 @@ struct RoadPackPropertyTests {
         #expect(NavigationSeed.hex(pack.gridID) == NavigationSeed.hex(RoadFixture.grid().gridID))
     }
 
+    /// R16.1-6: the town fixture's golden has no `COVR` and `osmTimestamp`
+    /// 0, so a matched writer/reader change to the coverage layout or to
+    /// header bytes 48–55 would pass it. This one is built with both: a
+    /// two-ring coverage (outer and hole, so ring count, per-ring count and
+    /// lat/lon order are all in the bytes) and a non-zero timestamp.
+    /// Pinned like `goldenContentHash`: a change needs a new `formatVersion`
+    /// or `RoadPackBuild.builderVersion`.
+    static let goldenCoveredContentHash: UInt64 = 0x4FBA_65A7_69FB_78F6
+    static let goldenCoveredFileSize = 10240
+    static let goldenCoveredTimestamp: Int64 = 1_650_000_123
+
+    @Test("R16.1-6: golden contentHash of the town fixture with coverage and a non-zero osmTimestamp; header bytes 48–55 and the COVR layout pinned")
+    func goldenHashWithCoverageAndTimestamp() throws {
+        let outer = [RoadFixture.point(-800, -800), RoadFixture.point(800, -800), RoadFixture.point(800, 800), RoadFixture.point(-800, 800)]
+        let hole = [RoadFixture.point(-100, -100), RoadFixture.point(-100, 100), RoadFixture.point(100, 0)]
+        var parameters = RoadPackBuild.Parameters(classes: RoadGraphBuilder.regionClasses, grid: RoadFixture.grid())
+        parameters.coverage = [outer, hole]
+        parameters.osmTimestamp = Self.goldenCoveredTimestamp
+        parameters.sourceName = "synthetic.osm.pbf"
+        let data = try RoadPackBuild.build(opl: Data(Self.townLines().joined(separator: "\n").utf8), parameters: parameters).data
+        let pack = try RoadPack(data: data)
+        #expect(NavigationSeed.hex(pack.contentHash) == NavigationSeed.hex(Self.goldenCoveredContentHash))
+        #expect(pack.fileSize == Self.goldenCoveredFileSize)
+        // The layout the hash pins, spelled out: the flag word (bytes 12–15),
+        // the timestamp (48–55, little-endian) and COVR's u32 ring count,
+        // then per ring a u32 point count and (latE7, lonE7) i32 pairs.
+        let bytes = [UInt8](data)
+        func u32(_ at: Int) -> UInt32 { (0..<4).reduce(UInt32(0)) { $0 | UInt32(bytes[at + $1]) << (8 * $1) } }
+        func i32(_ at: Int) -> Int32 { Int32(bitPattern: u32(at)) }
+        let timestamp = (0..<8).reduce(UInt64(0)) { $0 | UInt64(bytes[48 + $1]) << (8 * $1) }
+        #expect(Int64(bitPattern: timestamp) == Self.goldenCoveredTimestamp)
+        #expect(pack.osmTimestamp == Self.goldenCoveredTimestamp)
+        #expect(u32(12) == RoadPackFormat.flagCoverage)
+        let covr = try #require(pack.sections.first { $0.name == "COVR" })
+        #expect(covr.length == 4 + (4 + 8 * outer.count) + (4 + 8 * hole.count))
+        #expect(u32(covr.offset) == 2)
+        var at = covr.offset + 4
+        for ring in [outer, hole] {
+            #expect(u32(at) == UInt32(ring.count))
+            at += 4
+            for p in ring {
+                #expect(i32(at) == p.latE7 && i32(at + 4) == p.lonE7)
+                at += 8
+            }
+        }
+        #expect(try pack.coverageRings() == [outer, hole])
+    }
+
     @Test("contentHash is FNV-1a 64 of the file with bytes 16–23 as zero; roadSetHash is over the hashes in ascending order")
     func hashDefinition() throws {
         let data = try RoadFixture.buildData(Self.townLines())

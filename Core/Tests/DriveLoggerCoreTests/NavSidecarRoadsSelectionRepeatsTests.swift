@@ -151,6 +151,27 @@ struct NavSidecarRoadsSelectionRepeatsTests {
         #expect(folded.count == 2 && folded[1].hasSuffix("(and 1 more like it to t 3.0 s)"), "\(folded)")
     }
 
+    /// R34.1-1: `unusableRequest` and `noneCovering` attempts can have the
+    /// same candidates (every one `covering: false`) and no packs or reason,
+    /// so only the outcome tells them apart. Folding them would lose the
+    /// unusable request from the sidecar and from `--compare`.
+    @Test("R34.1-1: noneCovering, unusableRequest with the same candidates, noneCovering: three lines and three compare rows")
+    func outcomeAloneSeparatesAttempts() {
+        let first = Self.line(1, inputs: 10)
+        let unusable = Self.line(2, inputs: 20, outcome: .unusableRequest)
+        let last = Self.line(3, inputs: 30)
+        #expect(unusable.candidates == first.candidates && unusable.packs == first.packs && unusable.reason == first.reason)
+        #expect(!unusable.isRepeat(of: first) && !first.isRepeat(of: unusable) && last.isRepeat(of: first))
+        var log = NavSidecar.RoadsSelectionLog()
+        #expect(log.record(first) == [first])
+        #expect(log.record(unusable) == [unusable])
+        #expect(log.record(last) == [last])
+        #expect(log.flush() == nil && log.attempts == 3 && log.lines == 3)
+        let rows = SidecarComparison.selectionRows([first, unusable, last])
+        #expect(rows.count == 3 && rows.allSatisfy { !$0.contains("more like it") }, "\(rows)")
+        #expect(rows[1].contains("unusableRequest"), "\(rows)")
+    }
+
     @Test("alwaysWrite (an attach) writes a repeat too, after the pending repeats")
     func alwaysWrite() {
         var log = NavSidecar.RoadsSelectionLog()
