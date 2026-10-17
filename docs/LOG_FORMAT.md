@@ -14,7 +14,8 @@ Current version: **3** (`LogFormatVersion.current`). Readable: **1, 2, 3**.
   `Documents/logs` (Files app → On My iPhone → DriveLogger → logs).
 - Encoding: UTF-8 JSON Lines, one object per line, `\n`-terminated.
 - Compression: gzip, written as a **sequence of gzip members**, one per flush
-  (at least every 2 s, on stop, on entering background, on memory warning;
+  (at least every 2 s, on stop, on entering background, on memory warning,
+  when iOS terminates the app while recording;
   no member is built from more than 8 MiB of JSON — a larger backlog is split
   at line ends). Concatenated members are a standard gzip stream: `gunzip`,
   `zcat` and Python's `gzip` module read the file as one.
@@ -424,7 +425,11 @@ the last replayed `adapter` row is the plan being polled at Start.
   that don't continue from it; readers must not assume the replay
   describes a live link.
 - The first `stats` window starts at the `start` row; these rows are
-  counted in it (`counts`, `timeouts`), not in a window of their own.
+  counted in it (`counts`, `timeouts`), not in a window of their own. They
+  reach the writer in one burst, so they show in that window's
+  `queueDepthMax`: a full initialisation (selection and the `ATAT1`/`ATAT2`
+  comparison) is about 45–55 rows, below the 200-event floor of the
+  writer-queue `error` row (`lifecycle`), so the replay alone never trips it.
 - Recordings made before M4 begin with `poll` rows instead. Recordings made
   between M4 and the M4 follow-up start the replay with `connecting` and
   `discovering`.
@@ -464,7 +469,7 @@ What the app writes (all at `clock.now()` when written):
 | `roadPacks` | `<n> found, <m> verified` plus `; <file>: <reason>` per refused file (names sorted), e.g. `2 found, 1 verified; old.roadpack: <reason>`; `none in Documents/RoadPacks` when the folder is empty or missing | Once per recording (app builds with a road-pack library), when the scan started at Start finishes while the recording is still running; no row if it finishes after Stop. Carries no coordinates. Informational, not an error. |
 | `error` | `no background location session; recording may pause while locked` | The source that keeps the app running with the phone locked (`referenceLocation`, holding a background location session) is unavailable or did not start at start — location denied or restricted — or became unavailable during the recording (an authorisation change, or a `kCLErrorDenied` while authorisation reads denied or restricted; never for a `kCLErrorDenied` while authorised). At most once per recording; written right after the source rows at start, or when the loss is noticed. The recording goes on; while the phone was locked, rows may stop and resume (look for a jump in `stats` `t`). Never written by simulator builds, which have no such source. |
 | `error` | `<source>: <error>` | A sensor reported an error while running; once per distinct error per source. Also `rawIMU: magnetometer unavailable; recording accel and gyro only`, and `referenceLocation: authorization denied while recording; no more reference fixes` (or `restricted`). Since M4 a CoreLocation error carries the authorisation read when it arrived: `referenceLocation: <error> (authorizationStatus=<status>, accuracyAuthorization=<accuracy>)`, e.g. `referenceLocation: Error Domain=kCLErrorDomain Code=1 "(null)" (authorizationStatus=authorizedWhenInUse, accuracyAuthorization=full)`. `Code=1` (`kCLErrorDenied`) can be transient: the source keeps running, and only when authorisation reads `denied`/`restricted` does it lead to the background-risk row. |
-| `error` | `writer queue peaked at <n> events, more than 2 s of data (<m>)` | The writer fell behind in that `stats` window (written after the `stats` row). |
+| `error` | `writer queue peaked at <n> events, more than 2 s of data (<m>)` | The writer fell behind in that `stats` window: its `queueDepthMax` `<n>` was above `max(<m>, 200)`, where `<m>` = ⌈2 × (sum of `counts`) / `windowS`⌉ is 2 s of that window's data. The **200-event floor** keeps a window with little data (no sensors, a short window) from alarming on a small burst; `<m>` may be below 200. Written after its periodic `stats` row and before the next row the recorder itself writes (sensor or link rows may sit between them); never for the final `stats` row. Core: `WriterQueueAlarm`. |
 | `error` | `write failed: <description>` | A write failure (below). |
 | `lowDiskSpace` | see below | Free space crossed a threshold. |
 | `stop` | `user` or `lowDiskSpace` | The normal stop path, followed by the final `stats` row and nothing else. |
@@ -478,6 +483,15 @@ Stop reasons (`detail` of `stop`): `user` (the user stopped the recording) or
 in Core (`LifecycleSample.StopReason`). Every sensor source is stopped before
 the `stop` row is written, so no sensor or link row follows it; the final
 `stats` row is the last line of a cleanly stopped file.
+
+**App terminated while recording** (iOS delivers `willTerminate`, e.g. the
+app swiped away from the app switcher while recording in the background):
+the recorder flushes everything recorded so far and waits for it (up to 3 s)
+before the process ends. No row is written and no stop reason exists for
+it: the file ends like a crash — no `stop` row, no final `stats` row — but
+with its last member complete. A process that is killed without
+`willTerminate` (suspended, crashed, out of memory) can still lose up to the
+last 2 s.
 
 A **write failure** (`ENOSPC`, an I/O error, a failed `fsync`) ends the
 recording: every sensor source is stopped, then an `error` row with detail
@@ -532,7 +546,7 @@ the window.
 | `gaps` | {kind: int} | Intervals > 50 ms in `motion`, `accel`, `gyro`, in timestamp order, including the stream's last sample from the previous window. Always has all three keys. |
 | `maxGapMs` | {kind: double}, ms | Longest interval per kind; only kinds with at least one interval. |
 | `timeouts` | int | `elm` rows with outcome `timeout` and no `rx` — one per command that timed out (late and unsolicited rows excluded). |
-| `queueDepthMax` | int, events | Peak writer queue depth in the window: events handed to the writer and not yet encoded, measured at every hand-over (not sampled), starting from the depth carried over from the previous window. A peak above 2 s of data is also written as a `lifecycle` `error` row. |
+| `queueDepthMax` | int, events | Peak writer queue depth in the window: events handed to the writer and not yet encoded, measured at every hand-over (not sampled), starting from the depth carried over from the previous window. A peak above `max(2 s of data, 200)` in a periodic window is also written as a `lifecycle` `error` row (above). |
 | `dropped` | int | Events refused in the window. Only possible after the file was closed; always 0 in a healthy file. |
 | `bytesWritten` | int, bytes | Compressed file size so far. |
 
@@ -560,7 +574,7 @@ was the confirm delay, and the recorder refused a fix above 10 km/h.
 | `pressedT` | int, ns | The tap time; equal to `t`. Always present. |
 | `mapSpanM` | double, m | Visible map span at the tap, before the double tap's own zoom: how precisely the point could be placed. At most 300 m for a new row. Optional. |
 | `obdSpeedKmh` | double, km/h | Last vehicle speed (PID 0x0D) from the primary ECU (`7E8`) at the tap. Absent when the link had none. Present even when too old to count as the fix's speed. |
-| `obdSpeedT` | int, ns | When that reply arrived: the `t` of its `obd` row. Present exactly when `obdSpeedKmh` is. `t − obdSpeedT` is the speed's age. |
+| `obdSpeedT` | int, ns | When that reply arrived: the `t` of its `obd` row in this file. Present exactly when `obdSpeedKmh` is. `t − obdSpeedT` is the speed's age. No speed is carried over from before Start: a fix before the recording's first speed reading has no OBD speed. Recordings made before the 2026-10-17 backlog sweep (M8.1-3) can carry a pre-Start reading: an `obdSpeedT` with no `obd` row, possibly negative. |
 | `gpsSpeedKmh` | double, km/h | Speed of the latest reference fix at the tap, whenever it had `speed ≥ 0`, however old or inaccurate. **Reference only**: it is the fix's speed only when `speedSource` is `gps`. |
 | `speedSource` | string | Which speed describes the fix: `obd`, `gps` or `unknown`. Always present. |
 | `gateSpeedKmh` | double, km/h | The speed `speedSource` names: the speed of the car at the tap. Absent when `speedSource` is `unknown`. The name is from the 10 km/h gate older builds applied. |
@@ -652,6 +666,23 @@ press-to-confirm delay, coordinates, note). `--csv` writes one CSV per kind
 (`manualFix.csv` has every field): `t` in integer nanoseconds, empty cell
 for an absent field, RFC 4180 quoting, compact JSON for `stats.counts` and for
 unknown kinds. `--strict` stops at the first damaged member or malformed line.
+
+- `Duration` runs from the `start` row to the last `t` (from the first row in
+  a file without a `start` row). Rows stamped before the `start` row — the
+  start-up init, a pre-dated CoreMotion batch — are reported on a separate
+  `Pre-Start` line.
+- The `Stats rows` means (`motionHz`, `obdHz`) are weighted by `windowS`; the
+  minimums leave out windows shorter than 1 s (the remainder the final
+  `stats` row closes, often milliseconds) unless every window is that short.
+- Health warnings: a truncated tail, damaged members, skipped lines, a read
+  error, dropped events, no `stats` rows in a v2 recording more than 30 s
+  past its `start` row, gaps over 50 ms in `motion`/`accel`/`gyro`,
+  out-of-order rows in more than 1 % of a kind's rows, OBD replies stamped
+  before their request, `lifecycle` `error` rows. Out-of-order `link` and
+  `elm` rows are not a warning: several emitters (BLE layer, ELM session, an
+  old session finishing after a reconnect) write them in emission order, so
+  a reconnect reorders a few by design. The table still counts them.
+
 Exit codes: `0` the file was read (warnings such as truncation, damage or
 skipped lines are printed, not fatal), `1` unreadable file, `2` usage error.
 

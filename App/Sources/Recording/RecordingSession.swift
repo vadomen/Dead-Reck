@@ -44,7 +44,9 @@ enum RecordingStartBlocker: Error, Hashable, Sendable {
 /// Live numbers for the dashboard. Display only — never written to the log.
 struct LiveStatus: Hashable, Sendable {
     /// Latest vehicle speed from the engine ECU (`7E8`), any time the link
-    /// polls — before a recording too. nil when the link isn't connected.
+    /// polls — before a recording too. nil when the link isn't connected,
+    /// and from Start until the recording's first speed reading (M8.1-3: a
+    /// manual fix's `obdSpeedT` must be an `obd` row of its own file).
     var obdSpeedKmh: Double?
     /// Speed of the latest reference fix, while recording. Reference only,
     /// never written. From any `LiveReferenceFixReporting` source: the
@@ -168,10 +170,11 @@ struct RecordingNavigationFeed: Sendable {
 /// `foreground`, `memoryWarning`, `thermalState` (at start when not nominal,
 /// and on every change), `protectedDataUnavailable`, `lowDiskSpace`, `error`
 /// (a source that is unavailable or failed to start, no background location
-/// session, a write failure, a writer queue backlog over 2 s of data), and a
-/// `stats` row every `statsInterval` (10 s) plus a final one after the `stop`
-/// row. Flushes on entering the background (inside a background task) and on
-/// memory warnings. Keeps the screen awake (idle timer off) from start until
+/// session, a write failure, a writer queue backlog over `max(2 s of data,
+/// 200)`), and a `stats` row every `statsInterval` (10 s) plus a final one
+/// after the `stop` row. Flushes on entering the background (inside a
+/// background task), on memory warnings, and on `willTerminate` (waiting for
+/// it; no row). Keeps the screen awake (idle timer off) from start until
 /// the recording ends.
 ///
 /// **Ending a recording.** Two paths, each run once however many callers
@@ -350,7 +353,7 @@ final class RecordingSession {
     @ObservationIgnored private(set) var consumedLinkEvents = 0
     /// `replyUptime` of the reading behind `live.obdSpeedKmh`: the OBD age
     /// in the `manualFix` row's `obdSpeedT`. Set and
-    /// cleared with it.
+    /// cleared with it, at Start too (M8.1-3).
     @ObservationIgnored private var obdSpeedUptime: Double?
 
     /// `detail` of the `lifecycle` `error` row written when a recording has
@@ -518,7 +521,11 @@ final class RecordingSession {
         ownsStartingFlag = false
         currentFile = url
         lastStopReason = nil
-        live = LiveStatus(obdSpeedKmh: live.obdSpeedKmh, obdHz: live.obdHz, availableDiskBytes: nil)
+        // No speed carried over from before Start (M8.1-3): a manual fix's
+        // `obdSpeedT` names an `obd` row, and pre-Start readings aren't in
+        // this file. The recording's first reading sets it again.
+        live = LiveStatus(obdSpeedKmh: nil, obdHz: live.obdHz, availableDiskBytes: nil)
+        obdSpeedUptime = nil
         state = .calibrating
         setIdleTimerDisabled(true)
         onNavigationFeed?(RecordingNavigationFeed(
@@ -725,6 +732,30 @@ final class RecordingSession {
         guard let rec = recording, rec.isWritable else { return }
         rec.record(LifecycleSample(.memoryWarning))
         flushInBackgroundTask(rec, reason: "memoryWarning")
+    }
+
+    /// Longest `handleWillTerminate` waits for its flush. iOS allows about
+    /// 5 s after `willTerminate` before it kills the app.
+    nonisolated static let willTerminateFlushTimeout: DispatchTimeInterval = .seconds(3)
+
+    /// `UIApplication.willTerminateNotification` (R4.1-4), e.g. the app
+    /// swiped away while recording in the background: flushes everything
+    /// recorded so far and **returns only when it is on disk** (or after
+    /// `willTerminateFlushTimeout`), because the process ends when this
+    /// returns. Flush only: no row is written and the recording isn't
+    /// stopped, so the file ends like a crash (no `stop` row, no final
+    /// `stats` row) but without losing the last unflushed seconds. Blocks
+    /// the main thread; the writer runs off it.
+    func handleWillTerminate() {
+        guard let rec = recording else { return }
+        let writer = rec.writer
+        let flushed = DispatchSemaphore(value: 0)
+        Task.detached {
+            // A throw is this call's result, not a report (rule 4).
+            try? await writer.flush()
+            flushed.signal()
+        }
+        _ = flushed.wait(timeout: .now() + Self.willTerminateFlushTimeout)
     }
 
     // MARK: - Stop
@@ -957,8 +988,10 @@ final class RecordingSession {
         rec.liveTimer?.cancel()
     }
 
-    /// Writes one periodic `stats` row, and an `error` row if the writer
-    /// queue held more than 2 s of data at its peak (docs/PLAN.md §4.3).
+    /// Writes one periodic `stats` row, then an `error` row if the writer
+    /// queue's peak in that window was above `max(2 s of data, 200)`
+    /// (`WriterQueueAlarm`; docs/LOG_FORMAT.md). Not on the stop path: the
+    /// final `stats` row is the last row.
     private func writeStatsRow(_ rec: ActiveRecording) async {
         guard recording === rec, rec.isWritable else { return }
         let end = rec.clock.now()
@@ -966,15 +999,8 @@ final class RecordingSession {
         guard rec.isWritable else { return }
         rec.sink.record(LogEvent(timestamp: end, payload: .stats(sample)))
         live.motionHz = sample.motionHz
-        let total = sample.counts.values.reduce(0, +)
-        if sample.windowS > 0 {
-            let twoSeconds = Int((2 * Double(total) / sample.windowS).rounded(.up))
-            if sample.queueDepthMax > max(twoSeconds, 200) {
-                rec.record(LifecycleSample(
-                    .error,
-                    detail: "writer queue peaked at \(sample.queueDepthMax) events, more than 2 s of data (\(twoSeconds))"
-                ))
-            }
+        if let detail = WriterQueueAlarm.detail(for: sample) {
+            rec.record(LifecycleSample(.error, detail: detail))
         }
     }
 
@@ -1140,8 +1166,14 @@ final class RecordingSession {
 
     private func handleLinkEvent(_ event: LinkEvent) {
         consumedLinkEvents += 1
+        // Delivered before Start but handled after it (M4 dedup contract):
+        // replayed already, or not part of the recording.
+        let skipped = recording.map { $0.acceptsLinkEvents && $0.linkEventsToSkip > 0 } ?? false
         switch event {
         case .session(.reading(let reading)) where reading.measurement.pid == .vehicleSpeed && reading.isFromPrimaryECU:
+            // A skipped reading has no `obd` row in this file, so it can't be
+            // a manual fix's speed (M8.1-3).
+            guard !skipped else { break }
             live.obdSpeedKmh = reading.measurement.value
             obdSpeedUptime = reading.replyUptime
         case .session(.pollRate(let hz, _)):
@@ -1154,9 +1186,7 @@ final class RecordingSession {
             break
         }
         guard let rec = recording, rec.acceptsLinkEvents else { return }
-        if rec.linkEventsToSkip > 0 {
-            // Delivered before Start: replayed already, or not part of the
-            // recording (M4 dedup contract).
+        if skipped {
             rec.linkEventsToSkip -= 1
             return
         }
@@ -1182,6 +1212,14 @@ final class RecordingSession {
                 guard let rec = self?.recording, rec.isWritable else { return }
                 rec.record(LifecycleSample(.protectedDataUnavailable, detail: "device locked; recording continues (files are completeUntilFirstUserAuthentication)"))
             }
+        })
+        // `queue: nil`: run on the posting thread (UIKit posts it on the main
+        // thread) before `post` returns, so the flush is done before the
+        // process can end.
+        observers.append(center.addObserver(
+            forName: UIApplication.willTerminateNotification, object: nil, queue: nil
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.handleWillTerminate() }
         })
     }
 

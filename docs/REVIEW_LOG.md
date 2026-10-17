@@ -325,3 +325,21 @@ Tests: unchanged since round 1 (945 passed, 36 known issues).
 ### Run 45 summary
 
 2 rounds; 2 fixed (R45.1-1, R45.1-2), 0 rejected, 0 deferred.
+
+## Run 46: backlog sweep sensors batch 1 (06435c6..cac994d, branch sweep-sensors), started 2026-10-17
+
+Commits: cac994d M2-S4 link/elm reordering not warned, M2-S5 weighted stats means and short final window skipped, M6.1-2 duration from the start row, R4.1-8 writer-queue alarm in Core with tests, M6.1-5 proof test (no fix), M8.1-3 live OBD speed cleared at Start, R4.1-4 bounded blocking flush on willTerminate.
+
+### Round 1
+
+Reviewer: one fresh reviewer (opus), checks 2, 3, 6–11, 13; inspect_log run on a real drive and the init replay measured on five (46 rows, first-window queue peak 43–47, under the 200 floor). willTerminate wait bounded (3 s), no main-actor hop on the flush path, throw still signals. Mutations: author's floor mutation re-run and killed; no-stats check from `firstT` killed; Pre-Start `<` → `<=` survived. Result: 0 BLOCKER / 0 MAJOR / 1 MINOR.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R46.1-1 | MINOR | `RecordingAnalysis.swift:418`: Pre-Start boundary untested (`<` → `<=` survives); a regression prints "Pre-Start 0.000 s" for every file whose start row is first. | DEFERRED | docs/BACKLOG.md |
+
+Tests: `cd Core && swift test` 955 passed, 36 known issues (KI-1); simulator build OK; App suites 42/42 (author).
+
+### Run 46 summary
+
+1 round; 0 fixed, 0 rejected, 1 MINOR deferred (R46.1-1).
