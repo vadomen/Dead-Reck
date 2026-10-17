@@ -184,3 +184,22 @@ Tests: Core not re-run: no file outside docs/, .claude/ and CLAUDE.md changed (c
 ### Run 38 summary
 
 1 round; 0 fixed, 0 rejected, 1 MINOR deferred (R38.1-1).
+
+## Run 39: R38.1-1 fix and release plan (879ef28..0c1d19e), started 2026-10-17
+
+Commits: 1e7df00 reviewer.md check 13: mutation and bit-identical commands from the main tree root, `--package-path` instead of `cd` (R38.1-1 closed); 0c1d19e docs/RELEASE_PLAN.md (English, scrubbed release plan) and WORKFLOW App Store line pointing at it.
+
+### Round 1
+
+Reviewer: one fresh reviewer (sonnet), lite review, checks 10 and 11 plus the check-13 commands against the settings allow/ask/deny rules and RELEASE_PLAN.md against the repo (site/ pages, icon and privacy-page status, UX-1/UX-8, N3.4, project.yml and Info.plist keys, required-reason APIs). Privacy clean; no contradictions found. Result: 0 BLOCKER / 0 MAJOR / 2 MINOR.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R39.1-1 | MINOR | `.claude/agents/reviewer.md:81` says "`cd <root>` once"; the shell resets its cwd after a `cd` outside the session's project directory, so a reviewer started in `.claude/worktrees/<task>` falls back to the worktree and `../dead-reck-mutants` resolves wrongly again. Fix: start each mutation/bit-identical call with `cd <root> && `, or check `pwd` first. | DEFERRED | backlog. |
+| R39.1-2 | MINOR | `docs/RELEASE_PLAN.md:148`: "`site/publish_packs.sh` ... it asks before running"; the script has no prompt of its own (only `--dry-run`); the ask is the `.claude/settings.json` permission rule. | DEFERRED | backlog. |
+
+Tests: Core not run: no file outside docs/ and .claude/ changed; App/ unchanged.
+
+### Run 39 summary
+
+1 round; 0 fixed, 0 rejected, 2 MINOR deferred (R39.1-1, R39.1-2).
