@@ -177,7 +177,7 @@ Reviewer: one fresh reviewer (sonnet) on the whole range, checks 10 and 11: priv
 
 | ID | Tag | Finding | Status | Note |
 |---|---|---|---|---|
-| R38.1-1 | MINOR | `.claude/agents/reviewer.md` check 13 and `.claude/settings.json` use the cwd-relative `../dead-reck-mutants`; nothing says the mutation and bit-identical commands run from the main tree. A reviewer started in `.claude/worktrees/<task>` would resolve it to `.claude/worktrees/dead-reck-mutants` (the old sibling `../dead-reck-<task>` worktrees shared its parent). The git-ignored acceptance file's "or the worktree under review" has the same ambiguity. | DEFERRED | backlog. |
+| R38.1-1 | MINOR | `.claude/agents/reviewer.md` check 13 and `.claude/settings.json` use the cwd-relative `../dead-reck-mutants`; nothing says the mutation and bit-identical commands run from the main tree. A reviewer started in `.claude/worktrees/<task>` would resolve it to `.claude/worktrees/dead-reck-mutants` (the old sibling `../dead-reck-<task>` worktrees shared its parent). The git-ignored acceptance file's "or the worktree under review" has the same ambiguity. | FIXED | fixed after the run; backlog row closed. |
 
 Tests: Core not re-run: no file outside docs/, .claude/ and CLAUDE.md changed (code equals e9a353d); App/ unchanged.
 

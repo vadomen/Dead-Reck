@@ -78,11 +78,12 @@ checks. Checks 10 and 11 apply to every diff.
     - re-run at least one "bit-identical" claim yourself on one acceptance drive (release build, one seed); drive paths, seed, truth file, packs and the procedure are in `logs/ACCEPTANCE.md` (git-ignored: never quote its paths in findings);
     - road packs deterministic, ≤ 150 MB, nothing from `osm/` tracked; GPS only via the explicit measurement mode; no logger or format change.
 13. Mutations: at most 3 targeted mutations per round, on new or changed Core logic.
+    - **Run every mutation and bit-identical command from the main tree root**, typed exactly as below: the paths are relative to it, and the allow rules in `.claude/settings.json` match this literal text (no `$var`/`$(…)` forms; they prompt). Find the root with `git rev-parse --path-format=absolute --git-common-dir` (prints `<root>/.git`), then `cd <root>` once by its literal absolute path. Never `cd` into the mutants worktree: use `--package-path`, so the shell's cwd stays at the root.
     - Use the one persistent worktree `../dead-reck-mutants`:
       - create it once: `git worktree add --detach ../dead-reck-mutants HEAD`;
       - otherwise move it to HEAD: `git -C ../dead-reck-mutants checkout --detach -f <HEAD sha>`.
     - Test with a persistent build dir and a filter on the affected suites only:
-      `cd ../dead-reck-mutants/Core && swift test --scratch-path ~/.cache/dead-reck-mutants-build --filter <Suite>`
+      `swift test --package-path ../dead-reck-mutants/Core --scratch-path ~/.cache/dead-reck-mutants-build --filter <Suite>`
       (`DEVELOPER_DIR` as in ios-build-test).
     - Undo each mutation before the next (`git -C ../dead-reck-mutants checkout -f -- .`).
     - A mutation that survives is a missing-test finding.
