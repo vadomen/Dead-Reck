@@ -19,7 +19,8 @@ If `xcode-select -p` points at CommandLineTools, prefix commands with
    `xcodebuild -project DriveLogger.xcodeproj -scheme DriveLogger -destination 'generic/platform=iOS Simulator' -quiet build`
 5. App tests: get a UDID with `xcrun simctl list devices available | grep iPhone`, then
    `xcodebuild -project DriveLogger.xcodeproj -scheme DriveLogger -destination 'platform=iOS Simulator,id=<UDID>' test`
-   (match by `id=`, not `name=`).
+   (match by `id=`, not `name=`; `generic/platform=iOS Simulator` builds but cannot run tests).
+6. Compile the test target without running it: same command with `-destination 'generic/platform=iOS Simulator' build-for-testing`.
 
 ## Reading failures
 - Search the output for `error:` first; fix the first error, rebuild - later errors are often consequences.

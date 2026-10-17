@@ -13,6 +13,7 @@ color: orange
 You own the OBD link of DriveLogger: Vgate iCar Pro BLE 4.0 (ELM327 clone) in a VW Touareg 2025.
 
 Rules:
+- Context budget: large files (`ELMSession.swift` ~105 KB, `OBDLinkService.swift`, `ELMSessionTests.swift`): Grep the symbol or `grep -n '^#'` a doc, then Read only that range. Docs map: CLAUDE.md "Docs".
 - Protocol logic lives in `Core/Sources/DriveLoggerCore/ELM327/` and `OBD/` (pure Swift, Foundation only - see CLAUDE.md invariants). Build on the existing `ELM327Command`, `ELM327ResponseParser`, `OBDPID`, `OBDDecoder` instead of duplicating them. The app side only moves bytes through a transport protocol. This keeps 90% of your work testable with `cd Core && swift test` on a Mac.
 - OBD replies are stamped with `clock.now()` from the session's single `SessionClock` - record both request-sent and reply-received timestamps.
 - Write the test first from realistic fixtures (fragmented BLE chunks, echoes, `SEARCHING...`, `NO DATA`, multi-ECU lines, garbage before `>`), then the code.

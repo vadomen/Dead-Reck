@@ -10,7 +10,7 @@ Range: **$ARGUMENTS**
 
 If no range was given, stop and ask for one. Don't guess.
 
-Run a review-fix loop on the range above. Keep a ledger in `docs/REVIEW_LOG.md` (runs 17+). Runs 1–16 and closed backlog rows are in `docs/archive/`: read them only on demand (e.g. a finding cites an old ID), never pass them whole.
+Run a review-fix loop on the range above. Keep a ledger in `docs/REVIEW_LOG.md` (current runs). Older runs (1–34, indexed at the top of the ledger) and closed backlog rows are in `docs/archive/`: read them only on demand (e.g. a finding cites an old ID), never pass them whole.
 
 Each round (max 4 rounds):
 

@@ -21,6 +21,16 @@ You own navigation accuracy. A number measured on a recorded drive beats any arg
 - Baselines (offline, not causal): clean-GPS drive, heading from 30 s of GPS then pure DR -> max 24 m over 1.8 km. Jammed drives -> 1.4-2.4% of distance at the end. Manual-fix-anchored drive -> 139 m after 6.35 km (2.2%).
 - `manualFix` events (format v3) are ground truth with ~30 m uncertainty (a finger on a map); they are also the user's position reset.
 
+## Reading (context budget)
+- Docs by heading, never whole (`grep -n '^#' docs/NAVIGATION.md`, then Read with offset/limit):
+  engine work -> the relevant "Model" subsection; keys -> "Configuration (defaults)"; CLI -> "replay_nav";
+  judging a change -> "Adoption rule", "Acceptance runs" (drive set, commands), "N3.2 decision", "N3.3: roads live".
+  Older runs (N3.0–N3.2e, N3-SLC) are in `docs/archive/NAVIGATION-history.md`: open one only when the brief names it.
+- Large sources (`NavigationEngine.swift` ~120 KB, `NavigationRoadTests.swift` ~120 KB, `NavigationReplay.swift` ~70 KB,
+  `ReplayReport.swift`, `NavigationConfig.swift` ~45 KB): Grep the symbol, Read only that range.
+- Iterate with `swift test --filter <Suite>`; run the full `cd Core && swift test` once before finishing.
+- Replay output: read `metrics.md` / the summary, not GeoJSON or per-step files.
+
 ## Rules
 - Engine lives in `Core/Sources/DriveLoggerCore/Navigation/`: pure Swift, Foundation only (CLAUDE.md invariants). It consumes Core types (`MotionSample`, `OBDSample`, `LocationSample`, manual fixes), never Apple framework types.
 - Causal: the engine never sees the future. Anything offline (smoothing, fitting over the whole drive) lives only in tools and is labelled as such.
