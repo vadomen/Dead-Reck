@@ -416,6 +416,91 @@ struct RoadPackPropertyTests {
         #expect(rings[0][1] == RoadPoint(latE7: 0, lonE7: 10_000))
     }
 
+    /// Three short streets, `dx`, `dy` metres from (0, 0): distinct content per offset.
+    static func streets(_ dx: Double, _ dy: Double, firstID: Int64) -> [String] {
+        (0..<3).map { k in
+            let id = firstID + Int64(k), y = dy + Double(k) * 150 - 150
+            return RoadFixture.way(id, ["highway": "residential"],
+                                   [N(id: 10 * id, east: dx - 300, north: y), N(id: 10 * id + 1, east: dx + 300, north: y)])
+        }
+    }
+
+    @Test("Coverage: trying the cheapest pack first equals the OR over packs in canonical order")
+    func coverageOrderIsAnOR() throws {
+        func circle(_ cx: Double, _ cy: Double, _ r: Double, _ n: Int) -> [RoadPoint] {
+            (0..<n).map { k in
+                let a = 2 * Double.pi * Double(k) / Double(n)
+                return RoadFixture.point(cx + r * cos(a), cy + r * sin(a))
+            }
+        }
+        func square(_ cx: Double, _ cy: Double, _ h: Double) -> [RoadPoint] {
+            [RoadFixture.point(cx - h, cy - h), RoadFixture.point(cx + h, cy - h),
+             RoadFixture.point(cx + h, cy + h), RoadFixture.point(cx - h, cy + h)]
+        }
+        // Overlapping coverage of every kind: a many-vertex ring with a hole,
+        // two bounding boxes (no COVR), a small square with a hole and a
+        // triangle, so a point is often covered by several packs and the
+        // cheap packs are not the canonical first.
+        let packs = [
+            try RoadFixture.build(Self.streets(0, 0, firstID: 100), coverage: [circle(0, 0, 900, 400), square(0, 0, 120)]),
+            try RoadFixture.build(Self.streets(700, 0, firstID: 200)),
+            try RoadFixture.build(Self.streets(0, 800, firstID: 300)),
+            try RoadFixture.build(Self.streets(-600, -600, firstID: 400), coverage: [square(-600, -600, 400), square(-600, -600, 50)]),
+            try RoadFixture.build(Self.streets(600, -700, firstID: 500),
+                                  coverage: [[RoadFixture.point(200, -1100), RoadFixture.point(1100, -1000), RoadFixture.point(500, -300)]]),
+        ]
+        let network = try RoadNetwork(packs: packs)
+        #expect(network.coverageOrder.sorted() == Array(network.packs.indices))
+        #expect(network.coverageOrder != Array(network.packs.indices))
+        // The rule before the reorder, written out independently: packs in
+        // canonical order, the COVR polygon (even-odd) if present, else the
+        // shape-point bounding box.
+        let canonical = try network.packs.map { (rings: try $0.coverageRings(), box: $0.pointBounds()) }
+        func reference(_ latitude: Double, _ longitude: Double) -> Bool {
+            let latE7 = latitude * 1e7, lonE7 = longitude * 1e7
+            for pack in canonical {
+                if let rings = pack.rings {
+                    if RoadNetwork.evenOddContains(rings: rings, latE7: latE7, lonE7: lonE7) { return true }
+                } else if let b = pack.box,
+                          latE7 >= Double(b.southWest.latE7), latE7 <= Double(b.northEast.latE7),
+                          lonE7 >= Double(b.southWest.lonE7), lonE7 <= Double(b.northEast.lonE7) {
+                    return true
+                }
+            }
+            return false
+        }
+        // A grid over and beyond every pack, every coverage vertex and every
+        // shape point (boundary cases), and points just off the vertices.
+        var points: [(Double, Double)] = []
+        for i in stride(from: -1500.0, through: 1500, by: 47) {
+            for j in stride(from: -1500.0, through: 1500, by: 43) {
+                let p = RoadFixture.point(i, j)
+                points.append((p.latitude, p.longitude))
+            }
+        }
+        for pack in network.packs {
+            var vertices = (try pack.coverageRings() ?? []).flatMap { $0 }
+            vertices += (0..<pack.pointCount).map { pack.point($0) }
+            for v in vertices {
+                points.append((v.latitude, v.longitude))
+                points.append((v.latitude + 1e-7, v.longitude - 1e-7))
+            }
+        }
+        var covered = 0, mismatches = 0
+        for (latitude, longitude) in points {
+            let got = network.covers(latitude: latitude, longitude: longitude)
+            if got != reference(latitude, longitude) { mismatches += 1 }
+            if got { covered += 1 }
+        }
+        #expect(mismatches == 0, "\(mismatches) of \(points.count) points")
+        #expect(covered > points.count / 10 && covered < points.count * 9 / 10)
+        // The input order of the packs changes nothing.
+        let reversed = try RoadNetwork(packs: packs.reversed())
+        #expect(reversed.coverageOrder == network.coverageOrder)
+        #expect(points.allSatisfy { reversed.covers(latitude: $0.0, longitude: $0.1) == network.covers(latitude: $0.0, longitude: $0.1) })
+        #expect(points.count > 5000)
+    }
+
     @Test("A pack over the size limit is refused by the writer")
     func sizeLimit() throws {
         let ways = try OPLReader.ways(in: Self.townLines().joined(separator: "\n"))
