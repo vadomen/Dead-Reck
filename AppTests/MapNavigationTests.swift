@@ -402,4 +402,20 @@ struct MapNavigationTests {
         #expect(feed.latest == nil)
         #expect(feed.stats == nil)
     }
+
+    @Test("Feed: the first poll on opening replaces a stale estimate left from before Stop (R14.1-3)")
+    @MainActor func feedRefreshedDropsStale() async {
+        let feed = NavigationFeed(display: nav(), source: { .idle(at: .zero) })
+        #expect(feed.latest != nil, "latest still holds the estimate from when the loop last ran")
+        let fresh = await feed.refreshed(at: t(0))
+        #expect(fresh == nil)
+        #expect(feed.latest == nil)
+    }
+
+    @Test("Feed: without a source refreshed returns what is shown")
+    @MainActor func feedRefreshedWithoutSource() async {
+        let shown = nav()
+        let feed = NavigationFeed(display: shown)
+        #expect(await feed.refreshed(at: t(0)) == shown)
+    }
 }

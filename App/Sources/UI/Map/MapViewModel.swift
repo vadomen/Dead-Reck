@@ -48,8 +48,11 @@ final class MapViewModel {
         self.manualFixes = manualFixes
     }
 
-    /// Takes the recorder's latest fix. Does nothing when the scene is not
-    /// active. A different `file` is a new recording and resets the track; a
+    /// Takes the recorder's latest fix. When the scene is not active (locked
+    /// screen) it only feeds the bearing source, for the recording already
+    /// shown: a good course from a locked stretch would otherwise be lost and
+    /// unlocking at a light would show the pre-lock heading (M10.1-2). Track,
+    /// latest fix and staleness are untouched. A different `file` is a new recording and resets the track; a
     /// nil fix or nil file (after Stop) keeps what is shown until the next Start.
     ///
     /// `elapsed` is the recorder's session-clock time now; with it the fix's
@@ -57,7 +60,13 @@ final class MapViewModel {
     /// ingested late (scene reactivation) already looks stale. Without it the
     /// fix is treated as arriving now.
     func ingest(_ fix: LocationSample?, file: URL?, isActive: Bool, elapsed: TimeInterval? = nil) {
-        guard isActive else { return }
+        guard isActive else {
+            if let fix, let file, file == currentFile {
+                bearingSource.ingest(fix)
+                if bearingSource.bearingDegrees != bearing { bearing = bearingSource.bearingDegrees }
+            }
+            return
+        }
         if let file, file != currentFile {
             currentFile = file
             track = GPSTrack()

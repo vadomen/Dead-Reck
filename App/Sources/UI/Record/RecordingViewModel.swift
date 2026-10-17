@@ -24,7 +24,6 @@ final class RecordingViewModel {
     private(set) var markCount = 0
     /// Bumped to re-read non-observable source availability.
     private(set) var refreshTick = 0
-    private(set) var isStartRequested = false
 
     @ObservationIgnored private let session: RecordingSession
     @ObservationIgnored private let link: any OBDLinkServicing
@@ -94,25 +93,29 @@ final class RecordingViewModel {
     }
 
     func start() async {
-        guard gate.allowsStart, !isStartRequested else { return }
-        isStartRequested = true
+        // `session.isStarting` and the state, not a flag of our own: a flag
+        // held across the calibration ignored a re-Start after a stop and
+        // let its late reset clear the next checklist (R5.1-3).
+        guard gate.allowsStart, !session.isStarting, !ConsoleText.isRecordingActive(session.state) else { return }
         startError = nil
         store.save(checklist)
-        // A scan left running would compete with the OBD link for the radio.
-        if link.state == .scanning { link.stopScan() }
+        // A scan left running, or pending while Bluetooth is off, would
+        // compete with the OBD link for the radio or resume mid-drive (R5.2-2).
+        link.stopScan()
+        // Snapshot what this drive uses, then reset the per-drive choices
+        // before awaiting the (5 s) calibration.
+        let mount = checklist.mountForHeader
+        let vehicle = checklist.vehicleForHeader
         let allowWithoutOBD = session.allowsRecordingWithoutOBD
-        defer {
-            isStartRequested = false
-            // "Record without OBD" is a per-recording choice, asked again next time.
-            session.allowsRecordingWithoutOBD = false
-            // Confirmations apply to one drive.
-            checklist.mountConfirmed = false
-            checklist.orientationConfirmed = false
-        }
+        // "Record without OBD" is a per-recording choice, asked again next time.
+        session.allowsRecordingWithoutOBD = false
+        // Confirmations apply to one drive.
+        checklist.mountConfirmed = false
+        checklist.orientationConfirmed = false
         do {
             try await session.start(
-                mount: checklist.mountForHeader,
-                vehicle: checklist.vehicleForHeader,
+                mount: mount,
+                vehicle: vehicle,
                 allowWithoutOBD: allowWithoutOBD,
                 calibration: .seconds(Self.calibrationSeconds)
             )
@@ -121,13 +124,26 @@ final class RecordingViewModel {
         }
     }
 
+    /// Markers are written during calibration and recording only.
+    static func canMark(_ state: RecordingState) -> Bool {
+        state == .calibrating || state == .recording
+    }
+
     func stop() {
         Task { await session.stop() }
     }
 
+    /// Writes a marker and confirms it. Does nothing, and confirms nothing,
+    /// unless a recording is running: the session drops a marker after a stop
+    /// or a failure, and "Marked" must not be shown for one that was not
+    /// written (R5.1-6). The sheet closes either way.
     func mark(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        guard Self.canMark(session.state) else {
+            isMarkSheetPresented = false
+            return
+        }
         session.mark(trimmed)
         markCount += 1
         lastMark = trimmed

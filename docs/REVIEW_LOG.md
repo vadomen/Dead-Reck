@@ -357,3 +357,22 @@ Tests: `cd Core && swift test` 956 passed, 36 known issues (KI-1); simulator bui
 ### Run 47 summary
 
 1 round; 0 fixed, 0 rejected, 0 deferred.
+## Run 48: backlog sweep ios-ui batch 1 (89c3619..273eaf9, branch sweep-ui), started 2026-10-17
+
+Commits: 273eaf9 M10.1-3 `mapSpanM` is the viewport height in heading-up too, M10.1-2 locked-screen courses feed the bearing, R14.1-3 frame after a fresh poll, R5.1-2 record-without-OBD toggle stays visible, R5.1-3 Start state reset before awaiting, R5.1-6 no "Marked" when not recording (partial), R5.1-7 / R5.2-1 / R5.2-3 console gating, R5.2-2 Start always stops a pending scan (view-model half).
+
+### Round 1
+
+Reviewer: one fresh reviewer (opus), checks 6, 7, 9–11 and UI safety while recording, by reading (the mutants worktree was assigned to another agent). Every row's test would fail on 89c3619 (compile or assertion); M10.1-3 leaves the engine σ at 30 m for every new row under the 300 m gate. The author's mutation step was denied by the permission classifier; the orchestrator ran its 3 App mutations in `../dead-reck-mutants` with xcodebuild: rotated span branch dropped → "Visible span means the viewport height in both modes" fails; `.failed` case removed from `canScan` → `scanRefused` fails; checklist reset moved after the await → `restartDuringCalibration` fails. Result: 0 BLOCKER / 0 MAJOR / 3 MINOR.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R48.1-1 | MINOR | `docs/LOG_FORMAT.md:575`, `MapFraming.swift:35`, `NavigationConfig.swift:631-633`, PLAN §6 item 12: old heading-up `mapSpanM` is said to be "up to ~2.2×" the viewport height (so "errs toward a larger σ"); on a portrait screen it is ~0.5×–1.15× (smallest near east/west), so old values can understate. | DEFERRED | docs/BACKLOG.md (ios-ui batch 2) |
+| R48.1-2 | MINOR | `AppTests/UIPresentationTests.swift:571,579`: unbounded `while session.state != .calibrating` loops: a regression hangs the AppTests run instead of failing. | DEFERRED | docs/BACKLOG.md (ios-ui batch 2) |
+| R48.1-3 | MINOR | `ConsoleViewModel.swift:183` / `ConsoleView.swift:89-93`: after R5.2-1, tapping an adapter row while recording with no adapter held shows "Drop the OBD connection?"; "Keep connection" cancels the connect a user wanted. | DEFERRED | docs/BACKLOG.md (ios-ui batch 2) |
+
+Tests: `cd Core && swift test` 955 passed, 36 known issues; simulator build OK; full AppTests 340 passed (author).
+
+### Run 48 summary
+
+1 round; 0 fixed, 0 rejected, 3 MINOR deferred (R48.1-1..3).

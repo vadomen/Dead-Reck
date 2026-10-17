@@ -80,12 +80,14 @@ enum ConsoleText {
         }
     }
 
-    /// Re-initialise can be pressed unless an init is visibly running or
-    /// there is no connection to re-initialise.
+    /// Re-initialise is offered only on a live connection (R5.1-7): in
+    /// `.failed` and `.reconnecting` the service has no connection and
+    /// `reinitialise()` does nothing.
     static func canReinitialise(_ state: OBDLinkState) -> Bool {
         switch state {
-        case .ready, .polling, .failed, .reconnecting: true
-        case .unavailable, .idle, .scanning, .connecting, .discoveringServices, .initialising: false
+        case .ready, .polling: true
+        case .unavailable, .idle, .scanning, .connecting, .discoveringServices, .initialising,
+             .failed, .reconnecting: false
         }
     }
 }
@@ -118,8 +120,11 @@ extension ConsoleText {
     }
 
     /// Scan only finds an adapter: not while one is held, not while recording.
+    /// `.failed` counts as free (R5.2-3): it is where an unusable adapter
+    /// ("pick another adapter") leaves the user, so Scan must work there.
     static func canScan(link: OBDLinkState, recording: Bool) -> Bool {
         if case .unavailable = link { return false }
+        if case .failed = link { return !recording }
         return !recording && !holdsAdapter(link)
     }
 }
@@ -171,9 +176,11 @@ final class ConsoleViewModel {
     func stopScan() { link.stopScan() }
 
     /// Tapping an adapter row. The already-targeted adapter is harmless; any
-    /// other one, while an adapter is held during a recording, asks first.
+    /// other one during a recording asks first, whatever the link state
+    /// (R5.2-1): with Bluetooth unavailable a stale scan row would otherwise
+    /// retarget the link silently.
     func connect(_ id: UUID) {
-        if isRecording, ConsoleText.holdsAdapter(link.state), id != link.rememberedAdapterID {
+        if isRecording, id != link.rememberedAdapterID {
             pendingChange = .connect(id)
         } else {
             link.connect(to: id)

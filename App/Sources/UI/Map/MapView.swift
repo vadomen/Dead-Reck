@@ -336,25 +336,18 @@ struct GPSMapView: View {
                     if resumeIfDue() { return }
                 }
             }
-            // One 100 ms loop while the map is visible and the scene active:
-            // polls the navigation feed, then turns/centres the camera.
-            .task(id: isLive) { await runLoop() }
+            // Opening the map: frame on a fresh estimate, then one 100 ms loop
+            // while the map is visible and the scene active: it polls the
+            // navigation feed, then turns/centres the camera.
+            .task(id: isLive) {
+                await frameOnOpen()
+                await runLoop()
+            }
             // Fires on reselect/foreground too.
             .onChange(of: isLive, initial: true) { _, live in
                 guard live else { return }
                 // A deadline that passed while away (screen off, other tab).
                 resumeIfDue()
-                if let fix = latest {
-                    frame(center: fix.coordinate, accuracy: fix.horizontalAccuracy)
-                } else if let nav = navigation?.latest {
-                    frame(center: nav.position.coordinate, accuracy: nav.semiMajorM / 3)
-                } else if let cached = cachedLocation() {
-                    // Camera only: no dot is drawn for it.
-                    frame(
-                        center: CLLocationCoordinate2D(latitude: cached.latitude, longitude: cached.longitude),
-                        accuracy: cached.horizontalAccuracy
-                    )
-                }
             }
             // Start: a toast from the previous recording would offer a dead Undo.
             .onChange(of: recordingFile) {
@@ -474,7 +467,10 @@ struct GPSMapView: View {
             .onMapCameraChange(frequency: .onEnd) { context in
                 // Not our own write: the driver zoomed.
                 headingState.zoom.cameraReported(distance: context.camera.distance)
-                if let span = MapFraming.visibleSpanMeters(latitudeDelta: context.region.span.latitudeDelta),
+                if let span = MapFraming.visibleSpanMeters(
+                    latitudeDelta: context.region.span.latitudeDelta,
+                    cameraDistance: context.camera.distance, heading: context.camera.heading
+                ),
                    MapChange.isSignificant(old: visibleSpanM, new: span) {
                     visibleSpanM = span
                 }
@@ -657,6 +653,27 @@ struct GPSMapView: View {
         reseedHeading()
         guard isLive, let center = followCenter else { return }
         withAnimation(.easeInOut(duration: duration)) { recenter(center: center) }
+    }
+
+    /// Frames the map when it becomes live. The estimate is polled first:
+    /// the feed's `latest` is only updated while the loop runs, so after a
+    /// Stop (or any recording change) while the map was away it is stale
+    /// (R14.1-3). Without an estimate the last fix, then the cached location.
+    private func frameOnOpen() async {
+        guard isLive else { return }
+        let nav = await navigation?.refreshed()
+        if Task.isCancelled { return }
+        if let fix = latest {
+            frame(center: fix.coordinate, accuracy: fix.horizontalAccuracy)
+        } else if let nav {
+            frame(center: nav.position.coordinate, accuracy: nav.semiMajorM / 3)
+        } else if let cached = cachedLocation() {
+            // Camera only: no dot is drawn for it.
+            frame(
+                center: CLLocationCoordinate2D(latitude: cached.latitude, longitude: cached.longitude),
+                accuracy: cached.horizontalAccuracy
+            )
+        }
     }
 
     /// ~10 Hz while the map is visible. Polls the navigation feed, steps the
