@@ -156,11 +156,18 @@ struct NavigationFixPinInjectionTests {
     /// the test plane: a north–south street along the first leg, an
     /// east–west one along the last (crossing it at the corner), and a short
     /// street 45 m east of the first leg, alongside it from 640 m to 960 m
-    /// north (the leg passes there at about 94–126 s).
+    /// north (the leg passes there at about 94–126 s). The north–south
+    /// street has a node every 100 m (at 30 m past each hundred), as real
+    /// streets do: the 5 s candidate grid (50 m) is never within 20 m of
+    /// one, so its next and previous segments are always 20–80 m away and
+    /// collinear, and only the interior rule keeps them from counting as a
+    /// parallel road (R37.2-2).
     static func lMap(_ drive: S) throws -> RoadNetwork {
         let x0 = F.truth(drive, 1).east, y1 = F.truth(drive, drive.duration - 1).north
+        let nodes = [-1000.0] + (0..<30).map { -970 + 100 * Double($0) } + [2000]
         return try NavigationRoadTests.network([
-            NavigationRoadTests.street(1, from: (x0, -1000), to: (x0, 2000)),
+            RoadFixture.way(1, ["highway": "residential"],
+                            nodes.enumerated().map { RoadFixture.Node(id: 1000 + Int64($0.offset), east: x0, north: $0.element) }),
             NavigationRoadTests.street(2, from: (-500, y1), to: (2500, y1)),
             NavigationRoadTests.street(3, from: (x0 + 45, 640), to: (x0 + 45, 960)),
         ])
@@ -207,6 +214,14 @@ struct NavigationFixPinInjectionTests {
             let p = try at(t)
             #expect(p.context == .straight && !p.junction && !p.parallel, "\(t) s: \(p.context)")
         }
+        // The whole first leg (candidates start at 90 s, once the ring has
+        // its fixes) away from the street alongside (95–125 s) and the
+        // corner (150 s): straight on its own many-node street.
+        let firstLeg = times.filter { $0.t < 150 && !(95...125).contains($0.t) }
+        #expect(firstLeg.map(\.t) == [90, 130, 135, 140, 145])
+        for p in firstLeg {
+            #expect(p.context == .straight && !p.junction && !p.parallel, "\(p.t) s: \(p.context)")
+        }
         // The turn starts at 150 s, 19 m before the east–west street (the
         // turn's radius), heading north: across it, so a junction.
         let corner = try at(150)
@@ -219,6 +234,10 @@ struct NavigationFixPinInjectionTests {
             #expect(p.context == .parallel && p.parallel && !p.junction, "\(t) s: \(p.context)")
         }
         #expect(try at(135).context == .straight, "past the parallel street's end")
+        // 130 s, 1000 m north: 70 m past a node and 30 m before the next, the
+        // street's own neighbouring segments are not a road alongside.
+        let p130 = try at(130)
+        #expect(p130.context == .straight && !p130.parallel, "\(p130.context)")
 
         // The classifier directly: the corner's crossing road is within the
         // radius at 30°, the leg's own street never makes a junction.
@@ -236,6 +255,13 @@ struct NavigationFixPinInjectionTests {
         #expect(context(0, 800, course: 0) == (false, true))
         #expect(context(0, 800, course: 30) == (false, false), "the street alongside at 30° is not parallel")
         #expect(context(0, 800, course: nil) == (false, true), "no course: the nearest road's direction")
+        // 30 m into a 100 m segment (nodes at 130 m and 230 m north): the
+        // street's next segment starts 70 m ahead and its previous one ended
+        // 30 m behind, both collinear and in the parallel band, but the pin
+        // is not beside either of them, so they are not a parallel road.
+        #expect(context(0, 160, course: 0) == (false, false))
+        #expect(context(0, 160, course: nil) == (false, false))
+        #expect(context(0, 1000, course: 0) == (false, false))
         // On the east–west street 20 m from the north–south one, heading east.
         #expect(context(20, y1, course: 90) == (true, false))
     }
