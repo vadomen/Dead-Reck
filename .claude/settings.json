@@ -45,6 +45,7 @@
       "Bash(git worktree prune*)",
       "Bash(git -C ../dead-reck-mutants checkout --detach -f *)",
       "Bash(git -C ../dead-reck-mutants checkout -f -- .)",
+      "Bash(git -C ../dead-reck-mutants apply --index *)",
       "Bash(git -C ../dead-reck-mutants diff *)",
       "Bash(git -C ../dead-reck-mutants status *)"
     ],

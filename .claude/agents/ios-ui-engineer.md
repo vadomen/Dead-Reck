@@ -21,7 +21,7 @@ Rules:
 
 ## Before finishing: author-side mutations
 Run 1–3 targeted mutations on the view-model logic you added or changed (state, formatting and decision code under `App/Sources/UI/` that `AppTests` covers; not view layout), using reviewer check 13's procedure (`.claude/agents/reviewer.md`): every call starts `cd <root> && ` from the main tree root, the one worktree `../dead-reck-mutants`, its allowed command forms only, and undo each mutation before the next. App logic has no `swift test`, so the test command is the simulator one, pointed at the worktree:
-`xcodebuild -project ../dead-reck-mutants/DriveLogger.xcodeproj -scheme DriveLogger -destination 'platform=iOS Simulator,id=<UDID>' -derivedDataPath ~/.cache/dead-reck-mutants-dd test -only-testing:AppTests/<Suite>`.
+`xcodebuild -project ../dead-reck-mutants/DriveLogger.xcodeproj -scheme DriveLogger -destination 'platform=iOS Simulator,id=<UDID>' -derivedDataPath ~/.cache/dead-reck-mutants-dd test -only-testing:DriveLoggerAppTests/<Suite>`.
 Your change is not committed yet, so bring it into the worktree first:
 1. In your working tree: `git add -N . && git diff HEAD --binary --output=<root>/.claude/review-scratch/author.patch`.
 2. `cd <root> && git -C ../dead-reck-mutants checkout --detach -f <your HEAD sha>`, then `cd <root> && git -C ../dead-reck-mutants apply --index <root>/.claude/review-scratch/author.patch`. Because it is staged, check 13's undo (`checkout -f -- .`) returns to your change, not to HEAD.

@@ -14,7 +14,7 @@ Run a review-fix loop on the range above. Keep a ledger in `docs/REVIEW_LOG.md` 
 
 ## Lite path (no code in the range)
 
-Run `git diff --stat <range>` first. If it touches nothing under `Core/`, `App/`, `AppTests/`, `project.yml`, `.claude/hooks/`, `.claude/settings.json`, `scripts/`, `tools/`, `site/functions/` or `site/*.sh` (so: docs, `.claude` agent/skill text, assets, `site/` copy only), run the lite path instead of the rounds below:
+Run `git diff --stat <range>` first. If it touches nothing under `Core/`, `App/`, `AppTests/`, `project.yml`, `DriveLogger.xcodeproj`, `Config/`, `.claude/hooks/`, `.claude/settings.json`, `scripts/`, `tools/`, `site/functions/` or `site/*.sh` (so: docs, `.claude` agent/skill text, assets, `site/` copy only), run the lite path instead of the rounds below:
 
 - ONE fresh `reviewer` on `sonnet`, told "lite run": checks 10 and 11 only, no mutations. Pass it the range and the backlog IDs as in step 1. Run no tests and pass none.
 - No round 2 unless it finds a BLOCKER or MAJOR. Then verify, fix and re-review as in steps 2–4 (a fix that stays outside the paths above stays lite).

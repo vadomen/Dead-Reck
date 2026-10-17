@@ -203,3 +203,19 @@ Tests: Core not run: no file outside docs/ and .claude/ changed; App/ unchanged.
 ### Run 39 summary
 
 1 round; 0 fixed, 0 rejected, 2 MINOR deferred (R39.1-1, R39.1-2).
+
+## Run 40 (lite): review process — lite path, author-side mutations, MINOR bar (4862d33..7211493), started 2026-10-17
+
+Commits: 7211493 review-loop "Lite path" (no code in the range: one sonnet reviewer, checks 10 and 11, one-line wording MINORs fixed in the run), engineers' author-side mutations (check-13 procedure, uncommitted change brought into `../dead-reck-mutants` via a staged patch; reviewer re-checks one and covers the rest), reviewer MINOR bar (concrete failure scenario required); WORKFLOW.md lines to match.
+
+### Round 1
+
+Reviewer: one fresh reviewer (sonnet), lite run, checks 10 and 11, including the new command forms against the settings allow/ask/deny rules. Privacy clean. Result: 0 BLOCKER / 1 MAJOR / 2 MINOR.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R40.1-1 | MAJOR | Engineer agents' author-side mutation step 2, `git -C ../dead-reck-mutants apply --index <patch>`, matches no allow rule in `.claude/settings.json`: every engineer run that changes logic stops at a permission prompt and may skip or mis-target its mutations. | CONFIRMED, FIXED | Allow rule `Bash(git -C ../dead-reck-mutants apply --index *)` added (user approved the settings edit). |
+| R40.1-2 | MINOR | `.claude/agents/ios-ui-engineer.md`: `-only-testing:AppTests/<Suite>`; the test target is `DriveLoggerAppTests` (`project.yml`), so the command finds no target. | FIXED | One-line fix in the round commit (lite rule). |
+| R40.1-3 | MINOR | `.claude/skills/review-loop/SKILL.md` lite trigger omits `Config/` and `DriveLogger.xcodeproj`: a signing/build-setting-only range would get a lite review with no build. | FIXED | Both added to the trigger list in the round commit (lite rule). |
+
+Tests: Core not run: no file outside docs/ and .claude/ changed; App/ unchanged.
