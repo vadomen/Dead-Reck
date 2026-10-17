@@ -123,7 +123,7 @@ protocol OBDLinkServicing: AnyObject, Observable {
     ///
     /// **Contents.** `LinkEvent`s exactly as delivered on `linkEvents()`,
     /// unchanged — same values, same original uptimes, same `seq` — in
-    /// delivery order, in two parts:
+    /// delivery order, in three parts:
     /// 1. **Connection:** the BLE transition into `connected` that started
     ///    the current connection (its reason names the GATT selection). The
     ///    `connecting` and `discovering` transitions before it are not kept.
@@ -138,9 +138,17 @@ protocol OBDLinkServicing: AnyObject, Observable {
     ///    adapter had buffered); for a re-init with `→ resetting`
     ///    (`reinitialise()`) or `→ reinitialising` (the session's own
     ///    retry → re-init path), and its handshake has no probe.
+    /// 3. **After the init** (M7.1-5): the latest `.adapter` event and the
+    ///    latest ELM transition (`from != to`) delivered after the init
+    ///    ended, at most one of each, in arrival order — e.g. the `.adapter`
+    ///    re-announced when a PID was dropped on NO DATA, or `polling →
+    ///    retrying`. So the last `adapter` row replayed is the plan polled
+    ///    at Start, which is what `adapter`/`plan` (the header) say. Notes,
+    ///    exchanges and readings after the init are not kept.
     ///
     /// `.pollRate` and `.needsReconnect` are never kept: they produce no
-    /// rows. Poll traffic after the transition into `polling` is not kept.
+    /// rows. Poll traffic after the transition into `polling` is not kept
+    /// (part 3 aside).
     /// Writing these events through `LogEvent.rows(for:adapter:clock:)`
     /// with `adapter: self.adapter` gives exactly the rows a recording
     /// running at the time would have written (the `adapter` row merges

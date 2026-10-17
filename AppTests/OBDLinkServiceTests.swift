@@ -32,12 +32,20 @@ actor WriteFailingTransport: ELMTransport {
         }
         return try await inner.send(command)
     }
+
+    var isClosed: Bool {
+        get async { await inner.isClosed }
+    }
 }
 
 /// A `BLECentralClient` that connects at once and hands over a
 /// `MockELMAdapter` per connection: `scripts[n]` for connection `n`, the
 /// last one repeating. `writeFailures[n]` names a command whose first write
 /// on connection `n` throws `.writeFailed` (`WriteFailingTransport`).
+/// Connections in `stalledDiscoveries` report `.connected` and then nothing,
+/// like a GATT callback that never comes. `cancelConnection` reports
+/// `.cancelled` after `cancelLatency`, as `BLECentral` does when
+/// CoreBluetooth's disconnect callback for it arrives.
 final class FakeBLECentral: BLECentralClient {
     static let adapterID = UUID(uuidString: "0BD0B0D0-1111-4222-8333-944455556666")!
 
@@ -45,6 +53,8 @@ final class FakeBLECentral: BLECentralClient {
     private let continuation: AsyncStream<BLECentralEvent>.Continuation
     private let scripts: [[MockELMAdapter.Rule]]
     private let writeFailures: [Int: String]
+    private let stalledDiscoveries: Set<Int>
+    private let cancelLatency: Duration
     private let lock = NSLock()
     // Guarded by `lock`.
     private nonisolated(unsafe) var log: [String] = []
@@ -53,9 +63,17 @@ final class FakeBLECentral: BLECentralClient {
     // Guarded by `lock`.
     private nonisolated(unsafe) var current: MockELMAdapter?
 
-    init(scripts: [[MockELMAdapter.Rule]], writeFailures: [Int: String] = [:], poweredOn: Bool = true) {
+    init(
+        scripts: [[MockELMAdapter.Rule]],
+        writeFailures: [Int: String] = [:],
+        stalledDiscoveries: Set<Int> = [],
+        cancelLatency: Duration = .zero,
+        poweredOn: Bool = true
+    ) {
         self.scripts = scripts
         self.writeFailures = writeFailures
+        self.stalledDiscoveries = stalledDiscoveries
+        self.cancelLatency = cancelLatency
         (events, continuation) = AsyncStream.makeStream(of: BLECentralEvent.self)
         if poweredOn { send(.availability(.poweredOn, uptime: Self.now)) }
     }
@@ -79,16 +97,18 @@ final class FakeBLECentral: BLECentralClient {
     }
 
     func connect(_ id: UUID) {
-        let transport = lock.withLock { () -> any ELMTransport in
+        let (transport, stalled) = lock.withLock { () -> (any ELMTransport, Bool) in
             log.append("connect")
             let script = scripts[min(made.count, scripts.count - 1)]
             let adapter = MockELMAdapter(rules: script)
             let failing = writeFailures[made.count]
+            let stalled = stalledDiscoveries.contains(made.count)
             made.append(adapter)
             current = adapter
-            return failing.map { WriteFailingTransport(adapter, failing: $0) } ?? adapter
+            return (failing.map { WriteFailingTransport(adapter, failing: $0) } ?? adapter, stalled)
         }
         send(.connected(id, uptime: Self.now))
+        guard !stalled else { return }
         send(.ready(
             BLELinkReady(id: id, name: "IOS-Vlink", transport: transport, selection: SimulatedBLECentral.selection, table: SimulatedBLECentral.table),
             uptime: Self.now
@@ -101,9 +121,11 @@ final class FakeBLECentral: BLECentralClient {
             defer { current = nil }
             return current
         }
+        let latency = cancelLatency
         Task {
             await adapter?.disconnect()
-            send(.disconnected(id, reason: nil, uptime: Self.now))
+            if latency > .zero { try? await Task.sleep(for: latency) }
+            send(.cancelled(id, uptime: Self.now))
         }
     }
 
@@ -210,9 +232,13 @@ enum LinkTestSupport {
     static func service(
         _ central: FakeBLECentral,
         defaults: UserDefaults = defaults(),
-        configuration: ELMSessionConfiguration = configuration
+        configuration: ELMSessionConfiguration = configuration,
+        discoveryTimeout: Duration = OBDLinkService.defaultDiscoveryTimeout
     ) -> OBDLinkService {
-        OBDLinkService(central: central, defaults: defaults, sessionConfiguration: configuration, backoff: backoff)
+        OBDLinkService(
+            central: central, defaults: defaults, sessionConfiguration: configuration, backoff: backoff,
+            discoveryTimeout: discoveryTimeout
+        )
     }
 }
 
@@ -337,6 +363,105 @@ struct OBDLinkServiceTests {
         #expect(drop.reason?.contains("writeFailed") == true)
         #expect(await central.adapters[0].sentCommands.isEmpty, "the failed ATZ never reached the adapter")
         #expect(await central.adapters[1].sentCommands.first == "ATZ")
+        link.disconnect()
+    }
+
+    // R3.1-3: the disconnect the service asked for (here: after a failed
+    // initialisation) may complete after the backoff, while the next
+    // connection is already up. It must not pass for that connection's loss.
+    @Test("A requested disconnect completing after the reconnect leaves the new connection alone")
+    func lateCancelledKeepsNewConnection() async throws {
+        let central = FakeBLECentral(
+            scripts: [LinkTestSupport.touareg()], writeFailures: [0: "ATZ"], cancelLatency: .milliseconds(150)
+        )
+        let link = LinkTestSupport.service(central)
+        let log = LinkEventLog(link.linkEvents())
+        link.connect(to: FakeBLECentral.adapterID)
+        #expect(await eventually { link.console.contains { $0.text == "ble: requested disconnect completed" } })
+        try await Task.sleep(for: .milliseconds(100))
+        let texts = link.console.map(\.text)
+        let connected = try #require(texts.lastIndex { $0.hasPrefix("ble: discovering → connected") })
+        let completed = try #require(texts.firstIndex(of: "ble: requested disconnect completed"))
+        #expect(connected < completed, "the cancel completed while the new connection was up")
+
+        #expect(link.state.isPolling)
+        #expect(link.bleState == .connected)
+        #expect(central.calls.filter { $0 == "connect" }.count == 2)
+        #expect(log.ble.map(\.to) == [.connecting, .discovering, .connected, .disconnected, .reconnecting, .connecting, .discovering, .connected])
+        link.disconnect()
+    }
+
+    // R3.1-5: the attempt counter used to reset when initialisation
+    // succeeded, so a link that initialises and then fails every poll
+    // reconnected every second for ever.
+    @Test("Backoff keeps growing while init succeeds but no poll does; the first successful poll resets it")
+    func backoffResetsOnFirstSuccessfulPoll() async throws {
+        let canError = MockELMAdapter.Rule(command: "010D", reply: "CAN ERROR\r\r>")
+        let failing = LinkTestSupport.touareg(overrides: [canError])
+        let healthyThenFailing = LinkTestSupport.touareg(overrides: [
+            MockELMAdapter.Rule(command: "010D", reply: "7E803410D3C\r\r>", times: 3), canError,
+        ])
+        let central = FakeBLECentral(scripts: [failing, failing, healthyThenFailing, LinkTestSupport.touareg()])
+        let link = LinkTestSupport.service(central)
+        let log = LinkEventLog(link.linkEvents())
+        link.connect(to: FakeBLECentral.adapterID)
+
+        #expect(await eventually { central.adapters.count == 4 && link.state.isPolling && !log.readings.isEmpty })
+        let attempts = log.ble.filter { $0.to == .reconnecting }.map { $0.reason?.components(separatedBy: " in ").first }
+        #expect(attempts == ["attempt 1", "attempt 2", "attempt 1"])
+        #expect(log.events.filter { if case .session(.needsReconnect) = $0 { true } else { false } }.count == 3)
+        link.disconnect()
+    }
+
+    // R3.1-6: a rejected acknowledged write used to reach the console only.
+    @Test("A failed acknowledged write is a ble note (from == to) in the link events; the init replay is kept")
+    func writeFailedNote() async throws {
+        let central = FakeBLECentral(scripts: [LinkTestSupport.touareg()])
+        let link = LinkTestSupport.service(central)
+        let log = LinkEventLog(link.linkEvents())
+        link.connect(to: FakeBLECentral.adapterID)
+        #expect(await eventually { link.state.isPolling })
+        let replay = link.lastInitEvents
+
+        central.send(.writeFailed(FakeBLECentral.adapterID, reason: "Writing is not permitted.", uptime: 1234.5))
+        let isNote: (LinkEvent) -> Bool = {
+            if case .ble(.connected, .connected, "write failed: Writing is not permitted.", 1234.5) = $0 { true } else { false }
+        }
+        #expect(await eventually { log.events.contains(where: isNote) })
+        #expect(link.bleState == .connected)
+        #expect(link.state.isPolling)
+        #expect(link.console.contains { $0.text == "ble: write failed: Writing is not permitted." && $0.uptime == 1234.5 })
+        #expect(link.lastInitEvents == replay, "a note doesn't restart or extend the replayed init")
+        #expect(!link.lastInitEvents.contains(where: isNote))
+
+        // A write on another peripheral says nothing about this link: console only.
+        central.send(.writeFailed(UUID(), reason: "elsewhere", uptime: 1240))
+        #expect(await eventually { link.console.contains { $0.text == "ble: write failed: elsewhere" } })
+        #expect(!log.events.contains { if case .ble(_, _, "write failed: elsewhere", _) = $0 { true } else { false } })
+        link.disconnect()
+    }
+
+    // R3.1-7: a GATT callback that never comes (flaky clone, restoration)
+    // used to leave the link in `discovering` for good.
+    @Test("Discovery that never finishes times out: disconnected, backoff, reconnect; the adapter stays the target")
+    func discoveryWatchdog() async throws {
+        let central = FakeBLECentral(scripts: [LinkTestSupport.touareg()], stalledDiscoveries: [0])
+        let link = LinkTestSupport.service(central, discoveryTimeout: .milliseconds(150))
+        let log = LinkEventLog(link.linkEvents())
+        link.connect(to: FakeBLECentral.adapterID)
+        #expect(await eventually { link.bleState == .discovering })
+
+        #expect(await eventually { central.adapters.count == 2 && link.state.isPolling })
+        let ble = log.ble
+        #expect(ble.map(\.to) == [.connecting, .discovering, .disconnected, .reconnecting, .connecting, .discovering, .connected])
+        try #require(ble.count >= 4)
+        #expect(ble[2].reason?.hasPrefix("GATT discovery timed out after") == true)
+        #expect(ble[3].reason?.hasPrefix("attempt 1 in") == true)
+        #expect(central.calls.contains("cancel"), "the stalled connection is cancelled")
+        // The watchdog is off once connected.
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(link.state.isPolling)
+        #expect(central.calls.filter { $0 == "connect" }.count == 2)
         link.disconnect()
     }
 

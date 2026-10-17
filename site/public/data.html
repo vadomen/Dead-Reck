@@ -29,8 +29,8 @@
     const m = await r.json();
     const fmt = (n) => (n / 1e6).toFixed(1) + " MB";
     el.innerHTML = "<div class=\"table-wrap\"><table><thead><tr><th>Pack</th><th>Size</th><th>OSM data as of</th><th>SHA-256</th></tr></thead><tbody>" +
-      m.packs.map((p) => `<tr><td><a href="${p.url}" download>${p.name}</a></td><td>${fmt(p.size)}</td><td>${(p.osmDate || "").slice(0, 10)}</td><td><code>${p.sha256}</code></td></tr>`).join("") +
-      "</tbody></table></div>";
+      m.packs.map((p) => `<tr><td><a href="${p.url}" download>${(p.title && p.title.en) || p.name}</a></td><td>${fmt(p.size)}</td><td>${(p.osmDate || "").slice(0, 10)}</td><td><code>${p.sha256}</code></td></tr>`).join("") +
+      "</tbody><tfoot><tr><th>Total</th><th>" + fmt(m.packs.reduce((a, p) => a + p.size, 0)) + "</th><th></th><th></th></tr></tfoot></table></div>";
   } catch (e) { el.textContent = el.dataset.fallback; }
 })();
 </script>

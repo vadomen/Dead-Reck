@@ -3,7 +3,8 @@ import Foundation
 import Observation
 
 /// Delay before reconnect attempt `n` (1-based): `initial × 2^(n−1)`, capped
-/// at `maximum`. Reset after a successful initialisation.
+/// at `maximum`. The attempt count resets on the first successful poll of a
+/// connection (R3.1-5), not when its initialisation succeeds.
 struct ReconnectBackoff: Hashable, Sendable {
     var initial: Duration
     var maximum: Duration
@@ -35,11 +36,17 @@ struct ReconnectBackoff: Hashable, Sendable {
 /// idle|scanning|restoring → connecting       (connect, remembered adapter at launch)
 /// connecting → discovering → connected       (didConnect, UART pair + notifications)
 /// connected|discovering|connecting → disconnected
-///     (link lost, connect failed, or the ELM session asked for a reconnect)
+///     (link lost, connect failed, the ELM session asked for a reconnect, or
+///     discovery and notify-enable didn't finish within `discoveryTimeout`)
 /// disconnected → reconnecting → connecting   (after the backoff delay)
 /// idle → restoring                           (relaunched by the system with our adapter)
 /// any → idle                                 (disconnect / forget, or an unusable GATT layout)
 /// ```
+///
+/// `ble` rows with `from == to` are notes, not transitions: `write failed:
+/// <error>` when CoreBluetooth rejects an acknowledged write (R3.1-6).
+/// A disconnect this service asked for (`.cancelled`) is never a link loss:
+/// it only reaches the console (R3.1-3).
 ///
 /// ## Sessions and reconnects
 ///
@@ -48,20 +55,24 @@ struct ReconnectBackoff: Hashable, Sendable {
 ///   session has shut down and its last event has been forwarded — so
 ///   `seq` is unique and increasing for the whole recording.
 /// - The same way, the previous session's `rememberedPlan` (poll plan with
-///   its `ATAT` level and `requestHeader`, and the `ATZ` banner it was
-///   chosen on) seeds the next session **on the same adapter** (peripheral
-///   identifier), which then skips start-up selection and the
-///   `ATAT1`/`ATAT2` comparison if the plan still fits and its check poll
-///   passes (M6.1-3; `ELMSession`, "Remembered poll plan"). A session
-///   started on a different adapter clears it, and so does `forget()`;
-///   `disconnect()` keeps it. In memory only, for this app session.
+///   its `ATAT` level and `requestHeader`, the `ATZ` banner and the vehicle
+///   key it was chosen on) seeds the next session **on the same adapter**
+///   (peripheral identifier), which then skips start-up selection and the
+///   `ATAT1`/`ATAT2` comparison if the plan still fits (same banner, same
+///   vehicle: M7.1-3) and its check poll passes (M6.1-3; `ELMSession`,
+///   "Remembered poll plan"). A session started on a different adapter
+///   clears it, and so does `forget()`; `disconnect()` keeps it. A session
+///   whose polling failed (`needsReconnect`) hands over nil, so the
+///   reconnect selects again (M7.1-2). In memory only, for this app session.
 /// - Reconnect with backoff (`ReconnectBackoff`, 1 s doubling to 30 s) on a
 ///   link loss, a failed connect, a failed initialisation (a write error
 ///   during the handshake included: BLE stays up then), and on the
-///   session's `needsReconnect`. The attempt counter resets once an
-///   initialisation succeeds. The connect itself never times out: iOS
-///   keeps it pending until the adapter is back (unplugged and replugged),
-///   in the background too.
+///   session's `needsReconnect`, and when GATT discovery stalls (R3.1-7:
+///   `discoveryTimeout`, 10 s, from `→ discovering` to `.ready`). The
+///   attempt counter resets on the connection's first successful poll
+///   (R3.1-5), so a link that initialises but never polls still backs off.
+///   The connect itself never times out: iOS keeps it pending until the
+///   adapter is back (unplugged and replugged), in the background too.
 /// - Every session event and BLE transition goes to the `linkEvents()`
 ///   subscriber, in the order this service handles them, and to the console.
 /// - The current connection's `→ connected` and its latest initialisation
@@ -76,6 +87,8 @@ class OBDLinkService: OBDLinkServicing {
     static let consoleLimit = 500
     /// Default bound of `lastInitEvents`.
     static let defaultInitEventLimit = 1_000
+    /// Default `discoveryTimeout`.
+    static let defaultDiscoveryTimeout: Duration = .seconds(10)
 
     private(set) var state: OBDLinkState = .idle
     private(set) var discovered: [DiscoveredAdapter] = []
@@ -116,6 +129,10 @@ class OBDLinkService: OBDLinkServicing {
     @ObservationIgnored private let uptime: any UptimeSource
     @ObservationIgnored private let sessionConfiguration: ELMSessionConfiguration
     @ObservationIgnored private let backoff: ReconnectBackoff
+    @ObservationIgnored private let discoveryTimeout: Duration
+    /// Ends a `discovering` that never reaches `.ready` (R3.1-7). Cancelled
+    /// when BLE leaves `discovering`.
+    @ObservationIgnored private var discoveryWatchdog: Task<Void, Never>?
     @ObservationIgnored private var centralTask: Task<Void, Never>?
     @ObservationIgnored private var subscriber: AsyncStream<LinkEvent>.Continuation?
     /// The adapter the user wants connected; nil after `disconnect()`.
@@ -131,6 +148,9 @@ class OBDLinkService: OBDLinkServicing {
     @ObservationIgnored private var session: ELMSession?
     @ObservationIgnored private var sessionTask: Task<Void, Never>?
     @ObservationIgnored private var retiring: Task<Void, Never>?
+    /// The retire started by the latest `dropLink()`; see
+    /// `sessionsRetired()`.
+    @ObservationIgnored private var lastDrop: Task<Void, Never>?
     @ObservationIgnored private var nextSeq = 0
     /// The init-and-poll run in progress, tagged with its connection's
     /// `linkToken`. A `reinitialise()` on the same connection while it runs
@@ -152,19 +172,24 @@ class OBDLinkService: OBDLinkServicing {
     ///   - uptime: stamps the service's own transitions and the sessions;
     ///     the same timebase as the transport.
     ///   - initEventLimit: bound of `lastInitEvents`; smaller in tests.
+    ///   - discoveryTimeout: longest time from `→ discovering` (connected)
+    ///     to the UART pair being ready; after it the connection is
+    ///     cancelled and retried with backoff (R3.1-7).
     init(
         central: (any BLECentralClient)? = nil,
         defaults: UserDefaults = .standard,
         uptime: any UptimeSource = SystemUptimeSource(),
         sessionConfiguration: ELMSessionConfiguration = .default,
         backoff: ReconnectBackoff = .default,
-        initEventLimit: Int = OBDLinkService.defaultInitEventLimit
+        initEventLimit: Int = OBDLinkService.defaultInitEventLimit,
+        discoveryTimeout: Duration = OBDLinkService.defaultDiscoveryTimeout
     ) {
         self.central = central ?? BLECentral(restoreIdentifier: Self.restoreIdentifier, uptime: uptime)
         self.defaults = defaults
         self.uptime = uptime
         self.sessionConfiguration = sessionConfiguration
         self.backoff = backoff
+        self.discoveryTimeout = discoveryTimeout
         initCapture = InitCapture(limit: initEventLimit)
         rememberedAdapterID = defaults.string(forKey: Self.rememberedAdapterKey).flatMap(UUID.init(uuidString:))
         // Reconnected automatically once Bluetooth is on.
@@ -297,6 +322,7 @@ class OBDLinkService: OBDLinkServicing {
             guard id == target, [.connecting, .restoring].contains(bleState) else { return }
             transition(to: .discovering, reason: nil, uptime: at)
             state = .discoveringServices
+            startDiscoveryWatchdog(for: id)
         case .connectFailed(let id, let reason, let at):
             guard id == target, bleState == .connecting else { return }
             transition(to: .disconnected, reason: reason ?? "connect failed", uptime: at)
@@ -331,8 +357,16 @@ class OBDLinkService: OBDLinkServicing {
             transition(to: .disconnected, reason: reason ?? "link lost", uptime: at)
             dropLink()
             scheduleReconnect()
-        case .writeFailed(_, let reason, let at):
-            appendConsole(.status, "ble: write failed: \(reason)", at)
+        case .cancelled(_, let at):
+            // The disconnect this service asked for. It may land after the
+            // reconnect has started; it is not that connection's loss (R3.1-3).
+            appendConsole(.status, "ble: requested disconnect completed", at)
+        case .writeFailed(let id, let reason, let at):
+            guard id == target else {
+                appendConsole(.status, "ble: write failed: \(reason)", at)
+                return
+            }
+            note("write failed: \(reason)", uptime: at)
         }
     }
 
@@ -359,6 +393,21 @@ class OBDLinkService: OBDLinkServicing {
             dropLink()
             transition(to: .unavailable, reason: reason, uptime: at)
             state = .unavailable(reason: reason)
+        }
+    }
+
+    private func startDiscoveryWatchdog(for id: UUID) {
+        discoveryWatchdog?.cancel()
+        let timeout = discoveryTimeout
+        discoveryWatchdog = Task { [weak self] in
+            try? await Task.sleep(for: timeout)
+            guard !Task.isCancelled, let self, self.target == id, self.bleState == .discovering else { return }
+            // Not `unusable`: a missed callback says nothing about the
+            // adapter's layout, so this is retried like a link loss.
+            self.transition(to: .disconnected, reason: "GATT discovery timed out after \(timeout)")
+            self.dropLink()
+            self.central.cancelConnection(id)
+            self.scheduleReconnect()
         }
     }
 
@@ -461,7 +510,9 @@ class OBDLinkService: OBDLinkServicing {
         do throws(ELMSessionError) {
             let info = try await session.initialise()
             guard token == linkToken else { return }
-            attempt = 0
+            // `attempt` is not reset here but on the first successful poll
+            // (`handleSession`): init can pass on a link where every poll
+            // then fails, and that cycle must back off too (R3.1-5).
             try await session.startPolling(info.plan)
         } catch {
             guard token == linkToken else { return }
@@ -485,7 +536,15 @@ class OBDLinkService: OBDLinkServicing {
     private func dropLink() {
         linkToken += 1
         pollHz = 0
-        Task { await retireSession() }
+        lastDrop = Task { await retireSession() }
+    }
+
+    /// Returns once every session dropped so far has been retired (its
+    /// `nextSeq` and remembered plan taken, or not, per `pollPlanEpoch`):
+    /// `retireSession` waits for every retire before it. For tests: a
+    /// deterministic wait instead of a sleep (M7.1-6).
+    func sessionsRetired() async {
+        await lastDrop?.value
     }
 
     /// Shuts the current session down, waits until its last event has been
@@ -530,6 +589,12 @@ class OBDLinkService: OBDLinkServicing {
                 if case .polling = state { state = .polling(protocolNumber: info.protocolNumber, voltage: info.voltage) }
             case .pollRate(let hz, _):
                 pollHz = hz
+            case .reading:
+                // A poll answered with a value (only `ok` polls yield
+                // readings; the plan's own `ATSH`/`ATAT` exchanges are poll
+                // phase too, but prove nothing): the link works end to end,
+                // so the next loss starts the backoff from 1 s again (R3.1-5).
+                attempt = 0
             default:
                 break
             }
@@ -569,11 +634,23 @@ class OBDLinkService: OBDLinkServicing {
         guard new != bleState else { return }
         let old = bleState
         bleState = new
+        if old == .discovering {
+            discoveryWatchdog?.cancel()
+            discoveryWatchdog = nil
+        }
         let stamp = at ?? uptime.uptimeSeconds
         let event = LinkEvent.ble(from: old, to: new, reason: reason, uptime: stamp)
         initCapture.ble(event, from: old, to: new)
         deliver(event)
         appendConsole(.status, "ble: \(old.rawValue) → \(new.rawValue)" + (reason.map { " (\($0))" } ?? ""), stamp)
+    }
+
+    /// A `ble` row with `from == to`: a fact about the link, not a transition.
+    private func note(_ reason: String, uptime at: Double) {
+        let event = LinkEvent.ble(from: bleState, to: bleState, reason: reason, uptime: at)
+        initCapture.ble(event, from: bleState, to: bleState)
+        deliver(event)
+        appendConsole(.status, "ble: \(reason)", at)
     }
 
     private func appendConsole(for event: ELMSessionEvent) {
@@ -640,7 +717,11 @@ class OBDLinkService: OBDLinkServicing {
 /// The events behind `lastInitEvents`: the current connection's BLE
 /// transition into `connected`, then the latest initialisation of that
 /// connection's session, from its first event to its transition into
-/// `polling` or `failed`. Fed by `OBDLinkService` in delivery order.
+/// `polling` or `failed`, then (M7.1-5) the latest `.adapter` event and the
+/// latest ELM transition delivered after that init ended, in arrival order,
+/// so the replay ends with the plan actually polled (e.g. after a PID was
+/// dropped on NO DATA) and the state the link is in. Fed by
+/// `OBDLinkService` in delivery order.
 ///
 /// Emptied when BLE leaves `connected` (M6.1-1): a connection that has
 /// dropped is never replayed. Session events are matched by the token of
@@ -655,14 +736,20 @@ struct InitCapture {
     /// Collecting the init: from the session's first event, or the start of
     /// a re-init, until `polling` or `failed`.
     private var initialising = false
+    /// After the init ended: the latest `.adapter` event and the latest ELM
+    /// transition (`from != to`), at most one of each, oldest first.
+    private var afterInit: [LinkEvent] = []
 
     init(limit: Int) {
         self.limit = max(limit, 1)
     }
 
-    var events: [LinkEvent] { connection + initialisation }
+    var events: [LinkEvent] { connection + initialisation + afterInit }
 
     mutating func ble(_ event: LinkEvent, from: LinkSample.BLEState, to: LinkSample.BLEState) {
+        // A note (`write failed: …`) neither starts nor ends a connection,
+        // and isn't part of the replayed init.
+        guard from != to else { return }
         if to == .connected {
             // A new connection: everything starts again from here.
             reset()
@@ -677,6 +764,7 @@ struct InitCapture {
     private mutating func reset() {
         connection = []
         initialisation = []
+        afterInit = []
         sessionToken = nil
         initialising = false
     }
@@ -686,6 +774,7 @@ struct InitCapture {
     mutating func sessionStarted(token: Int) {
         sessionToken = token
         initialisation = []
+        afterInit = []
         initialising = true
     }
 
@@ -697,11 +786,15 @@ struct InitCapture {
         case .state(let from, let to, _, _) where from != to && !initialising && (to == .resetting || to == .reinitialising):
             // A new init on this connection replaces the last one.
             initialisation = []
+            afterInit = []
             initialising = true
         default:
             break
         }
-        guard initialising else { return }
+        guard initialising else {
+            keepAfterInit(sessionEvent, as: event)
+            return
+        }
         initialisation.append(event)
         if case .state(let from, let to, _, _) = sessionEvent, from != to, to == .polling || to == .failed {
             initialising = false
@@ -709,13 +802,36 @@ struct InitCapture {
         trim()
     }
 
+    /// After the init: a newer `.adapter` event or ELM transition replaces
+    /// the one of its kind and goes last. Notes, exchanges and readings
+    /// are poll traffic and not kept.
+    private mutating func keepAfterInit(_ sessionEvent: ELMSessionEvent, as event: LinkEvent) {
+        let isAdapter: (LinkEvent) -> Bool = { if case .session(.adapter) = $0 { true } else { false } }
+        let isTransition: (LinkEvent) -> Bool = {
+            if case .session(.state(let from, let to, _, _)) = $0 { from != to } else { false }
+        }
+        switch sessionEvent {
+        case .adapter:
+            afterInit.removeAll(where: isAdapter)
+        case .state(let from, let to, _, _) where from != to:
+            afterInit.removeAll(where: isTransition)
+        default:
+            return
+        }
+        afterInit.append(event)
+        trim()
+    }
+
     /// Drops the oldest events beyond `limit`: the connection part first,
-    /// then the start of the init.
+    /// then the start of the init, and `afterInit` (at most two) only with a
+    /// limit below three.
     private mutating func trim() {
-        let excess = connection.count + initialisation.count - limit
+        let excess = connection.count + initialisation.count + afterInit.count - limit
         guard excess > 0 else { return }
         let fromConnection = min(excess, connection.count)
         connection.removeFirst(fromConnection)
-        initialisation.removeFirst(excess - fromConnection)
+        let fromInit = min(excess - fromConnection, initialisation.count)
+        initialisation.removeFirst(fromInit)
+        afterInit.removeFirst(min(excess - fromConnection - fromInit, afterInit.count))
     }
 }

@@ -23,8 +23,10 @@ Rules:
 Run 1–3 targeted mutations on the view-model logic you added or changed (state, formatting and decision code under `App/Sources/UI/` that `AppTests` covers; not view layout), using reviewer check 13's procedure (`.claude/agents/reviewer.md`): every call starts `cd <root> && ` from the main tree root, the one worktree `../dead-reck-mutants`, its allowed command forms only, and undo each mutation before the next. App logic has no `swift test`, so the test command is the simulator one, pointed at the worktree:
 `xcodebuild -project ../dead-reck-mutants/DriveLogger.xcodeproj -scheme DriveLogger -destination 'platform=iOS Simulator,id=<UDID>' -derivedDataPath ~/.cache/dead-reck-mutants-dd test -only-testing:DriveLoggerAppTests/<Suite>`.
 Your change is not committed yet, so bring it into the worktree first:
-1. In your working tree: `git add -N . && git diff HEAD --binary --output=<root>/.claude/review-scratch/author.patch`.
-2. `cd <root> && git -C ../dead-reck-mutants checkout --detach -f <your HEAD sha>`, then `cd <root> && git -C ../dead-reck-mutants apply --index <root>/.claude/review-scratch/author.patch`. Because it is staged, check 13's undo (`checkout -f -- .`) returns to your change, not to HEAD.
+1. In your working tree: `git add -N . && git diff HEAD --binary --output=<root>/.claude/review-scratch/author-<branch>.patch`.
+2. `cd <root> && git -C ../dead-reck-mutants checkout --detach -f <your HEAD sha>`, then `cd <root> && git -C ../dead-reck-mutants apply --index <root>/.claude/review-scratch/author-<branch>.patch`. Because it is staged, check 13's undo (`checkout -f -- .`) returns to your change, not to HEAD.
+
+`../dead-reck-mutants` is shared: the orchestrator runs one mutating agent (engineer or reviewer) at a time. If the worktree is not at the sha you set, or holds a patch you didn't apply, another run is using it: stop and report, don't re-sync over it. When you finish, run `cd <root> && git -C ../dead-reck-mutants checkout --detach -f <your HEAD sha>` so no staged patch is left behind: a later run can't reset over a patch it didn't apply.
 
 A mutation that survives means a missing test: add it in your own tree, re-sync, re-run. List the result in your summary, one line each: `mutation -> test that failed`. Views only, no view-model logic: say `mutations: none (no view-model logic changed)`.
 

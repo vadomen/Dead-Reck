@@ -144,7 +144,7 @@ final class SimulatedBLECentral: BLECentralClient {
         guard let adapter else { return }
         Task {
             await adapter.disconnect()
-            continuation.yield(.disconnected(id, reason: nil, uptime: uptime.uptimeSeconds))
+            continuation.yield(.cancelled(id, uptime: uptime.uptimeSeconds))
         }
     }
 

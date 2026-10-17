@@ -275,3 +275,53 @@ Tests: Core not run: no file outside docs/ changed.
 ### Run 43 summary
 
 1 round; 0 fixed, 0 rejected, 0 deferred.
+
+## Run 44: backlog sweep elm batch 1 (1cd8d50..68959b3, branch sweep-elm), started 2026-10-17
+
+Commits: 68959b3 M1-E1 per-ECU tolerant replies, B1-1 one retry on a first-sample timeout in start-up selection, M7.1-1 plan remembered only when selection kept every PID, M7.1-2 remembered plan cleared on poll-failure escalation, M7.1-3 plan keyed on ATDPN + 7E8 0100 bitmask, M7.1-5 init capture replays post-init adapter re-announcements, M7.1-6 tests.
+
+### Round 1
+
+Reviewer: one fresh reviewer (opus), checks 1, 3, 4, 6–11, 13. Author mutations: 3 listed, 1 re-run (killed); reviewer's 2 own mutations survived. Result: 0 BLOCKER / 2 MAJOR / 0 MINOR.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R44.1-1 | MAJOR | `ELMSession.swift:830`: the handshake `0100` rule (with a fault, only 7E8's `41 00` counts) is untested; `(scan.faults.isEmpty \|\| $0.isFromPrimaryECU)` → `true` survives every ELM suite. A regression would accept a reply with 7E8's line cut short and init with no 7E8 answer. | CONFIRMED, FIXED | `ELMSessionMultiECUToleranceTests.supportedPIDsFaultWithoutPrimaryFails` (4 replies: 7E8 cut short either order, no 7E8 with a cut-short 7EA, no 7E8 with `NO DATA`). |
+| R44.1-2 | MAJOR | `ELMSession.swift:1173`: B1-1's "selection only, not the ATAT comparison" limit is untested; default `retriesFirstTimeout` → `true` passes all ELMSession tests, so ATAT2 could be kept after a timed-out reply. | CONFIRMED, FIXED | `ELMSessionAdaptiveTimingTests.atat2FirstSampleTimeoutNotRetried`. |
+
+Tests: `cd Core && swift test` 940 tests in 124 suites passed, 36 known issues (KI-1). The fixer's mutation runs were blocked by the permission classifier; round 2 checks them.
+
+### Round 2
+
+Reviewer: one fresh reviewer (sonnet), re-review of 2a8f935..abb00d7: both fixer mutations run (no permission denial for the reviewer) and killed (`supportedPIDsFaultWithoutPrimaryFails` on all 4 cases; `atat2FirstSampleTimeoutNotRetried` with 7 issues); both tests assert what their names claim. Result: 0 BLOCKER / 0 MAJOR / 0 MINOR.
+
+Tests: unchanged since round 1 (940 passed, 36 known issues).
+
+### Run 44 summary
+
+2 rounds; 2 fixed (R44.1-1, R44.1-2), 0 rejected, 0 deferred.
+
+## Run 45: backlog sweep elm batch 2 (ec77c62..da19774, branch sweep-elm2), started 2026-10-17
+
+Commits: da19774 R3.1-3 requested cancel reported as `.cancelled`, R3.1-5 backoff reset on the first reading, R3.1-6 write failures as `ble` notes, R3.1-7 10 s GATT discovery/notify watchdog, R3.2-2 one connect path, R32.2-4 shutdown drains a closed transport (link loss ends `failed / transport closed`).
+
+### Round 1
+
+Reviewer: one fresh reviewer (opus), checks 1–11, 13. Author mutations: 4 listed (3 App, run in the author's worktree), the Core one re-run and killed; the reviewer's own mutation survived. Result: 0 BLOCKER / 1 MAJOR / 0 MINOR. The fixer found a second, pre-existing data loss while writing the test (R45.1-2), verified by the orchestrator against the code.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R45.1-1 | MAJOR | `ELMSessionTests.swift:719`: `shutdownAfterTransportLost` checks only the end state; nothing tests that bytes buffered at the link loss are recorded. `await reader.value` → `_ = reader; transportDidClose()` survives every ELMSession suite while dropping a buffered reply. | CONFIRMED, FIXED | `shutdownAfterTransportLostDrainsBufferedBytes` with a gated transport that proves the bytes are still buffered when shutdown runs. |
+| R45.1-2 | MAJOR | `ELMSession.swift` (since cad8c53): a reply resolved by the reader but not yet emitted by `run()` is lost when the stream ends in the same step: `abandonInFlight` skips a resolved flight and `transportDidClose()` finishes `events` first, so the exchange row, its `rx` and readings vanish (probe: 50 of 50). `shutdown()` had the same window for manual commands and replies before `send` returned. | CONFIRMED, FIXED | Recording moved into the flight (`record` closure, `UnrecordedReply`); `recordUnrecordedReply()` before `failed`/`idle` and `finish()`; no duplicate when `run()` resumes. Tests `replyThenStreamEnd(phase:)`, `replyThenStreamEndBeforeSendReturns`, `shutdownRecordsResolvedReply` fail on HEAD's ELMSession. |
+
+Tests: `cd Core && swift test` 945 tests in 124 suites passed, 36 known issues (KI-1); AppTests OBDLinkServiceTests + StartupInitRecordingTests 27 passed (fixer). Fixer mutations not run (shared mutants worktree held another run's patch; one fixer earlier denied by the permission classifier); round 2 runs them.
+
+### Round 2
+
+Reviewer: one fresh reviewer (opus), re-review of da19774..9b5c122: R45.1-1 and R45.1-2 fixed; the refactor keeps the normal-path order, writes no duplicate rows, keeps `nextSeq` and stamps, and every caller handles `run()` throwing after its row without a stray state change (also removes an old window where a resumed handshake could change state after `failed`). Its mutation reset was denied by the permission classifier (stale staged patch in `../dead-reck-mutants`); after the user cleared the worktree, the orchestrator ran the 3 mutations with the check-13 procedure: `recordUnrecordedReply()` removed in `transportDidClose` → `replyThenStreamEnd` (both phases) and `replyThenStreamEndBeforeSendReturns` fail; removed in `shutdown` → `shutdownRecordsResolvedReply` fails; `await reader.value` → `_ = reader; transportDidClose()` → `shutdownAfterTransportLostDrainsBufferedBytes` fails. Result: 0 BLOCKER / 0 MAJOR / 0 MINOR.
+
+Tests: unchanged since round 1 (945 passed, 36 known issues).
+
+### Run 45 summary
+
+2 rounds; 2 fixed (R45.1-1, R45.1-2), 0 rejected, 0 deferred.

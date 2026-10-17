@@ -30,11 +30,18 @@ import Foundation
 /// reinitialising ─limit reached→ failed (+ needsReconnect)
 /// polling ─stopPolling() or every PID NO DATA→ ready
 /// any ─transport closes→ failed;  any ─shutdown()→ idle
+///     (failed instead if the transport had closed already: R32.2-4)
 /// ```
 ///
 /// - A poll **failure** is any outcome other than `ok` (and other than a
 ///   droppable `NO DATA`, below): timeout, `?`, `CAN ERROR`, malformed, …,
-///   or a failed write. Failures are retried after `retryDelay`; the
+///   or a failed write. Replies are parsed per ECU (M1-E1,
+///   `ELM327ResponseParser.scanReplies`): a bad or status line from one ECU
+///   leaves the others' answers standing, and the exchange is `ok` if the
+///   primary ECU's (`7E8`) answer decoded; every ECU that decoded yields
+///   readings. Only when the primary's answer is lost does the reply's
+///   status (or `malformed`) become the outcome. The same rule applies to
+///   probe exchanges and the handshake's `0100`. Failures are retried after `retryDelay`; the
 ///   `failuresBeforeReinit`-th consecutive one re-runs the handshake (after
 ///   `reinitBackoff × 2^(n−1)` for attempt `n`), then retries the command.
 /// - A re-init "fails" if a handshake step fails, or if polling fails
@@ -68,7 +75,11 @@ import Foundation
 ///   takes the first whose every sample carries the primary ECU's value for
 ///   every requested PID. Under functional addressing the suffix steps are
 ///   skipped: `010D0C` → `010D`. Selection sends each command
-///   `probeSamples` (3) times.
+///   `probeSamples` (3) times. A first sample that times out is sent once
+///   more before the step is given up (B1-1), with a note `start-up
+///   selection: <tx> timed out on its first sample; retrying once`; if the
+///   timed-out command's prompt never comes, the retry finds the link
+///   desynchronised and init restarts from `ATZ`.
 /// - **`ATAT1` unless `ATAT2` is clearly better** (M4 bench: a 3-sample
 ///   probe flipped to `ATAT2` on a 4.6 ms edge that the steady state did not
 ///   show). The chosen command is sent `adaptiveTimingSamples` (10) times at
@@ -135,19 +146,29 @@ import Foundation
 /// each reconnect widened the OBD gap by ~1 s. A plan chosen on the same
 /// adapter is now reused.
 /// - **What is remembered.** `rememberedPlan`: the plan selection chose
-///   (`adaptiveTiming` and `requestHeader` included) and the `ATZ` banner
-///   it was chosen on. Passed in by the owner (the previous session's, on
+///   (`adaptiveTiming` and `requestHeader` included), the `ATZ` banner it
+///   was chosen on, and the vehicle (`ATDPN` and the primary ECU's `0100`
+///   bitmask, M7.1-3). Passed in by the owner (the previous session's, on
 ///   the same peripheral), and replaced by every `initialise()`: the plan
-///   its selection chose, nil if nothing parsed. Only plans from selection
-///   are remembered (`probe` configured); without probing it is ignored and
-///   left as it is.
+///   its selection chose, nil if nothing parsed or if selection dropped a
+///   PID on NO DATA (M7.1-1: that drop is for this session only, so the
+///   next connection must select again and give the PID a fresh chance).
+///   Only plans from selection are remembered (`probe` configured); without
+///   probing it is ignored and left as it is. Polling that escalates to
+///   `failed` + `needsReconnect` clears it (M7.1-2), so the next connection
+///   selects again; a transport loss keeps it.
 /// - **The handshake always runs in full** (`ATZ` … `ATSP0`, `0100`,
 ///   `ATDPN`, `ATRV`), and the `ATSH7E0` gate is re-evaluated as on every
 ///   init. Then (state `probing`, after letting a late `ATSH7E0` reply
 ///   land) the remembered plan is **not reused** — note `remembered poll
 ///   plan not reused: <why>; selecting again`, then selection as usual — if
 ///   it fails `PollingPlan.validate()` (`invalid (<error>)`), if the banner
-///   differs (`chosen on <old>, this adapter reports <new>`), or if its
+///   differs (`chosen on <old>, this adapter reports <new>`), if the
+///   vehicle differs (`chosen on protocol <old>, this vehicle reports
+///   <new>`, comparing `A6` and `6` as one protocol; `chosen on a vehicle
+///   whose 7E8 0100 bitmask is <old|absent>, this one reports <new|none>`)
+///   or isn't known (`chosen without a vehicle key (ATDPN, 7E8 0100
+///   bitmask)`: a plan made without one), or if its
 ///   addressing isn't what the gate produced this time (`chosen with
 ///   requestHeader <7E0|7DF>, this handshake left requests at <7DF|7E0>`: a
 ///   7E0 plan whose `ATSH7E0` was skipped or refused, or a functional plan
@@ -311,7 +332,9 @@ public actor ELMSession {
     /// The plan the next `initialise()` tries before selecting (see
     /// "Remembered poll plan"): the one passed to `init`, then whatever each
     /// `initialise()` leaves — the plan its selection chose, the remembered
-    /// one if its check passed, nil if it failed and nothing was selected.
+    /// one if its check passed, nil if it failed and nothing was selected
+    /// or if selection dropped a PID (M7.1-1) — and nil once polling has
+    /// escalated to `failed` (M7.1-2).
     /// Read it after `shutdown()` to seed the session for the next
     /// connection to the same adapter, as with `nextSeq`.
     public private(set) var rememberedPlan: RememberedPollingPlan?
@@ -362,9 +385,37 @@ public actor ELMSession {
         /// `ATZ`: banner-shaped replies held in arrival order until an `ELM`
         /// banner or the end of the window decides.
         var bannerCandidates: [ELMRawReply] = []
+        /// Writes the reply's exchange row (and a poll's readings): `run()`'s
+        /// interpretation, kept here so link loss or shutdown can record a
+        /// reply `run()` hasn't yet (`UnrecordedReply`).
+        let record: (ELMRawReply, _ requestUptime: Double) -> RecordedReply
         var resolution: Resolution?
         var continuation: CheckedContinuation<Resolution, Never>?
         var timeoutTask: Task<Void, Never>?
+    }
+
+    /// A reply's row as written, and the value interpreted from it
+    /// (type-erased; `run()` casts it back). `value` is nil unless `ok`.
+    private struct RecordedReply {
+        let exchange: ELMExchange
+        let value: Any?
+    }
+
+    /// A reply that resolved the command in flight, until `run()` resumes
+    /// and records it (R45.1-2). The last notification and the end of
+    /// `incoming` can reach the reader in one step, and shutdown can run
+    /// before `run()` resumes too: both record it first (`recordUnrecordedReply`),
+    /// so its row and readings precede the `failed`/`idle` transition and
+    /// `events` finishing, and `run()` then writes no second row.
+    private struct UnrecordedReply {
+        let token: UInt64
+        let reply: ELMRawReply
+        /// The moment before the write until `send` returns, then the
+        /// transport's stamp (as `InFlight.requestUptime`).
+        var requestUptime: Double
+        let record: (ELMRawReply, _ requestUptime: Double) -> RecordedReply
+        /// Set when link loss or shutdown recorded the reply.
+        var recorded: RecordedReply?
     }
 
     private enum Acceptance {
@@ -391,6 +442,7 @@ public actor ELMSession {
         var requestUptime: Double
     }
 
+    private var unrecordedReply: UnrecordedReply?
     private var framer = ELMFramer()
     private var readerTask: Task<Void, Never>?
     private var transportClosed = false
@@ -559,7 +611,19 @@ public actor ELMSession {
 
     /// Stops polling, abandons a command still in flight, goes `idle` and
     /// finishes `events`. Idempotent.
+    ///
+    /// If the transport has already closed (`ELMTransport.isClosed`), the
+    /// reader first drains `incoming`, so the session ends as a link loss
+    /// would — every delivered byte recorded, then `failed` with
+    /// `transport closed` — rather than `idle`, whichever the caller noticed
+    /// first: the link service shuts the session down on the BLE disconnect,
+    /// which can overtake the reader (R32.2-4). A reply already in for the
+    /// command in flight is recorded before `idle` (R45.1-2).
     public func shutdown() async {
+        guard !isShutdown else { return }
+        if !transportClosed, let reader = readerTask, await transport.isClosed {
+            await reader.value
+        }
         guard !isShutdown else { return }
         isShutdown = true
         stopRequested = true
@@ -567,8 +631,13 @@ public actor ELMSession {
         initTask?.cancel()
         rateTask?.cancel()
         rateTask = nil
-        let abandoned = inFlight?.wire
+        // A flight its reply already resolved isn't abandoned: it is
+        // recorded just below.
+        let abandoned = inFlight.flatMap { $0.resolution == nil ? $0.wire : nil }
         abandonInFlight(with: .cancelled)
+        // Its reply in, but `run()` not yet resumed to record it: the
+        // awaits below needn't let it, and a manual command isn't awaited.
+        recordUnrecordedReply()
         finishOwedWait(nil, drained: false)
         releaseAllWaiters()
         await pollTask?.value
@@ -769,7 +838,8 @@ public actor ELMSession {
         guard elevenBitCANProtocols.contains(number) else {
             return "protocol \(protocolNumber) is not 11-bit ISO 15765-4 CAN (6, A6, 8, A8)"
         }
-        let replies = supportedPIDs.flatMap { try? ELM327ResponseParser.replies(in: $0, headers: true) } ?? []
+        // Intact answers only (M1-E1): another ECU's bad line doesn't hide 7E8's.
+        let replies = supportedPIDs.map { ELM327ResponseParser.scanReplies(in: $0, headers: true).replies } ?? []
         guard replies.contains(where: { $0.header == "7E8" && $0.bytes.starts(with: [0x41, 0x00]) }) else {
             return "no 7E8 reply to 0100"
         }
@@ -800,8 +870,15 @@ public actor ELMSession {
     ) -> (outcome: ELMOutcome, value: InitValue?) {
         do {
             if command == .supportedPIDs {
-                let replies = try ELM327ResponseParser.replies(in: raw, headers: headers)
-                guard replies.contains(where: { $0.bytes.starts(with: [0x41, 0x00]) }) else { return (.malformed, nil) }
+                // Per ECU (M1-E1), as for polls: with a bad or status line
+                // in the reply, only the primary ECU's answer counts.
+                let scan = ELM327ResponseParser.scanReplies(in: raw, headers: headers)
+                let answers = scan.replies.filter {
+                    $0.bytes.starts(with: [0x41, 0x00]) && (scan.faults.isEmpty || $0.isFromPrimaryECU)
+                }
+                guard !answers.isEmpty else {
+                    return (scan.faults.isEmpty ? .malformed : outcome(for: scan.error ?? .emptyResponse), nil)
+                }
                 return (.ok, .supported(raw))
             }
             switch (command, try ELM327ResponseParser.textReply(to: command.wireFormat, raw: raw)) {
@@ -929,7 +1006,7 @@ public actor ELMSession {
             reusable = nil
             // A late ATSH7E0 OK changes the addressing: let it land first.
             try await settleOwedPromptsInSlot()
-            if let mismatch = reuseMismatch(remembered, banner: found.banner) {
+            if let mismatch = reuseMismatch(remembered, found: found) {
                 noteState(reason: "remembered poll plan not reused: \(mismatch); selecting again")
             } else {
                 noteState(reason: "poll plan reused from the \(rememberedPlanOrigin): " + Self.describe(remembered.plan))
@@ -945,24 +1022,59 @@ public actor ELMSession {
             }
         }
         let (plan, selected) = try await probe()
-        rememberedPlan = selected ? RememberedPollingPlan(plan: plan, elmVersion: found.banner) : nil
+        // Only a full selection is remembered (M7.1-1): a plan that lost a
+        // PID to the NO DATA rule would keep it lost on every reconnect,
+        // although the rule drops a PID for this session only.
+        let full = plan.pids == PollingPlan.baseline.pids
+        rememberedPlan = selected && full
+            ? RememberedPollingPlan(plan: plan, elmVersion: found.banner, vehicle: Self.vehicleKey(found))
+            : nil
         rememberedPlanOrigin = "previous initialisation"
         return plan
     }
 
+    /// The vehicle as this handshake saw it (M7.1-3): `ATDPN` and the
+    /// primary ECU's `0100` bitmask.
+    private static func vehicleKey(_ found: HandshakeResult) -> RememberedPollingPlan.VehicleKey {
+        RememberedPollingPlan.VehicleKey(
+            protocolNumber: found.protocolNumber,
+            supportedPIDs: primarySupportedPIDs(found.supportedPIDs)
+        )
+    }
+
+    /// The 8 hex digits after `41 00` in the primary ECU's intact answer to
+    /// `0100` (headers on), e.g. `BE1CA813`; nil without one.
+    static func primarySupportedPIDs(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        let replies = ELM327ResponseParser.scanReplies(in: raw, headers: true).replies
+        guard let answer = replies.first(where: {
+            $0.isFromPrimaryECU && $0.bytes.count >= 6 && $0.bytes.starts(with: [0x41, 0x00])
+        }) else { return nil }
+        return answer.bytes[2..<6].map { String(format: "%02X", $0) }.joined()
+    }
+
     /// Why `remembered` can't be reused after this handshake, or nil if it
     /// can: it must pass `validate()`, come from an adapter with the same
-    /// `ATZ` banner, and have the addressing the `ATSH7E0` gate produced
-    /// this time (a 7E0 plan needs `ATSH7E0` answered `OK`; a functional
-    /// plan needs it skipped or refused).
-    private func reuseMismatch(_ remembered: RememberedPollingPlan, banner: String) -> String? {
+    /// `ATZ` banner and from the same vehicle (`ATDPN` and the primary
+    /// ECU's `0100` bitmask; a plan without that key never matches), and
+    /// have the addressing the `ATSH7E0` gate produced this time (a 7E0
+    /// plan needs `ATSH7E0` answered `OK`; a functional plan needs it
+    /// skipped or refused).
+    private func reuseMismatch(_ remembered: RememberedPollingPlan, found: HandshakeResult) -> String? {
         do {
             try remembered.plan.validate()
         } catch {
             return "invalid (\(error))"
         }
+        let banner = found.banner
         if !remembered.elmVersion.isEmpty, remembered.elmVersion != banner {
             return "chosen on \(remembered.elmVersion), this adapter reports \(banner)"
+        }
+        guard let vehicle = remembered.vehicle else {
+            return "chosen without a vehicle key (ATDPN, 7E8 0100 bitmask)"
+        }
+        if let mismatch = vehicle.mismatch(with: Self.vehicleKey(found)) {
+            return mismatch
         }
         if remembered.plan.requestHeader != planHeader {
             let chosen = remembered.plan.requestHeader ?? .functional
@@ -1020,7 +1132,7 @@ public actor ELMSession {
         var pids = PollingPlan.baseline.pids
         selection: while !pids.isEmpty {
             for candidate in Self.candidates(pidCount: pids.count, physical: physical) {
-                switch try await measure(candidate, pids: pids, rpmEvery: rpmEvery, mayDrop: true) {
+                switch try await measure(candidate, pids: pids, rpmEvery: rpmEvery, mayDrop: true, retriesFirstTimeout: true) {
                 case .valid(let cost):
                     return Selection(pids: pids, chosen: (candidate, cost))
                 case .drop(let pid):
@@ -1098,21 +1210,29 @@ public actor ELMSession {
 
     /// Sends a candidate's commands, `samples` times each, stopping at the
     /// first that doesn't parse. Each command's cost is its median latency.
+    /// `retriesFirstTimeout` (start-up selection, B1-1): see
+    /// `measure(_:pids:samples:retriesFirstTimeout:)`.
     private func measure(
         _ candidate: Candidate,
         pids: [OBDPID],
         rpmEvery: Int,
         mayDrop: Bool,
+        retriesFirstTimeout: Bool = false,
         samples: Int = probeSamples
     ) async throws(ELMSessionError) -> CandidateResult {
         if candidate.multiPID {
             let command = ELM327Command.currentDataMany(pids, responseCount: candidate.responseCount)
-            guard case .valid(let latency) = try await measure(command, pids: pids, samples: samples) else { return .invalid }
+            guard case .valid(let latency) = try await measure(
+                command, pids: pids, samples: samples, retriesFirstTimeout: retriesFirstTimeout
+            ) else { return .invalid }
             return .valid(cost: latency)
         }
         var latencies: [Double] = []
         for pid in pids {
-            switch try await measure(.currentDataMany([pid], responseCount: candidate.responseCount), pids: [pid], samples: samples) {
+            switch try await measure(
+                .currentDataMany([pid], responseCount: candidate.responseCount), pids: [pid], samples: samples,
+                retriesFirstTimeout: retriesFirstTimeout
+            ) {
             case .valid(let latency):
                 latencies.append(latency)
             case .noData where mayDrop && candidate.responseCount == nil && isDroppableOnNoData(pid):
@@ -1144,13 +1264,33 @@ public actor ELMSession {
     }
 
     /// `command` sent `samples` times; its median latency, or why not.
-    private func measure(_ command: ELM327Command, pids: [OBDPID], samples: Int) async throws(ELMSessionError) -> ProbeResult {
+    ///
+    /// `retriesFirstTimeout` (B1-1, start-up selection only): if the first
+    /// sample times out, it is sent once more, with a note `start-up
+    /// selection: <tx> timed out on its first sample; retrying once`, before
+    /// the step is given up. The retry goes out like any command: owed
+    /// prompts are settled first, and a written-off one desynchronises the
+    /// link, which restarts init from `ATZ` (the re-init path).
+    private func measure(
+        _ command: ELM327Command,
+        pids: [OBDPID],
+        samples: Int,
+        retriesFirstTimeout: Bool = false
+    ) async throws(ELMSessionError) -> ProbeResult {
         var latencies: [Double] = []
-        for _ in 0..<max(samples, 1) {
+        var retried = false
+        var sample = 0
+        while sample < max(samples, 1) {
             let headers = headersOn
             let (exchange, decoded) = try await perform(command, phase: .probe, timeout: configuration.commandTimeout) { raw in
                 Self.interpretPoll(raw, pids: pids, headers: headers)
             }
+            if exchange.outcome == .timeout, sample == 0, retriesFirstTimeout, !retried {
+                retried = true
+                noteState(reason: "start-up selection: \(exchange.tx) timed out on its first sample; retrying once")
+                continue
+            }
+            sample += 1
             if exchange.outcome == .noData { return .noData }
             guard let decoded else { return .invalid }
             let fromPrimary = Set(decoded.filter { OBDReading.isPrimaryECU($0.ecu) }.map(\.measurement.pid))
@@ -1316,7 +1456,10 @@ public actor ELMSession {
         let exchange: ELMExchange
         let decoded: [DecodedValue]?
         do {
-            (exchange, decoded) = try await perform(command, phase: .poll, timeout: plan.timeout) { raw in
+            (exchange, decoded) = try await perform(
+                command, phase: .poll, timeout: plan.timeout,
+                recorded: { exchange, decoded in self.emitReadings(decoded, of: exchange) }
+            ) { raw in
                 Self.interpretPoll(raw, pids: pids, headers: headers)
             }
         } catch {
@@ -1325,17 +1468,7 @@ public actor ELMSession {
 
         switch exchange.outcome {
         case .ok:
-            for value in decoded ?? [] {
-                continuation.yield(.reading(OBDReading(
-                    seq: exchange.seq,
-                    command: exchange.tx,
-                    ecu: value.ecu,
-                    measurement: value.measurement,
-                    raw: exchange.rx ?? "",
-                    requestUptime: exchange.requestUptime,
-                    replyUptime: exchange.completedUptime
-                )))
-            }
+            // The readings went out with the row (`emitReadings`).
             okPIDs.formUnion((decoded ?? []).map(\.measurement.pid))
             okCommands.insert(exchange.tx)
             successfulPollsInWindow += 1
@@ -1363,6 +1496,21 @@ public actor ELMSession {
             return .noData
         default:
             return .failure(exchange.outcome.rawValue)
+        }
+    }
+
+    /// One reading per decoded value of an `ok` poll, right behind its row.
+    private func emitReadings(_ decoded: [DecodedValue], of exchange: ELMExchange) {
+        for value in decoded {
+            continuation.yield(.reading(OBDReading(
+                seq: exchange.seq,
+                command: exchange.tx,
+                ecu: value.ecu,
+                measurement: value.measurement,
+                raw: exchange.rx ?? "",
+                requestUptime: exchange.requestUptime,
+                replyUptime: exchange.completedUptime
+            )))
         }
     }
 
@@ -1458,6 +1606,10 @@ public actor ELMSession {
         var reason = failure
         while true {
             if reinitsWithoutSuccess >= configuration.reinitsBeforeReconnect {
+                // Polling failed on this plan (M7.1-2): the next connection
+                // selects again instead of reusing it. A transport loss
+                // keeps it (it ends polling before this, as a rule).
+                if !transportClosed, !isShutdown { rememberedPlan = nil }
                 setState(.failed, reason: "\(reinitsWithoutSuccess) re-init(s) did not restore polling; last: \(reason)")
                 continuation.yield(.needsReconnect(uptime: uptime.uptimeSeconds))
                 return false
@@ -1543,7 +1695,8 @@ public actor ELMSession {
         _ command: ELM327Command,
         phase: ELMPhase,
         timeout: Duration,
-        interpret: (String) -> (outcome: ELMOutcome, value: Value?)
+        recorded: ((ELMExchange, Value) -> Void)? = nil,
+        interpret: @escaping (String) -> (outcome: ELMOutcome, value: Value?)
     ) async throws(ELMSessionError) -> (exchange: ELMExchange, value: Value?) {
         let validated: ValidatedELMCommand
         do {
@@ -1554,7 +1707,7 @@ public actor ELMSession {
             setState(.failed, reason: "\(command.wireFormat) rejected by the read-only guard: \(error)")
             throw error
         }
-        return try await run(validated, phase: phase, timeout: timeout, interpret: interpret)
+        return try await run(validated, phase: phase, timeout: timeout, recorded: recorded, interpret: interpret)
     }
 
     /// Test seam: fires the timeout of the command in flight and then, in
@@ -1578,12 +1731,15 @@ public actor ELMSession {
     }
 
     /// Takes the single command slot, sends, waits for the prompt or the
-    /// timeout, and emits the exchange.
+    /// timeout, and emits the exchange. `recorded` runs right after a
+    /// reply's row with the value of an `ok` one: a poll's readings, so
+    /// they go out with the row wherever it is written (R45.1-2).
     private func run<Value>(
         _ command: ValidatedELMCommand,
         phase: ELMPhase,
         timeout: Duration,
-        interpret: (String) -> (outcome: ELMOutcome, value: Value?)
+        recorded: ((ELMExchange, Value) -> Void)? = nil,
+        interpret: @escaping (String) -> (outcome: ELMOutcome, value: Value?)
     ) async throws(ELMSessionError) -> (exchange: ELMExchange, value: Value?) {
         try await acquireSlot()
         defer { releaseSlot() }
@@ -1607,14 +1763,9 @@ public actor ELMSession {
         } else {
             acceptance = .any
         }
-        let (requestUptime, resolution) = try await transact(command, phase: phase, timeout: timeout, acceptance: acceptance)
-        switch resolution {
-        case .reply(let reply):
-            // ATZ answered with a banner: the adapter is reset and replies
-            // line up with commands again.
-            if isReset { resynchronised() }
+        let record: (ELMRawReply, Double) -> RecordedReply = { reply, requestUptime in
             let (outcome, value) = interpret(reply.text)
-            let exchange = emitExchange(
+            let exchange = self.emitExchange(
                 phase: phase,
                 tx: command.wire,
                 requestUptime: requestUptime,
@@ -1622,7 +1773,29 @@ public actor ELMSession {
                 completedUptime: reply.completedUptime,
                 outcome: outcome
             )
-            return (exchange, outcome == .ok ? value : nil)
+            let kept = outcome == .ok ? value : nil
+            if let kept, let recorded { recorded(exchange, kept) }
+            return RecordedReply(exchange: exchange, value: kept)
+        }
+        let (requestUptime, resolution) = try await transact(
+            command, phase: phase, timeout: timeout, acceptance: acceptance, record: record
+        )
+        let unrecorded = unrecordedReply
+        unrecordedReply = nil
+        switch resolution {
+        case .reply(let reply):
+            if let early = unrecorded?.recorded {
+                // Link loss or shutdown recorded the reply while this waited
+                // to resume (R45.1-2): no second row. The session is closed,
+                // so the command ends like one abandoned in flight.
+                try checkOpen()
+                return (early.exchange, early.value as? Value)
+            }
+            // ATZ answered with a banner: the adapter is reset and replies
+            // line up with commands again.
+            if isReset { resynchronised() }
+            let written = record(reply, requestUptime)
+            return (written.exchange, written.value as? Value)
         case .timedOut(let exchange):
             // `timeoutFired` emitted the row and recorded the owed prompt in
             // the step that took the command off the wire.
@@ -1638,10 +1811,12 @@ public actor ELMSession {
         _ command: ValidatedELMCommand,
         phase: ELMPhase,
         timeout: Duration,
-        acceptance: Acceptance
+        acceptance: Acceptance,
+        record: @escaping (ELMRawReply, Double) -> RecordedReply
     ) async throws(ELMSessionError) -> (requestUptime: Double, resolution: Resolution) {
         try checkOpen()
         startReaderIfNeeded()
+        unrecordedReply = nil
         nextToken += 1
         let token = nextToken
         // The deadline is fixed before the write, so a slow write counts
@@ -1652,7 +1827,7 @@ public actor ELMSession {
         // while the write is still going uses the former.
         var flight = InFlight(
             token: token, wire: command.wire, phase: phase, acceptance: acceptance,
-            requestUptime: uptime.uptimeSeconds
+            requestUptime: uptime.uptimeSeconds, record: record
         )
         flight.timeoutTask = Task { [weak self] in
             do {
@@ -1669,12 +1844,17 @@ public actor ELMSession {
             requestUptime = try await transport.send(command)
         } catch {
             discardInFlight(token)
+            // Link loss may have recorded this command's reply before the
+            // write reported failing: that row stands, the command still
+            // ends with the error.
+            if unrecordedReply?.token == token { unrecordedReply = nil }
             if isShutdown { throw .cancelled }
             if transportClosed { throw .transport(.disconnected(nil)) }
             throw .transport(error as? ELMTransportError ?? .writeFailed(String(describing: error)))
         }
         lastSent = SentCommand(tx: command.wire, phase: phase, requestUptime: requestUptime)
         if inFlight?.token == token { inFlight?.requestUptime = requestUptime }
+        if unrecordedReply?.token == token { unrecordedReply?.requestUptime = requestUptime }
 
         // The reply (or the timeout) may already be in: a zero-latency
         // transport answers before `send` returns.
@@ -1698,6 +1878,11 @@ public actor ELMSession {
         guard var flight = inFlight, flight.token == token, flight.resolution == nil else { return false }
         flight.timeoutTask?.cancel()
         flight.timeoutTask = nil
+        if case .reply(let reply) = resolution {
+            unrecordedReply = UnrecordedReply(
+                token: token, reply: reply, requestUptime: flight.requestUptime, record: flight.record
+            )
+        }
         if let continuation = flight.continuation {
             inFlight = nil
             continuation.resume(returning: resolution)
@@ -1955,6 +2140,7 @@ public actor ELMSession {
         rateTask?.cancel()
         rateTask = nil
         abandonInFlight(with: .closed)
+        recordUnrecordedReply()
         finishOwedWait(nil, drained: false)
         recordPendingPartialReply()
         releaseAllWaiters()
@@ -1987,6 +2173,21 @@ public actor ELMSession {
         for reply in held { payLateOrUnsolicited(reply) }
         resolve(flight.token, with: resolution)
     }
+
+    /// Link loss or shutdown: writes the row (and a poll's readings) of a
+    /// reply that resolved the command in flight but that `run()` hasn't
+    /// recorded yet, so it reaches `events` before the final transition
+    /// (R45.1-2). Stamped as `run()` would: the transport's request stamp
+    /// if `send` has returned, else the moment before the write.
+    private func recordUnrecordedReply() {
+        guard var pending = unrecordedReply, pending.recorded == nil else { return }
+        pending.recorded = pending.record(pending.reply, pending.requestUptime)
+        unrecordedReply = pending
+    }
+
+    /// Test seam: a reply has resolved the command in flight and `run()`
+    /// hasn't recorded it yet.
+    var hasUnrecordedReply: Bool { unrecordedReply.map { $0.recorded == nil } ?? false }
 
     /// The late `>` for a command that already timed out: a `timeout`
     /// exchange with `rx`, attributed to that command.
@@ -2162,19 +2363,25 @@ public actor ELMSession {
         pids: [OBDPID],
         headers: Bool
     ) -> (outcome: ELMOutcome, value: [DecodedValue]?) {
-        do {
-            let replies = try ELM327ResponseParser.replies(in: raw, headers: headers)
-            var decoded: [DecodedValue] = []
-            for reply in replies {
-                // An ECU answer that doesn't decode (e.g. a 7F negative
-                // response from another module) stays in the raw text only.
-                guard let measurements = try? OBDDecoder.decode(requested: pids, bytes: reply.bytes) else { continue }
-                decoded += measurements.map { DecodedValue(ecu: reply.header, measurement: $0) }
-            }
-            return decoded.isEmpty ? (.malformed, nil) : (.ok, decoded)
-        } catch {
-            return (outcome(for: error), nil)
+        // Per ECU (M1-E1): an ECU whose lines don't parse is left out.
+        let scan = ELM327ResponseParser.scanReplies(in: raw, headers: headers)
+        var decoded: [DecodedValue] = []
+        for reply in scan.replies {
+            // An ECU answer that doesn't decode (e.g. a 7F negative
+            // response from another module) stays in the raw text only.
+            guard let measurements = try? OBDDecoder.decode(requested: pids, bytes: reply.bytes) else { continue }
+            decoded += measurements.map { DecodedValue(ecu: reply.header, measurement: $0) }
         }
+        if !scan.faults.isEmpty {
+            // A bad or status line fails the exchange only if the primary
+            // ECU's answer didn't decode; otherwise every ECU that decoded
+            // is kept, and the raw reply records the rest.
+            guard decoded.contains(where: { OBDReading.isPrimaryECU($0.ecu) }) else {
+                return (outcome(for: scan.error ?? .emptyResponse), nil)
+            }
+            return (.ok, decoded)
+        }
+        return decoded.isEmpty ? (.malformed, nil) : (.ok, decoded)
     }
 
     private static func interpretAcknowledgement(_ raw: String, wire: String) -> (outcome: ELMOutcome, value: Void?) {

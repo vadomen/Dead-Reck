@@ -279,3 +279,166 @@ extension ELMSessionConfiguration {
         reinitBackoff: .milliseconds(50)
     )
 }
+
+/// A mock adapter behind a gate: chunks the mock delivers are queued here
+/// and reach the session's reader only while the gate is open. With the gate
+/// held, bytes provably sit buffered in `incoming`, unconsumed, which a plain
+/// `AsyncStream` can't guarantee against the reader's own task (R45.1-1).
+struct GatedTransport: ELMTransport {
+    let mock: MockELMAdapter
+    let gate: ChunkGate
+    let incoming: AsyncStream<ELMChunk>
+
+    init(mock: MockELMAdapter) {
+        let gate = ChunkGate()
+        self.mock = mock
+        self.gate = gate
+        incoming = AsyncStream(unfolding: { await gate.next() })
+        let upstream = mock.incoming
+        Task {
+            for await chunk in upstream { await gate.append(chunk) }
+            await gate.finish()
+        }
+    }
+
+    func send(_ command: ValidatedELMCommand) async throws -> Double {
+        try await mock.send(command)
+    }
+
+    var isClosed: Bool {
+        get async {
+            await gate.noteClosedQuery()
+            return await mock.isClosed
+        }
+    }
+}
+
+actor ChunkGate {
+    private var queue: [ELMChunk] = []
+    private var upstreamFinished = false
+    private var open = true
+    private var consumer: CheckedContinuation<ELMChunk?, Never>?
+    /// How often `GatedTransport.isClosed` was asked: shutdown asks once.
+    private(set) var closedQueries = 0
+
+    /// Text delivered by the mock and not yet taken by the reader.
+    var bufferedText: String { String(decoding: queue.flatMap { Array($0.bytes) }, as: UTF8.self) }
+
+    func hold() { open = false }
+
+    func release() {
+        open = true
+        serve()
+    }
+
+    func append(_ chunk: ELMChunk) {
+        queue.append(chunk)
+        serve()
+    }
+
+    func finish() {
+        upstreamFinished = true
+        serve()
+    }
+
+    func noteClosedQuery() { closedQueries += 1 }
+
+    func next() async -> ELMChunk? {
+        if open, !queue.isEmpty { return queue.removeFirst() }
+        if open, upstreamFinished { return nil }
+        return await withCheckedContinuation { consumer = $0 }
+    }
+
+    private func serve() {
+        guard open, let waiting = consumer else { return }
+        if !queue.isEmpty {
+            consumer = nil
+            waiting.resume(returning: queue.removeFirst())
+        } else if upstreamFinished {
+            consumer = nil
+            waiting.resume(returning: nil)
+        }
+    }
+}
+
+/// Polls `condition` in real time (the virtual clock stands still), for
+/// waits on other tasks that no clock step drives. False after `limit`.
+func waitReal(limit: Duration = .seconds(5), _ condition: () async -> Bool) async -> Bool {
+    let deadline = ContinuousClock.now.advanced(by: limit)
+    while ContinuousClock.now < deadline {
+        if await condition() { return true }
+        try? await Task.sleep(for: .milliseconds(1))
+    }
+    return await condition()
+}
+
+/// A mock adapter behind a relay that can hold the chunks it delivers and
+/// then hand them to the session together with the end of `incoming`, in
+/// one go: the last BLE notification and the disconnect back-to-back. The
+/// session's reader then takes the reply and the end in one step, before
+/// `run()` resumes to record the reply (R45.1-2). `holdSends()` also keeps
+/// `send` from returning, so a reply and the end can land before it does.
+struct RelayTransport: ELMTransport {
+    let mock: MockELMAdapter
+    let relay: ChunkRelay
+    let incoming: AsyncStream<ELMChunk>
+
+    init(mock: MockELMAdapter) {
+        let (stream, continuation) = AsyncStream.makeStream(of: ELMChunk.self)
+        let relay = ChunkRelay(continuation)
+        self.mock = mock
+        self.relay = relay
+        incoming = stream
+        let upstream = mock.incoming
+        Task { for await chunk in upstream { await relay.take(chunk) } }
+    }
+
+    func send(_ command: ValidatedELMCommand) async throws -> Double {
+        let stamp = try await mock.send(command)
+        await relay.sendReturning()
+        return stamp
+    }
+
+    var isClosed: Bool { get async { await mock.isClosed } }
+}
+
+actor ChunkRelay {
+    private let continuation: AsyncStream<ELMChunk>.Continuation
+    private var held: [ELMChunk] = []
+    private var holding = false
+    private var sendsHeld = false
+    private var blockedSends: [CheckedContinuation<Void, Never>] = []
+
+    init(_ continuation: AsyncStream<ELMChunk>.Continuation) { self.continuation = continuation }
+
+    /// Text delivered by the mock and held back from the session.
+    var heldText: String { String(decoding: held.flatMap { Array($0.bytes) }, as: UTF8.self) }
+    var blockedSendCount: Int { blockedSends.count }
+
+    func take(_ chunk: ELMChunk) {
+        if holding { held.append(chunk) } else { continuation.yield(chunk) }
+    }
+
+    func hold() { holding = true }
+
+    /// Every held chunk, then the end of `incoming`, with nothing between.
+    func flushAndFinish() {
+        for chunk in held { continuation.yield(chunk) }
+        held = []
+        continuation.finish()
+    }
+
+    func holdSends() { sendsHeld = true }
+
+    func releaseSends() {
+        sendsHeld = false
+        let blocked = blockedSends
+        blockedSends = []
+        for send in blocked { send.resume() }
+    }
+
+    fileprivate func sendReturning() async {
+        guard sendsHeld else { return }
+        await withCheckedContinuation { blockedSends.append($0) }
+    }
+}

@@ -173,6 +173,9 @@ public actor MockELMAdapter: ELMTransport {
         }
     }
 
+    /// True after `disconnect()`.
+    public var isClosed: Bool { !connected }
+
     /// Simulates the adapter being unplugged: finishes `incoming`. Replies
     /// still pending are dropped and later sends throw `.notConnected`.
     public func disconnect() {

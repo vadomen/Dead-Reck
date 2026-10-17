@@ -145,6 +145,39 @@ struct ELMSessionAdaptiveTimingTests {
         #expect(await Self.timingNote(harness.log) == "adaptive timing: ATAT1 kept, ATAT2 replies did not parse")
     }
 
+    // R44.1-2: B1-1's one retry on a first-sample timeout is for start-up
+    // selection only. In the ATAT1/ATAT2 comparison a timeout means the
+    // level's replies did not parse, and ATAT1 is kept.
+    @Test("A first ATAT2 comparison sample that times out is not retried: ATAT1 kept, replies did not parse")
+    func atat2FirstSampleTimeoutNotRetried() async throws {
+        // ATAT2 would be clearly faster (30 vs 60 ms) if its timed-out first
+        // sample were retried. The first ATAT2 reply comes after 300 ms: past
+        // the 200 ms timeout, within the next command's grace (a late row).
+        let harness = Self.harness([
+            Self.poll(ms: 60, level: 1),
+            Self.poll(ms: 300, level: 2, times: 1),
+            Self.poll(ms: 30, level: 2),
+        ])
+        let info = try await harness.initialise()
+
+        #expect(info.plan.adaptiveTiming == 1)
+        #expect(info.plan.primaryCommand.wireFormat == "010D0C1")
+        #expect(await harness.mock.adaptiveTiming == 1)
+        let sent = await harness.mock.sentCommands
+        #expect(sent.last == "ATAT1", "adapter must be left at ATAT1")
+        #expect(
+            sent.filter { $0 == "010D0C1" }.count == ELMSession.probeSamples + ELMSession.adaptiveTimingSamples + 1,
+            "one ATAT2 sample, no retry"
+        )
+        #expect(sent.filter { $0 == "ATZ" }.count == 1, "the late prompt was paid: no restart")
+        let notes = await harness.log.transitions.filter { $0.from == $0.to }.compactMap(\.reason)
+        #expect(!notes.contains { $0.hasPrefix("start-up selection: ") })
+        #expect(await Self.timingNote(harness.log) == "adaptive timing: ATAT1 kept, ATAT2 replies did not parse")
+        let atat2 = Self.probesByLevel(await harness.log.exchanges)[2] ?? []
+        #expect(atat2.first?.outcome == .timeout)
+        #expect(atat2.allSatisfy { $0.outcome == .timeout }, "the timeout row and its late row only")
+    }
+
     @Test("ATAT2 refused: ATAT1 stays, with a note")
     func atat2Refused() async throws {
         let harness = Self.harness([
