@@ -35,6 +35,7 @@ App/                         iOS app target — owns every Apple framework
 AppTests/                    App unit tests (Swift Testing)
 Config/                      Signing.xcconfig (committed), Local.xcconfig (git-ignored)
 scripts/push_packs.sh        Copy road packs to the phone; tools/roads/ builds them
+site/                        App Store website and road-pack downloads (Cloudflare Pages); site/publish_packs.sh
 docs/                        See "Docs" below. logs/, osm/ are git-ignored and private
 ```
 
