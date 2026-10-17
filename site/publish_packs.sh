@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# Upload osm/packs/*.roadpack to the R2 bucket behind https://fugps.pages.dev/packs/
+# Upload the packs listed in osm/packs.json (built into osm/packs/) to the R2 bucket behind https://fugps.pages.dev/packs/
 # and publish packs/manifest.json pointing at them.
 #
 #   site/publish_packs.sh [--dry-run] [--bucket <name>]
+#
+# Already-uploaded keys are remembered in site/.packs-build/uploaded.txt and skipped;
+# delete that file to force a full re-upload.
 #
 # Pack objects are content-addressed (packs/v1/<name>-<contentHash>.roadpack) and
 # immutable, so a re-run only changes the manifest. The manifest is uploaded last,
@@ -35,15 +38,35 @@ uploads="$build_dir/uploads.tsv"
 mkdir -p "$build_dir"
 
 # Validate each pack's header and write the manifest + the upload list.
-/usr/bin/env python3 -I - "$packs_dir" "$manifest" "$uploads" <<'PY'
-import sys, os, json, hashlib, struct, glob, datetime
-packs_dir, manifest_path, uploads_path = sys.argv[1:4]
+# The packs published are the ones listed in osm/packs.json (in its order);
+# titles come from there, coverage boxes from osm/work/boundary-<name>.geojson.
+/usr/bin/env python3 -I - "$repo_root" "$manifest" "$uploads" <<'PY'
+import sys, os, json, hashlib, struct, datetime
+root, manifest_path, uploads_path = sys.argv[1:4]
+packs_dir = os.path.join(root, "osm", "packs"); work = os.path.join(root, "osm", "work")
 MAGIC = b"DLRPACK\x00"; HEADER = 96; MAX = 150_000_000
-files = sorted(glob.glob(os.path.join(packs_dir, "*.roadpack")))
-if not files: sys.exit("error: no .roadpack files in osm/packs")
-packs, uploads = [], []
-for path in files:
-    name = os.path.basename(path)[:-len(".roadpack")]
+config = json.load(open(os.path.join(root, "osm", "packs.json")))
+packs, uploads, missing = [], [], []
+
+def bbox_of(name):
+    path = os.path.join(work, f"boundary-{name}.geojson")
+    if not os.path.exists(path): return None
+    lons, lats = [], []
+    def walk(c):
+        if isinstance(c[0], (int, float)): lons.append(c[0]); lats.append(c[1])
+        else:
+            for x in c: walk(x)
+    for line in open(path):
+        line = line.strip()
+        if line: walk(json.loads(line)["geometry"]["coordinates"])
+    if not lons: return None
+    r = lambda v: round(v, 5)
+    return [r(min(lons)), r(min(lats)), r(max(lons)), r(max(lats))]
+
+for spec in config["packs"]:
+    name = spec["name"]
+    path = os.path.join(packs_dir, name + ".roadpack")
+    if not os.path.exists(path): missing.append(name); continue
     size = os.path.getsize(path)
     with open(path, "rb") as f:
         head = f.read(HEADER)
@@ -63,6 +86,7 @@ for path in files:
     key = f"packs/v1/{name}-{chash}.roadpack"
     entry = {
         "name": name,
+        "kind": "national" if spec.get("classes") == "national" else "region",
         "url": "/" + key,
         "size": size,
         "sha256": sha.hexdigest(),
@@ -70,13 +94,20 @@ for path in files:
         "formatVersion": version,
         "osmTimestamp": osm_ts,
     }
+    if spec.get("title"): entry["title"] = spec["title"]
+    box = bbox_of(name)
+    if box: entry["bbox"] = box
     if osm_ts > 0:
         entry["osmDate"] = datetime.datetime.fromtimestamp(osm_ts, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     packs.append(entry)
     uploads.append((path, key))
-    print(f"  {name}: {size/1e6:.1f} MB  sha256 {entry['sha256'][:12]}…  contentHash {chash}  -> {key}")
+    print(f"  {name:9s} {size/1e6:6.1f} MB  {chash}  {entry.get('title', {}).get('en', '')}")
+if missing:
+    sys.exit("error: not built yet (run tools/roads/build_packs.sh): " + ", ".join(missing))
+total = sum(p["size"] for p in packs)
+print(f"  {len(packs)} packs, {total/1e6:.1f} MB")
 manifest = {
-    "schema": 1,
+    "schema": 2,
     "generated": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     "attribution": "© OpenStreetMap contributors",
     "license": "ODbL 1.0",
@@ -99,9 +130,13 @@ put() { # <file> <key> <content-type> <cache-control>
     --file "$1" --content-type "$3" --cache-control "$4"
 }
 
+# Keys already uploaded from this machine (content-addressed, so never stale).
+done_list="$build_dir/uploaded.txt"; touch "$done_list"
 while IFS=$'\t' read -r file key; do
+  if grep -qxF "$key" "$done_list"; then echo "skip (already uploaded) $key"; continue; fi
   echo "uploading $key"
   put "$file" "$key" "application/octet-stream" "public, max-age=31536000, immutable"
+  echo "$key" >> "$done_list"
 done < "$uploads"
 
 echo "uploading packs/manifest.json"

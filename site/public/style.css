@@ -34,4 +34,4 @@ th,td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line);vertic
 th{color:var(--muted);font-weight:600}
 td code{font-size:12px;word-break:break-all}
 .table-wrap{overflow-x:auto}
-#packs td:nth-child(-n+3){white-space:nowrap}
+#packs td:nth-child(n+2):nth-child(-n+3){white-space:nowrap}
