@@ -34,7 +34,7 @@ Each round (max 4 rounds):
    - `docs-editor` for docs-only fixes (wording in `docs/*.md` or `WORKFLOW.md`), whatever area the finding is about. It has no shell, so you run tests and commit.
 
    Every real bug gets a regression test that fails before the fix and passes after.
-4. Run `cd Core && swift test`, and the simulator build if `App/` changed (see the `ios-build-test` skill for commands and the `DEVELOPER_DIR` note). Both must be green. Commit the round as "review round N: <summary>". Once the round is in the ledger, delete its scratch file(s) in `.claude/review-scratch/`.
+4. Run `cd Core && swift test`, and the simulator build if `App/` changed (see the `ios-build-test` skill for commands and the `DEVELOPER_DIR` note). If `Core/Sources/DriveLoggerCore/Navigation/` (incl. `Replay/`, `Roads/`) changed, also run `cd Core && swift test -c release --filter 'NavigationRoadPerfTests|NavigationB0Tests'` (their timing asserts run only in release) and report it. All must be green. Commit the round as "review round N: <summary>". Once the round is in the ledger, delete its scratch file(s) in `.claude/review-scratch/`.
 5. Append MINOR findings to `docs/BACKLOG.md` as DEFERRED; do not fix them in the loop. A backlog row the range closes moves, unchanged apart from its status, to `docs/archive/BACKLOG-closed.md`. Ledger and backlog row edits go to `docs-editor` when you delegate them.
 
 Stop when a fresh reviewer reports no BLOCKER or MAJOR findings, then print: rounds run, findings fixed/rejected/deferred, final test results.

@@ -13,6 +13,7 @@ If `xcode-select -p` points at CommandLineTools, prefix commands with
 
 ## Order of checks (cheapest first)
 1. Core changed -> `cd Core && swift test` (must pass, all of it). One suite: `cd Core && swift test --filter <SuiteName>`.
+   `Core/Sources/DriveLoggerCore/Navigation/` (incl. `Replay/`, `Roads/`) changed -> also `cd Core && swift test -c release --filter 'NavigationRoadPerfTests|NavigationB0Tests'` (their timing asserts run only in release) and report it.
 2. Core invariant: `grep -rhoE '^[[:space:]]*import[[:space:]]+[A-Za-z_]+' Core/Sources Core/Tests | sort -u` shows only Foundation/Testing (+ DriveLoggerCore).
 3. Files added/removed/renamed -> `xcodegen generate`, then commit `project.yml` and the regenerated `DriveLogger.xcodeproj` together. Never hand-edit the `.xcodeproj`. `Info.plist` is hand-maintained (`App/Resources/Info.plist`).
 4. App code changed -> simulator build:

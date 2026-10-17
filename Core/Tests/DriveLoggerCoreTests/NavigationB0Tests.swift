@@ -196,14 +196,14 @@ struct NavigationB0Tests {
         let parkedBefore = try #require(parked.estimate(at: S.ms(634)))
         let parkedTime = clock.measure { parked.ingest(Self.motion(huge)) }
         let parkedAfter = try #require(parked.estimate(at: S.ms(huge)))
-        #expect(parkedTime < .seconds(1), "parked: \(parkedTime)")
+        // Timings release only: debug is -Onone and they are load-bound there, as in NavigationRoadPerfTests.
+        if NavigationRoadPerfTests.isRelease { #expect(parkedTime < .seconds(1), "parked: \(parkedTime)") }
         #expect(parked.counters.steps > 9_000_000_000)
         #expect(parkedAfter.stationary && parkedAfter.east == parkedBefore.east && parkedAfter.north == parkedBefore.north)
 
         var moving = Self.movingGap(false, config: config).engine
         let movingTime = clock.measure { moving.ingest(Self.motion(huge)) }
         let movingAfter = try #require(moving.estimate(at: S.ms(huge)))
-        // Release only: debug is -Onone and this timing is load-bound there, as in NavigationRoadPerfTests.
         if NavigationRoadPerfTests.isRelease { #expect(movingTime < .seconds(1), "moving: \(movingTime)") }
         #expect(moving.counters.macroSteps <= moving.config.maxCatchUpSteps)
         #expect(movingAfter.latitude.isFinite && movingAfter.longitude.isFinite && movingAfter.ellipse.semiMajorM.isFinite)
@@ -211,7 +211,7 @@ struct NavigationB0Tests {
         var fresh = NavigationEngine(config: config)
         fresh.ingest(Self.motion(0))
         let freshTime = clock.measure { fresh.ingest(Self.motion(huge)) }
-        #expect(freshTime < .seconds(1), "uninitialised: \(freshTime)")
+        if NavigationRoadPerfTests.isRelease { #expect(freshTime < .seconds(1), "uninitialised: \(freshTime)") }
         #expect(!fresh.isInitialized && fresh.counters.steps == 0)
     }
 
