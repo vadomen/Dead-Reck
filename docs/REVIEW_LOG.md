@@ -429,3 +429,13 @@ Reviewer: one fresh reviewer (opus), checks 2, 6–13. Bit-identical re-run (cle
 | R53.1-2 | MINOR | `NavigationEngine.swift:695` (read at :1001/:1007, reseed :1068): a vetoed step records `held` as the Doppler speed, so the OBD-0 course veto no longer protects fixes taken then: on a ferry with the car parked across the travel direction, a course reseed sets the heading to the ferry's course; with GNSS lost on landing, DR runs off at the parking angle. | DEFERRED | docs/BACKLOG.md; raised to the user with the default-on question |
 
 Tests: `cd Core && swift test` 976 passed, 36 known issues; release perf filter 9 passed; simulator build OK; App suites 56 passed (author).
+
+### Round 2
+
+Reviewer: one fresh reviewer (sonnet), re-review of d130298..24fc38b by reading: the test asserts what its name claims, is seeded, its bounds match the OU theory (std ≈ 3.97 m/s, shift rms ≈ 7.1 m) with wide margins, and cannot pass for the wrong reason (exact 29 vetoed steps, `staleSpeedSteps == 0`, no resampling in the window). Result: 0 BLOCKER / 0 MAJOR / 0 MINOR.
+
+Tests: 976 passed, 36 known issues.
+
+### Run 53 summary
+
+2 rounds; 1 fixed (R53.1-1), 0 rejected, 1 MINOR deferred (R53.1-2).
