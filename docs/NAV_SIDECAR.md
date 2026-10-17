@@ -30,6 +30,11 @@ are written as the strings `"inf"`, `"-inf"` and `"nan"`.
 | `roads` (v2) | once, when a road network becomes active | `t` (optional), `afterInputs`, `roads` (per pack: `contentHash`, `formatVersion`, `osmTimestamp`, `gridID`), `roadSetHash` |
 | `roadsSelection` (within v2) | a road selection attempt, when its outcome is known and it differs from the last such line; identical repeats as one line, at the next change, at an attach or at the end | `t`, `afterInputs`, `recordedAfterInputs`, `request` (`radiusM`), `candidates` (per pack file: `name`, `state`, `reason` or `covering`; absent for `unfinished`), `outcome`, `packs` (optional), `reason` (optional), `repeats` and `firstT` (optional, a line of repeats only) |
 
+- **pin.prior** is taken when the pin is written, about 3 s after the tap
+  (`engine.estimate(at: t)` for a past `t` returns the current state), so while
+  moving it is about v × 3 s ahead of the estimate at the tap. The engine
+  update itself uses `shiftSince(t)` and is right; arrival-order replay scores
+  the prior at the tap, so the two differ (backlog N4MF-2).
 - **seed** is `NavigationSeed.derive(header:)`: the 64-bit FNV-1a hash of the
   UTF-8 bytes of the header's `sessionID.uuidString`. It is a JSON integer up
   to 2⁶⁴ − 1.

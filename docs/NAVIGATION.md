@@ -1731,6 +1731,8 @@ both.
   from the sign of longitudinal acceleration against d(speed)/dt, a reverse
   hypothesis per particle at low speed after a stop, or a gear/reverse PID in
   mode 01 if the car exposes one.
+  Decision: a known limitation. OBD mode 01 has no gear signal, so reversing is
+  integrated as driving forward at the OBD speed (backlog N2-1, closed 2026-10-17).
 - **Wide heading posterior → shrunken mean**: while heading std is large, the
   mean of the arc-shaped cloud lies inside the arc, shortening the
   start-to-estimate distance by about exp(−σ²/2). On jammed-B this was most of

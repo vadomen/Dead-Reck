@@ -279,3 +279,9 @@ Replay only the current connection's init (M6.1-1) and remembered poll plan and 
 2. **Clears:** copy a covering pack to the phone (`scripts/push_packs.sh`) before Start: no line, and Diagnostics shows "Recording uses". After Stop the line is gone.
 3. **No collisions:** double-tap a pin while the line is up: the "Fix recorded / Undo" toast stacks below it; the recording indicator, Re-centre hint and Heading/Follow buttons are not covered. Pan the map to get the Re-centre hint and check again.
 4. **Readable in the mount:** read the line at arm's length in daylight; the long "No road pack covers this area" text may shrink to 80 % on a narrow phone (check it stays on one line and legible). Tapping it opens Settings (Diagnostics).
+
+### Added by the backlog triage sweep (2026-10-17) — not verified on a device
+1. **ELM write-offs and clone banners (bench):** count the write-off notes and the `ATZ banner without 'ELM'` notes over a bench session, and decide whether to model `STOPPED` in the mock (a real ELM327 aborts a pending command on any received byte). (M1-E3)
+2. **Vgate write stalls:** check whether the Vgate write characteristic is `withoutResponse`-only, and whether write stalls past the 1 s readiness limit of `BLETransport` happen (they log a `timeout` first and cost a needless `ATZ` re-init). (R3.2-1)
+3. **Camera distance/span ratio:** measure `camera.distance / visibleSpan` on the device and compare it with `MapFraming.distancePerSpan` (1.87, a guess that matches on one axis only). (M10.1-4)
+4. **N3.4: Finder/Files overwrite of a road pack:** check whether a Finder or Files copy overwrites a pack in `Documents/RoadPacks` in place, which would affect the memory-mapped pack (SIGBUS risk during a recording). This decides whether N3.4 import must clone packs into a private directory. (R32.1-8)
