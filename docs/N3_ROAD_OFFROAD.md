@@ -75,7 +75,7 @@ Prototype code: `logs/n32a/offroad/prototype.patch`, not committed.
 
 ### Test 3 (failed checks out of 80, i.e. 16 per seed × 5 seeds)
 
-| variant | roadCorrelationM 30 (default) | 100 | 300 | 1000 |
+| variant | roadCorrelationM 30 (default then) | 100 | 300 | 1000 |
 |---|---:|---:|---:|---:|
 | plan | 65 | 60 | 45 | 17 |
 | (a) 0.2 / 1 / 5 per km | 59 / 59 / 60 | | | |
@@ -276,7 +276,7 @@ decision"). Two cases stay named for any later off-road or ellipse work.
   ellipse of about 25 × 21 m. Passing: no extra misses in 2068–2087 s beyond
   N3.0's single miss (the 706 s pin), i.e. consistency back to 99.6 %.
 - **N3.2 test 3** (unmapped road beside a mapped one, known FAIL above).
-  Passing: no capture, and the truth inside the 95 % ellipse.
+  Passing: no capture, or the truth inside the 95 % ellipse.
 
 Two candidate directions, both unmeasured:
 - an ellipse that keeps the along-track uncertainty the roads cannot reduce;
