@@ -73,6 +73,8 @@ scripts/push_packs.sh [--dry-run] [--force] [--device <id>]   # never during a r
 xcodegen generate
 ```
 
+Run repo scripts by their repo-relative path (`scripts/push_packs.sh`), never absolute.
+
 Recordings, replay output and the truth file live in git-ignored `logs/`: they hold real positions.
 
 ## Project generation
