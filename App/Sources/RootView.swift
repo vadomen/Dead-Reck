@@ -26,14 +26,7 @@ struct RootView: View {
         _roads = State(initialValue: RoadsDiagnosticsModel(library: services.roadPacks, service: service))
         let library = services.roadPacks
         _roadsWarning = State(initialValue: RoadsWarningModel(source: {
-            let roads = await service.roadsStatus()
-            guard roads.recording else { return nil }
-            let status = await library.status()
-            return RoadsWarning.message(
-                recording: roads.recording, libraryScanned: status.scansCompleted > 0 && !status.scanning,
-                verifiedPacks: status.packs.filter(\.verified).count, roadsAttached: roads.inUse,
-                lastOutcome: roads.lastOutcome
-            )
+            await RoadsWarning.current(service: service, library: library)
         }))
         var initial = AppNavigation()
         #if DEBUG

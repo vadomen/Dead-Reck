@@ -325,6 +325,11 @@ final class RecordingSession {
     /// consume `inputs`, don't consume here). nil: nobody listens, and the
     /// tap's buffer simply drops the oldest inputs; the log is unaffected.
     @ObservationIgnored var onNavigationFeed: (@MainActor (RecordingNavigationFeed) -> Void)?
+    /// Awaited inside the background task of the flush on `.background` and
+    /// on a memory warning, after the log's own flush (R14.1-4): `AppServices`
+    /// flushes the navigation sidecar here, which is otherwise flushed only
+    /// every 10 s.
+    @ObservationIgnored var onFlush: (@Sendable () async -> Void)?
 
     @ObservationIgnored private let link: any OBDLinkServicing
     @ObservationIgnored private let sources: [any SensorSource]
@@ -1042,11 +1047,13 @@ final class RecordingSession {
 
     private func flushInBackgroundTask(_ rec: ActiveRecording, reason: String) {
         let writer = rec.writer
+        let alsoFlush = onFlush
         let endBackgroundTask = beginBackgroundTask("DriveLogger.flush.\(reason)")
         Task {
             // A throw is this call's result, not a report: the writer
             // delivers each failure once on `failures` (rule 4).
             try? await writer.flush()
+            await alsoFlush?()
             endBackgroundTask()
         }
     }

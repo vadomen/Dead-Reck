@@ -15,7 +15,8 @@ import Foundation
 ///   fix is the engine's own position reset;
 /// - writes the sidecar `feed.sidecarURL` (`NavSidecar`, docs/NAV_SIDECAR.md):
 ///   the header at once, then estimates, pins and road lines, buffered and
-///   flushed every `flushInterval` (10 s) on the actor, and, when the
+///   flushed every `flushInterval` (10 s) on the actor and on `flush()`
+///   (the app going to the background, R14.1-4), and, when the
 ///   feed's stream ends (stop or write failure), the closing
 ///   `roadsSelection` lines (`LiveNavigationRun.closingLines`), flushed and
 ///   closed;
@@ -70,6 +71,9 @@ actor NavigationService {
         var knownRefusals: [RoadPackSelection.Refusal] = []
         /// How the latest finished attempt of this recording ended.
         var lastOutcome: NavSidecar.RoadsSelection.Outcome?
+        /// This recording's own library rescan (started in `begin`) has
+        /// returned (R34.1-3).
+        var libraryScanned = false
     }
 
     /// What Diagnostics shows about roads in the recording.
@@ -87,6 +91,11 @@ actor NavigationService {
         /// How the latest selection attempt of this recording ended; nil
         /// before the first (the map's roads warning reads it).
         var lastOutcome: NavSidecar.RoadsSelection.Outcome?
+        /// The library rescan this recording started has returned, so the
+        /// library's packs are as of this recording, not an earlier scan
+        /// (R34.1-3: the map's "no road packs" line waits for it). False
+        /// without a library and for a finished recording.
+        var libraryScanned = false
 
         var inUse: Bool { !packNames.isEmpty }
         static let none = RoadsStatus()
@@ -118,9 +127,16 @@ actor NavigationService {
     private(set) var selectionAttempts = 0
     private(set) var lastAttemptOutcome: NavSidecar.RoadsSelection.Outcome?
 
-    init(flushInterval: Duration = .seconds(10), library: RoadPackLibrary? = nil) {
+    /// How a recording's start rescans the library: `rescan()`. Tests
+    /// inject a slow one (R34.1-3).
+    typealias LibraryRescan = @Sendable (RoadPackLibrary) async -> [RoadPackLibrary.PackStatus]
+    private let libraryRescan: LibraryRescan
+
+    init(flushInterval: Duration = .seconds(10), library: RoadPackLibrary? = nil,
+         libraryRescan: @escaping LibraryRescan = { await $0.rescan() }) {
         self.flushInterval = flushInterval
         self.library = library
+        self.libraryRescan = libraryRescan
     }
 
     /// The `onNavigationFeed` hook's body: starts the task that consumes
@@ -167,13 +183,20 @@ actor NavigationService {
         runsStarted += 1
         roadStates[feed.generation] = RoadsState()
         // Rescan the packs (cache hits are cheap); never awaited here. Its
-        // result goes into the recording once, as the `roadPacks` row.
+        // result goes into the recording once, as the `roadPacks` row, and
+        // only then does the library count as scanned for this recording.
         if let library {
-            let report = feed.recordRoadPacks
-            Task(priority: .utility) {
-                report(RoadPackLibrary.roadPacksDetail(await library.rescan()))
+            let report = feed.recordRoadPacks, rescan = libraryRescan, generation = feed.generation
+            Task(priority: .utility) { [self] in
+                let packs = await rescan(library)
+                libraryRescanReturned(generation)
+                report(RoadPackLibrary.roadPacksDetail(packs))
             }
         }
+    }
+
+    private func libraryRescanReturned(_ generation: Int) {
+        roadStates[generation]?.libraryScanned = true
     }
 
     private func ingest(_ input: NavigationInput, generation: Int) {
@@ -191,6 +214,19 @@ actor NavigationService {
         let request = run.live.newSelectionRequest
         runs[generation] = run
         if let request { requestRoads(request, generation: generation) }
+    }
+
+    /// Flushes every running recording's sidecar now (R14.1-4). `AppServices`
+    /// calls it from the recording's own flush on `.background` and on a
+    /// memory warning, inside that flush's background task: otherwise a
+    /// kill in the background would lose up to `flushInterval` of lines the
+    /// log (flushed on background) still has inputs for.
+    func flush() {
+        let now = ContinuousClock.now
+        for generation in runs.keys {
+            runs[generation]?.writer?.flush()
+            runs[generation]?.lastFlush = now
+        }
     }
 
     // MARK: Roads
@@ -267,7 +303,7 @@ actor NavigationService {
             let state = roadStates[generation]
             var status = RoadsStatus(recording: true, refusal: state?.refusal,
                                      selectionPending: run.live.roads == nil && run.live.selectionRequest != nil,
-                                     lastOutcome: state?.lastOutcome)
+                                     lastOutcome: state?.lastOutcome, libraryScanned: state?.libraryScanned ?? false)
             if let roads = run.live.roads {
                 status.packNames = state?.names ?? []
                 status.packHashPrefixes = roads.network.packs.map { String(NavigationSeed.hex($0.contentHash).prefix(8)) }

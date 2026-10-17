@@ -428,3 +428,27 @@ Tests: `cd Core && swift test` 970 passed, 36 known issues; AppTests RoadPackLib
 ### Run 51 summary
 
 1 round; 0 fixed, 0 rejected, 0 deferred.
+## Run 53: backlog sweep nav batch 2 (1e1be23..d130298, branch sweep-nav2), started 2026-10-18
+
+Commits: d130298 N4B1-1 `zuptFixGate` (default on: an OBD 0 does not freeze the cloud while ≥ 2 consecutive good fixes after the zeros began read ≥ 5 m/s; adoption rule: seeds 1–5 identical on every acceptance drive with and without roads, 0 vetoed steps; simulator drift 523 m → < 1 m), R14.1-4 sidecar flushed on background through an `onFlush` hook and `--compare` names an early end, R34.1-3 "No road packs" waits for this recording's own rescan.
+
+### Round 1
+
+Reviewer: one fresh reviewer (opus), checks 2, 6–13. Bit-identical re-run (clean, seed 1, roads, release, base vs head): GeoJSON `cmp`-identical. Gate causal and deterministic, no double counting; `onFlush` adds no rows and runs after the log flush. Mutations: author's `fixNs > since` killed; `if stale {` → `if stale && !vetoed {` survived all 29 Navigation suites; `!zeroVetoed` dropped from `isStopped` survived but is practically equivalent. Result: 0 BLOCKER / 1 MAJOR / 1 MINOR.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R53.1-1 | MAJOR | `NavigationEngine.swift:668`: no test covers the unknown-speed noise on vetoed steps; without it the cloud moves at exactly the held Doppler speed with no spread (overconfident ellipse). | CONFIRMED, FIXED | `NavigationZeroFixGateTests.vetoedStepTakesStaleSpeedNoise` (offset std 3.99 m/s vs 0 in a no-noise reference, along-track shift rms 6.86 m). The fixer's mutants reset was denied by the classifier (its patch apply ran); the orchestrator ran the mutation on that staged state: `if stale && !vetoed` → the new test fails. |
+| R53.1-2 | MINOR | `NavigationEngine.swift:695` (read at :1001/:1007, reseed :1068): a vetoed step records `held` as the Doppler speed, so the OBD-0 course veto no longer protects fixes taken then: on a ferry with the car parked across the travel direction, a course reseed sets the heading to the ferry's course; with GNSS lost on landing, DR runs off at the parking angle. | DEFERRED | docs/BACKLOG.md; raised to the user with the default-on question |
+
+Tests: `cd Core && swift test` 976 passed, 36 known issues; release perf filter 9 passed; simulator build OK; App suites 56 passed (author).
+
+### Round 2
+
+Reviewer: one fresh reviewer (sonnet), re-review of d130298..24fc38b by reading: the test asserts what its name claims, is seeded, its bounds match the OU theory (std ≈ 3.97 m/s, shift rms ≈ 7.1 m) with wide margins, and cannot pass for the wrong reason (exact 29 vetoed steps, `staleSpeedSteps == 0`, no resampling in the window). Result: 0 BLOCKER / 0 MAJOR / 0 MINOR.
+
+Tests: 976 passed, 36 known issues.
+
+### Run 53 summary
+
+2 rounds; 1 fixed (R53.1-1), 0 rejected, 1 MINOR deferred (R53.1-2).

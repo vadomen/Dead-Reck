@@ -343,6 +343,50 @@ struct NavigationServiceRoadsTests {
         #expect(repeatsLine > lastEstimate, "flushed at the end, not where the repeats happened")
     }
 
+    @Test("R34.1-3: with a slow rescan at Start, an earlier empty scan never shows 'No road packs'; this recording's own scan decides")
+    func noPacksWaitsForTheRecordingsRescan() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let dir = try RoadPackFixture.directory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let packs = library(dir)
+        // The launch scan finds nothing; then a pack is pushed.
+        #expect(await packs.rescan().isEmpty)
+        try RoadPackFixture.write(try RoadPackFixture.data(), named: "pushed.roadpack", in: dir)
+        // The recording's rescan starts a second late: the window in which
+        // the library still shows the launch scan, finished and idle.
+        let service = NavigationService(library: packs, libraryRescan: { library in
+            try? await Task.sleep(for: .seconds(1))
+            return await library.rescan()
+        })
+        let (feed, tap) = makeFeed(20, scratch: scratch)
+        let task = service.start(feed)
+        #expect(await waitUntil { await service.roadsStatus().recording })
+        #expect(!(await service.roadsStatus().libraryScanned))
+        let stale = await packs.status()
+        #expect(stale.scansCompleted == 1 && !stale.scanning && stale.packs.isEmpty,
+                "the earlier scan: finished, idle, no pack (the old rule read this as scanned)")
+        #expect(await RoadsWarning.current(service: service, library: packs) == nil)
+        #expect(await waitUntil(5) { await service.roadsStatus().libraryScanned })
+        #expect(await packs.status().packs.filter(\.verified).count == 1)
+        #expect(await RoadsWarning.current(service: service, library: packs) == nil)
+        tap.finish()
+        await task.value
+        #expect(await RoadsWarning.current(service: service, library: packs) == nil, "not recording")
+        #expect(!(await service.roadsStatus().libraryScanned), "a finished recording")
+
+        // Still empty after this recording's own scan: the line shows.
+        try FileManager.default.removeItem(at: dir.appendingPathComponent("pushed.roadpack"))
+        let (next, nextTap) = makeFeed(21, scratch: scratch)
+        let nextTask = service.start(next)
+        #expect(await waitUntil { await service.roadsStatus().recording })
+        #expect(await RoadsWarning.current(service: service, library: packs) == nil, "before its rescan returns")
+        #expect(await waitUntil(5) { await service.roadsStatus().libraryScanned })
+        #expect(await RoadsWarning.current(service: service, library: packs) == RoadsWarning.noPacks)
+        nextTap.finish()
+        await nextTask.value
+    }
+
     @Test("An empty library writes noPacks")
     func noPacksLine() async throws {
         let scratch = try ScratchStore()

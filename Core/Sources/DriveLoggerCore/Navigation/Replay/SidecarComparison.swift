@@ -119,6 +119,15 @@ public struct SidecarComparison: Hashable, Sendable {
     /// Estimates (by `t`) only in the sidecar, and only in the replay.
     public var sidecarOnly = 0
     public var replayOnly = 0
+    /// The sidecar's latest estimate `t`; nil when it has none.
+    public var sidecarLastEstimateT: MonotonicTimestamp?
+    /// Of `replayOnly`, the estimates after `sidecarLastEstimateT` (all of
+    /// them when the sidecar has no estimate): the sidecar ends early
+    /// (R14.1-4). The app buffers sidecar lines and flushes them every
+    /// 10 s and on `.background`; a kill, a crash or a flat battery loses
+    /// the lines since the last flush, while the log (flushed every 2 s)
+    /// keeps the inputs, so the replay runs on past the sidecar's end.
+    public var replayOnlyAfterSidecarEnd = 0
     /// Pins only in the sidecar or only in the replay (matched by `t`), and
     /// pins whose prior is present in one and absent in the other.
     public var pinsUnmatched = 0
@@ -149,6 +158,17 @@ public struct SidecarComparison: Hashable, Sendable {
     /// neither matching nor the verdict.
     public var sidecarSelections: [NavSidecar.RoadsSelection] = []
     public var replaySelections: [NavSidecar.RoadsSelection] = []
+
+    /// Replay-only estimates after the sidecar's last one: it ends early.
+    public var sidecarEndsEarly: Bool { replayOnlyAfterSidecarEnd > 0 }
+
+    /// A difference the early end does not explain: an unequal estimate or
+    /// pin, an estimate only in the sidecar or only in the replay before
+    /// the sidecar's end, an unmatched pin.
+    public var differsBeforeSidecarEnd: Bool {
+        estimates.unequal > 0 || pins.unequal > 0 || sidecarOnly > 0 || pinsUnmatched > 0
+            || replayOnly > replayOnlyAfterSidecarEnd
+    }
 
     /// Roads were in use on either side.
     public var roadsInUse: Bool { sidecarRoads != nil || replayRoads != nil }
@@ -250,7 +270,10 @@ public struct SidecarComparison: Hashable, Sendable {
             }
             estimates.add(live, replayed, at: live.t)
         }
-        replayOnly = replayEstimates.keys.filter { !seen.contains($0) }.count
+        let replayOnlyT = replayEstimates.keys.filter { !seen.contains($0) }
+        replayOnly = replayOnlyT.count
+        sidecarLastEstimateT = sidecar.estimates.map(\.t).max()
+        replayOnlyAfterSidecarEnd = replayOnlyT.filter { t in sidecarLastEstimateT.map { t > $0 } ?? true }.count
 
         var used: [MonotonicTimestamp: Int] = [:]
         for live in sidecar.pins {
@@ -309,6 +332,11 @@ public struct SidecarComparison: Hashable, Sendable {
         return rows
     }
 
+    /// " at t <s> s" of the sidecar's last estimate, or " (no estimate)".
+    private var lastEstimateText: String {
+        sidecarLastEstimateT.map { String(format: " at t %.1f s", $0.seconds) } ?? " (no estimate)"
+    }
+
     /// Human-readable report: one block for `replay_nav`.
     public func report(tolerance: Tolerance) -> String {
         func row(_ name: String, _ d: Differences) -> String {
@@ -321,7 +349,13 @@ public struct SidecarComparison: Hashable, Sendable {
         var lines: [String] = []
         lines.append(row("Estimates    ", estimates))
         lines.append(row("Pins         ", pins))
-        lines.append("Unmatched     estimates only in sidecar \(sidecarOnly), only in replay \(replayOnly); pins \(pinsUnmatched)")
+        lines.append("Unmatched     estimates only in sidecar \(sidecarOnly), only in replay \(replayOnly)"
+                     + (sidecarEndsEarly ? " (\(replayOnlyAfterSidecarEnd) after the sidecar's end\(lastEstimateText))" : "")
+                     + "; pins \(pinsUnmatched)")
+        if sidecarEndsEarly {
+            lines.append("Note          the sidecar ends early\(lastEstimateText): lines written since its last flush were lost "
+                         + "(app killed, crash or power loss); the log holds the inputs after it")
+        }
         lines.append("Dropped       \(droppedInputs) navigation input(s) dropped by the live feed")
         if encodingFailures > 0 {
             lines.append("Encoding      \(encodingFailures) navigation row(s) failed to encode: the live engine saw them, the file does not hold them")
@@ -369,9 +403,16 @@ public struct SidecarComparison: Hashable, Sendable {
             if let roadsMismatch { causes.append("a different road set or attach (\(roadsMismatch))") }
             if seedMismatch || configBlamed { causes.append("a different seed or config") }
             if truncatedLastLine { causes.append("a truncated last line") }
+            if sidecarEndsEarly {
+                causes.append("the sidecar ending early (\(replayOnlyAfterSidecarEnd) replay-only estimate(s) after its end)")
+            }
             explanation = causes.isEmpty
                 ? "; no known cause (dropped inputs 0, encoding failures 0, same seed and config)"
                 : "; explained by " + causes.joined(separator: ", ")
+            // The early end explains only the missing tail.
+            if causes.count == 1 && sidecarEndsEarly && differsBeforeSidecarEnd {
+                explanation += "; the differences before the sidecar's end have no known cause"
+            }
         }
         lines.append("Compare       " + verdict + explanation)
         return lines.joined(separator: "\n") + "\n"
