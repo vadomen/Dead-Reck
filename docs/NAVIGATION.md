@@ -1861,6 +1861,173 @@ values, so one column each.
   everywhere measured. To verify on the device: see "To verify on the
   device (N4)".
 
+### N2-3: magnetometer heading prior (2026-10-18)
+
+**Measured, not adopted: it fails the adoption rule on 4 of the 18 gated
+cells.** The experiment code is not merged (no engine change without
+passing the adoption rule). It is kept on the unmerged branch `exp-mag`
+(commit 10f84ee): key `magHeading`, default 0, bit-identical when off,
+replay only (the live tap does not deliver `mag` rows).
+
+- **Input.** `motion.magneticField` is absent on every sample of the
+  acceptance drives: they record `xArbitraryZVertical`, and
+  `magneticAccuracy` is −1 throughout. Only the raw `mag` rows (10 Hz,
+  device frame, uncalibrated) remain. Their magnitude is 510–670 µT, about
+  ten times the Earth's field: that is the magnetic mount. The offset
+  differs between drives (whole-drive fit |b| 532 and 606 µT on drive-10
+  and drive-11).
+- **Plumbing.** On `exp-mag`: a new input, `NavigationInput.magnetometer`.
+  Only the replay creates it: `NavigationReplay.inputs(from:magnetometer:)`,
+  and `replay_nav` adds the rows when `--set magHeading=1`. The live tap
+  (`LogFile.isTapped`, the logger's) passes only motion, location, OBD and
+  manual fixes. Live use would need a logger change.
+- **Method** (as implemented on `exp-mag`). Causal and deterministic; the
+  learner draws no random numbers.
+  - **Hard iron** (`MagnetometerCalibration`). Recursive least squares on
+    R m = R b + e, where R is CoreMotion's attitude (device to reference
+    frame), b the offset in the device frame and e the Earth's field in
+    the reference frame.
+    - It forgets over 600 s of learning time.
+    - It learns only while fresh OBD speed is above 0, because a parked
+      phone may be handled.
+    - It is ready when the heading axis has pointed into at least 5 of 8
+      azimuth sectors, the north angle's σ is at most 2° and the
+      horizontal field is 5–60 µT.
+    - Without tilt, the vertical part of b and the vertical field are not
+      separable; the heading uses the horizontal part.
+  - **Compass.** The heading of the most horizontal device axis,
+    clockwise from magnetic north. A sample is dropped when its residual
+    exceeds half the horizontal field. The 1 s circular mean is taken
+    against the gyro yaw integrated to each sample, so a turn adds no lag.
+  - **Mount offset, learned per particle.** Each particle has its own
+    offset (its heading minus the compass heading) in a Kalman filter with
+    one shared variance P.
+    - The first update after an initialisation sets the offsets and
+      changes no weight.
+    - Each later update weights by N(ν; 0, P + R), with R = σ² ×
+      max(1, τ / Δt), and P grows by q² Δt.
+    - So the compass constrains heading *changes* against the gyro, never
+      the absolute heading.
+    - Offsets are copied by resampling and turned by re-anchoring. A
+      reseeded particle takes the offset its new heading implies.
+- **Parameters, fixed before any acceptance replay.** Chosen on drive-10
+  and drive-11, which are not acceptance drives, with an offline script
+  run on those two drives only (logs/out-exp-mag/tools/).
+  - σ = 5°: the std of 1 s means of compass minus gyro yaw is 4.6° and
+    5.0°.
+  - τ = 60 s: the autocorrelation of that difference is 0.7 at 1 s,
+    0.35–0.40 at 10 s and 0.05–0.26 at 30–120 s. Its change over 300 s is
+    about its change over 60 s, so it is stationary, not drifting. 60 s is
+    also `networkFixCorrelationS`.
+  - q = 0.05°/√s, the gyro's own time noise.
+  - Forgetting 600 s, and the readiness and gate constants above. The
+    3 µT noise scale comes from the whole-drive residual median of
+    2.3–2.7 µT.
+  - On those drives the learner was ready at 55 and 106 s. Against
+    drive-10's CarPlay courses the causal compass is within 4.1° (median)
+    and 9.8° (p90).
+- **Runs.** Release build on the Mac, every acceptance run with its
+  acceptance flags, seeds 1–5, arrival order, with roads (national +
+  region-A) and without, on the `exp-mag` build. The key off (nothing set,
+  its default) against `--set magHeading=1`: 200 runs. Outputs: logs/out-exp-mag/acc/
+  (git-ignored).
+- **Off is the baseline, exactly.** All 100 off GeoJSONs are
+  byte-identical to the N4B1-1 runs (logs/out-sweep-nav2/acc/on).
+  `metrics.json` differs only in the five config keys and the two
+  counters (0) that `exp-mag` adds, and timing. The baseline columns therefore equal "N3.2
+  decision" and "N4B1-1".
+
+Means over seeds 1–5 (range). Gated value as in "N3.2 decision" (metres for
+clean-long, clean and manual's truth point 1; % of distance for the rest);
+consistency with the truth's σ.
+
+With roads:
+
+| drive | off | on | Δ mean (allowed) | consistency + σ off → on | criterion, on | verdict |
+|---|---|---|---|---|---|---|
+| clean-long | 19.38 (19.22–19.50) m | 19.38 (19.23–19.49) m | +0.00 (≤ +2.00) | 100.0 → 100.0 % | pass | PASS |
+| clean | 14.39 (11.81–18.82) m | 10.37 (7.24–12.64) m | −4.02 (≤ +2.00) | 100.0 → 100.0 % | pass | PASS |
+| manual | 7.23 (5.81–10.02) m | 8.92 (5.95–16.54) m | +1.69 (≤ +2.00) | 100.0 → 100.0 % | pass | PASS |
+| jammed-A | 0.177 (0.170–0.182) % | 0.187 (0.179–0.192) % | +0.010 (≤ +0.1) | 100.0 → 100.0 % | pass | PASS |
+| jammed-B | 0.201 (0.171–0.245) % | 0.185 (0.156–0.231) % | −0.016 (≤ +0.1) | 100.0 → 100.0 % | pass | PASS |
+| drive-7 | 0.130 (0.123–0.148) % | 0.173 (0.121–0.246) % | +0.043 (≤ +0.1) | 96.3 → 92.1 % | pass | **FAIL** (consistency) |
+| drive-8 | 0.186 (0.184–0.188) % | 0.184 (0.182–0.186) % | −0.002 (≤ +0.1) | 100.0 → 100.0 % | pass | PASS |
+| drive-9 (1) | 0.042 (0.033–0.051) % | 0.043 (0.035–0.057) % | +0.001 (≤ +0.1) | 100.0 → 100.0 % | pass | PASS |
+| drive-9 (2) | 0.043 (0.033–0.054) % | 0.044 (0.035–0.056) % | +0.001 (≤ +0.1) | 100.0 → 100.0 % | pass | PASS |
+| manual-3 (sanity) | 97.30 (93.91–102.32) m | 97.17 (92.32–101.80) m | −0.13 | 66.7 → 66.7 % | not gated | not gated |
+
+Without roads:
+
+| drive | off | on | Δ mean (allowed) | consistency + σ off → on | criterion, on | verdict |
+|---|---|---|---|---|---|---|
+| clean-long | 19.42 (18.09–20.29) m | 19.65 (18.36–20.45) m | +0.23 (≤ +2.00) | 100.0 → 100.0 % | pass | PASS |
+| clean | 12.98 (10.67–16.46) m | 18.59 (8.45–33.53) m | +5.60 (≤ +2.00) | 100.0 → 100.0 % | **seed 1 33.53 m > 30 m** | **FAIL** (value, criterion) |
+| manual | 50.50 (47.39–57.51) m | 48.34 (44.53–55.58) m | −2.16 (≤ +2.52) | 100.0 → 100.0 % | pass | PASS |
+| jammed-A | 1.137 (1.012–1.259) % | 1.413 (1.159–1.587) % | +0.277 (≤ +0.1) | 100.0 → 100.0 % | pass | **FAIL** (value) |
+| jammed-B | 1.068 (0.940–1.374) % | 1.046 (0.824–1.498) % | −0.022 (≤ +0.1) | 100.0 → 100.0 % | pass | PASS |
+| drive-7 | 1.128 (1.073–1.231) % | 0.849 (0.823–0.873) % | −0.279 (≤ +0.1) | 99.6 → 99.6 % | pass | PASS |
+| drive-8 | 1.482 (1.371–1.596) % | 1.866 (1.834–1.946) % | +0.385 (≤ +0.1) | 100.0 → 100.0 % | pass | **FAIL** (value) |
+| drive-9 (1) | 10.212 (10.022–10.373) % | 2.112 (1.907–2.337) % | −8.100 (≤ +0.1) | 75.0 → 100.0 % | not gated without roads | PASS |
+| drive-9 (2) | 8.380 (8.278–8.513) % | 2.330 (2.144–2.556) % | −6.050 (≤ +0.1) | 75.0 → 100.0 % | not gated without roads | PASS |
+| manual-3 (sanity) | 462.39 (456.91–470.88) m | 431.45 (418.11–452.22) m | −30.94 | 66.7 → 66.7 % | not gated | not gated |
+
+- **The failures.**
+  - Without roads: clean is +5.60 m, and seed 1 reaches 33.53 m against
+    12.24 m off, failing the 30 m criterion. jammed-A is +0.277 pp and
+    drive-8 +0.385 pp; every on seed of drive-8 (1.83–1.95 %) is above
+    every off seed (1.37–1.60 %).
+  - With roads: drive-7's consistency drops from 96.3 to 92.1 %. Per
+    seed, 267 / 252 / 249 / 236 / 253 of 273 checkpoints are inside,
+    against 266 / 265 / 267 / 252 / 265 off.
+- **The gains.**
+  - Without roads: drive-9 goes from 10.2 to 2.1 % and from 8.4 to 2.3 %,
+    under the 2.5 % threshold the roads-on runs are gated by, and its
+    consistency rises from 75 to 100 %. drive-7 goes from 1.13 to 0.85 %,
+    manual improves by 2.2 m and manual-3 (not gated) by 31 m.
+  - With roads: clean improves by 4.0 m.
+- **Why it is mixed** (offline, after the runs; it explains the result and
+  set nothing). The compass error depends on the heading: soft iron in
+  the car body and the mount. Withheld clean courses minus the causal
+  compass, as a mean per 45° course bin:
+  - drive-8: from +3.9° to −8.8°, 13° peak to peak (866 courses), while
+    the mean over the stretch before its mask and the mean after differ
+    by only 1.7°;
+  - clean: from −6.5° to +9.5°, most bins with 3–8 courses; its fit
+    residual median is 5.2 µT, against 2.4–2.8 µT on drive-7, drive-8,
+    drive-10 and drive-11;
+  - drive-7 after 1869 s: within ±3°.
+
+  Each particle's offset is an average over the headings driven so far.
+  On a leg in another direction the compass then pulls heading by the
+  difference in deviation, a few degrees for km of dead reckoning, more
+  than the gyro error it corrects (1–1.5 % of the angle turned). The
+  compass wins where the deviation over the dead-reckoned leg is small
+  (drive-7) or the gyro's error is larger. drive-9 is likely the second
+  case, not proven: like jammed-A, it has no clean course to show the
+  deviation.
+- **Not tried** (each needs its own pre-declared run): learning the
+  deviation as a function of heading (a two-harmonic curve per drive,
+  causal), soft iron in the fit, or a per-vehicle mount-offset prior.
+  Seen across drives, the offset would need the same reference axis and
+  a stable mount.
+- **Timing.** On the Mac, +0.002 to +0.008 ms per step (seed 1), with
+  the learner running at 10 Hz and the update at 1 Hz.
+- **Code** (on `exp-mag`, commit 10f84ee, not on main; kept for the
+  follow-up of learning the compass error as a function of heading;
+  `magHeading` and four parameters).
+  - Files: `MagnetometerCalibration.swift` and the engine's "Magnetometer
+    heading" section.
+  - Tests: `NavigationMagHeadingTests`. The learner converges on a
+    synthetic hard-iron field, needs turns, gates disturbances and
+    ignores degenerate input. With the key off, `mag` rows change
+    nothing. There is no look-ahead (garbage rows after t leave the
+    estimate at t unchanged), runs are deterministic, the particle
+    offsets learn the mount offset, and the compass bounds a 1 % gyro
+    scale error. The config keys are tested too.
+  - The cost when off, had it been merged: the sidecar header's config, and
+    so its `configHash`, gains the five keys. `--as-live --compare` on an older
+    sidecar names them as config differences.
+
 ## Known limitations and options
 
 - **Heading convergence with tower fixes only** (manual: 6.8 km against a
@@ -1869,7 +2036,9 @@ values, so one column each.
   The honest heading std drops under 10° only after several km. Options: a
   second manual fix a few hundred metres after the first (two pins fix
   heading); road matching (N3); a magnetometer heading with a learned mount
-  offset; trusting towers more (`networkFixCorrelationS` 30 → 5.1 km; not the default,
+  offset (measured in N2-3 and not adopted: it constrains heading changes, not
+  the initial heading, and its heading-dependent error costs elsewhere);
+  trusting towers more (`networkFixCorrelationS` 30 → 5.1 km; not the default,
   see "Tried and rejected").
   ("Tried and rejected" and the measurements cited in this section: [docs/archive/NAVIGATION-history.md](archive/NAVIGATION-history.md).)
 - **Reversing** (backlog N2-1, closed 2026-10-17: known limitation): OBD speed
