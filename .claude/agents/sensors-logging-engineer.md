@@ -24,8 +24,10 @@ Rules:
 
 ## Before finishing: author-side mutations
 Run 1–3 targeted mutations on the Core logic you added or changed, using exactly reviewer check 13's procedure (`.claude/agents/reviewer.md`): every call starts `cd <root> && ` from the main tree root, the one worktree `../dead-reck-mutants`, `swift test --package-path ../dead-reck-mutants/Core --scratch-path ~/.cache/dead-reck-mutants-build --filter <Suite>`, its allowed command forms only, and undo each mutation before the next. Your change is not committed yet, so bring it into the worktree first:
-1. In your working tree: `git add -N . && git diff HEAD --binary --output=<root>/.claude/review-scratch/author.patch`.
-2. `cd <root> && git -C ../dead-reck-mutants checkout --detach -f <your HEAD sha>`, then `cd <root> && git -C ../dead-reck-mutants apply --index <root>/.claude/review-scratch/author.patch`. Because it is staged, check 13's undo (`checkout -f -- .`) returns to your change, not to HEAD.
+1. In your working tree: `git add -N . && git diff HEAD --binary --output=<root>/.claude/review-scratch/author-<branch>.patch`.
+2. `cd <root> && git -C ../dead-reck-mutants checkout --detach -f <your HEAD sha>`, then `cd <root> && git -C ../dead-reck-mutants apply --index <root>/.claude/review-scratch/author-<branch>.patch`. Because it is staged, check 13's undo (`checkout -f -- .`) returns to your change, not to HEAD.
+
+`../dead-reck-mutants` is shared: the orchestrator runs one mutating agent (engineer or reviewer) at a time. If the worktree is not at the sha you set, or holds a patch you didn't apply, another run is using it: stop and report, don't re-sync over it.
 
 A mutation that survives means a missing test: add it in your own tree, re-sync, re-run. List the result in your summary, one line each: `mutation -> test that failed` (e.g. `File.swift:<line> '>=' -> '>' -> SuiteTests/testName`). No Core logic changed: say `mutations: none (no Core logic changed)`.
 
