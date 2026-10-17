@@ -15,9 +15,7 @@ cd "$root" || exit 0
 changed=$( { git diff --name-only HEAD; git ls-files --others --exclude-standard; } 2>/dev/null | grep -E '^Core/.*\.swift$')
 [[ -z "$changed" ]] && exit 0
 
-# Debug build: skip suites whose assertions only mean something in release
-# (cd Core && swift test -c release --filter NavigationRoadPerfTests).
-if ! out=$(cd Core && swift test --parallel --skip NavigationRoadPerfTests 2>&1); then
+if ! out=$(cd Core && swift test --parallel 2>&1); then
   echo "Core tests fail in $root (cd Core && swift test) - fix before finishing:" >&2
   # ✘ = Swift Testing issue; not 'failed', which matches test titles in
   # "◇ started" lines and expected-failure ("━ known issue") lines.

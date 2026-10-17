@@ -203,7 +203,8 @@ struct NavigationB0Tests {
         var moving = Self.movingGap(false, config: config).engine
         let movingTime = clock.measure { moving.ingest(Self.motion(huge)) }
         let movingAfter = try #require(moving.estimate(at: S.ms(huge)))
-        #expect(movingTime < .seconds(1), "moving: \(movingTime)")
+        // Release only: debug is -Onone and this timing is load-bound there, as in NavigationRoadPerfTests.
+        if NavigationRoadPerfTests.isRelease { #expect(movingTime < .seconds(1), "moving: \(movingTime)") }
         #expect(moving.counters.macroSteps <= moving.config.maxCatchUpSteps)
         #expect(movingAfter.latitude.isFinite && movingAfter.longitude.isFinite && movingAfter.ellipse.semiMajorM.isFinite)
 
