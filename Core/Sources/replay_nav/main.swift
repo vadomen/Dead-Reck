@@ -12,7 +12,27 @@ import Foundation
 //       [--fix-offset <from>:<to>|auto[:<len>:<step>]]... [--fix-source any|accessory|phone]
 //       [--fix-offset-max <m>] [--fix-offset-step <m>] [--fix-max-acc <m>] [--fix-offset-stat mean|median]
 //       [--fix-offset-course <deg>|off] [--fix-offset-test <m>@<deg>]... [--fix-offset-trace]
+//       [--fixpin-inject <out.jsonl> [--fixpin-two-pins] [--fixpin-survey] [--fixpin-pins <n>] [--fixpin-separation <s>] [--fixpin-engine-no-roads]]
 //
+// --fixpin-inject (one log, needs --roads): the N3-FIXPIN injection study
+// (`FixPinInjection`), no metrics files. Picks pin times (genuine GNSS
+// rings, road context straight/junction/parallel, clear of recorded pins and
+// of the truth file's excludeFixes), then per pin time runs every
+// sensitivity case (fixes shifted 100/200/335/500 m × 8 bearings from 90 s
+// before the pin to 30 s after it, pin at the genuine position) and
+// specificity case (genuine fixes, pin displaced 30/75/150/300 m × 8) with
+// the run's config (--seed, --set), --gps use, roads from the first input,
+// and writes one JSON line per case: the engine's decision at the pin,
+// the prior error and the error at the end of the window. --fixpin-two-pins:
+// a second pin after ≥ 330 m and ≥ 55° of turn (pin times without one are
+// skipped). --fixpin-survey: print the pin times only. --fixpin-pins
+// (default 6) pin times at least --fixpin-separation s (default 60) apart.
+// --fixpin-engine-no-roads: the engine runs without roads (the packs still
+// pick and classify the pin times). With --fixpin-two-pins, sensitivity adds
+// a genuine third pin 60 s after the second (the prior after the verdict),
+// and specificity runs pin 2 displaced like pin 1 on the map, in the car's
+// frame, and genuine. Relative metres,
+// bearings and session seconds only.
 // --fix-offset (repeatable, needs --roads): analysis only, no engine, no
 // metrics files. For each window of clean fixes (≤ 15 m, session seconds;
 // `auto` = sliding windows, default 60 s every 30 s) from --fix-source
@@ -111,6 +131,7 @@ let usage = """
            [--fix-offset <from>:<to>|auto[:<len>:<step>]]... [--fix-source any|accessory|phone]
            [--fix-offset-max <m>] [--fix-offset-step <m>] [--fix-max-acc <m>] [--fix-offset-stat mean|median]
            [--fix-offset-course <deg>|off] [--fix-offset-test <m>@<deg>]... [--fix-offset-trace]
+           [--fixpin-inject <out.jsonl> [--fixpin-two-pins] [--fixpin-survey] [--fixpin-pins <n>] [--fixpin-separation <s>] [--fixpin-engine-no-roads]]
     """
 
 var arguments = Array(CommandLine.arguments.dropFirst())
@@ -139,6 +160,11 @@ var fixSource = FixOffsetScan.Source.any
 var fixOffsetOptions = FixOffsetScan.Options()
 var fixMaxAccuracy = NavigationReplay.cleanFixTruthAccM
 var fixOffsetTrace = false
+var fixPinInjectPath: String?
+var fixPinTwoPins = false
+var fixPinSurvey = false
+var fixPinEngineRoads = true
+var fixPinOptions = FixPinInjection.Options()
 
 func number(_ text: String, _ flag: String) -> Double {
     guard let value = Double(text), value.isFinite else { fail("\(flag) needs a number, got \(text)\n\(usage)", status: 2) }
@@ -254,6 +280,22 @@ while !arguments.isEmpty {
         }
     case "--fix-offset-trace":
         fixOffsetTrace = true
+    case "--fixpin-inject":
+        fixPinInjectPath = value()
+    case "--fixpin-two-pins":
+        fixPinTwoPins = true
+    case "--fixpin-survey":
+        fixPinSurvey = true
+    case "--fixpin-engine-no-roads":
+        fixPinEngineRoads = false
+    case "--fixpin-pins":
+        let n = number(value(), argument)
+        guard n >= 1, n == n.rounded() else { fail("--fixpin-pins must be a positive integer\n\(usage)", status: 2) }
+        fixPinOptions.pinsPerLog = Int(n)
+    case "--fixpin-separation":
+        let seconds = number(value(), argument)
+        guard seconds >= 0 else { fail("--fixpin-separation must be >= 0\n\(usage)", status: 2) }
+        fixPinOptions.minSeparationS = seconds
     case "--fix-offset-test":
         let parts = value().split(separator: "@").map(String.init)
         guard parts.count == 2 else { fail("--fix-offset-test needs <m>@<deg>\n\(usage)", status: 2) }
@@ -406,6 +448,49 @@ if let reason = validated.invalidReason {
 }
 for change in ReplayReport.configChanges(from: config, to: validated) {
     print("note: config validation clamps \(change); the engine runs with the clamped value")
+}
+// --fixpin-inject: the injection study only, then stop.
+if let fixPinInjectPath {
+    guard let network = roads?.network else { fail("--fixpin-inject needs --roads\n\(usage)", status: 2) }
+    guard paths.count == 1 else { fail("--fixpin-inject takes one log\n\(usage)", status: 2) }
+    let url = URL(fileURLWithPath: paths[0])
+    let events: [LogEvent]
+    do {
+        let reader = try LogFileReader(url: url, recovery: strict ? .strict : .skipMalformedLines)
+        events = Array(reader)
+        print("Read          \(url.lastPathComponent): \(ReplayReport.readText(reader.report))")
+    } catch {
+        fail("cannot read \(paths[0]): \(error)", status: 1)
+    }
+    let inputs = NavigationReplay.inputs(from: events)
+    let excluded = truth?.entry(forLog: url.lastPathComponent)?.excludeFixes ?? []
+    let options = fixPinOptions
+    let pinTimes = FixPinInjection.pinTimes(inputs, roads: network, options: options, excluded: excluded)
+    print("Config        seed \(config.seed), roadFixPinCheck \(config.roadFixPinCheck), fixPinTwoPinCheck \(config.fixPinTwoPinCheck), "
+          + "roadFixPinOffRoadM \(config.roadFixPinOffRoadM), roadFixPinMarginM \(config.roadFixPinMarginM)")
+    print("Pin times     \(pinTimes.count)\(excluded.isEmpty ? "" : " (\(excluded.count) excluded fix range(s) avoided)")")
+    for p in pinTimes {
+        let flags = (p.junction ? "J" : "-") + (p.parallel ? "P" : "-")
+        print(String(format: "  t %7.1f  ", p.t) + p.context.rawValue.padding(toLength: 9, withPad: " ", startingAt: 0)
+              + " \(flags) \(p.source) ring \(p.ringFixes) fixes " + String(format: "%.0f m  v %.1f m/s", p.ringPathM, p.speedMps)
+              + "  second pin " + (p.secondT.map { String(format: "%.1f", $0) } ?? "none (minimums not met)")
+              + (p.thirdT.map { String(format: "  third %.1f", $0) } ?? ""))
+    }
+    if fixPinSurvey { exit(EXIT_SUCCESS) }
+    FileManager.default.createFile(atPath: fixPinInjectPath, contents: nil)
+    guard let handle = FileHandle(forWritingAtPath: fixPinInjectPath) else { fail("cannot write \(fixPinInjectPath)", status: 1) }
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    var count = 0
+    let cases = FixPinInjection.cases(options, twoPins: fixPinTwoPins)
+    _ = FixPinInjection.run(inputs: inputs, config: config, roads: fixPinEngineRoads ? network : nil, pinTimes: pinTimes, cases: cases,
+                            options: options) { outcome in
+        if let data = try? encoder.encode(outcome) { handle.write(data + Data("\n".utf8)) }
+        count += 1
+    }
+    handle.closeFile()
+    print("Cases         \(count) written to \(fixPinInjectPath)")
+    exit(EXIT_SUCCESS)
 }
 // --compare: the sidecar is read first; its roads line decides when the
 // replay attaches the given packs.
