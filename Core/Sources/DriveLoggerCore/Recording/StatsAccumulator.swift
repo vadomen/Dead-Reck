@@ -132,3 +132,35 @@ public struct StatsAccumulator: Sendable {
         return row
     }
 }
+
+/// The writer-queue alarm: the `lifecycle` `error` row the recorder writes
+/// after a periodic `stats` row whose peak writer queue depth
+/// (`queueDepthMax`) is above `max(2 s of the window's data, floor)` — the
+/// writer fell behind (docs/LOG_FORMAT.md, `lifecycle` and `stats`).
+public enum WriterQueueAlarm {
+    /// The threshold never drops below this many events, so a window with
+    /// little data (a recording without sensors, a short window) doesn't
+    /// alarm on a small burst. The largest burst a recording makes on
+    /// purpose, the start-up init replay at Start, is about 55 rows for a
+    /// full initialisation (`WriterQueueAlarmTests`).
+    public static let floor = 200
+
+    /// Events in 2 s of the window's data — every kind in `counts` — rounded
+    /// up; nil for a window of no length.
+    public static func twoSecondsOfData(_ sample: StatsSample) -> Int? {
+        guard sample.windowS > 0 else { return nil }
+        let total = sample.counts.values.reduce(0, +)
+        return Int((2 * Double(total) / sample.windowS).rounded(.up))
+    }
+
+    /// `detail` of the `error` row for `sample`, nil when its peak is at or
+    /// below the threshold or the window has no length. On-disk text:
+    /// `writer queue peaked at <queueDepthMax> events, more than 2 s of data
+    /// (<twoSecondsOfData>)`.
+    public static func detail(for sample: StatsSample) -> String? {
+        guard let twoSeconds = twoSecondsOfData(sample), sample.queueDepthMax > max(twoSeconds, floor) else {
+            return nil
+        }
+        return "writer queue peaked at \(sample.queueDepthMax) events, more than 2 s of data (\(twoSeconds))"
+    }
+}

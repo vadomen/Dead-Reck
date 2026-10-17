@@ -71,6 +71,7 @@
 		BD669916C0B963DBAE025373 /* DebugAutoRecord.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01C7240C90AC580E17CB5B05 /* DebugAutoRecord.swift */; };
 		C0D308ED2C7D266BE36FC103 /* MapFollow.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDF21332A165EE4A986319E5 /* MapFollow.swift */; };
 		C595401ECC2ECBFDD58C1F07 /* AppServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6A7B2B4C3A009CAC7FAB6CD /* AppServices.swift */; };
+		C945C19EA207DDAC807ED960 /* RecordingSessionLogHealthTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D2F9F3B73447BA4697222DE /* RecordingSessionLogHealthTests.swift */; };
 		CB124DE702CBA6B493AAA28F /* SimulatedOBDLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14F0D843A473920A9680FC04 /* SimulatedOBDLink.swift */; };
 		CB188C622936937BAC5F2899 /* MapNavigation.swift in Sources */ = {isa = PBXBuildFile; fileRef = C940A0982D6C1029FF16340A /* MapNavigation.swift */; };
 		CF7DAFE188B603771CB0BE9C /* GATTDetectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 428FB84AE7F6B6AC6DAF1351 /* GATTDetectionTests.swift */; };
@@ -103,6 +104,7 @@
 		01C7240C90AC580E17CB5B05 /* DebugAutoRecord.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugAutoRecord.swift; sourceTree = "<group>"; };
 		054B04838405BB2A03DF2023 /* RecordingSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingSessionTests.swift; sourceTree = "<group>"; };
 		05B11049AF172AA337D91426 /* RoadPackLibraryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoadPackLibraryTests.swift; sourceTree = "<group>"; };
+		0D2F9F3B73447BA4697222DE /* RecordingSessionLogHealthTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingSessionLogHealthTests.swift; sourceTree = "<group>"; };
 		12C8F6E577D688ED09523263 /* StartupInitRecordingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StartupInitRecordingTests.swift; sourceTree = "<group>"; };
 		12E7E598779EDC5E58A964B7 /* MapBearingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapBearingTests.swift; sourceTree = "<group>"; };
 		14F0D843A473920A9680FC04 /* SimulatedOBDLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimulatedOBDLink.swift; sourceTree = "<group>"; };
@@ -217,6 +219,7 @@
 				637DF8CB01E9F26F79D3563B /* NavigationServiceRoadsTests.swift */,
 				C06C7BF25C0632C6C10B1222 /* NavigationServiceTests.swift */,
 				4757331FF2FA81D7AC0192A2 /* OBDLinkServiceTests.swift */,
+				0D2F9F3B73447BA4697222DE /* RecordingSessionLogHealthTests.swift */,
 				054B04838405BB2A03DF2023 /* RecordingSessionTests.swift */,
 				B03770A2F4197C0EC3E1CACE /* RecordingTestSupport.swift */,
 				05B11049AF172AA337D91426 /* RoadPackLibraryTests.swift */,
@@ -545,6 +548,7 @@
 				665B29E7FECB248FAA85AE34 /* NavigationServiceRoadsTests.swift in Sources */,
 				E3A034DD4E4F285512F443AD /* NavigationServiceTests.swift in Sources */,
 				9D68BF8B1CC07439C59B8590 /* OBDLinkServiceTests.swift in Sources */,
+				C945C19EA207DDAC807ED960 /* RecordingSessionLogHealthTests.swift in Sources */,
 				7AC8D2001A8B6452A3F6D8FE /* RecordingSessionTests.swift in Sources */,
 				EB69D658A35BEC3DCD84D1EB /* RecordingTestSupport.swift in Sources */,
 				DCC26E03EEEEC0680898D0DE /* RoadPackLibraryTests.swift in Sources */,

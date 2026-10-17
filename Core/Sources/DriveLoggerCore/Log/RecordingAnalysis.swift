@@ -15,6 +15,8 @@ public struct RecordingAnalyzer {
     private var eventCount = 0
     private var firstT: Int64?
     private var lastT: Int64?
+    /// `t` of the first `lifecycle` `start` row, in file order.
+    private var startT: Int64?
     private var perKind: [String: KindAccumulator] = [:]
     private var obdLatencyBySeq: [Int: Double] = [:]
     private var obdLatencyUnsequenced: [Double] = []
@@ -54,6 +56,9 @@ public struct RecordingAnalyzer {
             }
         case .lifecycle(let sample):
             lifecycle[sample.event, default: 0] += 1
+            if sample.event == LifecycleSample.Event.start.rawValue, startT == nil {
+                startT = t
+            }
             if sample.event == LifecycleSample.Event.error.rawValue {
                 errors.append(sample.detail ?? "(no detail)")
             }
@@ -87,6 +92,7 @@ public struct RecordingAnalyzer {
             eventCount: eventCount,
             firstT: firstT.map(MonotonicTimestamp.init(nanoseconds:)),
             lastT: lastT.map(MonotonicTimestamp.init(nanoseconds:)),
+            startT: startT.map(MonotonicTimestamp.init(nanoseconds:)),
             kinds: kinds,
             obdLatency: RecordingSummary.Latency(milliseconds: Array(obdLatencyBySeq.values) + obdLatencyUnsequenced),
             elmOutcomes: elmOutcomes,
@@ -141,8 +147,9 @@ private struct KindAccumulator {
 
 private struct StatsAccumulation {
     var rows = 0
-    var motionHz: [Double] = []
-    var obdHz: [Double] = []
+    typealias Window = (windowS: Double, motionHz: Double, obdHz: Double)
+    /// One per `stats` row, in file order.
+    var windows: [Window] = []
     var maxQueueDepth = 0
     var totalDropped = 0
     var totalTimeouts = 0
@@ -151,8 +158,7 @@ private struct StatsAccumulation {
 
     mutating func observe(_ sample: StatsSample) {
         rows += 1
-        motionHz.append(sample.motionHz)
-        obdHz.append(sample.obdHz)
+        windows.append((sample.windowS, sample.motionHz, sample.obdHz))
         maxQueueDepth = max(maxQueueDepth, sample.queueDepthMax)
         totalDropped += sample.dropped
         totalTimeouts += sample.timeouts
@@ -164,12 +170,27 @@ private struct StatsAccumulation {
 
     var summary: RecordingSummary.Stats? {
         guard rows > 0 else { return nil }
+        // Weighted by window length, so the stop's short last window counts
+        // for its few milliseconds; the plain mean only if no window has a
+        // length.
+        let totalS = windows.reduce(0) { $0 + max(0, $1.windowS) }
+        func mean(_ hz: (Window) -> Double) -> Double {
+            if totalS > 0 {
+                return windows.reduce(0) { $0 + hz($1) * max(0, $1.windowS) } / totalS
+            }
+            return windows.reduce(0) { $0 + hz($1) } / Double(rows)
+        }
+        // A window under `minimumWindowS` (the stop's remainder) says
+        // nothing about a rate; left out of the minimums unless every
+        // window is that short.
+        let long = windows.filter { $0.windowS >= RecordingSummary.Stats.minimumWindowS }
+        let forMinimum = long.isEmpty ? windows : long
         return RecordingSummary.Stats(
             rows: rows,
-            minMotionHz: motionHz.min() ?? 0,
-            meanMotionHz: motionHz.reduce(0, +) / Double(rows),
-            minObdHz: obdHz.min() ?? 0,
-            meanObdHz: obdHz.reduce(0, +) / Double(rows),
+            minMotionHz: forMinimum.map { $0.motionHz }.min() ?? 0,
+            meanMotionHz: mean { $0.motionHz },
+            minObdHz: forMinimum.map { $0.obdHz }.min() ?? 0,
+            meanObdHz: mean { $0.obdHz },
             maxQueueDepth: maxQueueDepth,
             totalDropped: totalDropped,
             totalTimeouts: totalTimeouts,
@@ -231,7 +252,14 @@ public struct RecordingSummary: Hashable, Sendable {
         }
     }
 
+    /// `stats` rows aggregated. The means are weighted by `windowS` (rows
+    /// per second over the whole recorded span); the minimums leave out
+    /// windows shorter than `minimumWindowS` — the remainder the `stop` row
+    /// closes, often a few milliseconds — unless every window is that short.
     public struct Stats: Hashable, Sendable {
+        /// Shortest window whose rates count towards the minimums, in seconds.
+        public static let minimumWindowS = 1.0
+
         public var rows: Int
         public var minMotionHz: Double
         public var meanMotionHz: Double
@@ -270,6 +298,10 @@ public struct RecordingSummary: Hashable, Sendable {
     public var eventCount: Int
     public var firstT: MonotonicTimestamp?
     public var lastT: MonotonicTimestamp?
+    /// `t` of the first `lifecycle` `start` row; nil in a file without one.
+    /// Rows stamped before it (the start-up init replay, CoreMotion's
+    /// pre-dated batch) make `firstT` earlier.
+    public var startT: MonotonicTimestamp?
     /// Known kinds in format order, then unknown kinds alphabetically.
     public var kinds: [Kind]
     /// `obd` latency `t − requestT`, one value per exchange (`seq`).
@@ -285,6 +317,19 @@ public struct RecordingSummary: Hashable, Sendable {
     public var manualFixes: [ManualFix]
     /// Aggregate of the recorder's own `stats` rows.
     public var stats: Stats?
+
+    /// Kinds whose out-of-order rows are not a warning: `link` and `elm`
+    /// rows come from several emitters (the BLE layer, the ELM session, an
+    /// old session finishing after a reconnect) and are written in emission
+    /// order, so every reconnect reorders a few of them by design. Their
+    /// count still shows in the table.
+    public static let outOfOrderExpectedKinds: Set<String> = [LogEventKind.link.rawValue, LogEventKind.elm.rawValue]
+
+    /// Where the recording's duration is measured from: the `start` row, or
+    /// the earliest row in a file without one.
+    public var durationStartT: MonotonicTimestamp? {
+        startT ?? firstT
+    }
 
     /// Problems worth a look before trusting the drive. Empty for a clean
     /// recording.
@@ -309,14 +354,15 @@ public struct RecordingSummary: Hashable, Sendable {
             if stats.totalDropped > 0 {
                 warnings.append("\(stats.totalDropped) event(s) dropped by the recorder")
             }
-        } else if let firstT, let lastT, firstT.interval(to: lastT) > 30, header.formatVersion >= .v2 {
+        } else if let from = durationStartT, let lastT, from.interval(to: lastT) > 30, header.formatVersion >= .v2 {
             warnings.append("no stats rows in a v2 recording longer than 30 s")
         }
         for kind in kinds {
             if let gaps = kind.gapsOver50ms, gaps > 0 {
                 warnings.append("\(kind.kind): \(gaps) gap(s) over 50 ms, longest \(Self.format(kind.maxIntervalMs ?? 0, 1)) ms")
             }
-            if kind.outOfOrder > 0, Double(kind.outOfOrder) > Double(kind.count) * 0.01 {
+            if kind.outOfOrder > 0, Double(kind.outOfOrder) > Double(kind.count) * 0.01,
+               !Self.outOfOrderExpectedKinds.contains(kind.kind) {
                 warnings.append("\(kind.kind): \(kind.outOfOrder) out-of-order row(s)")
             }
         }
@@ -365,8 +411,12 @@ public struct RecordingSummary: Hashable, Sendable {
         }
 
         out.append("")
-        if let firstT, let lastT {
-            out.append("Duration      \(Self.format(firstT.interval(to: lastT), 3)) s  (t \(Self.format(firstT.seconds, 3)) … \(Self.format(lastT.seconds, 3)) s)")
+        if let from = durationStartT, let lastT {
+            let origin = startT == nil ? "" : ", from the start row"
+            out.append("Duration      \(Self.format(from.interval(to: lastT), 3)) s  (t \(Self.format(from.seconds, 3)) … \(Self.format(lastT.seconds, 3)) s\(origin))")
+        }
+        if let startT, let firstT, firstT < startT {
+            out.append("Pre-Start     \(Self.format(firstT.interval(to: startT), 3)) s  (t \(Self.format(firstT.seconds, 3)) … \(Self.format(startT.seconds, 3)) s, rows stamped before the start row)")
         }
         out.append("Events        \(eventCount)")
         out.append("")
