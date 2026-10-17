@@ -42,6 +42,8 @@ final class RoadsWarningModel {
     static let pollInterval: Duration = .seconds(1)
 
     private(set) var message: String?
+    /// How many times `message` was assigned (a test sees the guard; R34.1-5).
+    @ObservationIgnored private(set) var messageWrites = 0
     @ObservationIgnored private let source: Source?
 
     init(source: @escaping Source) { self.source = source }
@@ -55,7 +57,10 @@ final class RoadsWarningModel {
     func refresh() async {
         guard let source else { return }
         let next = await source()
-        if next != message { message = next }
+        if next != message {
+            message = next
+            messageWrites += 1
+        }
     }
 
     func run() async {

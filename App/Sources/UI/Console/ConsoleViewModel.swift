@@ -119,6 +119,41 @@ extension ConsoleText {
         }
     }
 
+    /// The words of the recording-time confirmation (R48.1-3). Dropping and
+    /// connecting are opposite: "Keep connection" must not be the cancel of a
+    /// connect the user asked for, so with no adapter held (idle, scanning,
+    /// unavailable, failed) a connect says so and the recording gains OBD.
+    struct LinkChangeDialog: Equatable {
+        var title: String
+        var message: String
+        var confirm: String
+        var cancel: String
+        /// Dropping the feed is destructive; adding one is not.
+        var confirmIsDestructive: Bool
+    }
+
+    /// True when an adapter connection exists or is being made.
+    static func holdsConnection(_ state: OBDLinkState) -> Bool {
+        switch state {
+        case .idle, .scanning, .unavailable, .failed: false
+        case .connecting, .discoveringServices, .initialising, .ready, .polling, .reconnecting: true
+        }
+    }
+
+    static func linkChangeDialog(
+        for change: LinkChange?, link: OBDLinkState, adapterName: String?
+    ) -> LinkChangeDialog {
+        if case .connect = change, !holdsConnection(link) {
+            return LinkChangeDialog(
+                title: "Connect to \(adapterName ?? "this adapter")?",
+                message: "The recording gains OBD from now on. Earlier parts of it stay without.",
+                confirm: "Connect", cancel: "Cancel", confirmIsDestructive: false)
+        }
+        return LinkChangeDialog(
+            title: "Drop the OBD connection?", message: recordingWarning,
+            confirm: "Drop OBD", cancel: "Keep connection", confirmIsDestructive: true)
+    }
+
     /// Scan only finds an adapter: not while one is held, not while recording.
     /// `.failed` counts as free (R5.2-3): it is where an unusable adapter
     /// ("pick another adapter") leaves the user, so Scan must work there.

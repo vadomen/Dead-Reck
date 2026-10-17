@@ -462,6 +462,52 @@ struct ConsoleGatingTests {
         }
     }
 
+    @Test("The confirmation says connect when no adapter is held, drop when one is (R48.1-3)")
+    func dialogWording() {
+        let id = UUID()
+        for state in [OBDLinkState.idle, .scanning, .unavailable(reason: "off"), .failed(reason: "x")] {
+            let d = ConsoleText.linkChangeDialog(for: .connect(id), link: state, adapterName: "IOS-Vlink")
+            #expect(d.title == "Connect to IOS-Vlink?", "\(state)")
+            #expect(d.confirm == "Connect" && d.cancel == "Cancel" && !d.confirmIsDestructive)
+            #expect(d.message.contains("gains OBD"))
+            #expect(!d.title.contains("Drop") && d.cancel != "Keep connection")
+        }
+        #expect(ConsoleText.linkChangeDialog(for: .connect(id), link: .idle, adapterName: nil).title == "Connect to this adapter?")
+        for state in [OBDLinkState.connecting, .initialising, .ready, .polling(protocolNumber: "6", voltage: nil), .reconnecting(attempt: 1)] {
+            let d = ConsoleText.linkChangeDialog(for: .connect(id), link: state, adapterName: "x")
+            #expect(d.title == "Drop the OBD connection?" && d.confirm == "Drop OBD" && d.cancel == "Keep connection" && d.confirmIsDestructive, "\(state)")
+            #expect(d.message == ConsoleText.recordingWarning)
+        }
+        let disconnect = ConsoleText.linkChangeDialog(for: .disconnect, link: .polling(protocolNumber: "6", voltage: nil), adapterName: nil)
+        #expect(disconnect.confirm == "Drop OBD" && disconnect.confirmIsDestructive)
+    }
+
+    @Test("forget() reaches the link, also while recording; the confirmation is the view's (R5.2-4)")
+    func forgetReachesLink() {
+        let (model, link) = make(.recording)
+        model.forget()
+        #expect(link.forgetCalls == 1)
+    }
+
+    @Test("Cancelling a connect leaves the link alone; confirming a stale id after cancel does nothing (R5.2-4)")
+    func cancelConnect() {
+        let (model, link) = make(.recording, link: .idle)
+        model.connect(UUID())
+        model.cancelPendingChange()
+        model.confirmPendingChange()
+        #expect(link.connectCalls.isEmpty && link.disconnectCalls == 0)
+    }
+
+    @Test("A recording that has not started, or has ended, never asks (R5.2-4)")
+    func notActiveNeverAsks() {
+        for state in [RecordingState.idle, .failed(reason: "x", unwrittenEvents: 0)] {
+            let (model, link) = make(state, link: .idle)
+            model.connect(UUID())
+            model.disconnect()
+            #expect(model.pendingChange == nil && link.connectCalls.count == 1 && link.disconnectCalls == 1)
+        }
+    }
+
     @Test("Scan is refused while recording and while an adapter is held")
     func scanRefused() {
         let (recording, link1) = make(.recording, link: .idle)
@@ -568,7 +614,9 @@ struct ConsoleGatingTests {
         let (model, session) = makeStartModel(scratch, defaults: d, link: FakeLink())
 
         let first = Task { await model.start() }   // 5 s calibration
-        while session.state != .calibrating { try await Task.sleep(for: .milliseconds(10)) }
+        var turns = 0
+        while session.state != .calibrating, turns < 1_000 { try await Task.sleep(for: .milliseconds(10)); turns += 1 }
+        #expect(session.state == .calibrating, "the first Start reached calibration")
         #expect(!model.checklist.mountConfirmed, "per-drive confirmations are reset before the wait")
         await session.stop()
         #expect(session.state == .idle)
@@ -576,7 +624,9 @@ struct ConsoleGatingTests {
         model.checklist.mountConfirmed = true
         model.checklist.orientationConfirmed = true
         let second = Task { await model.start() }
-        while session.state != .calibrating { try await Task.sleep(for: .milliseconds(10)) }
+        turns = 0
+        while session.state != .calibrating, turns < 1_000 { try await Task.sleep(for: .milliseconds(10)); turns += 1 }
+        #expect(session.state == .calibrating, "the second Start reached calibration")
         #expect(scratch.files.count == 2, "the re-Start was not ignored")
         // The first start's calibration wait ends here, long before the second's.
         await first.value

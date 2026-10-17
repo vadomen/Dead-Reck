@@ -66,6 +66,51 @@ extension CameraHeading {
     }
 }
 
+/// The map's auto-resume loop, with the clock and sleep injected so a test can
+/// drive it (M10.1-6). Sleeps until the deadline, tries to resume, and goes
+/// round again while a deadline remains (a gesture can push it out).
+enum FollowResumeLoop {
+    /// `deadline` reads the current deadline (nil ends the loop); `resumeIfDue`
+    /// returns true when Following resumed, which ends it. A cancelled task
+    /// ends it right after the sleep.
+    @MainActor
+    static func run(
+        deadline: () -> ContinuousClock.Instant?,
+        now: () -> ContinuousClock.Instant,
+        sleep: (ContinuousClock.Instant) async -> Void,
+        resumeIfDue: () -> Bool
+    ) async {
+        while let target = deadline() {
+            if now() < target {
+                await sleep(target)
+                if Task.isCancelled { return }
+            }
+            if resumeIfDue() { return }
+        }
+    }
+}
+
+/// When the heading smoother and write gate are cleared (M9.1-1/M9.1-2),
+/// pure so the rules are testable without the view.
+enum HeadingReset {
+    /// A new recording file: nothing of the last drive may turn the map.
+    static func newRecording(
+        smoother: inout HeadingSmoother, gate: inout HeadingWriteGate, publishPending: inout Bool
+    ) {
+        smoother = HeadingSmoother()
+        gate.reset()
+        publishPending = false
+    }
+
+    /// The bearing changed to `new`: with none left (and no effective one),
+    /// drop a stale smoothed heading.
+    static func bearingChanged(
+        to new: Double?, effectiveBearing: Double?, smoother: inout HeadingSmoother
+    ) {
+        if new == nil, effectiveBearing == nil { smoother = HeadingSmoother() }
+    }
+}
+
 /// One camera write decided by the 10 Hz follow loop.
 struct FollowCameraWrite: Equatable, Sendable {
     let heading: Double

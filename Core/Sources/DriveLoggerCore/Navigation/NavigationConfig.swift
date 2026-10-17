@@ -628,9 +628,10 @@ extension NavigationConfig {
 extension NavigationConfig {
     /// σ of a manual fix, metres: max(`manualFixSigmaMinM`,
     /// mapSpanM / `manualFixSpanDivisor`), or `manualFixSigmaMinM` when the
-    /// span is missing, not finite or not positive. In heading-up the
-    /// logged span can be up to ~2.2× too large (M10.1-3), which errs
-    /// toward a larger σ: safe.
+    /// span is missing, not finite or not positive. In heading-up
+    /// a span logged before M10.1-3 is the rotated viewport's bounding box,
+    /// between ~0.5× and ~1.15× the viewport height (smallest near east/west
+    /// headings), so it can understate the span and give too small a σ.
     public func manualFixSigma(mapSpanM: Double?) -> Double {
         guard let span = mapSpanM, span.isFinite, span > 0, manualFixSpanDivisor > 0 else {
             return manualFixSigmaMinM

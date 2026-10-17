@@ -67,6 +67,12 @@ struct ConsoleContent: View {
     var pendingLinkChange: LinkChange?
     var actions = ConsoleActions()
 
+    private var linkDialog: ConsoleText.LinkChangeDialog {
+        var name: String?
+        if case .connect(let id) = pendingLinkChange { name = discovered.first { $0.id == id }?.name }
+        return ConsoleText.linkChangeDialog(for: pendingLinkChange, link: state, adapterName: name)
+    }
+
     /// Pushed inside Settings' navigation stack (UX-4), which owns the title bar.
     var body: some View {
         VStack(spacing: 0) {
@@ -86,11 +92,13 @@ struct ConsoleContent: View {
                 ? "The app will stop reconnecting to it. \(ConsoleText.recordingWarning)"
                 : "The app will stop reconnecting to it. You can pick it again from a scan.")
         }
-        .confirmationDialog("Drop the OBD connection?", isPresented: $isLinkChangeConfirmationPresented, titleVisibility: .visible, presenting: pendingLinkChange) { change in
-            Button("Drop OBD", role: .destructive) { actions.confirmLinkChange(change) }
-            Button("Keep connection", role: .cancel) {}
+        .confirmationDialog(linkDialog.title, isPresented: $isLinkChangeConfirmationPresented, titleVisibility: .visible, presenting: pendingLinkChange) { change in
+            Button(linkDialog.confirm, role: linkDialog.confirmIsDestructive ? .destructive : nil) {
+                actions.confirmLinkChange(change)
+            }
+            Button(linkDialog.cancel, role: .cancel) {}
         } message: { _ in
-            Text(ConsoleText.recordingWarning)
+            Text(linkDialog.message)
         }
     }
 

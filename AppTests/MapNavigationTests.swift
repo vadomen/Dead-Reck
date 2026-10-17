@@ -309,16 +309,19 @@ struct MapNavigationTests {
         let framed = MapFraming.cameraDistance(spanMeters: 500)
         var zoom = FollowZoom()
         zoom.frame(distance: framed)
-        #expect(zoom.followDistance(headingUp: true, semiMajorM: 10) == framed)
+        let pinched = framed * 0.8
+        zoom.cameraReported(distance: pinched)       // the driver's zoom: held until re-centre
+        #expect(zoom.driverOverride)
+        #expect(zoom.autoFollowDistance(headingUp: true, semiMajorM: 10) == pinched)
 
-        let widened = zoom.followDistance(headingUp: true, semiMajorM: 400)
-        #expect(widened > framed * 1.5, "880 m span: widened")
+        let widened = zoom.autoFollowDistance(headingUp: true, semiMajorM: 400)
+        #expect(widened > pinched * 1.5, "880 m span: widened")
         zoom.cameraReported(distance: widened)       // our own write coming back
-        #expect(zoom.chosen == framed, "a widening is not the driver's choice")
-        #expect(zoom.followDistance(headingUp: true, semiMajorM: 400) == widened, "and does not grow further")
+        #expect(zoom.chosen == pinched, "a widening is not the driver's choice")
+        #expect(zoom.autoFollowDistance(headingUp: true, semiMajorM: 400) == widened, "and does not grow further")
 
-        let shrunk = zoom.followDistance(headingUp: true, semiMajorM: 10)
-        #expect(shrunk == framed)
+        let shrunk = zoom.autoFollowDistance(headingUp: true, semiMajorM: 10)
+        #expect(shrunk == pinched)
 
         // The same sequence on the old logic stays wide.
         var old = OldFollowDistance()
@@ -338,8 +341,8 @@ struct MapNavigationTests {
         #expect(zoom.chosen == 1000)
         zoom.cameraReported(distance: 400)            // pinch
         #expect(zoom.chosen == 400)
-        #expect(zoom.followDistance(headingUp: false, semiMajorM: 400) == 400, "north-up never widens")
-        let d = zoom.followDistance(headingUp: true, semiMajorM: 400)
+        #expect(zoom.autoFollowDistance(headingUp: false, semiMajorM: 400) == 400, "north-up never widens")
+        let d = zoom.autoFollowDistance(headingUp: true, semiMajorM: 400)
         #expect(abs(d - MapFraming.cameraDistance(spanMeters: 880)) < 1e-9)
         zoom.cameraReported(distance: 300)            // pinches again, not matching the widened write
         #expect(zoom.chosen == 300)

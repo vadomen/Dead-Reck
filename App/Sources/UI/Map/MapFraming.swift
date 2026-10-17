@@ -31,8 +31,9 @@ extension MapFraming {
     /// of a north-up map.
     ///
     /// North-up: `region.span.latitudeDelta`. Rotated (heading-up): that
-    /// delta is the N-S extent of the rotated viewport's bounding box, up to
-    /// ~2.2x the viewport height depending on the heading, so the span is
+    /// delta is the N-S extent of the rotated viewport's bounding box,
+    /// H|cos θ| + W|sin θ|: on a portrait screen between ~0.5x and ~1.15x
+    /// the viewport height, smallest near east/west headings, so the span is
     /// derived from the camera distance instead (`distancePerSpan`, the same
     /// approximation the follow camera uses). nil when not usable.
     static func visibleSpanMeters(latitudeDelta: Double, cameraDistance: Double, heading: Double) -> Double? {

@@ -348,14 +348,6 @@ struct FollowZoom: Equatable, Sendable {
         return distance
     }
 
-    /// The distance for a follow write: `chosen`, in heading-up with an
-    /// estimate widened to fit its ellipse. Records it as `writtenDistance`.
-    mutating func followDistance(headingUp: Bool, semiMajorM: Double?) -> Double {
-        let distance = Self.distance(chosen: chosen, headingUp: headingUp, semiMajorM: semiMajorM)
-        writtenDistance = distance
-        return distance
-    }
-
     static func distance(chosen: Double, headingUp: Bool, semiMajorM: Double?) -> Double {
         guard headingUp, let semiMajorM else { return chosen }
         let span = FollowSpan.span(minimum: chosen / MapFraming.distancePerSpan, semiMajorM: semiMajorM)
