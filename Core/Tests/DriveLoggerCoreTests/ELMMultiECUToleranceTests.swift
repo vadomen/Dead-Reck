@@ -106,6 +106,39 @@ struct ELMSessionMultiECUToleranceTests {
         #expect(info.plan.primaryCommand.wireFormat == "010D0C1")
         #expect(info.plan.requestHeader == .engine)
     }
+
+    // R44.1-1: with a fault in the 0100 reply, only the primary ECU's 41 00
+    // answer counts; a good answer from another ECU must not pass init.
+    @Test(
+        "Init: a fault in the 0100 reply and no good 7E8 answer fails init at 0100, even with a good 7E9 answer",
+        arguments: [
+            // (a) 7E8's line cut short (PCI 06, three data bytes), 7E9 good.
+            ("SEARCHING...\r7E9064100BE1CA813\r7E8064100BE\r\r>", ELMOutcome.malformed),
+            // The same, 7E8 first.
+            ("7E8064100BE\r7E9064100BE1CA813\r\r>", .malformed),
+            // (b) No 7E8 line at all: 7E9 good, 7EA cut short.
+            ("SEARCHING...\r7E9064100BE1CA813\r7EA0641\r\r>", .malformed),
+            // (b) No 7E8 line at all: 7E9 good plus a status line.
+            ("SEARCHING...\r7E9064100BE1CA813\rNO DATA\r\r>", .noData),
+        ]
+    )
+    func supportedPIDsFaultWithoutPrimaryFails(reply: String, outcome: ELMOutcome) async throws {
+        let harness = SessionHarness(
+            rules: [
+                Rule(command: "0100", reply: reply, delay: .milliseconds(30), requestHeader: "7DF"),
+            ] + MockELMAdapter.Rule.benchCar,
+            configuration: ELMSessionProbeTests.probing
+        )
+        await #expect(throws: ELMSessionError.initFailed(step: "0100", reason: outcome.rawValue)) {
+            _ = try await harness.initialise()
+        }
+        let search = try #require(await harness.log.exchanges.last)
+        #expect(search.tx == "0100")
+        #expect(search.outcome == outcome)
+        #expect(search.rx == String(reply.dropLast()), "never drop the raw response")
+        #expect(await harness.session.state == .failed)
+        #expect(!(await harness.mock.sentCommands).contains("ATSH7E0"))
+    }
 }
 
 @Suite("ELM327ResponseParser.scanReplies: per-ECU tolerant parsing (M1-E1)")

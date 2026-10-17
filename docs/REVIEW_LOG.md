@@ -275,3 +275,18 @@ Tests: Core not run: no file outside docs/ changed.
 ### Run 43 summary
 
 1 round; 0 fixed, 0 rejected, 0 deferred.
+
+## Run 44: backlog sweep elm batch 1 (1cd8d50..68959b3, branch sweep-elm), started 2026-10-17
+
+Commits: 68959b3 M1-E1 per-ECU tolerant replies, B1-1 one retry on a first-sample timeout in start-up selection, M7.1-1 plan remembered only when selection kept every PID, M7.1-2 remembered plan cleared on poll-failure escalation, M7.1-3 plan keyed on ATDPN + 7E8 0100 bitmask, M7.1-5 init capture replays post-init adapter re-announcements, M7.1-6 tests.
+
+### Round 1
+
+Reviewer: one fresh reviewer (opus), checks 1, 3, 4, 6–11, 13. Author mutations: 3 listed, 1 re-run (killed); reviewer's 2 own mutations survived. Result: 0 BLOCKER / 2 MAJOR / 0 MINOR.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R44.1-1 | MAJOR | `ELMSession.swift:830`: the handshake `0100` rule (with a fault, only 7E8's `41 00` counts) is untested; `(scan.faults.isEmpty \|\| $0.isFromPrimaryECU)` → `true` survives every ELM suite. A regression would accept a reply with 7E8's line cut short and init with no 7E8 answer. | CONFIRMED, FIXED | `ELMSessionMultiECUToleranceTests.supportedPIDsFaultWithoutPrimaryFails` (4 replies: 7E8 cut short either order, no 7E8 with a cut-short 7EA, no 7E8 with `NO DATA`). |
+| R44.1-2 | MAJOR | `ELMSession.swift:1173`: B1-1's "selection only, not the ATAT comparison" limit is untested; default `retriesFirstTimeout` → `true` passes all ELMSession tests, so ATAT2 could be kept after a timed-out reply. | CONFIRMED, FIXED | `ELMSessionAdaptiveTimingTests.atat2FirstSampleTimeoutNotRetried`. |
+
+Tests: `cd Core && swift test` 940 tests in 124 suites passed, 36 known issues (KI-1). The fixer's mutation runs were blocked by the permission classifier; round 2 checks them.
