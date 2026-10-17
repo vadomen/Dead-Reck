@@ -174,4 +174,22 @@ struct InspectLogHealthTests {
         #expect(summary.render().contains("Duration      30.001 s  (t -0.001 … 30.000 s)\n"))
         #expect(!summary.render().contains("Pre-Start"))
     }
+
+    @Test("A file whose start row is its first row has no Pre-Start line: firstT == startT is not a pre-Start span (R46.1-1)")
+    func startRowFirstHasNoPreStart() {
+        var v2 = F.header
+        v2.formatVersion = .v2
+        var analyzer = RecordingAnalyzer(header: v2)
+        analyzer.observe(LogEvent(timestamp: F.ms(250), payload: .lifecycle(LifecycleSample(.start))))
+        for index in 0..<100 {
+            analyzer.observe(StatsFixtures.motion(at: 250 + Double(index) * 10))
+        }
+        let summary = analyzer.summary(report: Self.clean)
+
+        #expect(summary.firstT == F.ms(250))
+        #expect(summary.startT == summary.firstT)
+        let text = summary.render()
+        #expect(text.contains("Duration      0.990 s  (t 0.250 … 1.240 s, from the start row)"), "\(text)")
+        #expect(!text.contains("Pre-Start"), "\(text)")
+    }
 }

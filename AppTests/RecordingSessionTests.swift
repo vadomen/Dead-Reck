@@ -214,6 +214,31 @@ struct RecordingSessionTests {
         #expect(session.lastStopReason == .lowDiskSpace)
     }
 
+    @Test("A write failure during calibration, with the calibration wake-up already queued: no calibrationEnd after the error row (R32.3-2)")
+    func failureDuringCalibrationWritesNoCalibrationEnd() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        // No periodic stats row: nothing else is due in the window.
+        let session = RecordingFixtures.session(store: scratch.store, statsInterval: .seconds(3_600))
+        let start = Task { try await session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .milliseconds(300)) }
+        #expect(await eventually(2) { session.state == .calibrating })
+        let url = try #require(session.currentFile)
+        let generation = try #require(session.currentGeneration)
+        try #require(session.state == .calibrating, "the calibration wait has not returned yet")
+        // Past the calibration wait: its wake-up is queued behind this turn,
+        // ahead of the end path the failure queues, so it runs after the
+        // error row with the state still `calibrating`.
+        blockMainActor(seconds: 0.8)
+        await session.handleWriteFailure(.diskFull, generation: generation)
+        try await start.value
+        #expect(session.state == .failed(reason: "disk full", unwrittenEvents: 0))
+
+        let (_, events, _) = try RecordingFixtures.read(url)
+        let lifecycle = RecordingFixtures.lifecycle(events).map(\.sample)
+        #expect(lifecycle.map(\.event) == ["start", "calibrationStart", "error"])
+        #expect(events.last?.payload == .lifecycle(LifecycleSample(.error, detail: "write failed: disk full")))
+    }
+
     @Test("A write failure: error row, finish, failed; no stop row (rule 4)")
     func writeFailureEntersFailed() async throws {
         let scratch = try ScratchStore()
@@ -267,9 +292,14 @@ struct RecordingSessionTests {
         #expect(!source.isRunning)
         // A sample from the sensor's own queue in that gap.
         source.emit()
+        // A second report in the same gap, while the recording is still
+        // current and its end path pending (R32.3-3): the error row is
+        // queued, so it writes nothing.
+        #expect(session.currentGeneration == generation)
+        await session.handleWriteFailure(.diskFull, generation: generation)
         await failing.value
         #expect(session.state == .failed(reason: "disk full", unwrittenEvents: 0))
-        // A second report writes nothing.
+        // And one after the end: the recording is gone.
         await session.handleWriteFailure(.diskFull, generation: generation)
 
         let (_, events, _) = try RecordingFixtures.read(url)
@@ -301,27 +331,89 @@ struct RecordingSessionTests {
 
     @Test("A failure delivered right after stop() is called, before its end path runs, still ends in failed (R4.1-1)")
     func failureRightAfterStop() async throws {
-        // Two interleavings: the failure before `stop()` has run at all, and
-        // after `stop()` has queued its end path but before that path's body
-        // ran (one yield). Both must end in `failed`, never `idle`.
-        for yields in 0...1 {
-            let scratch = try ScratchStore("failureRightAfterStop\(yields)")
+        // Two interleavings: the failure before `stop()` has run at all
+        // (still `recording`: the failure's own end path runs, no stop row),
+        // and after `stop()` has set `stopping` and queued its end path but
+        // before that path's body ran (its error row then precedes the stop
+        // row). Both must end in `failed`, never `idle`.
+        for afterStopRan in [false, true] {
+            let scratch = try ScratchStore("failureRightAfterStop\(afterStopRan)")
             defer { scratch.remove() }
-            let session = RecordingFixtures.session(store: scratch.store)
+            let source = FakeSource()
+            let session = RecordingFixtures.session(sources: [source], store: scratch.store)
             try await session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
             let url = try #require(session.currentFile)
             let generation = try #require(session.currentGeneration)
             let stopping = Task { await session.stop() }
-            for _ in 0..<yields { await Task.yield() }
+            if afterStopRan {
+                // `stop()` sets `stopping` synchronously, before it first
+                // suspends (R4.1-1).
+                var turns = 0
+                while session.state != .stopping, turns < 10_000 {
+                    await Task.yield()
+                    turns += 1
+                }
+                #expect(session.state == .stopping, "stop() ran: stopping before the failure")
+            } else {
+                #expect(session.state == .recording, "stop() has not run yet")
+            }
+            // Either way the end path's body (`quiesce` stops the sources)
+            // has not run: `stopping` came from `stop()` itself.
+            #expect(source.isRunning, "afterStopRan: \(afterStopRan)")
             await session.handleWriteFailure(.writeFailed(description: "EIO"), generation: generation)
             await stopping.value
-            #expect(session.state == .failed(reason: "EIO", unwrittenEvents: 0), "yields: \(yields)")
+            #expect(session.state == .failed(reason: "EIO", unwrittenEvents: 0), "afterStopRan: \(afterStopRan)")
             #expect(session.lastStopReason == nil)
             #expect(session.currentFile == nil)
 
             let (_, events, _) = try RecordingFixtures.read(url)
             let errors = RecordingFixtures.lifecycle(events).filter { $0.sample.event == "error" }.map(\.sample.detail)
-            #expect(errors == ["write failed: EIO"], "yields: \(yields)")
+            #expect(errors == ["write failed: EIO"], "afterStopRan: \(afterStopRan)")
+            let errorIndex = try #require(RecordingFixtures.index(of: .error, in: events))
+            if afterStopRan {
+                // The stop path's body ran after the error row: the failure
+                // reached it before the stop row was queued.
+                let stopIndex = try #require(RecordingFixtures.index(of: .stop, in: events))
+                #expect(errorIndex < stopIndex)
+            } else {
+                #expect(RecordingFixtures.index(of: .stop, in: events) == nil)
+                #expect(errorIndex == events.count - 1)
+            }
+        }
+    }
+
+    @Test("Stop and a write failure hold a background task from before the sources stop until the file is finished (R4.1-3)")
+    func endPathHoldsBackgroundTask() async throws {
+        for fails in [false, true] {
+            let scratch = try ScratchStore("endPathHoldsBackgroundTask\(fails)")
+            defer { scratch.remove() }
+            let spy = BackgroundTaskSpy()
+            let source = FakeSource()
+            let session = RecordingFixtures.session(sources: [source], store: scratch.store, backgroundTasks: spy)
+            try await session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
+            let generation = try #require(session.currentGeneration)
+            source.onStop = { spy.note("source stopped while holding \(spy.held)") }
+            spy.describeAtEnd = { session.currentFile == nil ? "file finished" : "file open" }
+            #expect(spy.log.isEmpty, "nothing held while recording")
+
+            if fails {
+                await session.handleWriteFailure(.diskFull, generation: generation)
+                #expect(session.state == .failed(reason: "disk full", unwrittenEvents: 0))
+                #expect(spy.log == [
+                    "begin DriveLogger.writeFailure",
+                    "source stopped while holding [\"DriveLogger.writeFailure\"]",
+                    "end DriveLogger.writeFailure (file finished)",
+                ])
+            } else {
+                await session.stop()
+                #expect(session.state == .idle)
+                #expect(spy.log == [
+                    "begin DriveLogger.stop",
+                    "source stopped while holding [\"DriveLogger.stop\"]",
+                    "end DriveLogger.stop (file finished)",
+                ])
+            }
+            #expect(spy.held.isEmpty)
         }
     }
 
@@ -519,8 +611,19 @@ struct RecordingSessionTests {
         #expect(session.live.gpsSpeedKmh == nil)
         try await session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
         let url = try #require(session.currentFile)
+        // No later than the source's start: fix n is stamped
+        // `sourceStart + n × 100 ms` with `sourceStart <= startedAt`.
+        let startedAt = try #require(session.manualFixTapTime())
         #expect(await eventually(3) { session.live.gpsSpeedKmh != nil })
         #expect(abs((session.live.gpsSpeedKmh ?? 0) - 13.9 * 3.6) < 1e-9)
+        // Wait for fix 9 (T-1), not a fixed interval: a fix stamped at least
+        // 900 ms after `startedAt` has n >= 9. It is shown only after the
+        // source generated it, and `stop()` waits for a delivery in progress,
+        // so fixes 0…9 are in the file.
+        #expect(await eventually(10) {
+            guard let received = location.latestReferenceFix?.receivedT else { return false }
+            return received.nanoseconds - startedAt.nanoseconds >= 900_000_000
+        })
         await session.stop()
         #expect(session.live.gpsSpeedKmh == nil)
         #expect(location.latestReferenceFix == nil)
@@ -772,6 +875,34 @@ struct RecordingSessionManualFixTests {
         #expect(Self.manualFixes(events).isEmpty)
     }
 
+    @Test("A fix whose undo window closes between a write failure's error row and its end path is dropped, not written: the map no longer draws it (R15.1-3)")
+    func windowClosingAfterFailureDrops() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let (session, _, url) = try await Self.started(window: .milliseconds(300), scratch: scratch)
+        let generation = try #require(session.currentGeneration)
+        let id = try Self.stage(session, latitude: 0.001)
+        // Let the fix's timer begin its wait, then block the main actor past
+        // it: the timer's wake-up is queued behind this turn, ahead of the
+        // end path the failure queues. It then finds the recording no longer
+        // writable (`writePending`'s skip branch), before `performFail`
+        // would drop the fix itself.
+        try await Task.sleep(for: .milliseconds(10))
+        blockMainActor(seconds: 0.8)
+        try #require(session.pendingManualFixes.map(\.id) == [id], "the timer has not run yet")
+        await session.handleWriteFailure(.diskFull, generation: generation)
+        #expect(session.state == .failed(reason: "disk full", unwrittenEvents: 0))
+        #expect(session.pendingManualFixes.isEmpty)
+        #expect(session.droppedManualFixIDs.contains(id))
+        let model = MapViewModel(
+            track: GPSTrack(), latest: nil, manualFixes: [ConfirmedFix(id: id, latitude: 0.001, longitude: 0)])
+        #expect(model.drawnManualFixes(excluding: session.droppedManualFixIDs).isEmpty)
+
+        let (_, events, _) = try RecordingFixtures.read(url)
+        #expect(Self.manualFixes(events).isEmpty)
+        #expect(events.last?.payload == .lifecycle(LifecycleSample(.error, detail: "write failed: disk full")))
+    }
+
     @Test("Several pending fixes are written in tap order")
     func tapOrder() async throws {
         let scratch = try ScratchStore()
@@ -794,7 +925,7 @@ struct RecordingSessionManualFixTests {
         #expect(taps == taps.sorted())
     }
 
-    @Test("Nothing is staged when not recording, or for a coordinate that is not a position; a fix from an earlier recording is not written to the next")
+    @Test("Nothing is staged when not recording, or for a coordinate that is not a position; a fix pending at Stop is written to its own recording, never to the next")
     func refusedWhenNotRecording() async throws {
         let scratch = try ScratchStore()
         defer { scratch.remove() }
@@ -808,17 +939,22 @@ struct RecordingSessionManualFixTests {
         #expect(session.stageManualFix(latitude: .nan, longitude: 0, tapT: tapT, mapSpanM: nil) == nil)
         #expect(session.stageManualFix(latitude: 91, longitude: 0, tapT: tapT, mapSpanM: nil) == nil)
         #expect(session.pendingManualFixes.isEmpty)
+        // Pending at Stop (R14.3-6): its 60 s window is still open.
+        let pending = try Self.stage(session, latitude: 0.001)
         await session.stop()
+        #expect(session.pendingManualFixes.isEmpty)
+        #expect(!session.droppedManualFixIDs.contains(pending))
         #expect(session.manualFixTapTime() == nil)
         #expect(session.stageManualFix(latitude: 0, longitude: 0, tapT: tapT, mapSpanM: nil) == nil)
 
         try await session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
         let second = try #require(session.currentFile)
+        #expect(session.pendingManualFixes.isEmpty, "nothing carried into the next recording")
         await session.stop()
-        for url in [first, second] {
-            let (_, events, _) = try RecordingFixtures.read(url)
-            #expect(Self.manualFixes(events).isEmpty)
-        }
+        let (_, firstEvents, _) = try RecordingFixtures.read(first)
+        #expect(Self.manualFixes(firstEvents).map(\.sample.latitude) == [0.001])
+        let (_, secondEvents, _) = try RecordingFixtures.read(second)
+        #expect(Self.manualFixes(secondEvents).isEmpty)
     }
 
     @Test("Without OBD: the GPS speed describes the fix when good and fresh; otherwise unknown, with the GPS speed kept for reference")

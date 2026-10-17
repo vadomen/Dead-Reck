@@ -457,7 +457,7 @@ What the app writes (all at `clock.now()` when written):
 |---|---|---|
 | `start` | absent, or `without OBD: link <state>` | First row. The second form when the user chose to record without a polling adapter (the header then has no `adapter`/`polling`). Followed by the start-up init rows, if any (above). |
 | `calibrationStart` | `keep still for <s> s` | Right after `start`: the keep-still phase begins. |
-| `calibrationEnd` | absent; `cut short after <s> s`; `interrupted by stop` | End of the keep-still phase. Back to back with `calibrationStart` when calibration was skipped. `interrupted by stop` when the recording was stopped during calibration (it is then followed by `stop`). |
+| `calibrationEnd` | absent; `cut short after <s> s`; `interrupted by stop` | End of the keep-still phase. Back to back with `calibrationStart` when calibration was skipped. `interrupted by stop` when the recording was stopped during calibration (it is then followed by `stop`). None when a write failure ended the recording during calibration: the `error` row is the last row. |
 | `background` / `foreground` | absent | The app entered the background / left it. Each `background` is followed by a flush. |
 | `memoryWarning` | absent | The system sent a memory warning; a flush follows. |
 | `thermalState` | `nominal`, `fair`, `serious`, `critical` | At start when not `nominal`, then on every change. |
