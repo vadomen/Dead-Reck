@@ -452,3 +452,17 @@ Tests: 976 passed, 36 known issues.
 ### Run 53 summary
 
 2 rounds; 1 fixed (R53.1-1), 0 rejected, 1 MINOR deferred (R53.1-2).
+
+## Run 55 (lite): N2-3 magnetometer heading prior, result only (7b1f833..7d67794, branch sweep-n23doc), started 2026-10-18
+
+Commits: 7d67794 NAVIGATION.md "N2-3: magnetometer heading prior": measured, fails the adoption rule on 4 of 18 gated cells; experiment code kept on the unmerged branch `exp-mag` (10f84ee), not on main (user rule: no engine merge unless it passes).
+
+### Round 1
+
+Reviewer: one fresh reviewer (sonnet), lite run, checks 10 and 11: no mag keys or types on main and none in the config table; every reference points to `exp-mag`; Δs, allowances and PASS/FAIL verdicts match the adoption rule (drive-7 roads consistency 1257/1365 = 92.1 % vs 96.3 %); off baselines equal "N3.2 decision". Privacy clean. Result: 0 BLOCKER / 0 MAJOR / 0 MINOR.
+
+Tests: Core not run: no file outside docs/ changed.
+
+### Run 55 summary
+
+1 round; 0 fixed, 0 rejected, 0 deferred.
