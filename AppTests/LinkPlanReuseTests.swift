@@ -119,8 +119,9 @@ struct LinkPlanReuseTests {
 
         link.forget()
         #expect(link.rememberedPollPlan == nil)
-        // The session retired by forget() must not store its plan afterwards.
-        try await Task.sleep(for: .milliseconds(200))
+        // The session retired by forget() must not store its plan afterwards:
+        // wait for that retire to finish (M7.1-6), then check.
+        await link.sessionsRetired()
         #expect(link.rememberedPollPlan == nil)
         link.connect(to: FakeBLECentral.adapterID)
         #expect(await Self.pollingOnConnection(3, link, central, log))
@@ -155,6 +156,35 @@ struct LinkPlanReuseTests {
         await central.loseLink()
         #expect(await Self.pollingOnConnection(3, link, central, log))
         #expect(Self.reuseNotes(Self.latestConnection(log.events)) == [Self.reuseNote(reselected)])
+        link.disconnect()
+    }
+}
+
+extension LinkPlanReuseTests {
+    @Test("M7.1-2: a reused plan that fails while polling (failed + needsReconnect) is not offered to the next connection")
+    func pollFailureNotRemembered() async throws {
+        // Connection 2: the check poll passes, every poll after it fails.
+        let failing = [
+            MockELMAdapter.Rule(
+                command: "010D0C1", reply: "7E806410D000C0A5C\r\r>", delay: .milliseconds(3), times: 1, requestHeader: "7E0"
+            ),
+            MockELMAdapter.Rule(command: "010D0C1", reply: "CAN ERROR\r\r>", delay: .milliseconds(3), requestHeader: "7E0"),
+        ] + LinkTestSupport.benchCar()
+        let central = FakeBLECentral(scripts: [LinkTestSupport.benchCar(), failing, LinkTestSupport.benchCar()])
+        let link = LinkTestSupport.service(central, configuration: LinkTestSupport.probing)
+        let log = LinkEventLog(link.linkEvents())
+        link.connect(to: FakeBLECentral.adapterID)
+        #expect(await Self.pollingOnConnection(1, link, central, log))
+        let plan = try #require(link.plan)
+
+        await central.loseLink()
+        #expect(await eventually { central.adapters.count == 2 && log.events.contains { if case .session(.needsReconnect) = $0 { true } else { false } } })
+        #expect(Self.reuseNotes(Self.latestConnection(log.events)) == [Self.reuseNote(plan)], "connection 2 reused it")
+
+        #expect(await Self.pollingOnConnection(3, link, central, log))
+        let third = Self.latestConnection(log.events)
+        #expect(Self.reuseNotes(third).isEmpty, "the failed plan was not stored again")
+        #expect(Self.probeTxs(third).count > 20, "selection and the ATAT comparison ran")
         link.disconnect()
     }
 }

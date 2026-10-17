@@ -27,8 +27,16 @@ struct ELMSessionPlanReuseTests {
         )
     }
 
-    static func remembered(_ plan: PollingPlan = benchPlan(), banner: String = benchBanner) -> RememberedPollingPlan {
-        RememberedPollingPlan(plan: plan, elmVersion: banner)
+    /// The bench car as the handshake sees it: `ATDPN` `A6`, 7E8's `0100`
+    /// bitmask `BE1CA813` (M7.1-3).
+    static let benchVehicle = RememberedPollingPlan.VehicleKey(protocolNumber: "A6", supportedPIDs: "BE1CA813")
+
+    static func remembered(
+        _ plan: PollingPlan = benchPlan(),
+        banner: String = benchBanner,
+        vehicle: RememberedPollingPlan.VehicleKey? = benchVehicle
+    ) -> RememberedPollingPlan {
+        RememberedPollingPlan(plan: plan, elmVersion: banner, vehicle: vehicle)
     }
 
     static func notes(_ log: EventLog) async -> [String] {
@@ -254,5 +262,221 @@ struct ELMSessionPlanReuseTests {
         #expect(polls.allSatisfy { $0.tx == "010D0C1" }, "multi-PID kept, nothing dropped")
         #expect(await harness.log.transitions.contains { $0.to == .retrying && $0.reason == "noData" })
         #expect(await harness.log.adapterInfos.count == 1, "no re-announcement: the plan did not change")
+    }
+}
+
+// Review run 7, round 1 follow-ups (M7.1-1, M7.1-2, M7.1-6).
+@Suite("ELMSession remembered poll plan follow-ups (M7.1)", .timeLimit(.minutes(1)))
+struct ELMSessionPlanReuseFollowUpTests {
+    typealias Rule = MockELMAdapter.Rule
+    typealias Reuse = ELMSessionPlanReuseTests
+
+    static let probing = ELMSessionProbeTests.probing
+    static let checkOK = "7E806410D000C0A5C\r\r>"
+
+    // MARK: M7.1-1
+
+    @Test("M7.1-1: a selection that dropped a PID on NO DATA is not remembered, so the PID gets a fresh chance next time")
+    func droppedPIDNotRemembered() async throws {
+        // Under 7E0 RPM never answers: every step with 010C fails, and the
+        // plain 010C's NO DATA drops it (never answered OK). 010D1 then wins.
+        let noRPM = [
+            Rule(command: "010D0C1", reply: "NO DATA\r\r>", delay: .milliseconds(30), requestHeader: "7E0"),
+            Rule(command: "010C1", reply: "NO DATA\r\r>", delay: .milliseconds(30), requestHeader: "7E0"),
+            Rule(command: "010D", reply: "7E803410D00\r\r>", delay: .milliseconds(60), requestHeader: "7E0"),
+            Rule(command: "010C", reply: "NO DATA\r\r>", delay: .milliseconds(60), requestHeader: "7E0"),
+        ]
+        let harness = SessionHarness(rules: noRPM + MockELMAdapter.Rule.benchCar, configuration: Self.probing)
+        let info = try await harness.initialise()
+
+        #expect(info.plan.pids == [.vehicleSpeed], "RPM dropped for this session")
+        #expect(info.plan.primaryCommand.wireFormat == "010D1")
+        #expect(await harness.session.rememberedPlan == nil, "a degraded plan is not carried to the next connection")
+    }
+
+    @Test("M7.1-1: a remembered plan is replaced by nil when this init's selection dropped a PID")
+    func droppedPIDClearsRemembered() async throws {
+        // The remembered plan's check fails (RPM NO DATA), selection drops RPM.
+        let noRPM = [
+            Rule(command: "010D0C1", reply: "NO DATA\r\r>", delay: .milliseconds(30), requestHeader: "7E0"),
+            Rule(command: "010C1", reply: "NO DATA\r\r>", delay: .milliseconds(30), requestHeader: "7E0"),
+            Rule(command: "010D", reply: "7E803410D00\r\r>", delay: .milliseconds(60), requestHeader: "7E0"),
+            Rule(command: "010C", reply: "NO DATA\r\r>", delay: .milliseconds(60), requestHeader: "7E0"),
+        ]
+        let harness = SessionHarness(
+            rules: noRPM + MockELMAdapter.Rule.benchCar, configuration: Self.probing, rememberedPlan: Reuse.remembered()
+        )
+        let info = try await harness.initialise()
+        #expect(info.plan.pids == [.vehicleSpeed])
+        #expect(await harness.session.rememberedPlan == nil)
+    }
+
+    // MARK: M7.1-2
+
+    /// The remembered bench plan passes its check, then every poll fails.
+    static func failingAfterCheck() -> [Rule] {
+        [
+            Rule(command: "010D0C1", reply: checkOK, delay: .milliseconds(20), times: 1, requestHeader: "7E0"),
+            Rule(command: "010D0C1", reply: "CAN ERROR\r\r>", delay: .milliseconds(20), requestHeader: "7E0"),
+        ] + MockELMAdapter.Rule.benchCar
+    }
+
+    @Test("M7.1-2: polling that escalates to failed + needsReconnect clears the remembered plan")
+    func pollFailureClearsRememberedPlan() async throws {
+        let harness = SessionHarness(rules: Self.failingAfterCheck(), configuration: Self.probing, rememberedPlan: Reuse.remembered())
+        let info = try await harness.initialise()
+        #expect(await harness.session.rememberedPlan == Reuse.remembered(), "the check passed: reused and kept")
+        try await harness.session.startPolling(info.plan)
+        await harness.run { await $0.reconnectRequests == 1 }
+
+        #expect(await harness.session.state == .failed)
+        #expect(await harness.session.rememberedPlan == nil, "the next connection selects again")
+    }
+
+    @Test("M7.1-2: a transport loss while polling keeps the remembered plan")
+    func transportLossKeepsRememberedPlan() async throws {
+        let harness = SessionHarness(rules: MockELMAdapter.Rule.benchCar, configuration: Self.probing, rememberedPlan: Reuse.remembered())
+        let info = try await harness.initialise()
+        try await harness.session.startPolling(info.plan)
+        await harness.run { await $0.readings.count >= 4 }
+        await harness.mock.disconnect()
+        await harness.run { await $0.states.last == .failed }
+
+        #expect(await harness.log.reconnectRequests == 0)
+        #expect(await harness.session.rememberedPlan == Reuse.remembered())
+    }
+
+    // MARK: M7.1-6
+
+    @Test("M7.1-6: reuse fails when ATAT<n> is not accepted; the full selection runs")
+    func refusedATATFallsBack() async throws {
+        let harness = SessionHarness(
+            rules: [Rule(command: "ATAT2", reply: "?\r\r>", delay: .milliseconds(10), times: 1)] + MockELMAdapter.Rule.benchCar,
+            configuration: Self.probing,
+            rememberedPlan: Reuse.remembered()
+        )
+        let info = try await harness.initialise()
+
+        #expect(await Reuse.reuseNotes(harness.log) == [
+            "poll plan reused from the previous connection: 010D0C1, ATAT2, requestHeader 7E0",
+            "reused plan failed (ATAT2 not accepted (notRecognised)); selecting again",
+        ])
+        let probes = await harness.log.exchanges.filter { $0.phase == .probe }.map(\.tx)
+        #expect(Array(probes.prefix(2)) == ["ATAT2", "ATAT1"], "no check poll after the refused ATAT2")
+        #expect(info.plan == Reuse.benchPlan(adaptiveTiming: 1))
+        #expect(await harness.session.rememberedPlan == Reuse.remembered(info.plan))
+    }
+
+    @Test("M7.1-6: a single-PID remembered plan checks every PID once (cycle 0) and is reused")
+    func singlePIDPlanReused() async throws {
+        var single = Reuse.benchPlan(adaptiveTiming: 1)
+        single.multiPID = false
+        let harness = SessionHarness(
+            rules: [Rule(command: "010C1", reply: "7E804410C0A5C\r\r>", delay: .milliseconds(40), requestHeader: "7E0")]
+                + MockELMAdapter.Rule.benchCar,
+            configuration: Self.probing,
+            rememberedPlan: Reuse.remembered(single)
+        )
+        let info = try await harness.initialise()
+
+        #expect(info.plan == single)
+        #expect(await harness.mock.sentCommands == Reuse.handshake + ["ATAT1", "010D1", "010C1"])
+        #expect(await Reuse.reuseNotes(harness.log) == [
+            "poll plan reused from the previous connection: 010D1, ATAT1, requestHeader 7E0",
+        ])
+        #expect(await harness.session.rememberedPlan == Reuse.remembered(single))
+    }
+
+    @Test("M7.1-6: a late ATSH7E0 OK is settled before the reuse check, so a 7E0 plan is reused")
+    func lateATSHSettledBeforeReuse() async throws {
+        // 300 ms: past the 200 ms timeout, inside the grace period.
+        let harness = SessionHarness(
+            rules: [Rule(command: "ATSH7E0", reply: "OK\r\r>", delay: .milliseconds(300), times: 1)] + MockELMAdapter.Rule.benchCar,
+            configuration: Self.probing,
+            rememberedPlan: Reuse.remembered()
+        )
+        let info = try await harness.initialise()
+
+        let notes = await Reuse.notes(harness.log)
+        let late = try #require(notes.firstIndex { $0.hasPrefix("late OK for ATSH7E0") })
+        let reused = try #require(notes.firstIndex { $0.hasPrefix("poll plan reused from the previous connection") })
+        #expect(late < reused, "the late OK landed before the reuse decision")
+        #expect(!notes.contains { $0.hasPrefix("remembered poll plan not reused") })
+        #expect(info.plan == Reuse.benchPlan())
+        #expect(await harness.mock.sentCommands == Reuse.handshake + ["ATAT2", "010D0C1"])
+    }
+}
+
+// M7.1-3 (user decision: fix): the reuse key was the peripheral and the ATZ
+// banner, which identify the adapter, not the car. The plan now also carries
+// ATDPN and the primary ECU's 0100 bitmask; a mismatch, or a plan without
+// them, means it is not reused.
+@Suite("ELMSession remembered poll plan: vehicle key (M7.1-3)", .timeLimit(.minutes(1)))
+struct ELMSessionPlanReuseVehicleTests {
+    typealias Reuse = ELMSessionPlanReuseTests
+    typealias Key = RememberedPollingPlan.VehicleKey
+
+    static let probing = ELMSessionProbeTests.probing
+
+    @Test("Selection remembers the vehicle key from ATDPN and 7E8's 0100 answer")
+    func selectionRecordsKey() async throws {
+        let harness = SessionHarness(rules: MockELMAdapter.Rule.benchCar, configuration: Self.probing)
+        let info = try await harness.initialise()
+        let remembered = try #require(await harness.session.rememberedPlan)
+        #expect(remembered.vehicle == Reuse.benchVehicle)
+        #expect(remembered == Reuse.remembered(info.plan))
+    }
+
+    @Test(
+        "A different vehicle, or a plan without a key, is not reused; selection runs and the new key is remembered",
+        arguments: [
+            (Key(protocolNumber: "A8", supportedPIDs: "BE1CA813") as Key?,
+             "chosen on protocol A8, this vehicle reports A6"),
+            (Key(protocolNumber: "A6", supportedPIDs: "BE3FA813") as Key?,
+             "chosen on a vehicle whose 7E8 0100 bitmask is BE3FA813, this one reports BE1CA813"),
+            (Key(protocolNumber: "A6", supportedPIDs: nil) as Key?,
+             "chosen on a vehicle whose 7E8 0100 bitmask is absent, this one reports BE1CA813"),
+            (nil, "chosen without a vehicle key (ATDPN, 7E8 0100 bitmask)"),
+        ]
+    )
+    func otherVehicleNotReused(vehicle: Key?, why: String) async throws {
+        let harness = SessionHarness(
+            rules: MockELMAdapter.Rule.benchCar, configuration: Self.probing,
+            rememberedPlan: Reuse.remembered(vehicle: vehicle)
+        )
+        let info = try await harness.initialise()
+
+        #expect(await Reuse.reuseNotes(harness.log) == ["remembered poll plan not reused: \(why); selecting again"])
+        let probes = await harness.log.exchanges.filter { $0.phase == .probe }
+        #expect(probes.first?.tx == "ATAT1", "selection, not the remembered ATAT2 and a check poll")
+        #expect(info.plan == Reuse.benchPlan(adaptiveTiming: 1), "selected again")
+        #expect(await harness.session.rememberedPlan == Reuse.remembered(info.plan), "now keyed on this vehicle")
+    }
+
+    @Test("ATDPN 6 and A6 are the same protocol (A only means auto-detected): reused")
+    func autoPrefixIgnored() async throws {
+        let harness = SessionHarness(
+            rules: MockELMAdapter.Rule.benchCar, configuration: Self.probing,
+            rememberedPlan: Reuse.remembered(vehicle: Key(protocolNumber: "6", supportedPIDs: "BE1CA813"))
+        )
+        let info = try await harness.initialise()
+        #expect(info.plan == Reuse.benchPlan())
+        #expect(await harness.mock.sentCommands == Reuse.handshake + ["ATAT2", "010D0C1"])
+    }
+
+    @Test("The bitmask comes from 7E8's intact answer: 7E9's answer, and a bad 7E9 line, don't change it")
+    func bitmaskFromPrimary() {
+        #expect(ELMSession.primarySupportedPIDs("7E906410098180001\r7E8064100BE1CA813\r\r") == "BE1CA813")
+        #expect(ELMSession.primarySupportedPIDs("SEARCHING...\r7E9064100\r7E8064100BE1CA813\r\r") == "BE1CA813")
+        #expect(ELMSession.primarySupportedPIDs("7E906410098180001\r\r") == nil, "no 7E8 answer")
+        #expect(ELMSession.primarySupportedPIDs("7E80641\r\r") == nil, "7E8 cut short")
+        #expect(ELMSession.primarySupportedPIDs(nil) == nil)
+    }
+
+    @Test("A key-less plan built with the old initialiser still constructs and compares; it just isn't reusable")
+    func keylessPlanIsHarmless() {
+        let old = RememberedPollingPlan(plan: Reuse.benchPlan(), elmVersion: Reuse.benchBanner)
+        #expect(old.vehicle == nil)
+        #expect(old != Reuse.remembered())
     }
 }

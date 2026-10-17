@@ -48,13 +48,15 @@ struct ReconnectBackoff: Hashable, Sendable {
 ///   session has shut down and its last event has been forwarded — so
 ///   `seq` is unique and increasing for the whole recording.
 /// - The same way, the previous session's `rememberedPlan` (poll plan with
-///   its `ATAT` level and `requestHeader`, and the `ATZ` banner it was
-///   chosen on) seeds the next session **on the same adapter** (peripheral
-///   identifier), which then skips start-up selection and the
-///   `ATAT1`/`ATAT2` comparison if the plan still fits and its check poll
-///   passes (M6.1-3; `ELMSession`, "Remembered poll plan"). A session
-///   started on a different adapter clears it, and so does `forget()`;
-///   `disconnect()` keeps it. In memory only, for this app session.
+///   its `ATAT` level and `requestHeader`, the `ATZ` banner and the vehicle
+///   key it was chosen on) seeds the next session **on the same adapter**
+///   (peripheral identifier), which then skips start-up selection and the
+///   `ATAT1`/`ATAT2` comparison if the plan still fits (same banner, same
+///   vehicle: M7.1-3) and its check poll passes (M6.1-3; `ELMSession`,
+///   "Remembered poll plan"). A session started on a different adapter
+///   clears it, and so does `forget()`; `disconnect()` keeps it. A session
+///   whose polling failed (`needsReconnect`) hands over nil, so the
+///   reconnect selects again (M7.1-2). In memory only, for this app session.
 /// - Reconnect with backoff (`ReconnectBackoff`, 1 s doubling to 30 s) on a
 ///   link loss, a failed connect, a failed initialisation (a write error
 ///   during the handshake included: BLE stays up then), and on the
@@ -131,6 +133,9 @@ class OBDLinkService: OBDLinkServicing {
     @ObservationIgnored private var session: ELMSession?
     @ObservationIgnored private var sessionTask: Task<Void, Never>?
     @ObservationIgnored private var retiring: Task<Void, Never>?
+    /// The retire started by the latest `dropLink()`; see
+    /// `sessionsRetired()`.
+    @ObservationIgnored private var lastDrop: Task<Void, Never>?
     @ObservationIgnored private var nextSeq = 0
     /// The init-and-poll run in progress, tagged with its connection's
     /// `linkToken`. A `reinitialise()` on the same connection while it runs
@@ -485,7 +490,15 @@ class OBDLinkService: OBDLinkServicing {
     private func dropLink() {
         linkToken += 1
         pollHz = 0
-        Task { await retireSession() }
+        lastDrop = Task { await retireSession() }
+    }
+
+    /// Returns once every session dropped so far has been retired (its
+    /// `nextSeq` and remembered plan taken, or not, per `pollPlanEpoch`):
+    /// `retireSession` waits for every retire before it. For tests: a
+    /// deterministic wait instead of a sleep (M7.1-6).
+    func sessionsRetired() async {
+        await lastDrop?.value
     }
 
     /// Shuts the current session down, waits until its last event has been
@@ -640,7 +653,11 @@ class OBDLinkService: OBDLinkServicing {
 /// The events behind `lastInitEvents`: the current connection's BLE
 /// transition into `connected`, then the latest initialisation of that
 /// connection's session, from its first event to its transition into
-/// `polling` or `failed`. Fed by `OBDLinkService` in delivery order.
+/// `polling` or `failed`, then (M7.1-5) the latest `.adapter` event and the
+/// latest ELM transition delivered after that init ended, in arrival order,
+/// so the replay ends with the plan actually polled (e.g. after a PID was
+/// dropped on NO DATA) and the state the link is in. Fed by
+/// `OBDLinkService` in delivery order.
 ///
 /// Emptied when BLE leaves `connected` (M6.1-1): a connection that has
 /// dropped is never replayed. Session events are matched by the token of
@@ -655,12 +672,15 @@ struct InitCapture {
     /// Collecting the init: from the session's first event, or the start of
     /// a re-init, until `polling` or `failed`.
     private var initialising = false
+    /// After the init ended: the latest `.adapter` event and the latest ELM
+    /// transition (`from != to`), at most one of each, oldest first.
+    private var afterInit: [LinkEvent] = []
 
     init(limit: Int) {
         self.limit = max(limit, 1)
     }
 
-    var events: [LinkEvent] { connection + initialisation }
+    var events: [LinkEvent] { connection + initialisation + afterInit }
 
     mutating func ble(_ event: LinkEvent, from: LinkSample.BLEState, to: LinkSample.BLEState) {
         if to == .connected {
@@ -677,6 +697,7 @@ struct InitCapture {
     private mutating func reset() {
         connection = []
         initialisation = []
+        afterInit = []
         sessionToken = nil
         initialising = false
     }
@@ -686,6 +707,7 @@ struct InitCapture {
     mutating func sessionStarted(token: Int) {
         sessionToken = token
         initialisation = []
+        afterInit = []
         initialising = true
     }
 
@@ -697,11 +719,15 @@ struct InitCapture {
         case .state(let from, let to, _, _) where from != to && !initialising && (to == .resetting || to == .reinitialising):
             // A new init on this connection replaces the last one.
             initialisation = []
+            afterInit = []
             initialising = true
         default:
             break
         }
-        guard initialising else { return }
+        guard initialising else {
+            keepAfterInit(sessionEvent, as: event)
+            return
+        }
         initialisation.append(event)
         if case .state(let from, let to, _, _) = sessionEvent, from != to, to == .polling || to == .failed {
             initialising = false
@@ -709,13 +735,36 @@ struct InitCapture {
         trim()
     }
 
+    /// After the init: a newer `.adapter` event or ELM transition replaces
+    /// the one of its kind and goes last. Notes, exchanges and readings
+    /// are poll traffic and not kept.
+    private mutating func keepAfterInit(_ sessionEvent: ELMSessionEvent, as event: LinkEvent) {
+        let isAdapter: (LinkEvent) -> Bool = { if case .session(.adapter) = $0 { true } else { false } }
+        let isTransition: (LinkEvent) -> Bool = {
+            if case .session(.state(let from, let to, _, _)) = $0 { from != to } else { false }
+        }
+        switch sessionEvent {
+        case .adapter:
+            afterInit.removeAll(where: isAdapter)
+        case .state(let from, let to, _, _) where from != to:
+            afterInit.removeAll(where: isTransition)
+        default:
+            return
+        }
+        afterInit.append(event)
+        trim()
+    }
+
     /// Drops the oldest events beyond `limit`: the connection part first,
-    /// then the start of the init.
+    /// then the start of the init, and `afterInit` (at most two) only with a
+    /// limit below three.
     private mutating func trim() {
-        let excess = connection.count + initialisation.count - limit
+        let excess = connection.count + initialisation.count + afterInit.count - limit
         guard excess > 0 else { return }
         let fromConnection = min(excess, connection.count)
         connection.removeFirst(fromConnection)
-        initialisation.removeFirst(excess - fromConnection)
+        let fromInit = min(excess - fromConnection, initialisation.count)
+        initialisation.removeFirst(fromInit)
+        afterInit.removeFirst(min(excess - fromConnection - fromInit, afterInit.count))
     }
 }

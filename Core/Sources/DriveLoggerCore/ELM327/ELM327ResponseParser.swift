@@ -160,6 +160,47 @@ public struct ECUReply: Hashable, Sendable {
     }
 }
 
+/// A line of a reply that `ELM327ResponseParser.scanReplies` could not use.
+public struct ECUReplyFault: Hashable, Sendable {
+    /// The ECU the line came from (its CAN header), whose answers were then
+    /// dropped. Nil for a status line (`NO DATA`, …), a line that can't be
+    /// attributed, and with headers off.
+    public var header: String?
+    public var line: String
+    public var error: ELM327Error
+
+    public init(header: String?, line: String, error: ELM327Error) {
+        self.header = header
+        self.line = line
+        self.error = error
+    }
+}
+
+/// A reply split per ECU, tolerantly (M1-E1): the answers of every ECU whose
+/// lines all parsed, and the lines that didn't.
+public struct ECUReplyScan: Hashable, Sendable {
+    /// Intact answers, in order of each ECU's first line.
+    public var replies: [ECUReply]
+    public var faults: [ECUReplyFault]
+
+    public init(replies: [ECUReply], faults: [ECUReplyFault]) {
+        self.replies = replies
+        self.faults = faults
+    }
+
+    /// What the reply failed with, as `replies(in:headers:)` reports it: the
+    /// first status line if there is one (they are protocol answers, e.g.
+    /// `NO DATA`), else the first other fault; `.emptyResponse` if there was
+    /// nothing at all; nil if nothing failed.
+    public var error: ELM327Error? {
+        if let status = faults.first(where: { $0.header == nil && ELM327ResponseParser.error(for: $0.line) != nil }) {
+            return status.error
+        }
+        if let first = faults.first { return first.error }
+        return replies.isEmpty ? .emptyResponse : nil
+    }
+}
+
 /// A non-hex reply to an `AT` command, classified.
 public enum ELMTextReply: Hashable, Sendable {
     case ok
@@ -236,8 +277,140 @@ extension ELM327ResponseParser {
         }
     }
 
+    /// Splits a reply into per-ECU answers without letting one ECU's bad
+    /// line spoil the others' (M1-E1). `replies(in:headers:)` throws at the
+    /// first status or malformed line; this keeps every ECU whose lines all
+    /// parse and lists the rest as faults.
+    ///
+    /// Headers on: each line is attributed to its CAN header when it is all
+    /// hex and long enough to carry one; a fault (bad PCI, truncated or
+    /// out-of-sequence frame, an ISO-TP transfer left unfinished) drops
+    /// **every** answer from that header, since a header that sent one bad
+    /// line can't be trusted for the rest. Status lines (`NO DATA`, `CAN
+    /// ERROR`, …) and lines that can't be attributed (non-hex garbage, too
+    /// short) are faults with no header and drop nothing. Headers off: status
+    /// lines are faults and the rest is parsed as in `replies`; if that
+    /// fails, the whole rest is one fault (nothing can be attributed).
+    ///
+    /// Echo lines and `SEARCHING...` are dropped as in `replies`. Never
+    /// throws; an empty reply is an empty scan.
+    public static func scanReplies(in raw: String, headers: Bool) -> ECUReplyScan {
+        let lines = lines(in: raw).filter { !ELMCommandPolicy.looksLikeSessionCommand($0) }
+        var faults: [ECUReplyFault] = []
+        var data: [String] = []
+        for line in lines {
+            if let error = error(for: line) {
+                faults.append(ECUReplyFault(header: nil, line: line, error: error))
+            } else {
+                data.append(line)
+            }
+        }
+        guard headers else {
+            guard !data.isEmpty else { return ECUReplyScan(replies: [], faults: faults) }
+            do {
+                return ECUReplyScan(replies: try headerOffReplies(data), faults: faults)
+            } catch {
+                let failure = (error as? ELM327Error) ?? .malformedFrame(data.joined(separator: " "))
+                faults.append(ECUReplyFault(header: nil, line: data.joined(separator: "\r"), error: failure))
+                return ECUReplyScan(replies: [], faults: faults)
+            }
+        }
+        return tolerantHeaderOnReplies(data, faults: faults)
+    }
+
     private static func isASCIIHex(_ character: Character) -> Bool {
         character.isASCII && character.isHexDigit
+    }
+
+    /// `headerOnReplies`, per header: a fault drops that header's answers
+    /// and is recorded; other headers carry on.
+    private static func tolerantHeaderOnReplies(_ lines: [String], faults: [ECUReplyFault]) -> ECUReplyScan {
+        struct OpenTransfer {
+            var replyIndex: Int
+            var declaredLength: Int
+            var nextSequence: UInt8
+            var line: String
+        }
+        var faults = faults
+        var replies: [ECUReply] = []
+        var open: [String: OpenTransfer] = [:]
+        var broken: Set<String> = []
+
+        for line in lines {
+            let digits = String(line.filter { !$0.isWhitespace })
+            let headerLength = digits.count.isMultiple(of: 2) ? 8 : 3
+            guard digits.allSatisfy(isASCIIHex), digits.count >= headerLength + 2 else {
+                // Garbage nobody can be blamed for: drops nothing.
+                let error: ELM327Error = digits.allSatisfy(isASCIIHex) ? .malformedFrame(line) : .malformedHex(line)
+                faults.append(ECUReplyFault(header: nil, line: line, error: error))
+                continue
+            }
+            let header = String(digits.prefix(headerLength))
+            func fail(_ error: ELM327Error) {
+                broken.insert(header)
+                open[header] = nil
+                faults.append(ECUReplyFault(header: header, line: line, error: error))
+            }
+            guard !broken.contains(header) else {
+                faults.append(ECUReplyFault(header: header, line: line, error: .malformedFrame(line)))
+                continue
+            }
+            guard let frame = try? Hex.bytes(in: digits.dropFirst(headerLength)), let pci = frame.first else {
+                fail(.malformedHex(line))
+                continue
+            }
+            switch pci >> 4 {
+            case 0x0:
+                let length = Int(pci & 0x0F)
+                guard (1...7).contains(length), open[header] == nil else {
+                    fail(.malformedFrame(line))
+                    continue
+                }
+                let data = frame.dropFirst()
+                guard data.count >= length else {
+                    fail(.truncatedFrame(expected: length, actual: data.count))
+                    continue
+                }
+                replies.append(ECUReply(header: header, bytes: Array(data.prefix(length))))
+            case 0x1:
+                guard frame.count >= 2, open[header] == nil else {
+                    fail(.malformedFrame(line))
+                    continue
+                }
+                let length = Int(pci & 0x0F) << 8 | Int(frame[1])
+                guard length > 7 else {
+                    fail(.malformedFrame(line))
+                    continue
+                }
+                open[header] = OpenTransfer(replyIndex: replies.count, declaredLength: length, nextSequence: 1, line: line)
+                replies.append(ECUReply(header: header, bytes: Array(frame.dropFirst(2).prefix(length))))
+            case 0x2:
+                guard var transfer = open[header], pci & 0x0F == transfer.nextSequence else {
+                    fail(.malformedFrame(line))
+                    continue
+                }
+                let missing = transfer.declaredLength - replies[transfer.replyIndex].bytes.count
+                replies[transfer.replyIndex].bytes += frame.dropFirst().prefix(missing)
+                if replies[transfer.replyIndex].bytes.count >= transfer.declaredLength {
+                    open[header] = nil
+                } else {
+                    transfer.nextSequence = (transfer.nextSequence + 1) & 0x0F
+                    open[header] = transfer
+                }
+            default:
+                fail(.malformedFrame(line))
+            }
+        }
+
+        for (header, transfer) in open.sorted(by: { $0.value.replyIndex < $1.value.replyIndex }) {
+            broken.insert(header)
+            faults.append(ECUReplyFault(
+                header: header,
+                line: transfer.line,
+                error: .truncatedFrame(expected: transfer.declaredLength, actual: replies[transfer.replyIndex].bytes.count)
+            ))
+        }
+        return ECUReplyScan(replies: replies.filter { !broken.contains($0.header ?? "") }, faults: faults)
     }
 
     private static func headerOnReplies(_ lines: [String]) throws -> [ECUReply] {
