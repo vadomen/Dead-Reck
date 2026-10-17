@@ -216,6 +216,39 @@ public struct NavigationConfig: Hashable, Sendable, Codable {
     /// 0…`maxLateManualFixWindowS`.
     public var lateManualFixWindowS = 5.0
 
+    // MARK: Pin against a GNSS source (N3-FIXPIN)
+
+    /// Pin-vs-fix arbitration (N3-FIXPIN, docs/NAVIGATION.md "Pin against a
+    /// GNSS source"). Per GNSS source (fixes with a valid speed, split by
+    /// `LocationSample.accessory`: true = accessory, false or nil = phone)
+    /// the engine keeps the fixes of the last this many seconds; a manual
+    /// fix that disagrees significantly with the prior is judged against the
+    /// source that supplied at least one of them. Only read while
+    /// `roadFixPinCheck` or `fixPinTwoPinCheck` is on. Valid: finite, in
+    /// (0, `maxFixPinWindowS`].
+    public var fixPinWindowS = 90.0
+    /// Two-pin arbiter (works with and without roads): 1 down-weights a
+    /// source when two independent pins agree on its offset (χ² of their
+    /// difference ≤ 5.99 against the summed covariances) after at least
+    /// `fixPinTwoPinMinPathM` of OBD distance and `fixPinTwoPinMinTurnDeg` of
+    /// net gyro heading change between them. 0: off (the default). Any
+    /// other value is invalid (`invalidReason`).
+    public var fixPinTwoPinCheck = 0
+    /// Least OBD distance between the two pins, metres. Valid: finite, ≥ 0.
+    public var fixPinTwoPinMinPathM = 300.0
+    /// Least |net heading change| (integrated gyro yaw) between the two
+    /// pins, degrees. Valid: finite, in [0, 360].
+    public var fixPinTwoPinMinTurnDeg = 45.0
+    /// While a source is down-weighted its position update uses
+    /// σ = max(σ_claimed, |offset|) × this, tempered like a network fix.
+    /// Valid: finite, > 0.
+    public var fixPinInflation = 1.0
+    /// Win-back by agreement: a down-weighted source is restored once its
+    /// fixes agree with the estimate (Mahalanobis² < 9 against its claimed
+    /// σ plus the estimate's covariance) for at least this many seconds
+    /// and 15 consecutive fixes. Valid: finite, ≥ 0.
+    public var fixPinRestoreS = 30.0
+
     // MARK: Resampling
 
     /// Systematic resampling when ESS falls under this fraction of N.
@@ -280,6 +313,20 @@ public struct NavigationConfig: Hashable, Sendable, Codable {
     /// initialised the engine or reset it; otherwise tempered by the
     /// distance since the last road update, as a regular one.
     public var roadPinAnchorMinKmh = 3.0
+    /// Road arbiter of a pin against a GNSS source (N3-FIXPIN): 1 compares,
+    /// over the source's recent fixes inside pack coverage, the mean capped
+    /// distance to a heading-compatible road of the fixes as given (A) and
+    /// shifted by the pin's offset (B). A > `roadFixPinOffRoadM`, B ≤ it
+    /// and A − B ≥ `roadFixPinMarginM`: the pin is right and the source is
+    /// down-weighted. 0: off (the default). Inert without roads. Any other
+    /// value is invalid (`invalidReason`).
+    public var roadFixPinCheck = 0
+    /// On/off-road threshold of that comparison, metres (the constant-offset
+    /// check's 15 m). Valid: finite, ≥ 0.
+    public var roadFixPinOffRoadM = 15.0
+    /// Least difference between A and B for a verdict, metres. Valid:
+    /// finite, ≥ 0.
+    public var roadFixPinMarginM = 10.0
 
     // MARK: Reporting
 
@@ -313,11 +360,13 @@ extension NavigationConfig {
         case cleanFixAccM, reseedHeadingStdDeg, reseedNoSupportSigma, reseedFraction
         case manualFixSigmaMinM, manualFixSpanDivisor, manualFixReactionS, manualFixUnknownSpeedMps
         case manualFixResetChi2, lateManualFixWindowS
+        case fixPinWindowS, fixPinTwoPinCheck, fixPinTwoPinMinPathM, fixPinTwoPinMinTurnDeg, fixPinInflation, fixPinRestoreS
         case resampleESSFraction, resampleHeadingJitterDeg, resampleScaleJitter, convergedHeadingStdDeg
         case roadUpdateIntervalS, roadSigmaM, roadHeadingSigmaDeg, roadHeadingGateDeg, roadSearchRadiusM
         case roadInnovationGateChi2, roadOffRoadProbability, roadCorrelationM, roadSplitSigmaM
         case roadEngageMaxEllipseM, roadAlongTrackCoupling, roadLevelHops, roadLevelForgetM
         case roadFixGateSigma, roadFixGateMinM, roadFixGateMinKmh, roadFixGateOnRoadShare, roadPinAnchorMinKmh
+        case roadFixPinCheck, roadFixPinOffRoadM, roadFixPinMarginM
     }
 
     /// Decodes a config written by any earlier build (R11.2-4, R12.1-1): a
@@ -380,6 +429,12 @@ extension NavigationConfig {
         manualFixUnknownSpeedMps = try c.decodeIfPresent(type(of: manualFixUnknownSpeedMps), forKey: .manualFixUnknownSpeedMps) ?? manualFixUnknownSpeedMps
         manualFixResetChi2 = try c.decodeIfPresent(type(of: manualFixResetChi2), forKey: .manualFixResetChi2) ?? manualFixResetChi2
         lateManualFixWindowS = try c.decodeIfPresent(type(of: lateManualFixWindowS), forKey: .lateManualFixWindowS) ?? lateManualFixWindowS
+        fixPinWindowS = try c.decodeIfPresent(type(of: fixPinWindowS), forKey: .fixPinWindowS) ?? fixPinWindowS
+        fixPinTwoPinCheck = try c.decodeIfPresent(type(of: fixPinTwoPinCheck), forKey: .fixPinTwoPinCheck) ?? fixPinTwoPinCheck
+        fixPinTwoPinMinPathM = try c.decodeIfPresent(type(of: fixPinTwoPinMinPathM), forKey: .fixPinTwoPinMinPathM) ?? fixPinTwoPinMinPathM
+        fixPinTwoPinMinTurnDeg = try c.decodeIfPresent(type(of: fixPinTwoPinMinTurnDeg), forKey: .fixPinTwoPinMinTurnDeg) ?? fixPinTwoPinMinTurnDeg
+        fixPinInflation = try c.decodeIfPresent(type(of: fixPinInflation), forKey: .fixPinInflation) ?? fixPinInflation
+        fixPinRestoreS = try c.decodeIfPresent(type(of: fixPinRestoreS), forKey: .fixPinRestoreS) ?? fixPinRestoreS
         resampleESSFraction = try c.decodeIfPresent(type(of: resampleESSFraction), forKey: .resampleESSFraction) ?? resampleESSFraction
         resampleHeadingJitterDeg = try c.decodeIfPresent(type(of: resampleHeadingJitterDeg), forKey: .resampleHeadingJitterDeg) ?? resampleHeadingJitterDeg
         resampleScaleJitter = try c.decodeIfPresent(type(of: resampleScaleJitter), forKey: .resampleScaleJitter) ?? resampleScaleJitter
@@ -402,6 +457,9 @@ extension NavigationConfig {
         roadFixGateMinKmh = try c.decodeIfPresent(type(of: roadFixGateMinKmh), forKey: .roadFixGateMinKmh) ?? roadFixGateMinKmh
         roadFixGateOnRoadShare = try c.decodeIfPresent(type(of: roadFixGateOnRoadShare), forKey: .roadFixGateOnRoadShare) ?? roadFixGateOnRoadShare
         roadPinAnchorMinKmh = try c.decodeIfPresent(type(of: roadPinAnchorMinKmh), forKey: .roadPinAnchorMinKmh) ?? roadPinAnchorMinKmh
+        roadFixPinCheck = try c.decodeIfPresent(type(of: roadFixPinCheck), forKey: .roadFixPinCheck) ?? roadFixPinCheck
+        roadFixPinOffRoadM = try c.decodeIfPresent(type(of: roadFixPinOffRoadM), forKey: .roadFixPinOffRoadM) ?? roadFixPinOffRoadM
+        roadFixPinMarginM = try c.decodeIfPresent(type(of: roadFixPinMarginM), forKey: .roadFixPinMarginM) ?? roadFixPinMarginM
     }
 }
 
@@ -417,6 +475,9 @@ extension NavigationConfig {
     /// absurd `--set`) would overflow the nanosecond interval the engine
     /// keeps; an hour is far beyond any sensible interval.
     public static let maxRoadUpdateIntervalS = 3_600.0
+    /// Largest `fixPinWindowS`, s: the per-source fix rings hold this much
+    /// of each GNSS stream (about 1 fix/s).
+    public static let maxFixPinWindowS = 3_600.0
 
     /// This configuration with values the engine cannot use safely clamped
     /// (B0-1). `NavigationEngine.init` applies it, so `engine.config` is the
@@ -486,9 +547,39 @@ extension NavigationConfig {
     /// - `roadAlongTrackCoupling` outside 0…1 (or not a number): the Joseph
     ///   form stays consistent for any gain, but a coupling outside the
     ///   Schmidt…Kalman range is a mistake, not a setting.
+    /// - The pin-vs-source keys (N3-FIXPIN): `roadFixPinCheck` and
+    ///   `fixPinTwoPinCheck` other than 0 or 1 (switches, not weights);
+    ///   `fixPinWindowS` outside (0, `maxFixPinWindowS`]; `fixPinInflation`
+    ///   not > 0; `fixPinTwoPinMinTurnDeg` outside 0…360; the other
+    ///   distances and times negative; any of them not finite. Refused,
+    ///   not clamped: a mistyped `--set` must not run as something else.
     public var invalidReason: String? {
         if !(roadAlongTrackCoupling >= 0 && roadAlongTrackCoupling <= 1) {
             return "roadAlongTrackCoupling must be in 0…1, got \(roadAlongTrackCoupling)"
+        }
+        return fixPinInvalidReason
+    }
+
+    private var fixPinInvalidReason: String? {
+        if roadFixPinCheck != 0 && roadFixPinCheck != 1 {
+            return "roadFixPinCheck must be 0 or 1, got \(roadFixPinCheck)"
+        }
+        if fixPinTwoPinCheck != 0 && fixPinTwoPinCheck != 1 {
+            return "fixPinTwoPinCheck must be 0 or 1, got \(fixPinTwoPinCheck)"
+        }
+        if !(fixPinWindowS > 0 && fixPinWindowS <= Self.maxFixPinWindowS) {
+            return "fixPinWindowS must be in (0, \(Self.maxFixPinWindowS)], got \(fixPinWindowS)"
+        }
+        if !(fixPinInflation > 0 && fixPinInflation.isFinite) {
+            return "fixPinInflation must be finite and > 0, got \(fixPinInflation)"
+        }
+        if !(fixPinTwoPinMinTurnDeg >= 0 && fixPinTwoPinMinTurnDeg <= 360) {
+            return "fixPinTwoPinMinTurnDeg must be in 0…360, got \(fixPinTwoPinMinTurnDeg)"
+        }
+        for (name, value) in [("fixPinTwoPinMinPathM", fixPinTwoPinMinPathM), ("fixPinRestoreS", fixPinRestoreS),
+                              ("roadFixPinOffRoadM", roadFixPinOffRoadM), ("roadFixPinMarginM", roadFixPinMarginM)]
+            where !(value >= 0 && value.isFinite) {
+            return "\(name) must be finite and ≥ 0, got \(value)"
         }
         return nil
     }

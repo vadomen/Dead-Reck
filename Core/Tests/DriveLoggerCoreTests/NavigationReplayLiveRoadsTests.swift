@@ -323,6 +323,6 @@ struct NavigationReplayLiveRoadsTests {
         let e = SidecarComparison(sidecar: roadSidecar, replay: roadReplay, replayConfig: config,
                                   givenRoadSetHash: set.roadSetHashHex)
         #expect(e.inertConfigDifferences.isEmpty && e.configBlamed && !e.exact)
-        #expect(NavigationConfig.roadOnlyKeys.count == 18 && NavigationConfig.roadOnlyKeys.allSatisfy { $0.hasPrefix("road") })
+        #expect(NavigationConfig.roadOnlyKeys.count == 21 && NavigationConfig.roadOnlyKeys.allSatisfy { $0.hasPrefix("road") })
     }
 }

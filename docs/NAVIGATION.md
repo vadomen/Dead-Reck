@@ -289,6 +289,61 @@ updates reweight only by what heading and scale actually predict.
       replay set (Mac, release, 2000 particles): +0.007 ms/step, from
       snapshotting 2 × N Doubles per step. Max ingest went from 0.13–0.36 ms to
       0.25–0.66 ms (the resample remap; a reseed's reconstruction).
+- **Pin against a GNSS source** (N3-FIXPIN, both keys default off, not
+  adopted; nothing below runs while `roadFixPinCheck` and
+  `fixPinTwoPinCheck` are 0). A fix with a small claimed accuracy outweighs
+  a pin: drive-10's accessory fixes, a constant-offset copy of the track
+  ("Constant-offset GNSS check" below), pulled the cloud back after every
+  pin reset. This decides, at a pin, whether the pin or a GNSS source is
+  wrong, and down-weights the source when it is the source.
+  - **Sources.** Fixes with a valid speed, split by `accessory` (true:
+    accessory; false or nil: phone). Network fixes are never judged and are
+    untouched. Each source keeps its fixes of the last `fixPinWindowS`
+    (90 s): fix time, position as given (not latency-shifted) in the engine
+    plane, course when the engine would use it, claimed σ.
+  - **At a pin** that is not a refinement (engine-side, causal: the
+    previous pin's `t` within 3 s, mirroring the replay's scoring pair
+    rule), for each source with a fix in the window: d = pin − prior mean
+    (before the pin is ingested), significant when χ² of d against the
+    prior covariance + pin σ² is above 9. A not-significant d judges
+    nothing.
+  - **Road arbiter** (`roadFixPinCheck`, inert without roads): over the
+    source's ring fixes inside pack coverage (at least 20 fixes and 200 m
+    of fix path), the mean of min(distance to a heading-compatible road,
+    100 m) as given (A) and shifted by d (B), through the matcher's cell
+    cache (`RoadMatcher.nearestCompatibleDistance`; each fix's A and B are
+    cached, exact for a fixed shift and plane, so a recheck queries only
+    the fixes added since). Verdict pin when
+    A > `roadFixPinOffRoadM` (15), B ≤ 15 and A − B ≥ `roadFixPinMarginM`
+    (10); fixes in the mirror case; otherwise none.
+  - **Two-pin arbiter** (`fixPinTwoPinCheck`, with or without roads): per
+    source the last independent pin's d, covariance, OBD distance and gyro
+    yaw. A new significant pin: verdict pin when the χ² of d₁ − d₂ against
+    the summed covariances is ≤ 5.99, the OBD path between them is at least
+    `fixPinTwoPinMinPathM` (300 m) and |net heading change| at least
+    `fixPinTwoPinMinTurnDeg` (45°). One pin alone gives no verdict.
+  - **Down-weighted** (verdict pin from either): the source's position
+    update uses σ = max(σ_claimed, |d|) × `fixPinInflation` (1.0), tempered
+    like a network fix by its own time since its last fix (min(1, Δt /
+    60 s)). Course and speed stay at full weight. It never reseeds the
+    cloud (counted, `fixPinReseedsBlocked`). The road fix gate is unchanged
+    (it can only reject); once the cloud is back on the roads it may reject
+    a down-weighted source's off-road fixes whole, course and speed
+    included (counted, `fixPinRejectedOffRoadDownweighted…`). The pin's own
+    update (or reset) is kept: the following fixes are weak.
+  - **Verdict fixes:** counters only (a hook for N3MF-1).
+  - **Win-back** (offset cleared, never a permanent discard): (1) roads,
+    every 10 s while down-weighted, A vs B on the ring says "fixes"; (2)
+    agreement: Mahalanobis² < 9 against the source's *claimed* σ (σ²·I +
+    the estimate's covariance, not the inflated σ) for at least
+    `fixPinRestoreS` (30 s) and 15 consecutive fixes, a disagreeing fix
+    restarts the run; (3) a new independent pin within χ² 9 of the source's
+    newest fix (claimed σ² + pin σ²).
+  - **Output:** `NavigationEngine.lastFixPinDecision` per pin; replay
+    summary and `metrics.md` lines and the `metrics.json` key
+    `fixPinDecisions` only while a key is on (or a counter is not 0), so
+    key-off outputs are byte-identical. No sidecar or log-format change.
+    Relative metres and bearings only.
 - **Local plane re-anchoring** (R13.1-3): the plane's east axis uses each
   point's own cos φ, so far from the anchor it is sheared, and true north tilts
   by about Δλ·sin φ (1.28° at 100 km east, latitude 55°). That would bias
@@ -377,7 +432,7 @@ Tried and rejected (worse on the replay set): moved to [docs/archive/NAVIGATION-
 ## Configuration (defaults)
 
 Every value is in `NavigationConfig`; `replay_nav` prints the full config with
-every result. The table lists the keys without roads; the 18 road keys
+every result. The table lists the keys without roads; the 21 road keys
 (`road…`, used only with `--roads`) and their defaults are in
 [docs/N3_PLAN.md](N3_PLAN.md), "Config keys" (R21.4-4). `roadCorrelationM`
 default 100 (was 30 until 2026-10-14; N3.2 decision, below).
@@ -421,6 +476,11 @@ default 100 (was 30 until 2026-10-14; N3.2 decision, below).
 | manualFixReactionS / manualFixUnknownSpeedMps | 1 / 10 | pin σ grows in quadrature by v × (τ + max(0, t − pressedT)) (N4MF-1); v for an `unknown` speed source |
 | manualFixResetChi2 | 25 | manual reset when every particle is further than this from the pin (χ², 2 dof) |
 | lateManualFixWindowS | 5 | per-particle motion ring for late manual fixes (R14.3-1); also the minimum length of the mean-motion history. 0 disables (mean shift for every pin). Clamped to 0–60 |
+| fixPinTwoPinCheck | 0 | N3-FIXPIN two-pin arbiter: 1 on, 0 off; other values refused |
+| fixPinWindowS | 90 | per-source fix ring for the pin checks, s; (0, 3600], else refused |
+| fixPinTwoPinMinPathM / fixPinTwoPinMinTurnDeg | 300 / 45 | two-pin verdict needs this OBD path and net gyro turn between the pins |
+| fixPinInflation | 1.0 | down-weighted σ = max(σ_claimed, \|offset\|) × this; > 0, else refused |
+| fixPinRestoreS | 30 | win-back by agreement after this long (and 15 consecutive fixes) |
 | resampleESSFraction | 0.5 | resampling threshold |
 | resampleHeadingJitterDeg / resampleScaleJitter | 0.2 / 0.0005 | jitter after resampling |
 | convergedHeadingStdDeg | 10 | `converged` threshold |

@@ -666,6 +666,10 @@ public struct PinEstimate: Hashable, Sendable, Codable {
     /// The prior's 95 % ellipse as (latitude, longitude) pairs, closed; nil
     /// when the pin initialised the engine.
     public var ring: [[Double]]?
+    /// What the engine decided about each GNSS source at this pin
+    /// (N3-FIXPIN); nil while both pin checks are off and when the pin
+    /// initialised the engine.
+    public var fixPin: FixPinDecision? = nil
 }
 
 // MARK: - Run
@@ -803,8 +807,12 @@ private struct ReplayRun {
                 ))
                 if reason != nil { continue }
             }
+            let pinIndex: Int?
             if case .manualFix(let sample, let t) = input {
                 recordPin(sample, at: t)
+                pinIndex = pins.count - 1
+            } else {
+                pinIndex = nil
             }
             if case .obd(let sample, let t) = input {
                 distance.observe(sample, at: t.nanoseconds, maxAgeS: options.config.obdMaxAgeS,
@@ -821,6 +829,7 @@ private struct ReplayRun {
             if engine.counters.fixesRejectedOffRoad != rejectedBefore, case .location = input {
                 fixes[fixes.count - 1].rejectedOffRoad = true
             }
+            if let pinIndex { pins[pinIndex].fixPin = engine.lastFixPinDecision }
             let ns = elapsed.components.seconds * 1_000_000_000 + elapsed.components.attoseconds / 1_000_000_000
             engineNs += ns
             maxIngestNs = max(maxIngestNs, ns)

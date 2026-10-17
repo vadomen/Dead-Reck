@@ -264,6 +264,8 @@ forced road update.
 | roadFixGateSigma / roadFixGateMinM | 3 / 50 | GNSS fix gate radius = max(min, k · σ_fix); k = 0 disables |
 | roadFixGateMinKmh / roadFixGateOnRoadShare | 20 / 0.8 | the gate applies only while moving this fast with the cloud this much on-road |
 | roadPinAnchorMinKmh | 3 | a pin at or above this speed triggers an immediate road update; 0 disables |
+| roadFixPinCheck | 0 (N3-FIXPIN) | road arbiter of a pin against a GNSS source: 1 on, 0 off, other values refused; inert without roads (docs/NAVIGATION.md "Pin against a GNSS source") |
+| roadFixPinOffRoadM / roadFixPinMarginM | 15 / 10 (N3-FIXPIN) | A (fixes as given) above this and B (shifted by the pin's offset) at or under it, by at least the margin: verdict pin; the mirror case: verdict fixes |
 | manualFixReactionS | 1.0 (N3.0) | pin σ grows by v × (this + max(0, t − pressedT)); 0 restores today's σ |
 | manualFixUnknownSpeedMps | 10 (N3.0) | v for a pin with `speedSource` `unknown` |
 

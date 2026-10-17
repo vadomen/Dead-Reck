@@ -58,6 +58,10 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
     /// being truth. nil (absent) in a run without it and in files written
     /// before it.
     public var fixesExcludedByTruth: ReplayResult.FixExclusion?
+    /// N3-FIXPIN: the engine's decision at each manual fix, in pin order
+    /// (relative metres only). nil (absent) while both pin checks are off,
+    /// and in files written before it.
+    public var fixPinDecisions: [FixPinDecision]?
 
     public init(_ result: ReplayResult) {
         logName = result.logName
@@ -94,6 +98,8 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
         roadsAttachedAfterInputs = result.roadsAttachedAfterInputs
         attachedRoadSetHash = result.attachedRoadSetHash
         fixesExcludedByTruth = result.fixesExcludedByTruth
+        let decisions = result.pins.compactMap(\.fixPin)
+        fixPinDecisions = decisions.isEmpty ? nil : decisions
     }
 
     /// `metrics.json` key: one row per log and mode.
@@ -111,6 +117,7 @@ extension ReplayMetrics {
         case scoreUntilT, checkpointsAfterScoreUntil
         case roadsAttachedAfterInputs, attachedRoadSetHash
         case fixesExcludedByTruth
+        case fixPinDecisions
     }
 
     /// Keys every `metrics.json` row has had since the first one (N2). A row
@@ -127,7 +134,7 @@ extension ReplayMetrics {
     ///   `motionStartT`, `consistency`, `consistencyWithTruthSigma`, `pins`,
     ///   `pinScoring`, `roads`, `roadSetHash`, `roadMetrics`, `scoreUntilT`,
     ///   `checkpointsAfterScoreUntil`, `roadsAttachedAfterInputs`,
-    ///   `attachedRoadSetHash`, `fixesExcludedByTruth` (and any key a
+    ///   `attachedRoadSetHash`, `fixesExcludedByTruth`, `fixPinDecisions` (and any key a
     ///   later build adds, which must be optional or take a default here).
     /// - `config` and `counters` decode tolerantly themselves: a config key
     ///   or counter added later takes its default (0 for a counter).
@@ -169,6 +176,7 @@ extension ReplayMetrics {
         roadsAttachedAfterInputs = try c.decodeIfPresent(Int.self, forKey: .roadsAttachedAfterInputs)
         attachedRoadSetHash = try c.decodeIfPresent(String.self, forKey: .attachedRoadSetHash)
         fixesExcludedByTruth = try c.decodeIfPresent(ReplayResult.FixExclusion.self, forKey: .fixesExcludedByTruth)
+        fixPinDecisions = try c.decodeIfPresent([FixPinDecision].self, forKey: .fixPinDecisions)
     }
 }
 
@@ -302,7 +310,9 @@ public enum ReplayReport {
         }
         for pin in result.pins {
             lines.append("Pin estimate  " + pinText(pin.pin) + notScoredSuffix(pin.pin, result.checkpoints))
+            if let decision = pin.fixPin { lines.append("              " + decision.text) }
         }
+        if let text = fixPinText(result.config, result.counters) { lines.append("Fix-pin       " + text) }
         if result.pinScoring.manualFixes > 0 || !result.pinScoring.unmatchedExclusionsT.isEmpty {
             lines.append("Pins scored   " + result.pinScoring.text)
         }
@@ -330,6 +340,31 @@ public enum ReplayReport {
     static func share(_ value: Double?) -> String {
         guard let value else { return "n/a" }
         return String(format: "%.1f %%", 100 * value)
+    }
+
+    /// The N3-FIXPIN counters as one line; nil while both pin checks are
+    /// off and every counter is 0, so a key-off summary and `metrics.md`
+    /// are byte-identical to the build before them.
+    public static func fixPinText(_ config: NavigationConfig, _ c: NavigationCounters) -> String? {
+        guard config.roadFixPinCheck != 0 || config.fixPinTwoPinCheck != 0 || c.anyFixPin else { return nil }
+        func pair(_ a: Int, _ p: Int) -> String { "\(a)/\(p)" }
+        return "checks roads \(config.roadFixPinCheck), two-pin \(config.fixPinTwoPinCheck); counts accessory/phone: "
+            + "significant pins \(c.fixPinSignificantPins); "
+            + "road verdict pin \(pair(c.fixPinRoadVerdictPinAccessory, c.fixPinRoadVerdictPinPhone)), "
+            + "fixes \(pair(c.fixPinRoadVerdictFixesAccessory, c.fixPinRoadVerdictFixesPhone)), "
+            + "none \(pair(c.fixPinRoadVerdictNoneAccessory, c.fixPinRoadVerdictNonePhone)); "
+            + "two-pin verdict pin \(pair(c.fixPinTwoPinVerdictPinAccessory, c.fixPinTwoPinVerdictPinPhone)), "
+            + "none \(pair(c.fixPinTwoPinVerdictNoneAccessory, c.fixPinTwoPinVerdictNonePhone)); "
+            + "down-weighted \(pair(c.fixPinDownweightsAccessory, c.fixPinDownweightsPhone)) times, "
+            + "fixes \(pair(c.fixPinDownweightedFixesAccessory, c.fixPinDownweightedFixesPhone)) "
+            + "(course \(pair(c.fixPinCourseUpdatesDownweightedAccessory, c.fixPinCourseUpdatesDownweightedPhone)), "
+            + "speed \(pair(c.fixPinSpeedUpdatesDownweightedAccessory, c.fixPinSpeedUpdatesDownweightedPhone)), "
+            + "rejected off-road \(pair(c.fixPinRejectedOffRoadDownweightedAccessory, c.fixPinRejectedOffRoadDownweightedPhone))), "
+            + "reseeds blocked \(c.fixPinReseedsBlocked); "
+            + "restored by roads \(pair(c.fixPinRestoresByRoadsAccessory, c.fixPinRestoresByRoadsPhone)), "
+            + "agreement \(pair(c.fixPinRestoresByAgreementAccessory, c.fixPinRestoresByAgreementPhone)), "
+            + "pin \(pair(c.fixPinRestoresByPinAccessory, c.fixPinRestoresByPinPhone)); "
+            + "road rechecks \(c.fixPinRoadRechecks), road distance queries \(c.fixPinRoadDistanceQueries)"
     }
 
     /// The road lines of the summary (N3.2b).
@@ -482,6 +517,11 @@ public enum ReplayReport {
                 out += "\nDR estimate at each manual fix (prior):\n\n"
                 for pin in pins { out += "- " + pinText(pin) + notScoredSuffix(pin, r.checkpoints) + "\n" }
             }
+            if let decisions = r.fixPinDecisions, !decisions.isEmpty {
+                out += "\nPin against GNSS sources (N3-FIXPIN):\n\n"
+                for d in decisions { out += String(format: "- t %.1f s: ", d.t) + d.text + "\n" }
+            }
+            if let text = fixPinText(r.config, r.counters) { out += "\nFix-pin: \(text).\n" }
             if let packs = r.roads, let hash = r.roadSetHash {
                 out += "\n```\n" + roadsText(packs, roadSetHash: hash) + "\n"
                     + roadLines(r.roadMetrics, counters: r.counters).joined(separator: "\n") + "\n```\n"

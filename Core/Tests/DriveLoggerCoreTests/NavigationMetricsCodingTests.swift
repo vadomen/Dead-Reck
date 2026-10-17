@@ -49,6 +49,13 @@ struct NavigationMetricsCodingTests {
         // The excludeFixes key filled too.
         metrics.fixesExcludedByTruth = .init(ranges: [.init(fromT: -1, toT: 251, reason: "r")], fixes: 3,
                                              cleanFixes: 2, cleanFixCheckpoints: 1)
+        // The N3-FIXPIN decisions filled too (relative metres only).
+        metrics.fixPinDecisions = [FixPinDecision(
+            t: 41.5, refinement: false, offsetEastM: 240, offsetNorthM: 160, chi2: 82, significant: true,
+            sources: [.init(source: "accessory", fixesInWindow: 30, wasDownweighted: false,
+                            road: .init(fixes: 30, pathM: 298, asGivenM: 40.5, shiftedM: 1.9, verdict: .pin),
+                            twoPin: .init(previousT: 1, chi2: 0.5, pathM: 500, turnDeg: 90, verdict: nil),
+                            downweighted: true, sourceChi2: nil, restored: false)])]
         return metrics
     }
 
@@ -171,7 +178,7 @@ struct NavigationMetricsCodingTests {
         #expect(later.map(\.stringValue).sorted()
             == ["consistency", "consistencyWithTruthSigma", "motionStartT", "pinScoring", "pins",
                 "checkpointsAfterScoreUntil", "roadMetrics", "roadSetHash", "roads", "scoreUntilT",
-                "roadsAttachedAfterInputs", "attachedRoadSetHash", "fixesExcludedByTruth"].sorted())
+                "roadsAttachedAfterInputs", "attachedRoadSetHash", "fixesExcludedByTruth", "fixPinDecisions"].sorted())
         for key in later {
             var old = row
             old.removeValue(forKey: key.stringValue)
@@ -192,6 +199,7 @@ struct NavigationMetricsCodingTests {
             case .roadsAttachedAfterInputs: #expect(decoded.roadsAttachedAfterInputs == nil)
             case .attachedRoadSetHash: #expect(decoded.attachedRoadSetHash == nil)
             case .fixesExcludedByTruth: #expect(decoded.fixesExcludedByTruth == nil)
+            case .fixPinDecisions: #expect(decoded.fixPinDecisions == nil)
             default: Issue.record("unexpected later key \(key)")
             }
         }

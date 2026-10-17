@@ -186,6 +186,20 @@ public struct NavigationEngine: Sendable {
     /// `roadUpdateIntervalS` > 0. Otherwise no road code runs at all.
     var roadsActive: Bool { roads != nil && config.roadUpdateIntervalS > 0 }
 
+    // Pin against a GNSS source (N3-FIXPIN). `fixPin` holds one entry per
+    // `FixPinSource.Kind` (by raw value) while `roadFixPinCheck` or
+    // `fixPinTwoPinCheck` is on, and is empty otherwise: then none of it runs.
+    private(set) var fixPin: [FixPinSource] = []
+    /// `t` of the last manual fix, for the engine-side refinement rule.
+    private var lastManualFixNs: Int64?
+    /// Cumulative OBD distance (with the truncation offset, before scale)
+    /// over moving steps since initialisation, metres: the two-pin
+    /// arbiter's path between pins. Read only by it.
+    private var cumulativeOBDM = 0.0
+    /// What the last manual fix decided about each GNSS source; nil when
+    /// both checks are off, and for a pin that initialised the engine.
+    public private(set) var lastFixPinDecision: FixPinDecision?
+
     // Implausible forward time jumps (B0-1): the latest accepted arrival,
     // and the arrival of the last input rejected as a jump.
     private var lastInputNs: Int64?
@@ -228,6 +242,9 @@ public struct NavigationEngine: Sendable {
             ? Int((config.lateManualFixWindowS * config.stepHz).rounded(.up)) + 1 : 0
         motionRing = ParticleMotionRing(capacity: ringSlots)
         preInitSteps = PreInitSteps(capacity: ringSlots)
+        if config.roadFixPinCheck == 1 || config.fixPinTwoPinCheck == 1 {
+            fixPin = FixPinSource.Kind.allCases.map { _ in FixPinSource() }
+        }
     }
 
     // MARK: Roads attached to a running engine (N3.3)
@@ -604,6 +621,7 @@ public struct NavigationEngine: Sendable {
         lastMovingStepNs = ns
         history.append(ns, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: fresh ? vObd : nil, held: vObd)
         recordMotion(at: ns, obdDistance: vObd * dt)
+        cumulativeOBDM += vObd * dt
         if counters.steps % reanchorCheckSteps == 0 {
             reanchorIfNeeded()
         }
@@ -706,6 +724,7 @@ public struct NavigationEngine: Sendable {
         lastMovingStepNs = ns
         history.append(ns, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: nil, held: heldOBDSpeed)
         recordMotion(at: ns, obdDistance: vObd * dt)
+        cumulativeOBDM += vObd * dt
         if counters.steps / reanchorCheckSteps != checkBefore {
             reanchorIfNeeded()
         }
@@ -797,6 +816,9 @@ public struct NavigationEngine: Sendable {
             (motionEast[i], motionNorth[i]) = linear(motionEast[i], motionNorth[i])
         }
         motionRing.transform(linear)
+        for k in fixPin.indices {
+            fixPin[k].transform(map: map, jee: jee, jen: jen, jne: jne, jnn: jnn)
+        }
         tangentPlane = new
         roads?.clearCache()
         counters.reanchors += 1
@@ -927,6 +949,13 @@ public struct NavigationEngine: Sendable {
             if network {
                 counters.networkFixesUsed += 1
                 lastNetworkFixNs = fixNs
+            } else if !fixPin.isEmpty, let plane = tangentPlane {
+                let kind = FixPinSource.Kind(accessory: sample.accessory)
+                let p = plane.enu(latitude: sample.latitude, longitude: sample.longitude)
+                fixPin[kind.rawValue].append(
+                    .init(ns: fixNs, east: p.east, north: p.north, course: courseValid ? sample.course * .pi / 180 : nil,
+                          sigma: sigma), windowNs: fixPinWindowNs)
+                fixPin[kind.rawValue].lastPositionNs = fixNs
             }
             return
         }
@@ -936,35 +965,80 @@ public struct NavigationEngine: Sendable {
         let targetNorth = fix.north + since.north
         let targetCourse = sample.course * .pi / 180 + since.yaw
 
+        // N3-FIXPIN: a GNSS fix joins its source's ring (as given, before
+        // the road gate: an off-road fix is road evidence too).
+        let source: FixPinSource.Kind? = network || fixPin.isEmpty ? nil : FixPinSource.Kind(accessory: sample.accessory)
+        if let source {
+            fixPin[source.rawValue].append(
+                .init(ns: fixNs, east: fix.east, north: fix.north, course: courseValid ? sample.course * .pi / 180 : nil,
+                      sigma: sigma), windowNs: fixPinWindowNs)
+        }
+
         if !network, rejectsOffRoad(east: targetEast, north: targetNorth, sigma: sigma,
                                     course: courseValid ? targetCourse : nil, arrivalNs: arrivalNs, plane: plane) {
             counters.fixesRejectedOffRoad += 1
+            if let source, fixPin[source.rawValue].isDownweighted {
+                counters.addFixPin(\.fixPinRejectedOffRoadDownweightedAccessory,
+                                   \.fixPinRejectedOffRoadDownweightedPhone, source)
+            }
             return
         }
 
+        // A down-weighted source may win back first (agreement, roads); if
+        // it stays down-weighted it never reseeds the cloud.
+        if let source, fixPin[source.rawValue].isDownweighted {
+            fixPinWinBack(source, east: targetEast, north: targetNorth, sigma: sigma, fixNs: fixNs, plane: plane)
+        }
+        let downweighted = source.map { fixPin[$0.rawValue].isDownweighted } ?? false
+
         if clean && (headingStdRadians() > config.reseedHeadingStdDeg * .pi / 180
                      || !courseHasSupport(targetCourse, sigma: courseSigma)) {
-            reseed(east: targetEast, north: targetNorth, sigma: sigma, course: targetCourse, courseSigma: courseSigma)
+            if downweighted {
+                counters.fixPinReseedsBlocked += 1
+            } else {
+                reseed(east: targetEast, north: targetNorth, sigma: sigma, course: targetCourse, courseSigma: courseSigma)
+            }
         }
 
         var temper = 1.0
+        var positionSigma = sigma
         if network {
             temper = Self.networkTemper(
                 sinceLastS: lastNetworkFixNs.map { Double(fixNs - $0) / 1e9 }, correlationS: config.networkFixCorrelationS
             )
             lastNetworkFixNs = max(lastNetworkFixNs ?? fixNs, fixNs)
             counters.networkFixesUsed += 1
+        } else if let source {
+            let k = source.rawValue
+            if let offset = fixPin[k].offset {
+                // Down-weighted: σ at least the offset, tempered like a
+                // network fix by the time since this source's last fix.
+                positionSigma = max(sigma, (offset.east * offset.east + offset.north * offset.north).squareRoot())
+                    * config.fixPinInflation
+                temper = Self.networkTemper(sinceLastS: fixPin[k].lastPositionNs.map { Double(fixNs - $0) / 1e9 },
+                                            correlationS: config.networkFixCorrelationS)
+                counters.addFixPin(\.fixPinDownweightedFixesAccessory, \.fixPinDownweightedFixesPhone, source)
+            }
+            fixPin[k].lastPositionNs = max(fixPin[k].lastPositionNs ?? fixNs, fixNs)
         }
         counters.fixesUsed += 1
 
         // Tempering a Gaussian likelihood by w is the same as dividing its
         // precision by w: R = σ² / w.
-        let positionVariance = temper > 0 ? sigma * sigma / temper : .infinity
+        let positionVariance = temper > 0 ? positionSigma * positionSigma / temper : .infinity
         let useSpeed = sample.hasValidSpeed && (since.obdSpeed ?? 0) * 3.6 > config.speedUpdateMinKmh && dopplerConsistent
         let obdSpeed = since.obdSpeed ?? 0
         let speedSigma = max(sample.speedAccuracy, config.speedSigmaFloorMps)
         if courseValid { counters.courseUpdates += 1 }
         if useSpeed { counters.speedUpdates += 1 }
+        if let source, downweighted {
+            if courseValid {
+                counters.addFixPin(\.fixPinCourseUpdatesDownweightedAccessory, \.fixPinCourseUpdatesDownweightedPhone, source)
+            }
+            if useSpeed {
+                counters.addFixPin(\.fixPinSpeedUpdatesDownweightedAccessory, \.fixPinSpeedUpdatesDownweightedPhone, source)
+            }
+        }
         for i in 0..<east.count {
             var l = positionVariance.isFinite
                 ? positionUpdate(i, east: targetEast, north: targetNorth, variance: positionVariance).logLikelihood
@@ -1105,10 +1179,19 @@ public struct NavigationEngine: Sendable {
     // MARK: Manual fixes
 
     private mutating func ingestManualFix(_ sample: ManualFixSample, at ns: Int64) {
+        if !fixPin.isEmpty { lastFixPinDecision = nil }
         guard sample.latitude.isFinite, sample.longitude.isFinite,
               abs(sample.latitude) <= 90, abs(sample.longitude) <= 180 else { return }
         counters.manualFixes += 1
         let sigma = config.manualFixSigma(sample, at: MonotonicTimestamp(nanoseconds: ns))
+        // N3-FIXPIN refinement rule, causal: the previous manual fix's `t` is
+        // at most `fixPinRefinementWindowS` before this one (the replay's
+        // pair rule, which is scoring only, on the pins ingested so far).
+        var refinement = false
+        if !fixPin.isEmpty {
+            refinement = lastManualFixNs.map { Double(ns) - Double($0) <= Self.fixPinRefinementWindowS * 1e9 } ?? false
+            lastManualFixNs = ns
+        }
         // Late: grid steps already ran after the pin's own instant (the app
         // writes a double-tap pin when its undo window closes). In arrival
         // order the engine has just stepped to floor(t): never late.
@@ -1146,6 +1229,10 @@ public struct NavigationEngine: Sendable {
         // v × 3 s ≈ 27 m² at 25 m/s, against R ≥ 900 m²) is left in, which
         // widens the likelihood by < 1.5 % in σ (conservative) and leaves
         // the posterior at most that Q too tight (σ ≈ 0.4 m at 30 m).
+        if !fixPin.isEmpty {
+            judgeFixPin(ns: ns, sigma: sigma, targetEast: targetEast, targetNorth: targetNorth, refinement: refinement,
+                        plane: plane)
+        }
         let prior = (logWeight, east, north, covEE, covEN, covNN)
         var nearest = Double.infinity
         for i in 0..<east.count {
@@ -1274,6 +1361,7 @@ public struct NavigationEngine: Sendable {
             cumulativeYaw += dYaw
             history.append(r.toNs, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: r.historySpeed, held: r.held)
             recordMotion(at: r.toNs, obdDistance: r.kind == .frozen ? 0 : r.speed * covered)
+            cumulativeOBDM += r.kind == .frozen ? 0 : r.speed * covered
         }
         for i in 0..<east.count {
             heading[i] = Self.wrap2Pi(h[i])
@@ -1602,6 +1690,290 @@ public struct NavigationEngine: Sendable {
         let near = matcher.anyCompatibleSegment(east: e, north: n, radius: radius, course: course,
                                                 cosHeadingGate: cosGate, plane: plane)
         return !near
+    }
+
+    // MARK: Pin against a GNSS source (N3-FIXPIN)
+
+    /// A manual fix at most this long after the previous one refines it
+    /// and is not judged: the engine-side, causal form of the replay's
+    /// scoring pair rule (`NavigationReplay.defaultPinPairWindowS`).
+    public static let fixPinRefinementWindowS = 3.0
+    /// χ² (2 dof) above which a pin's offset from the prior is significant,
+    /// and under which a fix agrees with the estimate (win-back 2) or a pin
+    /// with a source (win-back 3).
+    static let fixPinSignificantChi2 = 9.0
+    /// χ² (2 dof, 95 %) under which two pins' offsets agree.
+    static let fixPinTwoPinAgreeChi2 = 5.991
+    /// Road arbiter: distances capped here; at least this many fixes and
+    /// this much fix path inside pack coverage.
+    static let fixPinRoadCapM = 100.0
+    static let fixPinRoadMinFixes = 20
+    static let fixPinRoadMinPathM = 200.0
+    /// Win-back by roads: re-evaluated this often while down-weighted.
+    static let fixPinRoadRecheckS = 10.0
+    /// Win-back by agreement: at least this many consecutive fixes.
+    static let fixPinRestoreMinFixes = 15
+
+    private var fixPinWindowNs: Int64 { Int64((config.fixPinWindowS * 1e9).rounded()) }
+
+    /// Weighted mean and mixture covariance of the cloud.
+    private func cloudMoments() -> (east: Double, north: Double, ee: Double, en: Double, nn: Double) {
+        var me = 0.0, mn = 0.0
+        for i in 0..<east.count {
+            me += weight[i] * east[i]
+            mn += weight[i] * north[i]
+        }
+        var ee = 0.0, en = 0.0, nn = 0.0
+        for i in 0..<east.count {
+            let w = weight[i], de = east[i] - me, dn = north[i] - mn
+            ee += w * (covEE[i] + de * de)
+            en += w * (covEN[i] + de * dn)
+            nn += w * (covNN[i] + dn * dn)
+        }
+        return (me, mn, ee, en, nn)
+    }
+
+    /// dᵀ S⁻¹ d for a 2×2 symmetric S; +∞ when S is singular.
+    static func chi2(_ de: Double, _ dn: Double, ee: Double, en: Double, nn: Double) -> Double {
+        let det = ee * nn - en * en
+        guard det > 0, det.isFinite else { return .infinity }
+        return (de * de * nn - 2 * de * dn * en + dn * dn * ee) / det
+    }
+
+    /// The pin is about to be ingested (prior unchanged): its offset from
+    /// the prior, and for each GNSS source with a fix in the window the
+    /// arbiters, the action on a "pin" verdict, and win-back by a pin.
+    /// Draws no random number. `targetEast/North`: the pin as each particle
+    /// sees it (equal unless the pin is late).
+    private mutating func judgeFixPin(ns: Int64, sigma: Double, targetEast: [Double], targetNorth: [Double],
+                                      refinement: Bool, plane: LocalTangentPlane) {
+        // Offset: the weighted mean innovation, and the spread of the
+        // innovations (the prior's mixture covariance when not late).
+        var de = 0.0, dn = 0.0
+        for i in 0..<east.count {
+            de += weight[i] * (targetEast[i] - east[i])
+            dn += weight[i] * (targetNorth[i] - north[i])
+        }
+        var ee = 0.0, en = 0.0, nn = 0.0
+        for i in 0..<east.count {
+            let w = weight[i], ue = targetEast[i] - east[i] - de, un = targetNorth[i] - north[i] - dn
+            ee += w * (covEE[i] + ue * ue)
+            en += w * (covEN[i] + ue * un)
+            nn += w * (covNN[i] + un * un)
+        }
+        let s2 = sigma * sigma
+        let chi2 = Self.chi2(de, dn, ee: ee + s2, en: en, nn: nn + s2)
+        let significant = chi2 > Self.fixPinSignificantChi2
+        var decision = FixPinDecision(t: MonotonicTimestamp(nanoseconds: ns).seconds, refinement: refinement,
+                                      offsetEastM: de, offsetNorthM: dn, chi2: chi2, significant: significant, sources: [])
+        // The pin now, as the cloud sees it on average (equal to every
+        // particle's target unless the pin is late).
+        var pinNow = (east: 0.0, north: 0.0)
+        for i in 0..<east.count {
+            pinNow.east += weight[i] * targetEast[i]
+            pinNow.north += weight[i] * targetNorth[i]
+        }
+        for kind in FixPinSource.Kind.allCases {
+            let k = kind.rawValue
+            fixPin[k].prune(before: ns - fixPinWindowNs)
+            guard !fixPin[k].ring.isEmpty else { continue }
+            var entry = FixPinDecision.Source(source: kind.name, fixesInWindow: fixPin[k].ring.count,
+                                              wasDownweighted: fixPin[k].isDownweighted)
+            defer { decision.sources.append(entry) }
+            guard !refinement else { continue }
+            if fixPin[k].isDownweighted {
+                // Win-back 3: the pin agrees with the source's newest fix
+                // (shifted to now; only one young enough for the motion
+                // history to shift it).
+                if let newest = fixPin[k].ring.last, Double(ns - newest.ns) / 1e9 <= config.maxFixAgeS {
+                    let since = shiftSince(newest.ns)
+                    let fe = newest.east + since.east, fn = newest.north + since.north
+                    let v = newest.sigma * newest.sigma + s2
+                    let c = Self.chi2(pinNow.east - fe, pinNow.north - fn, ee: v, en: 0, nn: v)
+                    entry.sourceChi2 = c
+                    if c <= Self.fixPinSignificantChi2 {
+                        restoreFixPin(kind, reason: .pin)
+                        entry.restored = true
+                    }
+                }
+                // The prior follows the pin while down-weighted: its offset
+                // says nothing about the source, so no arbiter runs and the
+                // source's last independent pin stays the one that
+                // down-weighted it.
+                continue
+            }
+            var verdictPin = false
+            if significant && config.roadFixPinCheck == 1 && roadsActive {
+                let road = roadFixPinComparison(kind, shiftEast: de, shiftNorth: dn, plane: plane)
+                var r = FixPinDecision.Road(fixes: road.fixes, pathM: road.pathM, asGivenM: road.a, shiftedM: road.b)
+                if let a = road.a, let b = road.b {
+                    r.verdict = fixPinRoadVerdict(a: a, b: b)
+                }
+                switch r.verdict {
+                case .pin?: counters.addFixPin(\.fixPinRoadVerdictPinAccessory, \.fixPinRoadVerdictPinPhone, kind)
+                case .fixes?: counters.addFixPin(\.fixPinRoadVerdictFixesAccessory, \.fixPinRoadVerdictFixesPhone, kind)
+                case nil: counters.addFixPin(\.fixPinRoadVerdictNoneAccessory, \.fixPinRoadVerdictNonePhone, kind)
+                }
+                verdictPin = verdictPin || r.verdict == .pin
+                entry.road = r
+            }
+            if significant && config.fixPinTwoPinCheck == 1, let previous = fixPin[k].lastPin {
+                let c = Self.chi2(de - previous.dEast, dn - previous.dNorth,
+                                  ee: ee + s2 + previous.ee, en: en + previous.en, nn: nn + s2 + previous.nn)
+                let path = cumulativeOBDM - previous.obdM
+                let turn = (cumulativeYaw - previous.yaw) * 180 / .pi
+                var w = FixPinDecision.TwoPin(previousT: MonotonicTimestamp(nanoseconds: previous.ns).seconds, chi2: c,
+                                              pathM: path, turnDeg: turn)
+                if c <= Self.fixPinTwoPinAgreeChi2 && path >= config.fixPinTwoPinMinPathM
+                    && abs(turn) >= config.fixPinTwoPinMinTurnDeg {
+                    w.verdict = .pin
+                    counters.addFixPin(\.fixPinTwoPinVerdictPinAccessory, \.fixPinTwoPinVerdictPinPhone, kind)
+                } else {
+                    counters.addFixPin(\.fixPinTwoPinVerdictNoneAccessory, \.fixPinTwoPinVerdictNonePhone, kind)
+                }
+                verdictPin = verdictPin || w.verdict == .pin
+                entry.twoPin = w
+            }
+            fixPin[k].lastPin = .init(ns: ns, dEast: de, dNorth: dn, ee: ee + s2, en: en, nn: nn + s2,
+                                      obdM: cumulativeOBDM, yaw: cumulativeYaw)
+            if verdictPin {
+                fixPin[k].offset = (de, dn)
+                fixPin[k].agreeStartNs = nil
+                fixPin[k].agreeCount = 0
+                fixPin[k].lastRoadCheckNs = ns
+                counters.addFixPin(\.fixPinDownweightsAccessory, \.fixPinDownweightsPhone, kind)
+                entry.downweighted = true
+            }
+        }
+        if significant && !refinement && !decision.sources.isEmpty { counters.fixPinSignificantPins += 1 }
+        lastFixPinDecision = decision
+    }
+
+    /// The road arbiter's verdict on A (fixes as given) and B (shifted).
+    private func fixPinRoadVerdict(a: Double, b: Double) -> FixPinDecision.Verdict? {
+        let off = config.roadFixPinOffRoadM, margin = config.roadFixPinMarginM
+        if a > off && b <= off && a - b >= margin { return .pin }
+        if a <= off && b > off && b - a >= margin { return .fixes }
+        return nil
+    }
+
+    /// Over `kind`'s ring fixes inside pack coverage: their count, path,
+    /// and (with enough of both) the mean of min(distance to a
+    /// heading-compatible road, cap) as given (a) and shifted (b).
+    mutating func roadFixPinComparison(_ kind: FixPinSource.Kind, shiftEast: Double, shiftNorth: Double,
+                                               plane: LocalTangentPlane)
+        -> (fixes: Int, pathM: Double, a: Double?, b: Double?) {
+        guard var matcher = roads.take() else { return (0, 0, nil, nil) }
+        defer { roads = matcher }
+        let k = kind.rawValue
+        let cosGate = cos(min(180, config.roadHeadingGateDeg) * .pi / 180)
+        var used: [Int] = []
+        for j in fixPin[k].ring.indices {
+            let fix = fixPin[k].ring[j]
+            let covered: Bool
+            if let c = fix.covered {
+                covered = c
+            } else {
+                let g = plane.geodetic(east: fix.east, north: fix.north)
+                covered = matcher.network.covers(latitude: g.latitude, longitude: g.longitude)
+                fixPin[k].setCovered(j, covered)
+            }
+            if covered { used.append(j) }
+        }
+        var path = 0.0
+        for (a, b) in zip(used, used.dropFirst()) {
+            let p = fixPin[k].ring[a], q = fixPin[k].ring[b]
+            path += ((q.east - p.east) * (q.east - p.east) + (q.north - p.north) * (q.north - p.north)).squareRoot()
+        }
+        guard used.count >= Self.fixPinRoadMinFixes, path >= Self.fixPinRoadMinPathM else {
+            return (used.count, path, nil, nil)
+        }
+        // Cached per fix (exact: same fix, shift and plane give the same
+        // distance), so a recheck queries only the fixes added since.
+        if !(fixPin[k].roadShift.map { $0.east == shiftEast && $0.north == shiftNorth } ?? false) {
+            fixPin[k].setRoadShift((shiftEast, shiftNorth))
+        }
+        var sumA = 0.0, sumB = 0.0
+        for j in used {
+            let fix = fixPin[k].ring[j]
+            var a = fix.roadA, b = fix.roadB
+            if a == nil {
+                a = matcher.nearestCompatibleDistance(east: fix.east, north: fix.north, cap: Self.fixPinRoadCapM,
+                                                      course: fix.course, cosHeadingGate: cosGate, plane: plane)
+                counters.fixPinRoadDistanceQueries += 1
+            }
+            if b == nil {
+                b = matcher.nearestCompatibleDistance(east: fix.east + shiftEast, north: fix.north + shiftNorth,
+                                                      cap: Self.fixPinRoadCapM, course: fix.course,
+                                                      cosHeadingGate: cosGate, plane: plane)
+                counters.fixPinRoadDistanceQueries += 1
+            }
+            fixPin[k].setRoadDistances(j, a: a!, b: b!)
+            sumA += a!
+            sumB += b!
+        }
+        return (used.count, path, sumA / Double(used.count), sumB / Double(used.count))
+    }
+
+    /// Forgets every fix's cached road distances (tests: a cached value
+    /// must equal a fresh query).
+    mutating func clearFixPinRoadCache() {
+        for k in fixPin.indices { fixPin[k].setRoadShift((.nan, .nan)) }
+        for k in fixPin.indices {
+            for j in fixPin[k].ring.indices { fixPin[k].clearRoadDistances(j) }
+        }
+    }
+
+    enum FixPinRestoreReason { case roads, agreement, pin }
+
+    private mutating func restoreFixPin(_ kind: FixPinSource.Kind, reason: FixPinRestoreReason) {
+        let k = kind.rawValue
+        fixPin[k].offset = nil
+        fixPin[k].agreeStartNs = nil
+        fixPin[k].agreeCount = 0
+        fixPin[k].lastRoadCheckNs = nil
+        switch reason {
+        case .roads: counters.addFixPin(\.fixPinRestoresByRoadsAccessory, \.fixPinRestoresByRoadsPhone, kind)
+        case .agreement: counters.addFixPin(\.fixPinRestoresByAgreementAccessory, \.fixPinRestoresByAgreementPhone, kind)
+        case .pin: counters.addFixPin(\.fixPinRestoresByPinAccessory, \.fixPinRestoresByPinPhone, kind)
+        }
+    }
+
+    /// A fix of a down-weighted source, before its update: win-back by
+    /// roads (every `fixPinRoadRecheckS`, the road arbiter on the ring would
+    /// now say "fixes") and by agreement (Mahalanobis² against the
+    /// *claimed* σ plus the estimate's covariance under 9, for at least
+    /// `fixPinRestoreS` and `fixPinRestoreMinFixes` consecutive fixes; a
+    /// disagreeing fix restarts the run). `east/north`: the
+    /// latency-shifted fix.
+    private mutating func fixPinWinBack(_ kind: FixPinSource.Kind, east fe: Double, north fn: Double, sigma: Double,
+                                        fixNs: Int64, plane: LocalTangentPlane) {
+        let k = kind.rawValue
+        guard let offset = fixPin[k].offset else { return }
+        if config.roadFixPinCheck == 1, roadsActive,
+           fixPin[k].lastRoadCheckNs.map({ Double(fixNs - $0) / 1e9 >= Self.fixPinRoadRecheckS }) ?? true {
+            fixPin[k].lastRoadCheckNs = fixNs
+            let road = roadFixPinComparison(kind, shiftEast: offset.east, shiftNorth: offset.north, plane: plane)
+            counters.fixPinRoadRechecks += 1
+            if let a = road.a, let b = road.b, fixPinRoadVerdict(a: a, b: b) == .fixes {
+                restoreFixPin(kind, reason: .roads)
+                return
+            }
+        }
+        let m = cloudMoments()
+        let s2 = sigma * sigma
+        let c = Self.chi2(fe - m.east, fn - m.north, ee: m.ee + s2, en: m.en, nn: m.nn + s2)
+        if c < Self.fixPinSignificantChi2 {
+            if fixPin[k].agreeStartNs == nil { fixPin[k].agreeStartNs = fixNs }
+            fixPin[k].agreeCount += 1
+            let start = fixPin[k].agreeStartNs ?? fixNs
+            if fixPin[k].agreeCount >= Self.fixPinRestoreMinFixes && Double(fixNs - start) / 1e9 >= config.fixPinRestoreS {
+                restoreFixPin(kind, reason: .agreement)
+            }
+        } else {
+            fixPin[k].agreeStartNs = nil
+            fixPin[k].agreeCount = 0
+        }
     }
 
     // MARK: Weights and resampling
