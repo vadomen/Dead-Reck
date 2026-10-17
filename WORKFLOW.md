@@ -298,7 +298,7 @@ Dead reckoning on top of the logger. The model, config, replay commands, accepta
   - **N3-FIXPIN - pin against a GNSS source — done: measured, not adopted.** Keys `roadFixPinCheck` and `fixPinTwoPinCheck` stay default off; injection study via `replay_nav --fixpin-inject`; review run 37. Follow-up: backlog N3-FIXPIN-GATE.
   - **N3.4 - packs in the app (import), display — next.**
 - **NAV-NOOBD - navigation without OBD — after N3.** See docs/BACKLOG_UX.md.
-- **App Store release and site/** — in progress. App Store website and road-pack downloads on Cloudflare Pages in `site/` (`site/publish_packs.sh`); TestFlight, then App Store. The release plan is not in the repo yet.
+- **App Store release and site/** — in progress. App Store website and road-pack downloads on Cloudflare Pages in `site/` (`site/publish_packs.sh`); TestFlight, then App Store. Plan: docs/RELEASE_PLAN.md.
 
 Every engine change is judged on the replay set first and goes through `/review-loop` before merge.
 
