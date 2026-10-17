@@ -1725,14 +1725,13 @@ both.
   offset; trusting towers more (`networkFixCorrelationS` 30 → 5.1 km; not the default,
   see "Tried and rejected").
   ("Tried and rejected" and the measurements cited in this section: [docs/archive/NAVIGATION-history.md](archive/NAVIGATION-history.md).)
-- **Reversing** (backlog N2-1, N3 candidate): OBD speed has no sign, so
-  reversing is integrated as forward motion. Regression case:
-  `--gps mask-after-motion 30` on the clean drive (324 m today). Ideas: reverse
-  from the sign of longitudinal acceleration against d(speed)/dt, a reverse
-  hypothesis per particle at low speed after a stop, or a gear/reverse PID in
-  mode 01 if the car exposes one.
-  Decision: a known limitation. OBD mode 01 has no gear signal, so reversing is
-  integrated as driving forward at the OBD speed (backlog N2-1, closed 2026-10-17).
+- **Reversing** (backlog N2-1, closed 2026-10-17: known limitation): OBD speed
+  has no sign and mode 01 has no gear signal, so reversing is integrated as
+  driving forward at the OBD speed. Regression case:
+  `--gps mask-after-motion 30` on the clean drive (324 m today). Ideas
+  considered, not planned: reverse from the sign of longitudinal acceleration
+  against d(speed)/dt, or a reverse hypothesis per particle at low speed after
+  a stop.
 - **Wide heading posterior → shrunken mean**: while heading std is large, the
   mean of the arc-shaped cloud lies inside the arc, shortening the
   start-to-estimate distance by about exp(−σ²/2). On jammed-B this was most of

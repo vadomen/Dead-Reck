@@ -243,3 +243,21 @@ Tests: Core not run: no file outside docs/ changed.
 ### Run 41 summary
 
 1 round; 0 fixed, 0 rejected, 0 deferred.
+
+## Run 42 (lite): backlog triage decisions and Opus re-check (a8b2ea1..d92e300), started 2026-10-17
+
+Commits: d92e300 user decisions on the DECIDE rows (4 to PLAN §6 device checks, 4 closed with UX-11, a NAVIGATION reversing note and a NAV_SIDECAR pin.prior note); Opus re-check of the 60 phase-A closures, 58 hold, R26.2-3 and R27.1-2 reopened.
+
+### Round 1
+
+Reviewer: one fresh reviewer (sonnet), lite run, checks 10 and 11: PLAN §6 code facts, the NAV_SIDECAR pin.prior sentence, UX-11 columns, moved and reopened rows byte-identical apart from Status. Privacy clean. Result: 0 BLOCKER / 0 MAJOR / 1 MINOR.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R42.1-1 | MINOR | `docs/NAVIGATION.md` "Reversing" bullet still headed "(backlog N2-1, N3 candidate)" and offering a mode 01 gear PID, while its new last sentence says closed and that mode 01 has no gear signal: someone planning N3 picks it up as open. | FIXED | One-line wording fix in the ledger commit (lite rule): header says closed, gear-PID idea dropped, ideas marked "considered, not planned". |
+
+Tests: Core not run: no file outside docs/ changed.
+
+### Run 42 summary
+
+1 round; 1 fixed (R42.1-1), 0 rejected, 0 deferred.
