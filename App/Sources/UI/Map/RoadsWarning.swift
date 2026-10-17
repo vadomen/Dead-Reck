@@ -12,8 +12,9 @@ enum RoadsWarning {
     /// The line to show, or nil.
     ///
     /// - Not recording, or roads attached: nil.
-    /// - No verified pack in a finished, idle library scan: `noPacks`, even
-    ///   before the first selection attempt has an outcome.
+    /// - No verified pack once this recording's own library rescan has
+    ///   returned (`libraryScanned`, R34.1-3): `noPacks`, even before the
+    ///   first selection attempt has an outcome.
     /// - Otherwise only the latest attempt's outcome speaks: `noPacks`,
     ///   `noneCovering`, `refused`. `selected`, `unusableRequest` (transient:
     ///   the engine raises a new request, nothing the driver can fix),
@@ -29,6 +30,25 @@ enum RoadsWarning {
         if lastOutcome == .noneCovering { return noneCovering }
         if lastOutcome == .refused { return refused }
         return nil
+    }
+}
+
+extension RoadsWarning {
+    /// The line for the recording in progress: `message` over the service's
+    /// roads status and the library's latest packs (the map polls it). The
+    /// library counts as scanned only once the recording's own rescan has
+    /// returned (`RoadsStatus.libraryScanned`), not when an earlier scan is
+    /// finished and idle: at Start the rescan begins in a `.utility` task,
+    /// and a poll before it would read the previous scan's packs (R34.1-3).
+    static func current(service: NavigationService, library: RoadPackLibrary) async -> String? {
+        let roads = await service.roadsStatus()
+        guard roads.recording else { return nil }
+        let status = await library.status()
+        return message(
+            recording: roads.recording, libraryScanned: roads.libraryScanned,
+            verifiedPacks: status.packs.filter(\.verified).count, roadsAttached: roads.inUse,
+            lastOutcome: roads.lastOutcome
+        )
     }
 }
 

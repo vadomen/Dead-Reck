@@ -46,6 +46,17 @@ updates reweight only by what heading and scale actually predict.
   `v + 0.5` km/h when `v > 0`, times the particle's scale.
 - **ZUPT only on a fresh zero**: OBD 0 at most 2 s old freezes heading and
   position; no noise, bit-identical estimates.
+- **Unless moving fixes contradict the zero** (N4B1-1, `zuptFixGate`, on
+  by default): a step an OBD 0 would freeze (a fresh 0, or a parked stale
+  one) is vetoed while at least 2 good fixes in a row (valid Doppler speed,
+  accuracy ≤ `cleanFixAccM`), each with its own `t` after the run of zeros
+  began, read ≥ 5 m/s, and the newest is at most 3 s old at the step. A
+  good fix under 5 m/s resets the run; a moving OBD reply ends it. A vetoed
+  step moves like a stale one (unknown-speed noise) at the newest such
+  fix's Doppler speed, not scaled. Fixes measured before the zeros began
+  (the GNSS tail of a real stop) never count, so a real stop is a ZUPT as
+  before; on the acceptance set the gate never fires (see "N4B1-1: OBD
+  zero against moving fixes").
 - **Stale OBD** (> 2 s) means unknown speed, with two cases (R13.1-2):
   - **After an OBD 0 with no sign of motion since, the car is parked.** The
     step is frozen like a zero-velocity update. The latch is armed by every OBD
@@ -543,6 +554,8 @@ default 100 (was 30 until 2026-10-14; N3.2 decision, below).
 | scalePriorMean / scalePriorStd | 1.016 / 0.01 | per-vehicle OBD speed scale prior (measured on this car) |
 | obdSpeedOffsetKmh | 0.5 | truncation offset when v > 0 |
 | obdMaxAgeS | 2 | fresher = known speed; a fresh 0 is a ZUPT |
+| zuptFixGate | 1 | N4B1-1: moving good fixes veto an OBD 0's ZUPT or parked step; 0 off, 1 on, other values refused |
+| zuptFixGateMinSpeedMps / zuptFixGateMinFixes / zuptFixGateMaxAgeS | 5 / 2 / 3 | "moving" Doppler speed, m/s; moving good fixes in a row after the zeros began; how old the newest may be at the step, s (> 0, ≥ 1, ≥ 0, else refused) |
 | staleSpeedNoiseMpsPerSqrtS | 2.5 | speed error noise while stale |
 | staleSpeedDecayS | 20 | stale speed error decays (Ornstein–Uhlenbeck) with this time constant |
 | staleParkedMotionG / staleParkedMotionTauS | 0.09 / 1 | after an OBD 0, stale = parked until the 1 s EMA of horizontal userAcceleration exceeds this |
@@ -711,7 +724,9 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   differ only in road-only keys are named inert, not blamed (N3-CMPHASH).
   With `--roads`: a sidecar `roads` line attaches the given set at its
   `afterInputs` (the metrics replay too); a sidecar without one gets the live
-  rule. The mode label then gets `-attach-sidecar` (attached at the
+  rule. Replay-only estimates after the sidecar's last estimate are counted
+  as "the sidecar ends early" (R14.1-4: lines since the last flush lost to a
+  kill), named as a cause, not as "no known cause". The mode label then gets `-attach-sidecar` (attached at the
   sidecar's `afterInputs`) or, without `--as-live`, `-attach-live`, so the
   row and GeoJSON do not overwrite the from-start or `--as-live` run's
   (R32.1-5). A `roadSetHash` that differs, or packs on one side only, is a warning
@@ -902,6 +917,9 @@ For every recording it:
   `LiveNavigationRun`, the loop `replay_nav --compare` also runs;
 - writes the sidecar `<recording>.nav.jsonl` ([NAV_SIDECAR.md](NAV_SIDECAR.md)):
   the header, an estimate every session second, and a pin at each manual fix;
+  flushed every 10 s and, with the log, on `.background` and on a memory
+  warning (`RecordingSession.onFlush` → `NavigationService.flush()`,
+  R14.1-4);
 - measures engine time per 10 Hz step with `ContinuousClock` (EMA and
   maximum);
 - answers `snapshot(at:)` with a `NavigationSnapshot` (estimate, ellipse,
@@ -1748,6 +1766,101 @@ both.
    60 s window identifies the vector only sometimes. A long window, or a
    vector from an independent pin, is what pins it down.
 
+### N4B1-1: OBD zero against moving fixes (2026-10-18)
+
+**`zuptFixGate` is on by default.** It passes the adoption rule against the
+current default (the N3.2 decision's config, the "N3.2 decision" and "N3.3:
+roads live" baselines) with every gated value unchanged, because on the
+acceptance set it never fires.
+
+- **The case.** Backlog N4B1-1: in the simulator `SimulatedOBDLink` answers
+  0 km/h on every poll while the simulated motion and fixes drive at
+  50 km/h. The engine trusted the fresh 0 (896 of 900 steps were ZUPT, no
+  course or speed update), so the dot sat at the mean of the fixes, 519 m
+  behind at 90 s, with a 1.3 m ellipse. More generally: OBD stuck at 0
+  while GNSS moves gave an overconfident frozen estimate.
+- **The rule** (pre-declared, not swept; "Model", "Predict"): a step an OBD 0
+  would freeze is vetoed while ≥ 2 good fixes in a row, each taken after
+  the run of zeros began, read ≥ 5 m/s and the newest is ≤ 3 s old. Causal
+  (only fixes already ingested count) and deterministic (no random draw;
+  the evidence is a few integers and one speed). "After the zeros began" is
+  what keeps real stops: a fix measured while the car was still braking
+  (GNSS Doppler lags) predates the first 0 and does not count, and fixes
+  after it read under 5 m/s at a stop. 5 m/s is above the few m/s of
+  parked GNSS speed noise the course veto exists for; 2 fixes keep one
+  glitch fix or one OBD 0 glitch at speed from deciding.
+- **Runs.** Release build of the change on the Mac, every acceptance run
+  with its acceptance flags, seeds 1–5 in arrival order, with roads
+  (national + region-A) and without: `--set zuptFixGate=0` (the current
+  default's behaviour) against `--set zuptFixGate=1`, 100 runs each.
+  Outputs: logs/out-sweep-nav2/acc/ (git-ignored).
+- **Result: identical.** All 100 GeoJSON pairs are byte-identical; the gate
+  vetoed 0 steps in every run (`zuptVetoedSteps`). `metrics.json` differs
+  only in the config's `zuptFixGate` and the timing fields. The gate-off
+  means equal the N3.2 decision's and N3.3's N3.2 columns to the last digit
+  shown, so the baseline is the current default's.
+
+Means over seeds 1–5 (range); gated value as in "N3.2 decision" (metres for
+clean-long, clean and manual's truth point 1, % of distance for the rest);
+consistency with the truth's σ. The off and on columns are the same runs'
+values, so one column each.
+
+| drive | with roads, off = on | Δ | consistency + σ | without roads, off = on | Δ | consistency + σ | verdict |
+|---|---|---:|---|---|---:|---|---|
+| clean-long | 19.38 (19.22–19.50) m | 0 | 100.0 % | 19.42 (18.09–20.29) m | 0 | 100.0 % | PASS |
+| clean | 14.39 (11.81–18.82) m | 0 | 100.0 % | 12.98 (10.67–16.46) m | 0 | 100.0 % | PASS |
+| manual | 7.23 (5.81–10.02) m | 0 | 100.0 % | 50.50 (47.39–57.51) m | 0 | 100.0 % | PASS |
+| jammed-A | 0.177 (0.170–0.182) % | 0 | 100.0 % | 1.137 (1.012–1.259) % | 0 | 100.0 % | PASS |
+| jammed-B | 0.201 (0.171–0.245) % | 0 | 100.0 % | 1.068 (0.940–1.374) % | 0 | 100.0 % | PASS |
+| drive-7 | 0.130 (0.123–0.148) % | 0 | 96.3 % | 1.128 (1.073–1.231) % | 0 | 99.6 % | PASS (consistency unchanged; the N3.2 decision's accepted 96.3 %) |
+| drive-8 | 0.186 (0.184–0.188) % | 0 | 100.0 % | 1.482 (1.371–1.596) % | 0 | 100.0 % | PASS |
+| drive-9 (1) | 0.042 (0.033–0.051) % | 0 | 100.0 % | 10.212 (10.022–10.373) % | 0 | 75.0 % | PASS |
+| drive-9 (2) | 0.043 (0.033–0.054) % | 0 | 100.0 % | 8.380 (8.278–8.513) % | 0 | 75.0 % | PASS |
+
+- **Why it never fires, and the margin.** Over each whole recording (every
+  fix, masked or not), the good fixes whose `t` is after a run of OBD
+  zeros began, by arrival order (a throwaway script,
+  logs/out-sweep-nav2/margin.py):
+
+  | drive | good fixes after a 0 began | max Doppler | longest run ≥ 2 / 3 / 4 / 5 m/s |
+  |---|---:|---:|---|
+  | clean-long | 125 | 0.62 m/s | 0 / 0 / 0 / 0 |
+  | clean | 82 | 4.00 m/s | 4 / 2 / 1 / 0 |
+  | drive-7 | 5 | 0.62 m/s | 0 / 0 / 0 / 0 |
+  | drive-8 | 283 | 1.53 m/s | 0 / 0 / 0 / 0 |
+  | drive-10 (report only) | 7 | 0.62 m/s | 0 / 0 / 0 / 0 |
+  | manual, manual-3, jammed-A, jammed-B, drive-9, drive-11 | 0 | | |
+
+  The jammed drives, manual, manual-3 and drive-9 have no good fix (network
+  fixes carry no Doppler speed). clean is the closest: parked before motion
+  start and at its stops (26–29 s, 80–92 s) GNSS reads 2.6–4.0 m/s with
+  4–8 m accuracy while OBD says 0. That is the parked speed noise the 5 m/s
+  threshold is above. A looser diagnostic (1 fix at ≥ 2 m/s, not a
+  candidate; seed 1, no roads) fires there for 87 steps and moves clean's
+  max error from 12.24 to 17.10 m: the noise is real and a looser gate
+  would cost. The acceptance set cannot show the gate's benefit; it shows
+  that at 5 m/s × 2 it costs nothing.
+- **Where it acts** (not an acceptance drive): the simulator recording of
+  backlog N4B1-1 (90 s, `--gps use --file-order --seed header`, logs/out-sweep-nav2/sim/).
+  Off: 896 ZUPT steps, 0 course updates, the estimate 203–210 m from the
+  fixes at 30 s, 386–391 m at 60 s, 523 m at the end. On: 880 steps vetoed,
+  16 ZUPT (before the evidence), 88 course updates, 0.1–0.5 m from the fixes
+  after 10 s. These are the fixes the engine received, so this is
+  consistency with them, not error against independent truth.
+- **Tests** (`NavigationZeroFixGateTests`): OBD stuck at 0 with moving clean
+  fixes (vetoed, follows the drive; off: frozen > 300 m behind); a real stop
+  with 1 s GNSS Doppler lag (never vetoed, estimates equal to gate off); the
+  evidence rules (one fix, network and coarse fixes, the speed threshold,
+  fixes measured before the zeros); resets; expiry after
+  `zuptFixGateMaxAgeS`; a parked stale 0; catch-up while vetoed equals
+  stepping one by one; the keys' defaults, decoding and refusals.
+- **Live.** The sidecar header's config, and so its `configHash`, gains the
+  four keys: `--as-live --compare` on an older sidecar names them as config
+  differences (not road-only, so not inert). Live estimates are unchanged
+  wherever the gate does not fire, which on this car's drives is
+  everywhere measured. To verify on the device: see "To verify on the
+  device (N4)".
+
 ## Known limitations and options
 
 - **Heading convergence with tower fixes only** (manual: 6.8 km against a
@@ -1824,3 +1937,11 @@ both.
   when the adapter is already connected); and whether `replay_nav --as-live --compare` on a phone's
   sidecar is exact on an arm64 Mac (R13.1-7). If not, it must pass within the
   default tolerance with no unexplained cause.
+- N4B1-1 (`zuptFixGate` on): on a real drive `zuptVetoedSteps` stays 0 at
+  every stop (replay the drive; the sidecar cannot show it), and in the
+  simulator with `SimulatedOBDLink` (OBD 0 at 50 km/h) the dot follows the
+  green GNSS track after the first 2–3 s instead of freezing.
+- R14.1-4: background the app mid-recording, then kill it from the app
+  switcher; `--as-live --compare` of that recording shows estimates up to
+  about the moment it went to the background, and any replay-only tail as
+  "the sidecar ends early", not "no known cause".

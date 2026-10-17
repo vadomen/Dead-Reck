@@ -286,7 +286,7 @@ public enum ReplayReport {
                             result.msPerStep, result.maxIngestMs, result.config.particleCount, result.config.seed))
         let c = result.counters
         lines.append("Fixes         used \(c.fixesUsed) (network \(c.networkFixesUsed)), ignored stale \(c.fixesIgnoredStale), held \(c.fixesHeld) (used \(c.heldFixesUsed), dropped moving \(c.heldFixesDroppedMoving) / timeout \(c.heldFixesDroppedTimeout) / replaced \(c.heldFixesReplaced)), invalid \(c.fixesIgnoredInvalid), withheld \(result.fixes.filter { $0.withheld != nil }.count)")
-        lines.append("Updates       course \(c.courseUpdates), speed \(c.speedUpdates), reseeds \(c.reseeds), manual \(c.manualFixes) (late \(c.lateManualFixes), resets \(c.manualResets)), resamples \(c.resamples), ZUPT steps \(c.zuptSteps), stale-speed steps \(c.staleSpeedSteps), parked-stale steps \(c.staleParkedSteps), caught up in bulk \(c.coalescedSteps) (macro steps \(c.macroSteps))")
+        lines.append("Updates       course \(c.courseUpdates), speed \(c.speedUpdates), reseeds \(c.reseeds), manual \(c.manualFixes) (late \(c.lateManualFixes), resets \(c.manualResets)), resamples \(c.resamples), ZUPT steps \(c.zuptSteps) (vetoed by fixes \(c.zuptVetoedSteps)), stale-speed steps \(c.staleSpeedSteps), parked-stale steps \(c.staleParkedSteps), caught up in bulk \(c.coalescedSteps) (macro steps \(c.macroSteps))")
         let held = result.heldOutFixes
         if !held.isEmpty {
             lines.append("Held out      \(held.count) fix(es) (t s, acc m):")

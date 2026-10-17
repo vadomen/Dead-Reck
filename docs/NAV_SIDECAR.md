@@ -188,10 +188,13 @@ The rules for a change:
 ## Writing
 
 The header is flushed at once. Later lines are buffered and flushed every 10 s
-on the service actor, then flushed and closed when the recording's feed ends
-(on stop or on a write failure). A write error stops the sidecar, never the
-navigation or the recording. Killing the app loses at most the last 10 s, and
-can leave a partial last line.
+on the service actor, on every flush the recording itself does when the app
+goes to the background or gets a memory warning (R14.1-4: inside the same
+background task, after the log's flush), then flushed and closed when the
+recording's feed ends (on stop or on a write failure). A write error stops
+the sidecar, never the navigation or the recording. Killing the app loses at
+most the last 10 s (the lines since the last flush), and can leave a partial
+last line; `--compare` names that as "the sidecar ends early" (below).
 
 The size is about 365 bytes per estimate, so about 1.3 MB per hour. That is
 more than the 100 KB/h the N4 plan estimated, because values are written at
@@ -289,8 +292,17 @@ difference.
 - **FAIL** otherwise, with exit status 4.
 
 Any non-exact result names its known causes (drops, encoding failures, a
-different road set or attach, seed or config, truncation), or says there is
-none.
+different road set or attach, seed or config, truncation, an early end), or
+says there is none.
+
+**Sidecar ends early (R14.1-4).** Replay-only estimates after the sidecar's
+last estimate `t` (all of them when it has none) are counted apart:
+`Unmatched` shows "N after the sidecar's end at t … s", a `Note` says the
+lines since the last flush were lost (app killed, crash or power loss), and
+the cause is listed as "the sidecar ending early". The verdict is still
+FAIL: the tail is missing. A replay-only estimate before the sidecar's last
+one is not an early end; if the early end is the only cause named and such
+differences remain, the report adds that they have no known cause.
 
 Exact equality between an arm64 Mac and an iPhone is not verified yet (R13.1-7,
 docs/PLAN.md §6), which is why a tolerance exists. Within one machine the

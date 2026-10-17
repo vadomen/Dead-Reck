@@ -62,6 +62,11 @@ import Foundation
 /// and OBD speed. In arrival order a pin is never late, so neither path
 /// runs there.
 ///
+/// **OBD zero against moving fixes** (N4B1-1, `zuptFixGate`): an OBD 0
+/// that would freeze a step is vetoed while good fixes taken after the
+/// zeros began show the car moving; the step then moves like a stale one
+/// at the newest such fix's Doppler speed.
+///
 /// **Held stale fix** (N4B-1): a stale fix (older than `maxFixAgeS`) is
 /// used only while the car is stopped. When it arrives before OBD can say
 /// so — no OBD reply yet, or only a stale one — it is held, not dropped,
@@ -136,6 +141,8 @@ public struct NavigationEngine: Sendable {
     private var parkedSinceZero = false
     private var motionEMA = Vector3.zero
     private var lastMotionEMANs: Int64?
+    /// Moving fixes against the current run of OBD zeros (N4B1-1).
+    private(set) var zeroFix = ZeroFixEvidence()
 
     // Last step, for extrapolation in `estimate(at:)`.
     private var lastStepStationary = true
@@ -166,6 +173,20 @@ public struct NavigationEngine: Sendable {
         var arrivalNs: Int64
     }
     private var heldFix: HeldFix?
+
+    /// Good fixes against the current run of OBD zeros (N4B1-1,
+    /// `NavigationConfig.zuptFixGate`).
+    struct ZeroFixEvidence: Sendable, Equatable {
+        /// `t` of the run's first OBD 0; nil after a moving reply, and
+        /// before any reply.
+        var zeroSinceNs: Int64?
+        /// Good fixes in a row after `zeroSinceNs` reading at least
+        /// `zuptFixGateMinSpeedMps`.
+        var movingFixes = 0
+        /// The newest of them: its `t` and Doppler speed, m/s.
+        var newestFixNs: Int64?
+        var speedMps = 0.0
+    }
     /// Whether a stale fix is held, waiting for a fresh OBD reply.
     public var hasHeldFix: Bool { heldFix != nil }
 
@@ -368,7 +389,10 @@ public struct NavigationEngine: Sendable {
         while next <= target {
             // Both on the grid: divide first, so a huge `t` cannot overflow.
             let remaining = Int(target / stepNs - next / stepNs) + 1
-            if remaining > max(1, config.maxCatchUpSteps) && !isFresh(at: next) {
+            // A parked stretch is folded only once no moving fix vetoes it
+            // (N4B1-1): at most `zuptFixGateMaxAgeS` of steps run first.
+            if remaining > max(1, config.maxCatchUpSteps) && !isFresh(at: next)
+                && !(parkedSinceZero && zeroVetoed(at: next)) {
                 catchUp(from: next, steps: remaining)
                 return
             }
@@ -475,6 +499,13 @@ public struct NavigationEngine: Sendable {
         guard sample.pid == .vehicleSpeed,
               sample.ecu == nil || sample.ecu == Self.primaryECU,
               sample.value.isFinite, sample.value >= 0 else { return false }
+        if sample.value > 0 {
+            zeroFix = ZeroFixEvidence()
+        } else if obdSpeedKmh != 0 {
+            // The first 0 after a moving reply (or the first reply): a new
+            // run of zeros; only fixes after it are evidence against it.
+            zeroFix = ZeroFixEvidence(zeroSinceNs: ns)
+        }
         obdSpeedKmh = sample.value
         obdNs = ns
         parkedSinceZero = sample.value == 0
@@ -515,10 +546,43 @@ public struct NavigationEngine: Sendable {
         obdSpeedKmh.map { $0 > 0 ? ($0 + config.obdSpeedOffsetKmh) / 3.6 : 0 }
     }
 
-    /// Fresh OBD zero at `ns`: the car is known to be stopped.
+    /// Fresh OBD zero at `ns`, not vetoed by moving fixes (`zuptFixGate`):
+    /// the car is known to be stopped.
     private func isStopped(at ns: Int64) -> Bool {
         guard let v = obdSpeedKmh, let t = obdNs else { return false }
-        return v == 0 && Double(ns - t) / 1e9 <= config.obdMaxAgeS
+        return v == 0 && Double(ns - t) / 1e9 <= config.obdMaxAgeS && !zeroVetoed(at: ns)
+    }
+
+    /// Whether moving fixes veto the OBD 0 at `ns` (N4B1-1): the gate is
+    /// on, at least `zuptFixGateMinFixes` good fixes in a row since the run
+    /// of zeros began read moving, and the newest is at most
+    /// `zuptFixGateMaxAgeS` before `ns`. Only meaningful while the last
+    /// OBD reply is 0 (a moving reply clears the evidence).
+    private func zeroVetoed(at ns: Int64) -> Bool {
+        guard config.zuptFixGate == 1, zeroFix.movingFixes >= config.zuptFixGateMinFixes,
+              let newest = zeroFix.newestFixNs else { return false }
+        return Double(ns - newest) / 1e9 <= config.zuptFixGateMaxAgeS
+    }
+
+    /// Counts `sample` (fix time `fixNs`) as evidence for or against the
+    /// current run of OBD zeros (N4B1-1). Only good fixes — a valid Doppler
+    /// speed, accuracy ≤ `cleanFixAccM` — whose own `t` is after the run
+    /// began: a moving one extends the run of moving fixes, a slower one
+    /// ends it. Others change nothing. Kept whatever `zuptFixGate` says,
+    /// which only `zeroVetoed` reads.
+    private mutating func noteZeroFixEvidence(_ sample: LocationSample, fixNs: Int64) {
+        guard let since = zeroFix.zeroSinceNs, fixNs > since, sample.hasValidSpeed, sample.speed.isFinite,
+              sample.horizontalAccuracy <= config.cleanFixAccM else { return }
+        guard sample.speed >= config.zuptFixGateMinSpeedMps else {
+            zeroFix.movingFixes = 0
+            zeroFix.newestFixNs = nil
+            return
+        }
+        zeroFix.movingFixes += 1
+        if fixNs >= zeroFix.newestFixNs ?? fixNs {
+            zeroFix.newestFixNs = fixNs
+            zeroFix.speedMps = sample.speed
+        }
     }
 
     // MARK: Predict
@@ -540,7 +604,11 @@ public struct NavigationEngine: Sendable {
             fresh = Double(ns - t) / 1e9 <= config.obdMaxAgeS
             vObd = v > 0 ? (v + config.obdSpeedOffsetKmh) / 3.6 : 0
         }
-        if fresh && vObd == 0 {
+        // An OBD 0 that would freeze this step (fresh: ZUPT; stale: parked)
+        // while moving fixes contradict it (N4B1-1): the step moves like a
+        // stale one at the newest moving fix's Doppler speed.
+        let vetoed = ((fresh && vObd == 0) || (!fresh && parkedSinceZero)) && zeroVetoed(at: ns)
+        if fresh && vObd == 0 && !vetoed {
             // Zero-velocity update: nothing moves, no noise. Speed is known
             // again, so a past dropout's speed errors end here too (only
             // touched when set: the steady stop stays loop-free).
@@ -552,8 +620,8 @@ public struct NavigationEngine: Sendable {
             recordMotion(at: ns)
             return
         }
-        let stale = !fresh
-        if stale && parkedSinceZero {
+        let stale = !fresh || vetoed
+        if stale && parkedSinceZero && !vetoed {
             // Stale after a stop with no sign of motion since: parked.
             counters.staleParkedSteps += 1
             lastStepStationary = true
@@ -562,7 +630,11 @@ public struct NavigationEngine: Sendable {
             recordMotion(at: ns)
             return
         }
-        if stale {
+        if vetoed {
+            counters.zuptVetoedSteps += 1
+            speedOffsetsActive = true
+            vObd = zeroFix.speedMps
+        } else if stale {
             counters.staleSpeedSteps += 1
             speedOffsetsActive = true
         } else if speedOffsetsActive {
@@ -591,7 +663,8 @@ public struct NavigationEngine: Sendable {
         for i in 0..<east.count {
             let (n1, n2) = rng.nextGaussianPair()
             let dHeading = yaw + sigmaHeading * n1
-            var speed = vObd * scale[i]
+            // A vetoed step's speed is a GNSS Doppler speed: already true.
+            var speed = vetoed ? vObd : vObd * scale[i]
             if stale {
                 // Antithetic increments: the even particle of a pair draws,
                 // the odd one takes the opposite (an unpaired last one
@@ -619,7 +692,7 @@ public struct NavigationEngine: Sendable {
         lastStepStationary = false
         lastMeanSpeed = meanSpeed
         lastMovingStepNs = ns
-        history.append(ns, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: fresh ? vObd : nil, held: vObd)
+        history.append(ns, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: stale ? nil : vObd, held: vObd)
         recordMotion(at: ns, obdDistance: vObd * dt)
         cumulativeOBDM += vObd * dt
         if counters.steps % reanchorCheckSteps == 0 {
@@ -889,6 +962,7 @@ public struct NavigationEngine: Sendable {
             counters.fixesIgnoredInvalid += 1
             return
         }
+        noteZeroFixEvidence(sample, fixNs: fixNs)
         let age = max(0, Double(arrivalNs - fixNs) / 1e9)
         if age > config.maxFixAgeS && !isStopped(at: arrivalNs) {
             if isFresh(at: arrivalNs) || !(config.heldFixTimeoutS > 0) {
@@ -1406,6 +1480,8 @@ public struct NavigationEngine: Sendable {
             fresh = Double(ns - t) / 1e9 <= config.obdMaxAgeS
             v = kmh > 0 ? (kmh + config.obdSpeedOffsetKmh) / 3.6 : 0
         }
+        // No `zeroVetoed` here: a veto needs a recent moving fix, and a
+        // fresh fix initialises the engine, so none holds before it.
         let kind: PreInitSteps.Kind = (fresh && v == 0) || (!fresh && parkedSinceZero) ? .frozen : fresh ? .known : .stale
         let from = ns - Int64((dt * 1e9).rounded())
         // The history entry `step` would have written: the fresh speed

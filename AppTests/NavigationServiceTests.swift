@@ -151,6 +151,71 @@ struct NavigationServiceTests {
         #expect(summary.estimates == contents.estimates.count)
     }
 
+    // MARK: Flush (R14.1-4)
+
+    @Test("flush() writes the buffered sidecar lines now, not only every flushInterval (R14.1-4)")
+    func flushWritesBufferedLines() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let tap = NavigationTap()
+        for k in 0..<50 { tap.record(Self.motion(Double(k) * 0.01)) }
+        tap.record(Self.fix(0.5))
+        for k in 50...450 { tap.record(Self.motion(Double(k) * 0.01)) }
+        let recording = scratch.store.directory.appendingPathComponent("Drive_flush.jsonl.gz")
+        let feed = RecordingNavigationFeed(
+            generation: 1, header: Self.header, clock: SessionClock(header: Self.header),
+            recordingURL: recording, sidecarURL: LogStore.navSidecarURL(for: recording), tap: tap)
+        let harness = ServiceHarness(service: NavigationService(flushInterval: .seconds(3_600)))
+        harness.take(feed)
+        let service = harness.service
+        let deadline = ContinuousClock.now + .seconds(5)
+        while await service.snapshot(at: MonotonicTimestamp(seconds: 4.5)).stats.inputs < 452
+                && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        // Ingested, estimates emitted, but the hour-long timer has not fired:
+        // only the header (flushed at start) is on disk.
+        let before = try NavSidecar.read(contentsOf: feed.sidecarURL)
+        #expect(before.estimates.isEmpty)
+        await service.flush()
+        let after = try NavSidecar.read(contentsOf: feed.sidecarURL)
+        #expect(after.estimates.map(\.t.seconds) == [1, 2, 3, 4])
+        tap.finish()
+        await harness.finished(0)
+        // Everything the run emitted was already on disk.
+        #expect(try NavSidecar.read(contentsOf: feed.sidecarURL).estimates == after.estimates)
+    }
+
+    @Test("Going to the background flushes the sidecar with the log, inside the log's background task (R14.1-4)")
+    func backgroundFlushesSidecar() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let tasks = BackgroundTaskSpy()
+        let session = RecordingFixtures.session(sources: Self.sources(), store: scratch.store, backgroundTasks: tasks,
+                                                flushInterval: .seconds(3_600))
+        let harness = ServiceHarness(service: NavigationService(flushInterval: .seconds(3_600)))
+        session.onNavigationFeed = { harness.take($0) }
+        let service = harness.service
+        session.onFlush = { await service.flush() }
+        try await session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
+        let feed = try #require(harness.feeds.first)
+        func sidecarEstimates() -> Int { (try? NavSidecar.read(contentsOf: feed.sidecarURL))?.estimates.count ?? -1 }
+        #expect(await eventually(5) { session.live.referenceFix != nil })
+        try await Task.sleep(for: .milliseconds(2_500))
+        #expect(await service.snapshot().initialized)
+        #expect(sidecarEstimates() == 0, "the hour-long timer has not flushed")
+        tasks.describeAtEnd = { "sidecar estimates \(sidecarEstimates())" }
+        session.handleScenePhase(.background)
+        #expect(await eventually(3) { tasks.held.isEmpty })
+        let ended = try #require(tasks.log.last { $0.hasPrefix("end DriveLogger.flush.background") })
+        let count = sidecarEstimates()
+        #expect(count >= 1)
+        #expect(ended.contains("sidecar estimates") && !ended.contains("estimates 0)") && !ended.contains("estimates -1)"),
+                "the background task ended after the sidecar flush: \(ended)")
+        await session.stop()
+        await harness.finished(0)
+    }
+
     // MARK: Drops
 
     static let header = LogHeader(

@@ -49,6 +49,8 @@ final class AppServices {
         self.navigation = navigation
         // Synchronous inside `start`, before any row: only start the task.
         session.onNavigationFeed = { feed in navigation.start(feed) }
+        // The sidecar is flushed with the log on background (R14.1-4).
+        session.onFlush = { await navigation.flush() }
     }
 }
 

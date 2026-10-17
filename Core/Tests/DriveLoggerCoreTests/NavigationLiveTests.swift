@@ -472,6 +472,53 @@ struct NavigationLiveTests {
         #expect(SidecarComparison(sidecar: contents, replay: lines, replayConfig: config).exact)
     }
 
+    @Test("Compare (R14.1-4): replay-only estimates after the sidecar's last one are 'sidecar ends early', not 'no known cause'")
+    func compareSidecarEndsEarly() throws {
+        let config = NavigationConfig(seed: 9)
+        let header = NavSidecar.Line.header(NavSidecar.Header(sessionID: LogFixtures.sessionID, config: config, appBuild: "1"))
+        let replay = [header] + (1...5).map { NavSidecar.Line.estimate(Self.estimate(Double($0))) }
+        func compare(_ kept: [Int]) throws -> SidecarComparison {
+            let sidecar = try NavSidecar.read(Self.encoded([header] + kept.map { .estimate(Self.estimate(Double($0))) }))
+            return SidecarComparison(sidecar: sidecar, replay: replay, replayConfig: config)
+        }
+
+        // Killed after the flush that wrote t 3: the replay runs on to t 5.
+        let early = try compare([1, 2, 3])
+        #expect(early.replayOnly == 2 && early.replayOnlyAfterSidecarEnd == 2 && early.sidecarEndsEarly)
+        #expect(early.sidecarLastEstimateT == S.ms(3))
+        #expect(!early.differsBeforeSidecarEnd)
+        #expect(!early.exact && !early.passes(.default), "a missing tail is still not a match")
+        let report = early.report(tolerance: .default)
+        #expect(report.contains("only in replay 2 (2 after the sidecar's end at t 3.0 s)"), "\(report)")
+        #expect(report.contains("Note          the sidecar ends early at t 3.0 s"))
+        #expect(report.contains("explained by the sidecar ending early (2 replay-only estimate(s) after its end)"), "\(report)")
+        #expect(!report.contains("no known cause"))
+
+        // A gap inside the sidecar is not an early end.
+        let gap = try compare([1, 3, 4, 5])
+        #expect(gap.replayOnly == 1 && gap.replayOnlyAfterSidecarEnd == 0 && !gap.sidecarEndsEarly)
+        #expect(gap.differsBeforeSidecarEnd)
+        let gapReport = gap.report(tolerance: .default)
+        #expect(gapReport.contains("no known cause") && !gapReport.contains("ends early"))
+
+        // Both: the early end explains the tail only.
+        let both = try compare([1, 3])
+        #expect(both.replayOnly == 3 && both.replayOnlyAfterSidecarEnd == 2)
+        #expect(both.report(tolerance: .default).contains(
+            "explained by the sidecar ending early (2 replay-only estimate(s) after its end); "
+                + "the differences before the sidecar's end have no known cause"))
+
+        // Killed before any estimate reached the disk: all of them.
+        let none = try compare([])
+        #expect(none.sidecarLastEstimateT == nil && none.replayOnlyAfterSidecarEnd == 5)
+        #expect(none.report(tolerance: .default).contains("the sidecar ends early (no estimate)"))
+
+        // The whole run: exact, no note.
+        let whole = try compare([1, 2, 3, 4, 5])
+        #expect(whole.exact && !whole.sidecarEndsEarly && whole.replayOnlyAfterSidecarEnd == 0)
+        #expect(!whole.report(tolerance: .default).contains("ends early"))
+    }
+
     @Test("encodingFailed rows of navigation kinds are found; other kinds are not")
     func encodingFailuresFound() {
         let events: [LogEvent] = [

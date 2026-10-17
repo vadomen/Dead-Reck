@@ -118,6 +118,10 @@ public struct NavigationCounters: Hashable, Sendable, Codable {
     public var staleSpeedSteps = 0
     /// Stale steps frozen as parked: after an OBD 0, no motion since.
     public var staleParkedSteps = 0
+    /// Steps an OBD 0 would have frozen (ZUPT or parked) that moving fixes
+    /// vetoed (N4B1-1, `NavigationConfig.zuptFixGate`); not in the other
+    /// step counts. 0 while the gate is off.
+    public var zuptVetoedSteps = 0
     public var fixesUsed = 0
     /// Fixes without a valid speed (cell tower, Wi-Fi).
     public var networkFixesUsed = 0
@@ -264,7 +268,7 @@ public struct NavigationCounters: Hashable, Sendable, Codable {
 
 extension NavigationCounters {
     private enum CodingKeys: String, CodingKey {
-        case steps, zuptSteps, staleSpeedSteps, staleParkedSteps, fixesUsed, networkFixesUsed, fixesIgnoredStale
+        case steps, zuptSteps, staleSpeedSteps, staleParkedSteps, zuptVetoedSteps, fixesUsed, networkFixesUsed, fixesIgnoredStale
         case fixesHeld, heldFixesUsed, heldFixesDroppedMoving, heldFixesDroppedTimeout, heldFixesReplaced
         case staleFixesIgnoredMoved
         case fixesIgnoredInvalid, courseUpdates, speedUpdates, reseeds, manualFixes, manualResets, resamples
@@ -294,6 +298,7 @@ extension NavigationCounters {
         zuptSteps = try value(.zuptSteps)
         staleSpeedSteps = try value(.staleSpeedSteps)
         staleParkedSteps = try value(.staleParkedSteps)
+        zuptVetoedSteps = try value(.zuptVetoedSteps)
         fixesUsed = try value(.fixesUsed)
         networkFixesUsed = try value(.networkFixesUsed)
         fixesIgnoredStale = try value(.fixesIgnoredStale)

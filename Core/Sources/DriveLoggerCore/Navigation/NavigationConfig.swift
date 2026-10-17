@@ -68,6 +68,37 @@ public struct NavigationConfig: Hashable, Sendable, Codable {
     /// While OBD is stale, heading noise is multiplied by this.
     public var staleHeadingNoiseFactor = 3.0
 
+    // MARK: OBD zero against moving fixes (N4B1-1)
+
+    /// Fix gate on OBD zeros (N4B1-1): 1 vetoes a step that an OBD 0 would
+    /// freeze (a fresh 0: zero-velocity update; a stale one: parked) while
+    /// recent good fixes show the car moving; 0: off. "Good": a valid
+    /// Doppler speed (not a network fix) and accuracy ≤ `cleanFixAccM`.
+    /// Evidence counts only from fixes whose own `t` is after the OBD 0
+    /// run began (the first 0 after a moving reply or none), so the GNSS
+    /// tail of a real stop, measured before OBD reached 0, never counts.
+    /// The veto holds while at least `zuptFixGateMinFixes` such fixes in a
+    /// row read ≥ `zuptFixGateMinSpeedMps` and the newest is at most
+    /// `zuptFixGateMaxAgeS` old at the step. A good fix under the speed
+    /// resets the run; a moving OBD reply ends it. A vetoed step moves like
+    /// a stale one (unknown-speed noise) at the newest such fix's Doppler
+    /// speed, not scaled (it is already a true speed). Causal: only fixes
+    /// already ingested count. Any value other than 0 or 1 is invalid
+    /// (`invalidReason`). On by default since 2026-10-18: on the acceptance
+    /// set (seeds 1–5, with and without roads) it never fires and every
+    /// output is byte-identical to off (docs/NAVIGATION.md "N4B1-1: OBD
+    /// zero against moving fixes").
+    public var zuptFixGate = 1
+    /// Doppler speed at or above which a good fix says "moving", m/s.
+    /// Valid: finite, > 0.
+    public var zuptFixGateMinSpeedMps = 5.0
+    /// Moving good fixes in a row, after the OBD 0 began, before the veto
+    /// holds. Valid: ≥ 1.
+    public var zuptFixGateMinFixes = 2
+    /// The newest moving fix's `t` at most this before the step, s.
+    /// Valid: finite, ≥ 0.
+    public var zuptFixGateMaxAgeS = 3.0
+
     // MARK: Catch-up and extrapolation
 
     /// One `ingest` runs at most this many stale grid steps one by one. A
@@ -352,7 +383,8 @@ extension NavigationConfig {
         case turnHeadingNoiseDegPerSqrtDeg, alongTrackNoisePerSqrtM, crossTrackNoisePerSqrtM, scaleNoisePerSqrtS
         case scalePriorMean, scalePriorStd, obdSpeedOffsetKmh, obdMaxAgeS
         case staleSpeedNoiseMpsPerSqrtS, staleSpeedDecayS, staleParkedMotionG, staleParkedMotionTauS
-        case staleHeadingNoiseFactor, maxCatchUpSteps, extrapolationHorizonS, maxForwardJumpS
+        case staleHeadingNoiseFactor, zuptFixGate, zuptFixGateMinSpeedMps, zuptFixGateMinFixes, zuptFixGateMaxAgeS
+        case maxCatchUpSteps, extrapolationHorizonS, maxForwardJumpS
         case reanchorDistanceM, maxMotionGapS, fixSigmaPerAccuracy, fixSigmaFloorM
         case networkFixInflation, networkFixCorrelationS, staleFixSigmaGrowthMps, staleFixAgeS
         case maxFixAgeS, heldFixTimeoutS, courseMinSpeedMps, courseSigmaFloorDeg
@@ -400,6 +432,10 @@ extension NavigationConfig {
         staleParkedMotionG = try c.decodeIfPresent(type(of: staleParkedMotionG), forKey: .staleParkedMotionG) ?? staleParkedMotionG
         staleParkedMotionTauS = try c.decodeIfPresent(type(of: staleParkedMotionTauS), forKey: .staleParkedMotionTauS) ?? staleParkedMotionTauS
         staleHeadingNoiseFactor = try c.decodeIfPresent(type(of: staleHeadingNoiseFactor), forKey: .staleHeadingNoiseFactor) ?? staleHeadingNoiseFactor
+        zuptFixGate = try c.decodeIfPresent(type(of: zuptFixGate), forKey: .zuptFixGate) ?? zuptFixGate
+        zuptFixGateMinSpeedMps = try c.decodeIfPresent(type(of: zuptFixGateMinSpeedMps), forKey: .zuptFixGateMinSpeedMps) ?? zuptFixGateMinSpeedMps
+        zuptFixGateMinFixes = try c.decodeIfPresent(type(of: zuptFixGateMinFixes), forKey: .zuptFixGateMinFixes) ?? zuptFixGateMinFixes
+        zuptFixGateMaxAgeS = try c.decodeIfPresent(type(of: zuptFixGateMaxAgeS), forKey: .zuptFixGateMaxAgeS) ?? zuptFixGateMaxAgeS
         maxCatchUpSteps = try c.decodeIfPresent(type(of: maxCatchUpSteps), forKey: .maxCatchUpSteps) ?? maxCatchUpSteps
         extrapolationHorizonS = try c.decodeIfPresent(type(of: extrapolationHorizonS), forKey: .extrapolationHorizonS) ?? extrapolationHorizonS
         maxForwardJumpS = try c.decodeIfPresent(type(of: maxForwardJumpS), forKey: .maxForwardJumpS) ?? maxForwardJumpS
@@ -547,6 +583,9 @@ extension NavigationConfig {
     /// - `roadAlongTrackCoupling` outside 0…1 (or not a number): the Joseph
     ///   form stays consistent for any gain, but a coupling outside the
     ///   Schmidt…Kalman range is a mistake, not a setting.
+    /// - The OBD-zero fix gate's keys (N4B1-1): `zuptFixGate` other than 0
+    ///   or 1, `zuptFixGateMinSpeedMps` not > 0, `zuptFixGateMinFixes`
+    ///   under 1, `zuptFixGateMaxAgeS` negative; any not finite.
     /// - The pin-vs-source keys (N3-FIXPIN): `roadFixPinCheck` and
     ///   `fixPinTwoPinCheck` other than 0 or 1 (switches, not weights);
     ///   `fixPinWindowS` outside (0, `maxFixPinWindowS`]; `fixPinInflation`
@@ -557,7 +596,25 @@ extension NavigationConfig {
         if !(roadAlongTrackCoupling >= 0 && roadAlongTrackCoupling <= 1) {
             return "roadAlongTrackCoupling must be in 0…1, got \(roadAlongTrackCoupling)"
         }
-        return fixPinInvalidReason
+        return fixPinInvalidReason ?? zuptFixGateInvalidReason
+    }
+
+    /// The OBD-zero fix gate's keys (N4B1-1): refused, not clamped, like the
+    /// pin-vs-source keys.
+    private var zuptFixGateInvalidReason: String? {
+        if zuptFixGate != 0 && zuptFixGate != 1 {
+            return "zuptFixGate must be 0 or 1, got \(zuptFixGate)"
+        }
+        if !(zuptFixGateMinSpeedMps > 0 && zuptFixGateMinSpeedMps.isFinite) {
+            return "zuptFixGateMinSpeedMps must be finite and > 0, got \(zuptFixGateMinSpeedMps)"
+        }
+        if zuptFixGateMinFixes < 1 {
+            return "zuptFixGateMinFixes must be ≥ 1, got \(zuptFixGateMinFixes)"
+        }
+        if !(zuptFixGateMaxAgeS >= 0 && zuptFixGateMaxAgeS.isFinite) {
+            return "zuptFixGateMaxAgeS must be finite and ≥ 0, got \(zuptFixGateMaxAgeS)"
+        }
+        return nil
     }
 
     private var fixPinInvalidReason: String? {
