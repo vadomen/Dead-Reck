@@ -832,3 +832,13 @@ Reviewer: two fresh reviewers (opus) in parallel: engine set and replay/tooling 
 | R37.2-3 | MINOR | `FixPinInjection.swift:316, :232`: the parallel rule's nearest-road margin (pin offset from its own road) and the second pin's own-ring minimum (a fix gap before pin 2) are not exercised; mutations survive. | DEFERRED | backlog. |
 
 Tests: Core 907 tests in 119 suites passed, 36 known issues (test 3); App/ unchanged.
+
+### Round 3
+
+Reviewer: one fresh reviewer (opus): 454ea01 plus a whole-range pass (key-off identity, covers reorder, nearestCompatibleDistance, injection driver, excludeFixes, privacy, imports). Mutation "drop `interior`" now killed (16 issues). Re-runs: drive-8 roads seed 1 keys off, HEAD vs main: GeoJSON byte-identical, metrics.json identical minus the new keys/counters at off values and timing (as R37.1-4 records); injection clean seed 1 (road, two-pin roads off) JSONL and stdout byte-identical to the study's r1 outputs. No findings.
+
+Tests: Core 907 tests in 119 suites passed, 36 known issues (test 3); App/ unchanged.
+
+### Run 37 summary
+
+3 rounds; 4 MAJOR fixed with tests (R37.1-1, R37.1-2, R37.1-3, R37.2-2; no production code changed by the loop), 0 rejected, 11 MINOR deferred (R37.1-4..12, R37.2-1, R37.2-3). Final: Core 907 tests passed, 36 known issues.
