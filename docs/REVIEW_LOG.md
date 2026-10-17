@@ -343,3 +343,17 @@ Tests: `cd Core && swift test` 955 passed, 36 known issues (KI-1); simulator bui
 ### Run 46 summary
 
 1 round; 0 fixed, 0 rejected, 1 MINOR deferred (R46.1-1).
+
+## Run 47: backlog sweep sensors batch 2 (89c3619..5ab430c, branch sweep-sensors2), started 2026-10-17
+
+Commits: 5ab430c R32.3-2 no `calibrationEnd` after a write failure during calibration, R4.1-3 stop and write-failure end paths hold a background task until the file is finished; tests for R14.3-6, R15.1-3 (skip branch reachable; the generation conditions argued unreachable and commented), R32.3-3, T-1, R5.1-5, R46.1-1.
+
+### Round 1
+
+Reviewer: one fresh reviewer (opus), checks 2, 5–11. The background task begins after every early return, ends once by `defer`, expiry makes the later end a no-op; concurrency clean; the R15.1-3 unreachability argument holds; forced orderings deterministic (FIFO main-actor executor, serialized suites); T-1 bounded and sharp. Mutations: none this round (the mutants worktree was assigned to another agent; no Core logic changed); author killed the Core `<` → `<=` mutation in `../dead-reck-mutants` and showed the App tests fail with each guarded line removed in its own worktree. Result: 0 BLOCKER / 0 MAJOR / 0 MINOR.
+
+Tests: `cd Core && swift test` 956 passed, 36 known issues (KI-1); simulator build OK; full AppTests 333 passed (author); RecordingSessionTests 6/6 runs (author).
+
+### Run 47 summary
+
+1 round; 0 fixed, 0 rejected, 0 deferred.
