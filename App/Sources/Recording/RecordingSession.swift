@@ -139,7 +139,7 @@ struct RecordingNavigationFeed: Sendable {
 /// **Start-up init (M4).** The link usually connects and initialises before
 /// Start, so at Start the session writes `link.lastInitEvents` — the current
 /// connection's BLE `→ connected` and init (`ATZ` … `ATSH7E0`, probe,
-/// `adapter`) — following that property's dedup contract: replay only at
+/// `adapter`, then the latest `adapter` and transition after it) — following that property's dedup contract: replay only at
 /// Start, live events after that. In one synchronous main-actor step (no
 /// suspension between the reads and the writes) it reads `lastInitEvents`
 /// and `deliveredLinkEventCount`, writes the replay rows through

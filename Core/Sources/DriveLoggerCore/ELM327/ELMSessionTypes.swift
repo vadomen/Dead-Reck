@@ -281,10 +281,11 @@ public struct PollingPlan: Hashable, Sendable {
     }
 }
 
-/// A poll plan chosen by start-up selection, and the adapter it was chosen
-/// on, carried into the next initialisation so it can skip selection and
-/// the `ATAT1`/`ATAT2` comparison (M6.1-3). See `ELMSession`, "Remembered
-/// poll plan".
+/// A poll plan chosen by start-up selection, and the adapter and vehicle it
+/// was chosen on, carried into the next initialisation so it can skip
+/// selection and the `ATAT1`/`ATAT2` comparison (M6.1-3). See `ELMSession`,
+/// "Remembered poll plan". In memory only (not `Codable`): nothing is
+/// persisted across app launches.
 public struct RememberedPollingPlan: Hashable, Sendable {
     /// The plan selection chose, `adaptiveTiming` and `requestHeader`
     /// included.
@@ -293,10 +294,52 @@ public struct RememberedPollingPlan: Hashable, Sendable {
     /// A different banner at the next `ATZ` means a different adapter (or
     /// firmware): the plan is not reused.
     public var elmVersion: String
+    /// The vehicle it was chosen on (M7.1-3): the same adapter moved to
+    /// another car must not reuse the first car's plan. Nil for a plan made
+    /// without one (the initialiser's default, and every plan from before
+    /// M7.1-3), which is never reused.
+    public var vehicle: VehicleKey?
 
-    public init(plan: PollingPlan, elmVersion: String) {
+    /// What identifies the vehicle, as far as the handshake can tell.
+    public struct VehicleKey: Hashable, Sendable {
+        /// `ATDPN` as reported, e.g. `A6`.
+        public var protocolNumber: String
+        /// The primary ECU's (`7E8`) `0100` bitmask, the 8 hex digits after
+        /// `41 00` (`BE1CA813` on the bench car); nil if it didn't answer
+        /// `0100`.
+        public var supportedPIDs: String?
+
+        public init(protocolNumber: String, supportedPIDs: String?) {
+            self.protocolNumber = protocolNumber
+            self.supportedPIDs = supportedPIDs
+        }
+
+        /// `protocolNumber` without whitespace, upper-cased, and without
+        /// the `A` that only says the protocol was auto-detected: `A6` and
+        /// `6` are the same protocol.
+        var protocolID: String {
+            let number = String(protocolNumber.filter { !$0.isWhitespace }).uppercased()
+            return number.count == 2 && number.hasPrefix("A") ? String(number.dropFirst()) : number
+        }
+
+        /// Why `current` is not the vehicle this key was made on, or nil if
+        /// it is (same protocol, same bitmask).
+        func mismatch(with current: VehicleKey) -> String? {
+            if protocolID != current.protocolID {
+                return "chosen on protocol \(protocolNumber), this vehicle reports \(current.protocolNumber)"
+            }
+            if supportedPIDs != current.supportedPIDs {
+                return "chosen on a vehicle whose 7E8 0100 bitmask is \(supportedPIDs ?? "absent"), "
+                    + "this one reports \(current.supportedPIDs ?? "none")"
+            }
+            return nil
+        }
+    }
+
+    public init(plan: PollingPlan, elmVersion: String, vehicle: VehicleKey? = nil) {
         self.plan = plan
         self.elmVersion = elmVersion
+        self.vehicle = vehicle
     }
 }
 

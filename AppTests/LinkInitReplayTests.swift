@@ -434,6 +434,87 @@ struct LinkInitReplayTests {
     }
 }
 
+// M7.1-5: the capture used to end at `→ polling`, so a later `.adapter`
+// re-announcement (a PID dropped on NO DATA) or ELM transition wasn't
+// replayed, and the header (from `link.adapter`/`link.plan`) and the last
+// replayed `adapter` row could disagree.
+@MainActor
+@Suite("lastInitEvents after the init (M7.1-5)", .serialized, .timeLimit(.minutes(1)))
+struct LinkInitReplayAfterInitTests {
+    static func info(_ pids: [OBDPID]) -> ELMAdapterInfo {
+        var plan = PollingPlan.baseline
+        plan.pids = pids
+        return ELMAdapterInfo(elmVersion: "ELM327 v2.1", protocolNumber: "A6", voltage: 12.4, supportedPIDs: nil, plan: plan)
+    }
+
+    @Test("InitCapture keeps the newest post-init adapter event and ELM transition, in arrival order; poll traffic and notes are not kept")
+    func captureKeepsNewestAfterInit() {
+        var capture = InitCapture(limit: 100)
+        let connected = LinkEvent.ble(from: .discovering, to: .connected, reason: "notify FFE1", uptime: 1)
+        capture.ble(connected, from: .discovering, to: .connected)
+        capture.sessionStarted(token: 7)
+        func event(_ sessionEvent: ELMSessionEvent) -> LinkEvent { .session(sessionEvent) }
+        func feed(_ sessionEvent: ELMSessionEvent) { capture.session(.session(sessionEvent), token: 7) }
+
+        let initEvents: [ELMSessionEvent] = [
+            .state(from: .idle, to: .resetting, reason: nil, uptime: 2),
+            .adapter(Self.info([.vehicleSpeed, .engineSpeed]), uptime: 3),
+            .state(from: .probing, to: .ready, reason: nil, uptime: 3),
+            .state(from: .ready, to: .polling, reason: nil, uptime: 4),
+        ]
+        initEvents.forEach(feed)
+        feed(.exchange(ELMExchange(seq: 30, phase: .poll, tx: "010C", requestUptime: 5, rx: "NO DATA\r\r", completedUptime: 5.1, outcome: .noData)))
+        feed(.state(from: .polling, to: .polling, reason: "a note", uptime: 5.2))
+        let dropped = ELMSessionEvent.adapter(Self.info([.vehicleSpeed]), uptime: 5.2)
+        feed(dropped)
+        #expect(capture.events == [connected] + initEvents.map(event) + [event(dropped)])
+
+        let retrying = ELMSessionEvent.state(from: .polling, to: .retrying, reason: "timeout", uptime: 6)
+        let recovered = ELMSessionEvent.state(from: .retrying, to: .polling, reason: "recovered", uptime: 6.1)
+        feed(retrying)
+        #expect(Array(capture.events.suffix(2)) == [event(dropped), event(retrying)])
+        feed(recovered)
+        #expect(Array(capture.events.suffix(2)) == [event(dropped), event(recovered)], "the newest transition replaces the older")
+        let again = ELMSessionEvent.adapter(Self.info([.vehicleSpeed]), uptime: 7)
+        feed(again)
+        #expect(Array(capture.events.suffix(2)) == [event(recovered), event(again)], "a newer adapter event goes last")
+        #expect(capture.events.count == 1 + initEvents.count + 2)
+
+        // Another session's events never count.
+        capture.session(.session(.adapter(Self.info([.engineSpeed]), uptime: 8)), token: 6)
+        #expect(capture.events.last == event(again))
+
+        // A new init on the connection replaces the init and what followed it.
+        let reinit = ELMSessionEvent.state(from: .polling, to: .reinitialising, reason: "timeout", uptime: 9)
+        feed(reinit)
+        #expect(capture.events == [connected, event(reinit)])
+    }
+
+    @Test("A PID dropped on NO DATA after polling started: the replay ends with the adapter event for the plan polled, which matches link.plan")
+    func droppedPIDReplayed() async throws {
+        // No probing: 010D every cycle, 010C every 5th; 010C has never
+        // answered, so its NO DATA drops it and the adapter is re-announced.
+        let script = LinkTestSupport.touareg(overrides: [MockELMAdapter.Rule(command: "010C", reply: "NO DATA\r\r>")])
+        let central = FakeBLECentral(scripts: [script])
+        let link = LinkTestSupport.service(central)
+        let log = LinkEventLog(link.linkEvents())
+        link.connect(to: FakeBLECentral.adapterID)
+        #expect(await eventually { link.state.isPolling && link.plan?.pids == [.vehicleSpeed] && log.readings.count >= 2 })
+
+        let replay = link.lastInitEvents
+        let adapters = replay.compactMap { if case .session(.adapter(let info, _)) = $0 { info } else { nil } }
+        #expect(adapters.map(\.plan.pids) == [[.vehicleSpeed, .engineSpeed], [.vehicleSpeed]])
+        #expect(adapters.last?.plan == link.plan, "the last replayed adapter row is what the header says")
+        #expect(replay.last?.isAdapter == true)
+        #expect(!replay.compactMap(\.exchange).contains { $0.phase == .poll }, "no poll traffic")
+        // Written by a recorder starting now: the same rows as live.
+        #expect(await eventually { log.events.count == link.deliveredLinkEventCount })
+        let lastAdapter = try #require(log.events.lastIndex { $0.isAdapter })
+        #expect(replay.last == log.events[lastAdapter])
+        link.disconnect()
+    }
+}
+
 @MainActor
 @Suite("SimulatedOBDLink lastInitEvents (M4)", .serialized, .timeLimit(.minutes(1)))
 struct SimulatedLinkInitReplayTests {

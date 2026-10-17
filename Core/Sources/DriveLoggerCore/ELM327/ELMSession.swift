@@ -34,7 +34,13 @@ import Foundation
 ///
 /// - A poll **failure** is any outcome other than `ok` (and other than a
 ///   droppable `NO DATA`, below): timeout, `?`, `CAN ERROR`, malformed, …,
-///   or a failed write. Failures are retried after `retryDelay`; the
+///   or a failed write. Replies are parsed per ECU (M1-E1,
+///   `ELM327ResponseParser.scanReplies`): a bad or status line from one ECU
+///   leaves the others' answers standing, and the exchange is `ok` if the
+///   primary ECU's (`7E8`) answer decoded; every ECU that decoded yields
+///   readings. Only when the primary's answer is lost does the reply's
+///   status (or `malformed`) become the outcome. The same rule applies to
+///   probe exchanges and the handshake's `0100`. Failures are retried after `retryDelay`; the
 ///   `failuresBeforeReinit`-th consecutive one re-runs the handshake (after
 ///   `reinitBackoff × 2^(n−1)` for attempt `n`), then retries the command.
 /// - A re-init "fails" if a handshake step fails, or if polling fails
@@ -68,7 +74,11 @@ import Foundation
 ///   takes the first whose every sample carries the primary ECU's value for
 ///   every requested PID. Under functional addressing the suffix steps are
 ///   skipped: `010D0C` → `010D`. Selection sends each command
-///   `probeSamples` (3) times.
+///   `probeSamples` (3) times. A first sample that times out is sent once
+///   more before the step is given up (B1-1), with a note `start-up
+///   selection: <tx> timed out on its first sample; retrying once`; if the
+///   timed-out command's prompt never comes, the retry finds the link
+///   desynchronised and init restarts from `ATZ`.
 /// - **`ATAT1` unless `ATAT2` is clearly better** (M4 bench: a 3-sample
 ///   probe flipped to `ATAT2` on a 4.6 ms edge that the steady state did not
 ///   show). The chosen command is sent `adaptiveTimingSamples` (10) times at
@@ -135,19 +145,29 @@ import Foundation
 /// each reconnect widened the OBD gap by ~1 s. A plan chosen on the same
 /// adapter is now reused.
 /// - **What is remembered.** `rememberedPlan`: the plan selection chose
-///   (`adaptiveTiming` and `requestHeader` included) and the `ATZ` banner
-///   it was chosen on. Passed in by the owner (the previous session's, on
+///   (`adaptiveTiming` and `requestHeader` included), the `ATZ` banner it
+///   was chosen on, and the vehicle (`ATDPN` and the primary ECU's `0100`
+///   bitmask, M7.1-3). Passed in by the owner (the previous session's, on
 ///   the same peripheral), and replaced by every `initialise()`: the plan
-///   its selection chose, nil if nothing parsed. Only plans from selection
-///   are remembered (`probe` configured); without probing it is ignored and
-///   left as it is.
+///   its selection chose, nil if nothing parsed or if selection dropped a
+///   PID on NO DATA (M7.1-1: that drop is for this session only, so the
+///   next connection must select again and give the PID a fresh chance).
+///   Only plans from selection are remembered (`probe` configured); without
+///   probing it is ignored and left as it is. Polling that escalates to
+///   `failed` + `needsReconnect` clears it (M7.1-2), so the next connection
+///   selects again; a transport loss keeps it.
 /// - **The handshake always runs in full** (`ATZ` … `ATSP0`, `0100`,
 ///   `ATDPN`, `ATRV`), and the `ATSH7E0` gate is re-evaluated as on every
 ///   init. Then (state `probing`, after letting a late `ATSH7E0` reply
 ///   land) the remembered plan is **not reused** — note `remembered poll
 ///   plan not reused: <why>; selecting again`, then selection as usual — if
 ///   it fails `PollingPlan.validate()` (`invalid (<error>)`), if the banner
-///   differs (`chosen on <old>, this adapter reports <new>`), or if its
+///   differs (`chosen on <old>, this adapter reports <new>`), if the
+///   vehicle differs (`chosen on protocol <old>, this vehicle reports
+///   <new>`, comparing `A6` and `6` as one protocol; `chosen on a vehicle
+///   whose 7E8 0100 bitmask is <old|absent>, this one reports <new|none>`)
+///   or isn't known (`chosen without a vehicle key (ATDPN, 7E8 0100
+///   bitmask)`: a plan made without one), or if its
 ///   addressing isn't what the gate produced this time (`chosen with
 ///   requestHeader <7E0|7DF>, this handshake left requests at <7DF|7E0>`: a
 ///   7E0 plan whose `ATSH7E0` was skipped or refused, or a functional plan
@@ -311,7 +331,9 @@ public actor ELMSession {
     /// The plan the next `initialise()` tries before selecting (see
     /// "Remembered poll plan"): the one passed to `init`, then whatever each
     /// `initialise()` leaves — the plan its selection chose, the remembered
-    /// one if its check passed, nil if it failed and nothing was selected.
+    /// one if its check passed, nil if it failed and nothing was selected
+    /// or if selection dropped a PID (M7.1-1) — and nil once polling has
+    /// escalated to `failed` (M7.1-2).
     /// Read it after `shutdown()` to seed the session for the next
     /// connection to the same adapter, as with `nextSeq`.
     public private(set) var rememberedPlan: RememberedPollingPlan?
@@ -769,7 +791,8 @@ public actor ELMSession {
         guard elevenBitCANProtocols.contains(number) else {
             return "protocol \(protocolNumber) is not 11-bit ISO 15765-4 CAN (6, A6, 8, A8)"
         }
-        let replies = supportedPIDs.flatMap { try? ELM327ResponseParser.replies(in: $0, headers: true) } ?? []
+        // Intact answers only (M1-E1): another ECU's bad line doesn't hide 7E8's.
+        let replies = supportedPIDs.map { ELM327ResponseParser.scanReplies(in: $0, headers: true).replies } ?? []
         guard replies.contains(where: { $0.header == "7E8" && $0.bytes.starts(with: [0x41, 0x00]) }) else {
             return "no 7E8 reply to 0100"
         }
@@ -800,8 +823,15 @@ public actor ELMSession {
     ) -> (outcome: ELMOutcome, value: InitValue?) {
         do {
             if command == .supportedPIDs {
-                let replies = try ELM327ResponseParser.replies(in: raw, headers: headers)
-                guard replies.contains(where: { $0.bytes.starts(with: [0x41, 0x00]) }) else { return (.malformed, nil) }
+                // Per ECU (M1-E1), as for polls: with a bad or status line
+                // in the reply, only the primary ECU's answer counts.
+                let scan = ELM327ResponseParser.scanReplies(in: raw, headers: headers)
+                let answers = scan.replies.filter {
+                    $0.bytes.starts(with: [0x41, 0x00]) && (scan.faults.isEmpty || $0.isFromPrimaryECU)
+                }
+                guard !answers.isEmpty else {
+                    return (scan.faults.isEmpty ? .malformed : outcome(for: scan.error ?? .emptyResponse), nil)
+                }
                 return (.ok, .supported(raw))
             }
             switch (command, try ELM327ResponseParser.textReply(to: command.wireFormat, raw: raw)) {
@@ -929,7 +959,7 @@ public actor ELMSession {
             reusable = nil
             // A late ATSH7E0 OK changes the addressing: let it land first.
             try await settleOwedPromptsInSlot()
-            if let mismatch = reuseMismatch(remembered, banner: found.banner) {
+            if let mismatch = reuseMismatch(remembered, found: found) {
                 noteState(reason: "remembered poll plan not reused: \(mismatch); selecting again")
             } else {
                 noteState(reason: "poll plan reused from the \(rememberedPlanOrigin): " + Self.describe(remembered.plan))
@@ -945,24 +975,59 @@ public actor ELMSession {
             }
         }
         let (plan, selected) = try await probe()
-        rememberedPlan = selected ? RememberedPollingPlan(plan: plan, elmVersion: found.banner) : nil
+        // Only a full selection is remembered (M7.1-1): a plan that lost a
+        // PID to the NO DATA rule would keep it lost on every reconnect,
+        // although the rule drops a PID for this session only.
+        let full = plan.pids == PollingPlan.baseline.pids
+        rememberedPlan = selected && full
+            ? RememberedPollingPlan(plan: plan, elmVersion: found.banner, vehicle: Self.vehicleKey(found))
+            : nil
         rememberedPlanOrigin = "previous initialisation"
         return plan
     }
 
+    /// The vehicle as this handshake saw it (M7.1-3): `ATDPN` and the
+    /// primary ECU's `0100` bitmask.
+    private static func vehicleKey(_ found: HandshakeResult) -> RememberedPollingPlan.VehicleKey {
+        RememberedPollingPlan.VehicleKey(
+            protocolNumber: found.protocolNumber,
+            supportedPIDs: primarySupportedPIDs(found.supportedPIDs)
+        )
+    }
+
+    /// The 8 hex digits after `41 00` in the primary ECU's intact answer to
+    /// `0100` (headers on), e.g. `BE1CA813`; nil without one.
+    static func primarySupportedPIDs(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        let replies = ELM327ResponseParser.scanReplies(in: raw, headers: true).replies
+        guard let answer = replies.first(where: {
+            $0.isFromPrimaryECU && $0.bytes.count >= 6 && $0.bytes.starts(with: [0x41, 0x00])
+        }) else { return nil }
+        return answer.bytes[2..<6].map { String(format: "%02X", $0) }.joined()
+    }
+
     /// Why `remembered` can't be reused after this handshake, or nil if it
     /// can: it must pass `validate()`, come from an adapter with the same
-    /// `ATZ` banner, and have the addressing the `ATSH7E0` gate produced
-    /// this time (a 7E0 plan needs `ATSH7E0` answered `OK`; a functional
-    /// plan needs it skipped or refused).
-    private func reuseMismatch(_ remembered: RememberedPollingPlan, banner: String) -> String? {
+    /// `ATZ` banner and from the same vehicle (`ATDPN` and the primary
+    /// ECU's `0100` bitmask; a plan without that key never matches), and
+    /// have the addressing the `ATSH7E0` gate produced this time (a 7E0
+    /// plan needs `ATSH7E0` answered `OK`; a functional plan needs it
+    /// skipped or refused).
+    private func reuseMismatch(_ remembered: RememberedPollingPlan, found: HandshakeResult) -> String? {
         do {
             try remembered.plan.validate()
         } catch {
             return "invalid (\(error))"
         }
+        let banner = found.banner
         if !remembered.elmVersion.isEmpty, remembered.elmVersion != banner {
             return "chosen on \(remembered.elmVersion), this adapter reports \(banner)"
+        }
+        guard let vehicle = remembered.vehicle else {
+            return "chosen without a vehicle key (ATDPN, 7E8 0100 bitmask)"
+        }
+        if let mismatch = vehicle.mismatch(with: Self.vehicleKey(found)) {
+            return mismatch
         }
         if remembered.plan.requestHeader != planHeader {
             let chosen = remembered.plan.requestHeader ?? .functional
@@ -1020,7 +1085,7 @@ public actor ELMSession {
         var pids = PollingPlan.baseline.pids
         selection: while !pids.isEmpty {
             for candidate in Self.candidates(pidCount: pids.count, physical: physical) {
-                switch try await measure(candidate, pids: pids, rpmEvery: rpmEvery, mayDrop: true) {
+                switch try await measure(candidate, pids: pids, rpmEvery: rpmEvery, mayDrop: true, retriesFirstTimeout: true) {
                 case .valid(let cost):
                     return Selection(pids: pids, chosen: (candidate, cost))
                 case .drop(let pid):
@@ -1098,21 +1163,29 @@ public actor ELMSession {
 
     /// Sends a candidate's commands, `samples` times each, stopping at the
     /// first that doesn't parse. Each command's cost is its median latency.
+    /// `retriesFirstTimeout` (start-up selection, B1-1): see
+    /// `measure(_:pids:samples:retriesFirstTimeout:)`.
     private func measure(
         _ candidate: Candidate,
         pids: [OBDPID],
         rpmEvery: Int,
         mayDrop: Bool,
+        retriesFirstTimeout: Bool = false,
         samples: Int = probeSamples
     ) async throws(ELMSessionError) -> CandidateResult {
         if candidate.multiPID {
             let command = ELM327Command.currentDataMany(pids, responseCount: candidate.responseCount)
-            guard case .valid(let latency) = try await measure(command, pids: pids, samples: samples) else { return .invalid }
+            guard case .valid(let latency) = try await measure(
+                command, pids: pids, samples: samples, retriesFirstTimeout: retriesFirstTimeout
+            ) else { return .invalid }
             return .valid(cost: latency)
         }
         var latencies: [Double] = []
         for pid in pids {
-            switch try await measure(.currentDataMany([pid], responseCount: candidate.responseCount), pids: [pid], samples: samples) {
+            switch try await measure(
+                .currentDataMany([pid], responseCount: candidate.responseCount), pids: [pid], samples: samples,
+                retriesFirstTimeout: retriesFirstTimeout
+            ) {
             case .valid(let latency):
                 latencies.append(latency)
             case .noData where mayDrop && candidate.responseCount == nil && isDroppableOnNoData(pid):
@@ -1144,13 +1217,33 @@ public actor ELMSession {
     }
 
     /// `command` sent `samples` times; its median latency, or why not.
-    private func measure(_ command: ELM327Command, pids: [OBDPID], samples: Int) async throws(ELMSessionError) -> ProbeResult {
+    ///
+    /// `retriesFirstTimeout` (B1-1, start-up selection only): if the first
+    /// sample times out, it is sent once more, with a note `start-up
+    /// selection: <tx> timed out on its first sample; retrying once`, before
+    /// the step is given up. The retry goes out like any command: owed
+    /// prompts are settled first, and a written-off one desynchronises the
+    /// link, which restarts init from `ATZ` (the re-init path).
+    private func measure(
+        _ command: ELM327Command,
+        pids: [OBDPID],
+        samples: Int,
+        retriesFirstTimeout: Bool = false
+    ) async throws(ELMSessionError) -> ProbeResult {
         var latencies: [Double] = []
-        for _ in 0..<max(samples, 1) {
+        var retried = false
+        var sample = 0
+        while sample < max(samples, 1) {
             let headers = headersOn
             let (exchange, decoded) = try await perform(command, phase: .probe, timeout: configuration.commandTimeout) { raw in
                 Self.interpretPoll(raw, pids: pids, headers: headers)
             }
+            if exchange.outcome == .timeout, sample == 0, retriesFirstTimeout, !retried {
+                retried = true
+                noteState(reason: "start-up selection: \(exchange.tx) timed out on its first sample; retrying once")
+                continue
+            }
+            sample += 1
             if exchange.outcome == .noData { return .noData }
             guard let decoded else { return .invalid }
             let fromPrimary = Set(decoded.filter { OBDReading.isPrimaryECU($0.ecu) }.map(\.measurement.pid))
@@ -1458,6 +1551,10 @@ public actor ELMSession {
         var reason = failure
         while true {
             if reinitsWithoutSuccess >= configuration.reinitsBeforeReconnect {
+                // Polling failed on this plan (M7.1-2): the next connection
+                // selects again instead of reusing it. A transport loss
+                // keeps it (it ends polling before this, as a rule).
+                if !transportClosed, !isShutdown { rememberedPlan = nil }
                 setState(.failed, reason: "\(reinitsWithoutSuccess) re-init(s) did not restore polling; last: \(reason)")
                 continuation.yield(.needsReconnect(uptime: uptime.uptimeSeconds))
                 return false
@@ -2162,19 +2259,25 @@ public actor ELMSession {
         pids: [OBDPID],
         headers: Bool
     ) -> (outcome: ELMOutcome, value: [DecodedValue]?) {
-        do {
-            let replies = try ELM327ResponseParser.replies(in: raw, headers: headers)
-            var decoded: [DecodedValue] = []
-            for reply in replies {
-                // An ECU answer that doesn't decode (e.g. a 7F negative
-                // response from another module) stays in the raw text only.
-                guard let measurements = try? OBDDecoder.decode(requested: pids, bytes: reply.bytes) else { continue }
-                decoded += measurements.map { DecodedValue(ecu: reply.header, measurement: $0) }
-            }
-            return decoded.isEmpty ? (.malformed, nil) : (.ok, decoded)
-        } catch {
-            return (outcome(for: error), nil)
+        // Per ECU (M1-E1): an ECU whose lines don't parse is left out.
+        let scan = ELM327ResponseParser.scanReplies(in: raw, headers: headers)
+        var decoded: [DecodedValue] = []
+        for reply in scan.replies {
+            // An ECU answer that doesn't decode (e.g. a 7F negative
+            // response from another module) stays in the raw text only.
+            guard let measurements = try? OBDDecoder.decode(requested: pids, bytes: reply.bytes) else { continue }
+            decoded += measurements.map { DecodedValue(ecu: reply.header, measurement: $0) }
         }
+        if !scan.faults.isEmpty {
+            // A bad or status line fails the exchange only if the primary
+            // ECU's answer didn't decode; otherwise every ECU that decoded
+            // is kept, and the raw reply records the rest.
+            guard decoded.contains(where: { OBDReading.isPrimaryECU($0.ecu) }) else {
+                return (outcome(for: scan.error ?? .emptyResponse), nil)
+            }
+            return (.ok, decoded)
+        }
+        return decoded.isEmpty ? (.malformed, nil) : (.ok, decoded)
     }
 
     private static func interpretAcknowledgement(_ raw: String, wire: String) -> (outcome: ELMOutcome, value: Void?) {
