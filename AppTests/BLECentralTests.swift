@@ -20,4 +20,17 @@ struct BLECentralTests {
         #expect(!BLECentral.invalidatesPeripherals(.poweredOn))
         #expect(!BLECentral.invalidatesPeripherals(.poweredOff))
     }
+
+    // R3.2-2: a second connect for the same peripheral (the central's own
+    // on poweredOn, racing the service's) used to call `connect` again on a
+    // pending connection and restart discovery on a connected one, which
+    // could lose the notify callback and leave the link `discovering`.
+    @Test("connect: one CoreBluetooth connect and one discovery per connection, however often it is asked")
+    func connectSteps() {
+        #expect(BLECentral.connectStep(.disconnected, discovering: false) == .connect)
+        #expect(BLECentral.connectStep(.disconnecting, discovering: false) == .connect)
+        #expect(BLECentral.connectStep(.connecting, discovering: false) == .awaitConnect)
+        #expect(BLECentral.connectStep(.connected, discovering: false) == .adopt, "restored or connected elsewhere")
+        #expect(BLECentral.connectStep(.connected, discovering: true) == .joinDiscovery, "never a second discovery")
+    }
 }

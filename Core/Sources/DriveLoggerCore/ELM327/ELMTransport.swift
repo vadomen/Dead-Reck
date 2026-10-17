@@ -33,6 +33,13 @@ public protocol ELMTransport: Sendable {
     /// Every inbound fragment, in arrival order. Finishes when the link drops.
     /// Single consumer.
     var incoming: AsyncStream<ELMChunk> { get }
+
+    /// Whether the link has dropped: `incoming` has finished, or is
+    /// finishing in the same close. `ELMSession.shutdown()` asks, so that a
+    /// shutdown which arrives right behind a link loss still records the
+    /// loss (`failed`, `transport closed`) and every byte delivered before it
+    /// (R32.2-4). Must not stay false once `incoming` has finished.
+    var isClosed: Bool { get async }
 }
 
 /// Errors a transport reports.

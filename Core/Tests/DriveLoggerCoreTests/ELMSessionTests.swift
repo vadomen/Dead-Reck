@@ -712,6 +712,26 @@ struct ELMSessionBoundaryTests {
         await #expect(throws: ELMSessionError.self) { try await harness.session.startPolling(.baseline) }
     }
 
+    // R32.2-4: the link service shuts a session down as soon as BLE reports
+    // the disconnect, which can be before the session's reader has seen
+    // `incoming` finish. The loss must still be recorded as one.
+    @Test("Shutdown right after the transport closed records failed (transport closed), not idle (shutdown)")
+    func shutdownAfterTransportLost() async throws {
+        let harness = SessionHarness(rules: pacedRules())
+        _ = try await harness.initialise()
+        try await harness.session.startPolling(singlePlan())
+        await harness.run { await $0.readings.count >= 2 }
+        await harness.mock.disconnect()
+        await harness.session.shutdown()
+        await harness.run { await $0.finished }
+        let transitions = await harness.log.transitions
+        let last = try #require(transitions.last)
+        #expect(last.to == .failed)
+        #expect(last.reason == "transport closed")
+        #expect(!transitions.contains { $0.to == .idle }, "not recorded as a shutdown")
+        #expect(await harness.session.state == .failed)
+    }
+
     @Test("stopPolling returns to ready and polling can restart")
     func stopAndRestart() async throws {
         let harness = SessionHarness(rules: pacedRules())

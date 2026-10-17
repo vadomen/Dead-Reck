@@ -36,7 +36,13 @@ enum BLECentralEvent: Sendable {
     /// Connected, but no usable UART pair (or notifications refused). The
     /// connection is being cancelled.
     case unusable(UUID, table: [GATTServiceRecord], reason: String, uptime: Double)
+    /// The link dropped without being asked to: unplugged, out of range,
+    /// Bluetooth off, the UART service invalidated.
     case disconnected(UUID, reason: String?, uptime: Double)
+    /// The disconnect a `cancelConnection` asked for has completed. Never a
+    /// link loss: the caller has moved on already, and treating it as one
+    /// would drop a connection made since (R3.1-3).
+    case cancelled(UUID, uptime: Double)
     /// An acknowledged write failed (`didWriteValueFor` with an error).
     case writeFailed(UUID, reason: String, uptime: Double)
 }
@@ -52,8 +58,12 @@ protocol BLECentralClient: AnyObject, Sendable {
     /// Connects (or, after restoration, adopts an existing connection) and
     /// runs GATT discovery. A connection attempt doesn't time out: iOS keeps
     /// it pending until the adapter is in range, in the background too.
+    /// The caller is the only one who connects; a connect for a peripheral
+    /// already connecting or discovering doesn't start a second one (R3.2-2).
     func connect(_ id: UUID)
     /// Cancels an active or pending connection and closes its transport now.
+    /// Its disconnect callback, if one comes, is reported as `.cancelled`,
+    /// not `.disconnected`.
     func cancelConnection(_ id: UUID)
 }
 
@@ -73,6 +83,13 @@ protocol BLECentralClient: AnyObject, Sendable {
 /// - Every retained peripheral is dropped when Bluetooth goes resetting,
 ///   unknown, unauthorized or unsupported (`invalidatesPeripherals`); the
 ///   next `connect` retrieves the identifier again.
+/// - Never connects on its own: on `poweredOn` the service reconnects, so
+///   there is one connect, not two racing ones (R3.2-2). A `connect` for a
+///   peripheral that is connecting or mid-discovery joins it
+///   (`connectStep`).
+/// - A disconnect it was asked for (`cancelConnection`) is reported as
+///   `.cancelled`, so a late callback can't pass for the loss of a
+///   connection made after it (R3.1-3).
 ///
 /// Threading: CoreBluetooth calls and delegate callbacks run on `queue`.
 /// Mutable state is guarded by `lock` (docs/PLAN.md §4.0); CoreBluetooth is
@@ -111,6 +128,12 @@ final class BLECentral: NSObject, BLECentralClient, Sendable {
     private nonisolated(unsafe) var awaitingDisconnect: Set<UUID> = []
     // Guarded by `lock`. A connect requested while `awaitingDisconnect`.
     private nonisolated(unsafe) var deferredConnect: UUID?
+    // Guarded by `lock`. Asked to disconnect by `cancelConnection`: the next
+    // disconnect callback for the id is `.cancelled`. Cleared by that
+    // callback, or when the id connects again — CoreBluetooth delivers a
+    // connection's disconnect before the next one's `didConnect`, so a mark
+    // never outlives the connection it was meant for.
+    private nonisolated(unsafe) var requestedDisconnect: Set<UUID> = []
 
     /// - Parameter restoreIdentifier: enables CoreBluetooth state
     ///   restoration; requires the `bluetooth-central` background mode.
@@ -172,6 +195,7 @@ final class BLECentral: NSObject, BLECentralClient, Sendable {
                 }
                 let peripheral = self.known[id]
                 if peripheral?.state == .connected { self.awaitingDisconnect.insert(id) }
+                if let state = peripheral?.state, state != .disconnected { self.requestedDisconnect.insert(id) }
                 return (self.manager, peripheral, closing)
             }
             closing?.close(reason: "disconnect requested")
@@ -208,25 +232,66 @@ final class BLECentral: NSObject, BLECentralClient, Sendable {
 
     private func connectNow(_ id: UUID) {
         let (manager, targetStill) = lock.withLock { (self.manager, self.target == id) }
-        guard targetStill, let manager, manager.state == .poweredOn else { return }   // retried on poweredOn
+        guard targetStill, let manager, manager.state == .poweredOn else { return }   // the service connects again on poweredOn
         let peripheral = lock.withLock { known[id] } ?? manager.retrievePeripherals(withIdentifiers: [id]).first
         guard let peripheral else {
             emit(.connectFailed(id, reason: "not known to this phone; scan and pick it again", uptime: uptime.uptimeSeconds))
             return
         }
-        lock.withLock { known[id] = peripheral }
+        let discovering = lock.withLock { () -> Bool in
+            known[id] = peripheral
+            return discovery?.id == id
+        }
         peripheral.delegate = self
-        if peripheral.state == .connected {
-            // Restored by the system, or connected by another app: adopt it.
-            startDiscovery(peripheral)
-        } else {
+        switch Self.connectStep(peripheral.state, discovering: discovering) {
+        case .connect:
             manager.connect(peripheral, options: nil)
+        case .adopt:
+            // Restored by the system, or connected by another app. A
+            // transport still held for it is stale: whoever asked for this
+            // connect has no session on it.
+            _ = closeTransport(for: id, reason: "superseded by a new connect")
+            startDiscovery(peripheral)
+        case .awaitConnect:
+            break
+        case .joinDiscovery:
+            emit(.connected(id, uptime: uptime.uptimeSeconds))
+        }
+    }
+
+    /// What `connect` does with a peripheral (R3.2-2): one connect and one
+    /// discovery per connection, however often it is asked.
+    enum ConnectStep: Hashable, Sendable {
+        /// Not connected: `CBCentralManager.connect`.
+        case connect
+        /// Connected — restored by the system, or by another app — with no
+        /// discovery running: discover.
+        case adopt
+        /// A connect is already pending; its `didConnect` starts discovery.
+        case awaitConnect
+        /// Discovery is already running: report `.connected` again so the
+        /// caller's state follows, but don't restart it (a restart can lose
+        /// the notify callback of the first run).
+        case joinDiscovery
+    }
+
+    nonisolated static func connectStep(_ state: CBPeripheralState, discovering: Bool) -> ConnectStep {
+        switch state {
+        case .connected: discovering ? .joinDiscovery : .adopt
+        case .connecting: .awaitConnect
+        case .disconnected, .disconnecting: .connect
+        @unknown default: .connect
         }
     }
 
     private func startDiscovery(_ peripheral: CBPeripheral) {
         let id = peripheral.identifier
-        lock.withLock { discovery = Discovery(id: id, pendingServices: 0) }
+        lock.withLock {
+            discovery = Discovery(id: id, pendingServices: 0)
+            // A new connection: a requested disconnect still marked belonged
+            // to an earlier one, whose callback has come or never will.
+            requestedDisconnect.remove(id)
+        }
         emit(.connected(id, uptime: uptime.uptimeSeconds))
         peripheral.discoverServices(nil)
     }
@@ -392,6 +457,7 @@ extension BLECentral: CBCentralManagerDelegate {
             let stale = lock.withLock { () -> [CBPeripheral] in
                 discovery = nil
                 awaitingDisconnect.removeAll()
+                requestedDisconnect.removeAll()
                 deferredConnect = nil
                 // Below poweredOff every peripheral of this manager is
                 // invalid; a connect on one can hang for good. Forget them
@@ -405,7 +471,9 @@ extension BLECentral: CBCentralManagerDelegate {
         emit(.availability(availability, uptime: now))
         guard availability == .poweredOn else { return }
         scanIfPossible(start: false)
-        if let target = lock.withLock({ target }) { connectNow(target) }
+        // No connect to `target` here: the service reconnects on
+        // `.availability(.poweredOn)`, and a second connect from this layer
+        // raced it into a restarted discovery (R3.2-2).
     }
 
     func centralManager(_ central: CBCentralManager, willRestoreState dict: [String: Any]) {
@@ -456,11 +524,12 @@ extension BLECentral: CBCentralManagerDelegate {
         let id = peripheral.identifier
         let reason = error?.localizedDescription
         _ = closeTransport(for: id, reason: reason ?? "disconnected")
-        lock.withLock {
+        let requested = lock.withLock { () -> Bool in
             if discovery?.id == id { discovery = nil }
             awaitingDisconnect.remove(id)
+            return requestedDisconnect.remove(id) != nil
         }
-        emit(.disconnected(id, reason: reason, uptime: now))
+        emit(requested ? .cancelled(id, uptime: now) : .disconnected(id, reason: reason, uptime: now))
         connectDeferred(id, force: false)
     }
 }

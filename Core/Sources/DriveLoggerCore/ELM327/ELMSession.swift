@@ -30,6 +30,7 @@ import Foundation
 /// reinitialising ─limit reached→ failed (+ needsReconnect)
 /// polling ─stopPolling() or every PID NO DATA→ ready
 /// any ─transport closes→ failed;  any ─shutdown()→ idle
+///     (failed instead if the transport had closed already: R32.2-4)
 /// ```
 ///
 /// - A poll **failure** is any outcome other than `ok` (and other than a
@@ -581,7 +582,18 @@ public actor ELMSession {
 
     /// Stops polling, abandons a command still in flight, goes `idle` and
     /// finishes `events`. Idempotent.
+    ///
+    /// If the transport has already closed (`ELMTransport.isClosed`), the
+    /// reader first drains `incoming`, so the session ends as a link loss
+    /// would — every delivered byte recorded, then `failed` with
+    /// `transport closed` — rather than `idle`, whichever the caller noticed
+    /// first: the link service shuts the session down on the BLE disconnect,
+    /// which can overtake the reader (R32.2-4).
     public func shutdown() async {
+        guard !isShutdown else { return }
+        if !transportClosed, let reader = readerTask, await transport.isClosed {
+            await reader.value
+        }
         guard !isShutdown else { return }
         isShutdown = true
         stopRequested = true
