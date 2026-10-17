@@ -502,7 +502,7 @@ Since the double tap, a pin can be placed at any speed. Its row records `obdSpee
 - **Road truth (offline, labelled, tools only):**
   - For each withheld clean fix (≤ 15 m with a valid course), find the nearest
     heading-compatible edge (oneway respected) in the same road set. It counts only with a
-    likelihood margin ≥ 2:1 over the second-best edge. Otherwise the fix is "ambiguous" and
+    likelihood margin ≥ 2:1 over the best heading-compatible edge of any other way. Otherwise the fix is "ambiguous" and
     excluded, and the excluded share is reported.
   - As built (N3.2b, `NavigationReplay.RoadTruth`): "valid course" means a valid course
     and GNSS speed ≥ 3 m/s (`courseMinSpeedMps`); a stopped or creeping car has none
@@ -510,7 +510,7 @@ Since the double tap, a pin can be placed at any speed. Its row records `obdSpee
     with no heading-compatible edge that close is "no road" (unmapped road, car park), not
     on the nearest mapped road. Every heading-compatible edge within 50 m competes for the
     margin. Likelihood: N(d; σ_fix² + 7²) · N(Δψ; σ_course² + 10°²), σ_fix = accuracy /
-    2.45, σ_course = max(courseAccuracy, 2°).
+    1.51, σ_course = max(courseAccuracy, 2°).
   - If more than 20 % are ambiguous, upgrade to a Viterbi match over route distance.
   - It runs only when `--roads` is given and needs clean GNSS that the engine did not
     receive. So it is defined for clean (`mask-after 230`), clean-long (`mask-after 380`)

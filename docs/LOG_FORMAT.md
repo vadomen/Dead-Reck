@@ -518,7 +518,8 @@ and drops can't be reconstructed afterwards. Written every 10 s while
 recording (calibration included), and once more right after the `stop` row,
 closing the last, shorter window. The counts come from the writer itself —
 the one place every row passes, in write order — so every row of the file
-(this kind included: a `stats` row is counted in the next window) is counted
+except the final `stats` row (every other `stats` row is counted in the next
+window; the final one has no next window and is counted in none) is counted
 in exactly one `stats` row of a cleanly stopped recording. `t` is the end of
 the window.
 

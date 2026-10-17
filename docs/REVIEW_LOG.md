@@ -261,3 +261,17 @@ Tests: Core not run: no file outside docs/ changed.
 ### Run 42 summary
 
 1 round; 1 fixed (R42.1-1), 0 rejected, 0 deferred.
+
+## Run 43 (lite): backlog sweep docs batch (d92e300..cccfb03, branch sweep-docs), started 2026-10-17
+
+Commits: cccfb03 R4.1-7, R19.1-3, R22.3-4, R26.1-2, R27.1-2, R29.1-2, R29.1-3, R37.1-7 fixed in the docs (each statement re-derived from the code), R26.2-3 doc half fixed, PLAN §6 UX-2 tab order corrected.
+
+### Round 1
+
+Reviewer: one fresh reviewer (sonnet), lite run, checks 10 and 11: every changed statement checked against the code it cites; moved rows byte-identical apart from Status; no stale "80 km/h", "2.45", "second-best" or old tab order left. Privacy clean. Result: 0 BLOCKER / 0 MAJOR / 0 MINOR.
+
+Tests: Core not run: no file outside docs/ changed.
+
+### Run 43 summary
+
+1 round; 0 fixed, 0 rejected, 0 deferred.
