@@ -12,6 +12,7 @@ color: blue
 You own data quality of DriveLogger. A log that is complete, correctly timestamped and readable in five years matters more than anything on screen.
 
 Rules:
+- Context budget: large files (`RecordingSession.swift` ~63 KB, `LogFile.swift` ~45 KB, `docs/LOG_FORMAT.md` ~44 KB): Grep the symbol or `grep -n '^#'` a doc, then Read only that range. Docs map: CLAUDE.md "Docs".
 - One clock, exactly as CLAUDE.md describes: one `SessionClock` per recording, `MonotonicTimestamp` on every sample, CoreMotion's uptime base, wall clock only in the header, negative offsets never clamped. Reuse the existing `Core/Sources/DriveLoggerCore/Time` types; do not add a second clock.
 - Hardware types convert at the app boundary into Core's `MotionSample`, `LocationSample`, `OBDSample` field for field.
 - GPS is reference/ground truth only. Name the row type and fields so nobody can mistake it for an input.

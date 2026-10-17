@@ -20,15 +20,17 @@ Each of M2–M5 is self-contained: start it with **"Run Mx as in WORKFLOW.md"**.
 
 ## Read first (every milestone)
 
+Read by section, not whole files: `grep -n '^#' <doc>` first, then the section (CLAUDE.md "Docs").
+
 - `CLAUDE.md`: invariants, conventions, commands. It wins on any conflict.
 - `docs/PLAN.md`:
   - the decisions at the top;
   - §2, the open milestone's deliverables (completed milestones, the old status block and §1 are in `docs/archive/PLAN-done.md`);
-  - the §4 contracts the milestone implements. **The code is authoritative over the §4 sketches.**
+  - the §4 contract sketches are archived (`docs/archive/PLAN-done.md`) and **the code is authoritative**: read the code, open a sketch only when a task cites it.
   - §6, the hardware checks.
 - `docs/SPEC_V1.md`: what v1 must do.
 - `docs/BENCH_TEST_2026-10-07.md`: real replies from the test car (VW Touareg 2025, Vgate iCar Pro BLE 4.0 advertising as `IOS-Vlink`).
-- `docs/BACKLOG.md`: open (DEFERRED) items tagged with the milestone you're running. Close them, or say why not. Closed rows live in `docs/archive/BACKLOG-closed.md`.
+- `docs/BACKLOG.md`: open (DEFERRED) items tagged with the milestone you're running (grep the tag; don't read the table whole). Close them, or say why not. Closed rows live in `docs/archive/BACKLOG-closed.md`.
 - `docs/LOG_FORMAT.md` whenever anything touches the log.
 
 ---
@@ -307,7 +309,7 @@ Every engine change is judged on the replay set first and goes through `/review-
   - Take back a short result: what changed, commits, test counts, numbers, open decisions.
 - **The main session itself only** plans, asks me for decisions, verifies review findings, runs the final checks, commits and merges. It does not read large source files or run replay grids itself; it reads the agent's summary.
 - **API limit.** If an agent stops on an API limit, start a fresh one with a brief that says "resume from the last commit on <branch>".
-- **Archive.** `docs/archive/` is history: read it only on demand, never as default context for an agent. When a backlog row closes (DONE, FIXED, SUPERSEDED, OBSOLETE), move it to `docs/archive/BACKLOG-closed.md` unchanged; superseded NAVIGATION result tables go to `docs/archive/NAVIGATION-history.md`.
+- **Archive.** `docs/archive/` is history: read it only on demand, never as default context for an agent. When a backlog row closes (DONE, FIXED, SUPERSEDED, OBSOLETE), move it to `docs/archive/BACKLOG-closed.md` unchanged; superseded NAVIGATION result tables go to `docs/archive/NAVIGATION-history.md`. Keep working docs small: once a stage is done, move its plan text and superseded measurements to `docs/archive/` (with a one-paragraph stub under the old heading); when `docs/REVIEW_LOG.md` holds more than ~5 merged runs, move the older ones to a `docs/archive/REVIEW_LOG-runs-<a>-<b>.md` file and list them in its index.
 - **Docs-only work goes to `docs-editor`**, not `navigation-engineer` or another engineer: wording fixes, ledger/backlog row moves, plan text. It has no shell, so you run tests and commit.
 - **One engineer agent at a time in the main working tree.** Parallel sessions each get their own git worktree: `git worktree add ../dead-reck-<task> -b <task>`.
   - Merge them one at a time.

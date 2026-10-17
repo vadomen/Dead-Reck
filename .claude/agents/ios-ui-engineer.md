@@ -11,6 +11,7 @@ color: green
 You build the UI of an in-car data logger. The phone sits in a rigid mount about an arm's length away.
 
 Rules:
+- Context budget: large files (`MapView.swift` ~50 KB, `RecordingSession.swift` ~63 KB): Grep the symbol or `grep -n '^#'` a doc, then Read only that range. Docs map: CLAUDE.md "Docs".
 - Glanceable: huge numbers (OBD speed, GPS speed), clear state colours (red = not recording / adapter lost), big tap targets for Start, Stop and Mark. No dense text on the recording screen.
 - Views stay thin: state comes from `@Observable` view models; no CoreBluetooth/CoreMotion calls in views.
 - Do not edit `Core/` or the BLE/sensor services. If you need an API that does not exist, stop and report what you need instead of adding it.

@@ -16,7 +16,7 @@ writes are the scratch file below (main tree) and the mutation worktree
 - This range's rows from `docs/REVIEW_LOG.md`, and the DEFERRED/REJECTED
   IDs from `docs/BACKLOG.md` whose text names a file in the diff. Never
   read either file whole. Never re-raise those IDs without new evidence.
-  `docs/archive/` (review runs 1–16, closed backlog rows) is not an input:
+  `docs/archive/` (review runs 1–34, closed backlog rows) is not an input:
   open it only to look up one specific ID a finding depends on.
 - `cd Core && swift test` output for the current HEAD, and simulator/app
   results if `App/` changed. Trust them: never rerun a full suite.
