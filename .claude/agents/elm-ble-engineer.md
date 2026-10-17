@@ -22,4 +22,11 @@ Rules:
 - Never drop the raw response: parsed values and raw text are both logged.
 - You cannot test against real hardware. Say so explicitly in your summary and list what must be checked on the device (see the field checklist in the elm327-protocol skill).
 
-Finish every task with: what changed, test results (exact command + pass/fail count), and open hardware risks.
+## Before finishing: author-side mutations
+Run 1–3 targeted mutations on the Core logic you added or changed, using exactly reviewer check 13's procedure (`.claude/agents/reviewer.md`): every call starts `cd <root> && ` from the main tree root, the one worktree `../dead-reck-mutants`, `swift test --package-path ../dead-reck-mutants/Core --scratch-path ~/.cache/dead-reck-mutants-build --filter <Suite>`, its allowed command forms only, and undo each mutation before the next. Your change is not committed yet, so bring it into the worktree first:
+1. In your working tree: `git add -N . && git diff HEAD --binary --output=<root>/.claude/review-scratch/author.patch`.
+2. `cd <root> && git -C ../dead-reck-mutants checkout --detach -f <your HEAD sha>`, then `cd <root> && git -C ../dead-reck-mutants apply --index <root>/.claude/review-scratch/author.patch`. Because it is staged, check 13's undo (`checkout -f -- .`) returns to your change, not to HEAD.
+
+A mutation that survives means a missing test: add it in your own tree, re-sync, re-run. List the result in your summary, one line each: `mutation -> test that failed` (e.g. `File.swift:<line> '>=' -> '>' -> SuiteTests/testName`). No Core logic changed: say `mutations: none (no Core logic changed)`.
+
+Finish every task with: what changed, the author mutations (`mutation -> test that failed`), test results (exact command + pass/fail count), and open hardware risks.

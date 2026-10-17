@@ -9,7 +9,7 @@ Hooks need `jq` (`brew install jq`) and use full Xcode automatically if `xcode-s
 | sensors-logging-engineer | Opus | sensors, clock, log format, writer/reader, background, inspect_log | yes |
 | ios-ui-engineer | Sonnet | SwiftUI screens | App UI only |
 | navigation-engineer | Opus | DR engine, replay_nav, road graph, map matching, app NavigationService / RoadPackLibrary / Diagnostics road rows | yes |
-| reviewer | Opus | review vs invariants | no |
+| reviewer | Opus (Sonnet on lite runs) | review vs invariants | no |
 | docs-editor | Sonnet | docs-only edits, ledger/backlog row moves | docs only, no shell |
 | drive-analyst | Sonnet | field-log debrief | no |
 
@@ -305,20 +305,20 @@ Every engine change is judged on the replay set first and goes through `/review-
 ---
 
 ## Rules for the orchestrator
-- **Model.** The main session runs on Opus; verification of review findings (CONFIRMED / REJECTED) and adoption-rule verdicts (docs/NAVIGATION.md) happens in place, no model switch. Engineer agents and the reviewer stay on Opus with effort high (their frontmatter); `ios-ui-engineer`, `drive-analyst` and `docs-editor` run on Sonnet.
+- **Model.** The main session runs on Opus; verification of review findings (CONFIRMED / REJECTED) and adoption-rule verdicts (docs/NAVIGATION.md) happens in place, no model switch. Engineer agents and the reviewer stay on Opus with effort high (their frontmatter); `ios-ui-engineer`, `drive-analyst` and `docs-editor` run on Sonnet. The review-loop picks the reviewer's model per range; its lite path (no code in the range) runs one Sonnet reviewer.
 - **Delegate by default.** Code and analysis go to the owning agent with a self-contained brief: `navigation-engineer` (Core/Navigation, Replay, replay_nav, Roads, RoadPackBuild, tools/roads; in the app NavigationService, RoadPackLibrary and the Diagnostics road rows), `sensors-logging-engineer` (clock, log, sensors, RecordingSession), `elm-ble-engineer` (ELM327/OBD/BLE), `ios-ui-engineer` (App UI views), `drive-analyst` (recordings), `docs-editor` (docs).
   - Give the agent a self-contained brief: files to read, goal, exit criteria, memory limits.
-  - Take back a short result: what changed, commits, test counts, numbers, open decisions.
+  - Take back a short result: what changed, commits, test counts, numbers, author mutations (`mutation -> test that failed`), open decisions.
 - **The main session itself only** plans, asks me for decisions, verifies review findings, runs the final checks, commits and merges. It does not read large source files or run replay grids itself; it reads the agent's summary.
 - **API limit.** If an agent stops on an API limit, start a fresh one with a brief that says "resume from the last commit on <branch>".
 - **Archive.** `docs/archive/` is history: read it only on demand, never as default context for an agent. When a backlog row closes (DONE, FIXED, SUPERSEDED, OBSOLETE), move it to `docs/archive/BACKLOG-closed.md` unchanged; superseded NAVIGATION result tables go to `docs/archive/NAVIGATION-history.md`. Keep working docs small: once a stage is done, move its plan text and superseded measurements to `docs/archive/` (with a one-paragraph stub under the old heading); when `docs/REVIEW_LOG.md` holds more than ~5 merged runs, move the older ones to a `docs/archive/REVIEW_LOG-runs-<a>-<b>.md` file and list them in its index.
 - **Docs-only work goes to `docs-editor`**, not `navigation-engineer` or another engineer: wording fixes, ledger/backlog row moves, plan text. It has no shell, so you run tests and commit.
-- **One engineer agent at a time in the main working tree.** Parallel sessions each get their own git worktree: `git worktree add .claude/worktrees/<task> -b <task>` (git-ignored, inside the project so its permissions apply; the same place `isolation: worktree` uses). The reviewer's mutation worktree `../dead-reck-mutants` is separate and stays where it is.
+- **One engineer agent at a time in the main working tree.** Parallel sessions each get their own git worktree: `git worktree add .claude/worktrees/<task> -b <task>` (git-ignored, inside the project so its permissions apply; the same place `isolation: worktree` uses). The mutation worktree `../dead-reck-mutants` (reviewer check 13 and the engineers' author-side mutations) is separate and stays where it is.
   - Merge them one at a time.
   - Run `cd Core && swift test` after each merge, plus the simulator build if `App/` changed.
   - Remove the worktree and branch once merged.
 - Contracts first; parallel work only on disjoint folders. UI only after the service APIs exist.
-- Every part ends with `/review-loop` on its diff, green tests, and a commit. No push without asking me.
+- Every part ends with `/review-loop` on its diff (a range with no code takes its lite path), green tests, and a commit. No push without asking me.
 - Decisions that are genuinely mine (behaviour, safety trade-offs, a finding that comes back twice) go to me before a fix, not after.
 - Anything that needs the iPhone or the car goes to PLAN.md §6 as a checklist item for me; never claim it works.
 - Recordings stay outside the repo. Never commit one.

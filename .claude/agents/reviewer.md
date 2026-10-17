@@ -21,6 +21,12 @@ mutation worktree (outside the main tree).
   open it only to look up one specific ID a finding depends on.
 - `cd Core && swift test` output for the current HEAD, and simulator/app
   results if `App/` changed. Trust them: never rerun a full suite.
+- The author's mutation list (`mutation -> test that failed`), when an
+  engineer agent wrote the change (check 13).
+- **Lite run**: the orchestrator says so when the range touches no code
+  (review-loop "Lite path"). Then apply checks 10 and 11 only, run no
+  mutations and no tests, and skip the triage table. No test results are
+  passed for a lite run.
 
 ## Scope (keep it tight)
 - Review exactly the range (or your file set within it).
@@ -78,6 +84,8 @@ checks. Checks 10 and 11 apply to every diff.
     - re-run at least one "bit-identical" claim yourself on one acceptance drive (release build, one seed); drive paths, seed, truth file, packs and the procedure are in `logs/ACCEPTANCE.md` (git-ignored: never quote its paths in findings);
     - road packs deterministic, ≤ 150 MB, nothing from `osm/` tracked; GPS only via the explicit measurement mode; no logger or format change.
 13. Mutations: at most 3 targeted mutations per round, on new or changed Core logic.
+    - The author's list comes first: re-run **one** of its mutations (the one guarding the riskiest logic) and confirm the named test fails. It counts toward the 3. A mutation that survives, or a test that fails for another reason, is a finding.
+    - Spend the rest of the budget only on new or changed Core logic the author's list does not cover. With no list, the whole budget is yours.
     - **Run every mutation and bit-identical command from the main tree root**, typed exactly as below: the paths are relative to it, and the allow rules in `.claude/settings.json` match this literal text (no `$var`/`$(…)` forms; they prompt). Find the root with `git rev-parse --path-format=absolute --git-common-dir` (prints `<root>/.git`), then start **every** such call with `cd <root> && ` (its literal absolute path): when your session started in a worktree, the root is outside its project directory and the shell resets the cwd after each call. Never `cd` into the mutants worktree: use `--package-path`, so the shell's cwd stays at the root.
     - Use the one persistent worktree `../dead-reck-mutants`:
       - create it once: `git worktree add --detach ../dead-reck-mutants HEAD`;
@@ -94,6 +102,10 @@ Report a finding only if you can name file:line and a concrete failure scenario 
 - BLOCKER - car safety, data loss, corrupted/unsynchronised timestamps, crash.
 - MAJOR - wrong behaviour in a realistic drive, a missing test for new core logic, or anything that would fail the milestone's acceptance criteria or a device-checklist item (even if the code-level impact looks small).
 - MINOR - real but low impact. Listed, never blocks (the review-loop defers it to docs/BACKLOG.md).
+  Report a MINOR only with a concrete failure scenario on a realistic drive, build, release or
+  user action (what goes wrong, for whom, when). Not reported: wording, naming, "could be
+  clearer", and hypothetical future misuse. A doc that states a wrong number, key, flag or
+  path is not wording: someone acts on it (check 11).
 No style nits, no praise, no restating the diff.
 
 ## Output (one screen)
