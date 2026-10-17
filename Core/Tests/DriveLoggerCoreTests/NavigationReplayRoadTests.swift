@@ -274,6 +274,8 @@ struct NavigationReplayRoadTests {
         #expect(m.fixes.allSatisfy { $0.matchedEdge?.osmWayID == 2 }, "the engine left road 2")
         #expect(m.count(.wrong).fixes == m.scored && m.wrongShare == 1 && m.wrongShareByDistance == 1)
         #expect(m.fixes.allSatisfy { abs(($0.matchedEdgeDistanceM ?? 0) - 40) < 0.5 })
+        // R22.3-3: road 2 is beyond onRoadMaxM (15 m) but inside the 50 m search radius: it competes for the margin.
+        #expect(m.fixes.allSatisfy { ($0.logLikelihoodRatio ?? 0) > log(2) }, "road 2 competes")
         #expect(ReplayReport.summary(result).contains("wrong \(m.scored) (100.0 %; by distance 100.0 %)"))
         let tolerant = try #require(Self.run(inputs, roads: net, tolerance: 50).roadMetrics)
         #expect(tolerant.wrongRoadToleranceM == 50 && tolerant.count(.right).fixes == tolerant.scored && tolerant.wrongShare == 0)
@@ -799,6 +801,28 @@ struct NavigationReplayRoadTests {
         let above = try match(wayTwoEast: 9.25)
         #expect(above.status == .matched && above.edge?.osmWayID == 1, "\(above)")
         #expect(abs((above.logLikelihoodRatio ?? 0) - 0.7134) < 0.003, "\(String(describing: above.logLikelihoodRatio))")
+    }
+
+    /// R22.3-3: the margin's competitors are every heading-compatible way
+    /// within the 50 m search radius, not only the truth candidates within
+    /// `onRoadMaxM` (15 m). Way 2 parallel at x = `b`: ln ratio
+    /// b² / (2 · 59.964); beyond the search radius it does not compete.
+    @Test("R22.3-3 truth margin competitors: a parallel way 20 m or 40 m away (beyond 15 m, within 50 m) sets the ratio; one at 60 m does not")
+    func truthMarginCompetitorsBeyondOnRoad() throws {
+        func match(wayTwoEast b: Double) throws -> RoadTruthMatcher.Match {
+            let net = try R.network([R.street(1, from: (0, -3000), to: (0, 3000)),
+                                     R.street(2, from: (b, -3000), to: (b, 3000))])
+            return Self.truthMatch(RoadTruthMatcher(network: net))
+        }
+        #expect(NavigationReplay.RoadTruth.onRoadMaxM == 15 && NavigationReplay.RoadTruth.searchRadiusM == 50)
+        for (b, expected) in [(20.0, 3.3353), (40.0, 13.3413)] {
+            let m = try match(wayTwoEast: b)
+            #expect(m.status == .matched && m.edge?.osmWayID == 1, "\(m)")
+            #expect(abs((m.logLikelihoodRatio ?? 0) - expected) < 0.01,
+                    "way 2 at \(b) m: \(String(describing: m.logLikelihoodRatio))")
+        }
+        let far = try match(wayTwoEast: 60)
+        #expect(far.status == .matched && far.edge?.osmWayID == 1 && far.logLikelihoodRatio == nil, "\(far)")
     }
 
     /// R22.3-2: heading north, way 1 along the course 6 m west of the fix,

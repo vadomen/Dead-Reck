@@ -43,11 +43,32 @@ struct NavigationFixPinInjectionTests {
         return (decisions, engine.estimate(at: MonotonicTimestamp(seconds: tEnd)))
     }
 
+    /// `inputs` with the fixes stamped at `ts` arriving at their own `t`
+    /// (no latency), kept in arrival order (stable).
+    static func zeroLatency(_ inputs: [NavigationInput], at ts: Set<Double>) -> [NavigationInput] {
+        inputs.map { input -> NavigationInput in
+            guard case .location(var sample, let t) = input, ts.contains(t.seconds) else { return input }
+            sample.receivedT = nil
+            return .location(sample, at: t)
+        }.enumerated().sorted {
+            $0.element.arrival != $1.element.arrival ? $0.element.arrival < $1.element.arrival : $0.offset < $1.offset
+        }.map(\.element)
+    }
+
     @Test func caseFromSnapshotEqualsStraightRun() throws {
-        let inputs = F.inputs(Self.drive, offsetUntil: -.infinity)
+        let options = FixPinInjection.Options()
+        // R37.1-11: a fix arriving exactly at each pin time's t0 (pin − preS)
+        // is in the case's window (edited), never in the shared prefix.
+        let t0s: Set<Double> = [120 - options.preS, 240 - options.preS]
+        let inputs = Self.zeroLatency(F.inputs(Self.drive, offsetUntil: -.infinity), at: t0s)
+        for t0 in t0s {
+            #expect(inputs.contains {
+                guard case .location(let s, let t) = $0 else { return false }
+                return t.seconds == t0 && $0.arrival == t && s.hasValidSpeed
+            }, "a fix arriving exactly at t0 \(t0)")
+        }
         let roads = try F.roads(Self.drive)
         let config = F.config(roads: 1, twoPin: 1)
-        let options = FixPinInjection.Options()
         func pin(_ t: Double, _ second: Double?) -> FixPinInjection.PinTime {
             .init(t: t, secondT: second, context: .straight, junction: false, parallel: false, source: "accessory",
                   ringFixes: 0, ringPathM: 0, speedMps: 10)
@@ -264,6 +285,55 @@ struct NavigationFixPinInjectionTests {
         #expect(context(0, 1000, course: 0) == (false, false))
         // On the east–west street 20 m from the north–south one, heading east.
         #expect(context(20, y1, course: 90) == (true, false))
+    }
+
+    /// R37.2-3: the parallel band starts `parallelMinM` beyond the nearest
+    /// road, not only `parallelMinM` from the pin. A pin 10 m west of its
+    /// street (x = 0): a street alongside at x = 10 is 20 m away, inside
+    /// 15–80 m but not 15 m past the nearest (25 m), so not parallel; at
+    /// x = 20 (30 m) it is.
+    @Test func parallelRoadMustBeClearOfTheNearestOne() throws {
+        func context(secondStreetEast x: Double) throws -> (junction: Bool, parallel: Bool) {
+            let map = try NavigationRoadTests.network([
+                NavigationRoadTests.street(1, from: (0, -1000), to: (0, 1000)),
+                NavigationRoadTests.street(2, from: (x, -1000), to: (x, 1000)),
+            ])
+            let g = S.plane.geodetic(east: -10, north: 0)
+            return FixPinInjection.context(latitude: g.latitude, longitude: g.longitude, course: 0, speed: 10,
+                                           roads: map, options: FixPinInjection.Options())
+        }
+        #expect(FixPinInjection.Options().parallelMinM == 15)
+        #expect(try context(secondStreetEast: 10) == (false, false), "20 m: within 15 m of the nearest road's 10 m")
+        #expect(try context(secondStreetEast: 20) == (false, true), "30 m: 20 m past the nearest road")
+    }
+
+    /// R37.2-3: the second pin needs its own ring, at least `minRingFixes / 2`
+    /// genuine fixes of the source in [s − preS, s]. The L-drive's 130 s
+    /// candidate (second pin at s ≈ 163 s, its ring from s − 90) with the
+    /// fixes over 73–127 s removed, and over 133 s to s − `kept`: the ring
+    /// keeps the 5 fixes around the first pin and `kept` before s.
+    @Test func secondPinNeedsItsOwnRing() throws {
+        let drive = F.lDrive(northS: 150, eastS: 150)
+        let inputs = F.inputs(drive, offsetUntil: -.infinity)
+        let map = try Self.lMap(drive)
+        let options = Self.allPinTimes(inputs, roads: map).options
+        let s = try #require(Self.expectedSecond(130, inputs: inputs, options: options))
+        #expect(options.minRingFixes / 2 == 12)
+        func withGap(kept: Int) -> [NavigationInput] {
+            inputs.filter { input in
+                guard case .location(_, let t) = input else { return true }
+                let x = t.seconds
+                return !((x > 72.5 && x < 127.5) || (x > 132.5 && x < s - Double(kept) + 0.5))
+            }
+        }
+        for (kept, accepted) in [(7, true), (6, false)] {
+            let gapped = withGap(kept: kept)
+            let ring = FixPinInjection.gnssFixes(gapped).filter { $0.t >= s - options.preS && $0.t <= s }
+            #expect(ring.count == 5 + kept, "ring before s: \(ring.count)")
+            let (times, _) = Self.allPinTimes(gapped, roads: map)
+            let p = try #require(times.first { $0.t == 130 }, "130 s is still a candidate (its own ring is 40–72 s plus 128–130 s)")
+            #expect(p.secondT == (accepted ? s : nil), "\(5 + kept) fixes: \(String(describing: p.secondT))")
+        }
     }
 
     @Test func secondAndThirdPinSelection() throws {

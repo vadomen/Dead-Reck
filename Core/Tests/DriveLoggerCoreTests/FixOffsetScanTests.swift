@@ -171,6 +171,26 @@ import Testing
         }
     }
 
+    /// R49.1-1: the refused set is exactly the list docs/NAVIGATION.md gives
+    /// ("replay_nav", `--fix-offset`), written out here: "--compare and its
+    /// tolerances" and "--fixpin-*" as `replay_nav` spells them. A member
+    /// dropped from (or added to) `engineOnlyFlags` fails here.
+    @Test func engineOnlyFlagsAreTheDocumentedList() {
+        let documented: Set<String> = [
+            "--gps", "--hold-out-acc", "--truth", "--seed", "--particles", "--set", "--out", "--as-live", "--file-order",
+            "--compare", "--tolerance", "--heading-tolerance", "--write-sidecar", "--pin-pair-window",
+            "--wrong-road-tolerance",
+            "--fixpin-inject", "--fixpin-two-pins", "--fixpin-survey", "--fixpin-pins", "--fixpin-separation",
+            "--fixpin-engine-no-roads",
+        ]
+        #expect(FixOffsetScan.engineOnlyFlags == documented,
+                "missing \(documented.subtracting(FixOffsetScan.engineOnlyFlags).sorted()), extra \(FixOffsetScan.engineOnlyFlags.subtracting(documented).sorted())")
+        for flag in documented.sorted() {
+            #expect(FixOffsetScan.refusedFlags(["--fix-offset", "--roads", flag]) == [flag], "\(flag)")
+        }
+        #expect(documented.filter { $0.hasPrefix("--fixpin-") }.count == 6)
+    }
+
     @Test func distancesAreCappedAndTheCourseGateSkipsCrossingRoads() throws {
         let net = try Self.network()
         let plane = LocalTangentPlane(latitude: 0, longitude: 0)
@@ -254,6 +274,25 @@ import Testing
         #expect(try! #require(d.speedDifferenceMedianKmh) < 1e-9)
         #expect(d.courseChangeDeg == 90)
         #expect(abs(try! #require(d.gyroYawDeg) - 90) < 1)
+    }
+
+    /// R35.1-2: each OBD reply's speed is held until the next one, at most
+    /// 2 s: an adapter gap is not integrated at the last speed. Fixes 0–20 s
+    /// along a straight line at 10 m/s; replies (10 m/s) at −1.5 s, then
+    /// every 0.5 s over 3–5 s and 12–20.5 s. Counted: 0–0.5 s (the −1.5 s
+    /// reply's 2 s hold), 3–7 s (the 5 s reply held 2 s), 12–20 s: 125 m.
+    /// Without the cap the gaps are filled: 200 m.
+    @Test func dynamicsHoldsAnOBDReplyAtMostTwoSeconds() {
+        let fixes = (0...20).map { i in
+            let q = RoadFixture.point(Double(i) * 10, 0)
+            return FixOffsetScan.Fix(t: Double(i), latitude: q.latitude, longitude: q.longitude, accuracyM: 10, speed: 10, course: 90)
+        }
+        let obd = [(t: -1.5, mps: 10.0)]
+            + stride(from: 3.0, through: 5.0, by: 0.5).map { (t: $0, mps: 10.0) }
+            + stride(from: 12.0, through: 20.5, by: 0.5).map { (t: $0, mps: 10.0) }
+        let d = FixOffsetScan.dynamics(fixes, obdSpeed: obd, yawRate: [])
+        #expect(abs(d.fixPathM - 200) < 0.5)
+        #expect(abs(try! #require(d.obdDistanceM) - 125) < 1e-6, "\(String(describing: d.obdDistanceM))")
     }
 
     @Test func yawRateIsAboutUpCounterClockwise() {

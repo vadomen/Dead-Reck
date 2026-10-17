@@ -34,16 +34,60 @@ struct NavigationFixPinTests {
     /// A 100 m street grid aligned with the drive's legs: north–south
     /// streets through the first leg, east–west ones through the last.
     static func roads(_ drive: S) throws -> RoadNetwork {
+        try R.network(streets(drive).map { R.street($0.id, from: $0.a, to: $0.b) })
+    }
+
+    /// `roads(drive)`'s streets, plane metres.
+    static func streets(_ drive: S) -> [(id: Int64, a: (Double, Double), b: (Double, Double))] {
         let x0 = truth(drive, 1).east
         let y1 = truth(drive, drive.duration - 1).north
-        var lines: [String] = []
+        var out: [(id: Int64, a: (Double, Double), b: (Double, Double))] = []
         var id: Int64 = 1
         for k in -15...15 {
             let x = x0 + Double(k) * 100, y = y1 + Double(k) * 100
-            lines.append(R.street(id, from: (x, -1800), to: (x, 1800))); id += 1
-            lines.append(R.street(id, from: (-1800, y), to: (1800, y))); id += 1
+            out.append((id, (x, -1800), (x, 1800))); id += 1
+            out.append((id, (-1800, y), (1800, y))); id += 1
         }
-        return try R.network(lines)
+        return out
+    }
+
+    /// `roads(drive)` with the streets at the same metres of `plane`
+    /// instead of `S.plane` (R37.2-1), on a pack grid centred there.
+    static func roads(_ drive: S, in plane: LocalTangentPlane) throws -> RoadNetwork {
+        func e7(_ east: Double, _ north: Double) -> RoadPoint {
+            let g = plane.geodetic(east: east, north: north)
+            return RoadPoint(latE7: Int32((g.latitude * 1e7).rounded()), lonE7: Int32((g.longitude * 1e7).rounded()))
+        }
+        let lines = streets(drive).map { street -> String in
+            let nodes = [(street.id * 10, street.a), (street.id * 10 + 1, street.b)].map { id, m in
+                let p = e7(m.0, m.1)
+                return "n\(id)x\(RoadFixture.degrees(p.lonE7))y\(RoadFixture.degrees(p.latE7))"
+            }.joined(separator: ",")
+            return "w\(street.id) v1 dV c0 t2020-01-01T00:00:00Z i0 u Thighway=residential N\(nodes)"
+        }
+        let grid = RoadGrid(southWest: e7(-2500, -2500), northEast: e7(2500, 2500))
+        return try RoadNetwork(packs: [RoadFixture.build(lines, grid: grid)])
+    }
+
+    /// `inputs` (positions in `S.plane`) with every fix and pin at the same
+    /// metres of `plane` (R37.2-1).
+    static func moved(_ inputs: [NavigationInput], to plane: LocalTangentPlane) -> [NavigationInput] {
+        func move(_ latitude: inout Double, _ longitude: inout Double) {
+            let m = S.plane.enu(latitude: latitude, longitude: longitude)
+            (latitude, longitude) = plane.geodetic(east: m.east, north: m.north)
+        }
+        return inputs.map { input in
+            switch input {
+            case .location(var s, let t):
+                move(&s.latitude, &s.longitude)
+                return .location(s, at: t)
+            case .manualFix(var s, let t):
+                move(&s.latitude, &s.longitude)
+                return .manualFix(s, at: t)
+            default:
+                return input
+            }
+        }
     }
 
     /// The drive's inputs: 1 Hz fixes (clean, `accuracy`, with course and
@@ -444,10 +488,22 @@ struct NavigationFixPinTests {
     // MARK: Re-anchor (R37.1-1)
 
     /// A plane point of `engine` as metres in the fixed test plane.
-    static func inTestPlane(_ engine: NavigationEngine, _ east: Double, _ north: Double) throws -> (east: Double, north: Double) {
+    static func inTestPlane(_ engine: NavigationEngine, _ east: Double, _ north: Double,
+                            plane: LocalTangentPlane = S.plane) throws -> (east: Double, north: Double) {
         let g = try #require(engine.tangentPlane).geodetic(east: east, north: north)
-        let p = S.plane.enu(latitude: g.latitude, longitude: g.longitude)
+        let p = plane.enu(latitude: g.latitude, longitude: g.longitude)
         return (p.east, p.north)
+    }
+
+    /// |∂e'/∂n| of the map from `off`'s plane to `on`'s at `fix` (in
+    /// `off`'s plane): what a re-anchor's Jacobian must carry.
+    static func planeShear(from off: NavigationEngine, to on: NavigationEngine, at fix: FixPinSource.Fix) throws -> Double {
+        let old = try #require(off.tangentPlane), new = try #require(on.tangentPlane)
+        func east(_ e: Double, _ n: Double) -> Double {
+            let g = old.geodetic(east: e, north: n)
+            return new.enu(latitude: g.latitude, longitude: g.longitude).east
+        }
+        return abs(east(fix.east, fix.north + 1) - east(fix.east, fix.north - 1)) / 2
     }
 
     static func distance(_ a: (east: Double, north: Double), _ b: (east: Double, north: Double)) -> Double {
@@ -465,16 +521,23 @@ struct NavigationFixPinTests {
         \.fixPinRoadRechecks,
     ] }
 
-    @Test("Re-anchor while down-weighted (both keys): ring, offset and last pin carried into the new plane; verdicts and win-back unchanged")
-    func reanchorWhileDownweighted() throws {
+    /// At latitude 0 the old→new plane map of a re-anchor is a translation
+    /// (J = I); at 60° (R37.2-1) a re-anchor east of the old anchor shears
+    /// it, ∂e'/∂n ≈ −Δe · tan φ / R, so a dropped or transposed Jacobian at
+    /// the call site moves the carried offset, last pin and ring courses.
+    @Test("Re-anchor while down-weighted (both keys): ring, offset and last pin carried into the new plane; verdicts and win-back unchanged",
+          arguments: [0.0, 60.0])
+    func reanchorWhileDownweighted(latitude: Double) throws {
+        let plane = LocalTangentPlane(latitude: latitude, longitude: 0)
         let drive = Self.lDrive(eastS: 140)
-        let net = try Self.roads(drive)
+        let net = latitude == 0 ? try Self.roads(drive) : try Self.roads(drive, in: plane)
         // The offset persists (never restored), or ends at 100 s (restored by
         // roads after both re-anchors, from a ring that straddles them).
         // Agreement disabled, so only roads can restore.
         for offsetUntil in [Double.infinity, 100] {
-            let label = "offset until \(offsetUntil)"
-            let inputs = Self.inputs(drive, offsetUntil: offsetUntil, pins: [(30.03, 0, 0)])
+            let label = "latitude \(latitude), offset until \(offsetUntil)"
+            let built = Self.inputs(drive, offsetUntil: offsetUntil, pins: [(30.03, 0, 0)])
+            let inputs = latitude == 0 ? built : Self.moved(built, to: plane)
             let fixed = Self.config(roads: 1, twoPin: 1) { $0.fixPinRestoreS = 3600 }
             let moving = Self.config(roads: 1, twoPin: 1) { $0.fixPinRestoreS = 3600; $0.reanchorDistanceM = 500 }
             #expect(moving.invalidReason == nil && moving.validated().reanchorDistanceM == 500)
@@ -505,8 +568,8 @@ struct NavigationFixPinTests {
             #expect((b.ring.first?.ns ?? .max) < S.ms(105).nanoseconds, "\(label)")
             var worst = 0.0, worstCourse = 0.0
             for (p, q) in zip(a.ring, b.ring) {
-                worst = max(worst, Self.distance(try Self.inTestPlane(off.engine, p.east, p.north),
-                                                 try Self.inTestPlane(on.engine, q.east, q.north)))
+                worst = max(worst, Self.distance(try Self.inTestPlane(off.engine, p.east, p.north, plane: plane),
+                                                 try Self.inTestPlane(on.engine, q.east, q.north, plane: plane)))
                 #expect((p.course == nil) == (q.course == nil))
                 if let c = p.course, let d = q.course { worstCourse = max(worstCourse, abs(remainder(c - d, 2 * .pi))) }
                 #expect(p.sigma == q.sigma)
@@ -515,31 +578,36 @@ struct NavigationFixPinTests {
             #expect(worstCourse < 1e-6, "\(label): ring course moved by \(worstCourse) rad")
 
             // The offset and the last pin's vector, as tips at the newest
-            // fix: the same on the ground (linearised at the cloud mean,
-            // ≤ |offset| × |anchor move| / R ≈ 0.02 m).
+            // fix: the same on the ground (linearised at the cloud mean;
+            // measured 3e-7 m at both latitudes). At 60° the two re-anchors
+            // shear the plane by ∂e'/∂n ≈ 2.6e-4, so a dropped Jacobian
+            // moves each tip by 0.042 m and a transposed one by 0.075 m
+            // (and turns the ring's east courses by 2.6e-4 rad).
             let pa = try #require(a.ring.last), pb = try #require(b.ring.last)
+            let shear = try Self.planeShear(from: off.engine, to: on.engine, at: pa)
+            #expect(latitude == 0 ? shear < 1e-7 : shear > 2e-4, "\(label): ∂e'/∂n \(shear)")
             if let oa = a.offset {
                 let ob = try #require(b.offset)
-                let tipA = try Self.inTestPlane(off.engine, pa.east + oa.east, pa.north + oa.north)
-                let tipB = try Self.inTestPlane(on.engine, pb.east + ob.east, pb.north + ob.north)
-                #expect(Self.distance(tipA, tipB) < 0.05, "\(label): offset tip \(Self.distance(tipA, tipB)) m")
+                let tipA = try Self.inTestPlane(off.engine, pa.east + oa.east, pa.north + oa.north, plane: plane)
+                let tipB = try Self.inTestPlane(on.engine, pb.east + ob.east, pb.north + ob.north, plane: plane)
+                #expect(Self.distance(tipA, tipB) < 1e-3, "\(label): offset tip \(Self.distance(tipA, tipB)) m")
                 #expect(abs((oa.east * oa.east + oa.north * oa.north).squareRoot() - Self.offsetM) < 15)
             } else {
                 #expect(b.offset == nil, "\(label)")
             }
             let la = try #require(a.lastPin, "\(label)"), lb = try #require(b.lastPin, "\(label)")
             #expect(la.ns == lb.ns && la.obdM == lb.obdM && la.yaw == lb.yaw, "\(label)")
-            let tipA = try Self.inTestPlane(off.engine, pa.east + la.dEast, pa.north + la.dNorth)
-            let tipB = try Self.inTestPlane(on.engine, pb.east + lb.dEast, pb.north + lb.dNorth)
-            #expect(Self.distance(tipA, tipB) < 0.05, "\(label): last-pin tip \(Self.distance(tipA, tipB)) m")
+            let tipA = try Self.inTestPlane(off.engine, pa.east + la.dEast, pa.north + la.dNorth, plane: plane)
+            let tipB = try Self.inTestPlane(on.engine, pb.east + lb.dEast, pb.north + lb.dNorth, plane: plane)
+            #expect(Self.distance(tipA, tipB) < 1e-3, "\(label): last-pin tip \(Self.distance(tipA, tipB)) m")
             // Covariance: invariant under the near-rotation (trace, determinant).
             #expect(abs((la.ee + la.nn) - (lb.ee + lb.nn)) < 1e-3 * (la.ee + la.nn), "\(label)")
             #expect(abs((la.ee * la.nn - la.en * la.en) - (lb.ee * lb.nn - lb.en * lb.en))
                     < 1e-3 * (la.ee * la.nn - la.en * la.en), "\(label)")
             // The estimates agree (the plane change is exact up to rounding).
             let worstEstimate = zip(on.estimates, off.estimates).map { x, y in
-                Self.distance(S.plane.enu(latitude: x.estimate.latitude, longitude: x.estimate.longitude),
-                              S.plane.enu(latitude: y.estimate.latitude, longitude: y.estimate.longitude))
+                Self.distance(plane.enu(latitude: x.estimate.latitude, longitude: x.estimate.longitude),
+                              plane.enu(latitude: y.estimate.latitude, longitude: y.estimate.longitude))
             }.max() ?? .infinity
             #expect(on.estimates.count == off.estimates.count && worstEstimate < 0.5, "\(label): estimate \(worstEstimate) m")
         }
