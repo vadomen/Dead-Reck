@@ -300,3 +300,28 @@ Tests: unchanged since round 1 (940 passed, 36 known issues).
 ### Run 44 summary
 
 2 rounds; 2 fixed (R44.1-1, R44.1-2), 0 rejected, 0 deferred.
+
+## Run 45: backlog sweep elm batch 2 (ec77c62..da19774, branch sweep-elm2), started 2026-10-17
+
+Commits: da19774 R3.1-3 requested cancel reported as `.cancelled`, R3.1-5 backoff reset on the first reading, R3.1-6 write failures as `ble` notes, R3.1-7 10 s GATT discovery/notify watchdog, R3.2-2 one connect path, R32.2-4 shutdown drains a closed transport (link loss ends `failed / transport closed`).
+
+### Round 1
+
+Reviewer: one fresh reviewer (opus), checks 1–11, 13. Author mutations: 4 listed (3 App, run in the author's worktree), the Core one re-run and killed; the reviewer's own mutation survived. Result: 0 BLOCKER / 1 MAJOR / 0 MINOR. The fixer found a second, pre-existing data loss while writing the test (R45.1-2), verified by the orchestrator against the code.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R45.1-1 | MAJOR | `ELMSessionTests.swift:719`: `shutdownAfterTransportLost` checks only the end state; nothing tests that bytes buffered at the link loss are recorded. `await reader.value` → `_ = reader; transportDidClose()` survives every ELMSession suite while dropping a buffered reply. | CONFIRMED, FIXED | `shutdownAfterTransportLostDrainsBufferedBytes` with a gated transport that proves the bytes are still buffered when shutdown runs. |
+| R45.1-2 | MAJOR | `ELMSession.swift` (since cad8c53): a reply resolved by the reader but not yet emitted by `run()` is lost when the stream ends in the same step: `abandonInFlight` skips a resolved flight and `transportDidClose()` finishes `events` first, so the exchange row, its `rx` and readings vanish (probe: 50 of 50). `shutdown()` had the same window for manual commands and replies before `send` returned. | CONFIRMED, FIXED | Recording moved into the flight (`record` closure, `UnrecordedReply`); `recordUnrecordedReply()` before `failed`/`idle` and `finish()`; no duplicate when `run()` resumes. Tests `replyThenStreamEnd(phase:)`, `replyThenStreamEndBeforeSendReturns`, `shutdownRecordsResolvedReply` fail on HEAD's ELMSession. |
+
+Tests: `cd Core && swift test` 945 tests in 124 suites passed, 36 known issues (KI-1); AppTests OBDLinkServiceTests + StartupInitRecordingTests 27 passed (fixer). Fixer mutations not run (shared mutants worktree held another run's patch; one fixer earlier denied by the permission classifier); round 2 runs them.
+
+### Round 2
+
+Reviewer: one fresh reviewer (opus), re-review of da19774..9b5c122: R45.1-1 and R45.1-2 fixed; the refactor keeps the normal-path order, writes no duplicate rows, keeps `nextSeq` and stamps, and every caller handles `run()` throwing after its row without a stray state change (also removes an old window where a resumed handshake could change state after `failed`). Its mutation reset was denied by the permission classifier (stale staged patch in `../dead-reck-mutants`); after the user cleared the worktree, the orchestrator ran the 3 mutations with the check-13 procedure: `recordUnrecordedReply()` removed in `transportDidClose` → `replyThenStreamEnd` (both phases) and `replyThenStreamEndBeforeSendReturns` fail; removed in `shutdown` → `shutdownRecordsResolvedReply` fails; `await reader.value` → `_ = reader; transportDidClose()` → `shutdownAfterTransportLostDrainsBufferedBytes` fails. Result: 0 BLOCKER / 0 MAJOR / 0 MINOR.
+
+Tests: unchanged since round 1 (945 passed, 36 known issues).
+
+### Run 45 summary
+
+2 rounds; 2 fixed (R45.1-1, R45.1-2), 0 rejected, 0 deferred.
