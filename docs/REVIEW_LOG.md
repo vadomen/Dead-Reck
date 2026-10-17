@@ -808,7 +808,7 @@ Reviewer: three fresh reviewers (opus) in parallel on disjoint sets: engine (Fix
 |---|---|---|---|---|
 | R37.1-1 | MAJOR | `NavigationEngine.swift:819-821` / `FixPin.swift:108-128` re-anchor `FixPinSource.transform` untested (mutation survives; no test sets reanchorDistanceM). | CONFIRMED | FIXED 52ab3db: `reanchorWhileDownweighted`, `sourceTransform`; all transform mutations killed. |
 | R37.1-2 | MAJOR | `NavigationEngine.swift:1191-1193` engine refinement rule untested. | CONFIRMED | FIXED 52ab3db: `refinementWithinWindow`, `refinementOutsideWindow`, `refinementChain` (engine and pinScoring both rolling: each pin vs the one before). |
-| R37.1-3 | MAJOR | `Replay/FixPinInjection.swift:222-249, 292-319` road-context classifier and second/third pin selection untested (backs the measured-not-adopted tables). | CONFIRMED | FIXED 52ab3db: `contextOnAnLDrive`, `secondAndThirdPinSelection`; mutations killed. |
+| R37.1-3 | MAJOR | `Replay/FixPinInjection.swift:222-249, 292-319` road-context classifier and second/third pin selection untested (backs the measured-not-adopted tables). | CONFIRMED | FIXED 52ab3db: `contextOnAnLDrive`, `secondAndThirdPinSelection`; the two named mutations killed; three further ones survived in round 2 (R37.2-2, R37.2-3). |
 | R37.1-4 | MINOR | `docs/NAVIGATION.md:345, 348`: "Key off = main, byte-identical on every run"; only GeoJSON is byte-identical, metrics.json/md/stdout gain the 9 config keys and the fix-pin counters at 0; key-off vs main compared at seeds 1–2 only. | DEFERRED | backlog. |
 | R37.1-5 | MINOR | `docs/NAVIGATION.md:400-401` "with roads the road key decides first": both arbiters run and are OR-ed (`NavigationEngine.swift:1806-1838`); with both keys on and two pins displaced alike, the two-pin "pin" wins over road "fixes"; that both-keys case was never measured. | DEFERRED | backlog. |
 | R37.1-6 | MINOR | `docs/NAVIGATION.md:371` vs `:411`: "0 of 1536" is pooled over 3 seeds while the text says per seed (512 per seed). | DEFERRED | backlog. |
@@ -820,3 +820,15 @@ Reviewer: three fresh reviewers (opus) in parallel on disjoint sets: engine (Fix
 | R37.1-12 | MINOR | (found while fixing R37.1-2) `NavigationEngine.swift:1183-1184` vs `NavigationReplay.swift:903-915`: the engine skips a manual fix with impossible coordinates before updating lastManualFixNs, pinScoring counts every manual fix, so a valid pin < 3 s after an invalid one is a refinement in scoring but judged by the engine. Recorded pins never carry such coordinates. | DEFERRED | backlog. |
 
 Tests: Core 907 tests in 119 suites passed, 36 known issues (test 3); App/ unchanged (build-for-testing succeeded at 3e43317).
+
+### Round 2
+
+Reviewer: two fresh reviewers (opus) in parallel: engine set and replay/tooling set (docs unchanged since round 1 apart from the ledger). Engine: R37.1-1 and R37.1-2 confirmed fixed (mutations: drop `!refinement` from `fixPinSignificantPins` and a chain anchored on its first pin both killed; swapping jen/jne at the transform call site survived, R37.2-1). Replay: three mutations survived (drop `interior`, drop the nearest-road margin in the parallel rule, drop the second pin's own-ring rule), R37.2-2, R37.2-3.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R37.2-1 | MINOR | `Core/Tests/DriveLoggerCoreTests/NavigationFixPinTests.swift:466` (`reanchorWhileDownweighted`): the synthetic drive is near latitude 0, so the re-anchor Jacobian is the identity and the engine-level test cannot see the linear part (swapped/dropped J arguments at `NavigationEngine.swift:820` survive); `FixPinSource.transform` itself is unit-tested. | DEFERRED | backlog. |
+| R37.2-2 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/Replay/FixPinInjection.swift:302,316`: the parallel-road `interior` rule is untested (R37.1-3 only partly fixed): without it, the next segment of the car's own multi-node street counts as parallel, reshuffling the context strata of the injection results. | CONFIRMED | FIXED 454ea01: lMap's first street gets a node every 100 m; first-leg pin times, 130 s and direct `context()` cases asserted straight; the mutation now fails 16 expectations. |
+| R37.2-3 | MINOR | `FixPinInjection.swift:316, :232`: the parallel rule's nearest-road margin (pin offset from its own road) and the second pin's own-ring minimum (a fix gap before pin 2) are not exercised; mutations survive. | DEFERRED | backlog. |
+
+Tests: Core 907 tests in 119 suites passed, 36 known issues (test 3); App/ unchanged.
