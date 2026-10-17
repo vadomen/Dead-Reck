@@ -309,6 +309,42 @@ struct RoadLevelAcrossPacksTests {
         }
     }
 
+    /// R28.1-4: with one pack `RoadNetwork.isEdge` is `RoadPack.isEdge`
+    /// itself, so the check above cannot catch a fault in the multi-pack
+    /// BFS. Here the same bridge pack shares a network with an unrelated
+    /// pack 5 km away (other ways, no shared coordinate), so the BFS runs
+    /// and must give each pack's own adjacency hop for hop. The bridge
+    /// fixture's farthest pair is 3 hops apart (street west of the bridge →
+    /// street → ramp → bridge), so hops 0…4 reach past every distance.
+    @Test("R28.1-4: two packs, one far and unrelated: the multi-pack BFS equals each pack's own isEdge hop for hop, and never crosses")
+    func multiPackBFSEqualsPackAdjacency() throws {
+        let bridges = try RoadFixture.build(RoadGraphTests.bridgeLines())
+        let far = try RoadFixture.build([
+            RoadFixture.way(500, ["highway": "residential"], [N(id: 5000, east: 5000, north: 5000), N(id: 5001, east: 5300, north: 5000)]),
+            RoadFixture.way(501, ["highway": "residential"], [N(id: 5001, east: 5300, north: 5000), N(id: 5002, east: 5300, north: 5300)]),
+            RoadFixture.way(502, ["highway": "residential"], [N(id: 5002, east: 5300, north: 5300), N(id: 5003, east: 5600, north: 5300)]),
+        ])
+        let net = try RoadNetwork(packs: [bridges, far])
+        #expect(net.packs.count == 2)
+        let refs = net.packs.indices.flatMap { p in (0..<net.packs[p].edgeCount).map { RoadNetwork.EdgeRef(pack: p, edge: $0) } }
+        // The fixture is material: the bridge pack has a 3-hop pair, the far one a 2-hop pair.
+        var longest = [0, 0]
+        for a in refs {
+            #expect(net.adjacentEdges(of: a).allSatisfy { $0.pack == a.pack }, "\(a) links across packs")
+            for b in refs {
+                for hops in 0...4 {
+                    let expected = a.pack == b.pack && net.packs[a.pack].isEdge(b.edge, withinHops: hops, of: a.edge)
+                    #expect(net.isEdge(b, withinHops: hops, of: a) == expected, "\(a) \(b) \(hops)")
+                }
+                if a.pack == b.pack, let d = (0...4).first(where: { net.packs[a.pack].isEdge(b.edge, withinHops: $0, of: a.edge) }) {
+                    longest[a.pack] = max(longest[a.pack], d)
+                }
+            }
+        }
+        let bridgeIndex = try #require(net.packs.firstIndex { $0 === bridges })
+        #expect(longest[bridgeIndex] == 3 && longest[1 - bridgeIndex] == 2)
+    }
+
     /// Way-node ranges that only touch: pack "old" holds way 12 nodes 0…1
     /// as one edge; in pack "split" way 13 joins way 12 at node 1, so way 12
     /// is two edges, nodes 0…1 and 1…2, every point 1 E7 unit north (no

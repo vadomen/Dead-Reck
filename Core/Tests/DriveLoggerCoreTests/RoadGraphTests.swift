@@ -360,6 +360,26 @@ struct RoadGraphTests {
             RoadFixture.way(9, Self.residential, [N(id: 71, east: 300, north: 0), N(id: 90, east: 400, north: 0)]),
             // The same ID twice in a row is the old rule and still applies.
             "w10 v1 dV c0 t i0 u Thighway=residential Nn100x0.0000000y-0.0010000,n100x0.0000000y-0.0010000,n101x0.0001000y-0.0010000",
+            // R17.1-1, a 3-chain: 213, 212 and 211 share (100, 800) in way
+            // 11 (213 kept, 212 and 211 dropped), way 12 meets 212 and way 13
+            // meets 211. `union` must merge the roots (`representative`):
+            // union(213, 211) after union(213, 212) re-parents 213, so
+            // without them 212 is left a node of its own.
+            RoadFixture.way(11, Self.residential, [N(id: 210, east: 0, north: 800), N(id: 213, east: 100, north: 800), N(id: 212, east: 100, north: 800), N(id: 211, east: 100, north: 800), N(id: 214, east: 200, north: 800)]),
+            RoadFixture.way(12, Self.residential, [N(id: 212, east: 100, north: 800), N(id: 220, east: 100, north: 900)]),
+            RoadFixture.way(13, Self.residential, [N(id: 211, east: 100, north: 800), N(id: 230, east: 100, north: 700)]),
+            // R17.1-1, a chain across ways: 241~242 in way 14, 242~243 in
+            // way 15, and way 16 ends at 243.
+            RoadFixture.way(14, Self.residential, [N(id: 240, east: 0, north: 1100), N(id: 241, east: 100, north: 1100), N(id: 242, east: 100, north: 1100)]),
+            RoadFixture.way(15, Self.residential, [N(id: 242, east: 100, north: 1100), N(id: 243, east: 100, north: 1100), N(id: 250, east: 200, north: 1100)]),
+            RoadFixture.way(16, Self.residential, [N(id: 260, east: 100, north: 1200), N(id: 243, east: 100, north: 1100)]),
+            // R17.1-1, a chain across ways through a merged node: 273~271 in
+            // way 17 (271 becomes 273's parent), 273~272 in way 18, and way
+            // 19 ends at 271. Without `representative`, union(273, 272)
+            // re-parents 273 to 272 and leaves 271 apart.
+            RoadFixture.way(17, Self.residential, [N(id: 270, east: 0, north: 1400), N(id: 273, east: 100, north: 1400), N(id: 271, east: 100, north: 1400)]),
+            RoadFixture.way(18, Self.residential, [N(id: 273, east: 100, north: 1400), N(id: 272, east: 100, north: 1400), N(id: 280, east: 200, north: 1400)]),
+            RoadFixture.way(19, Self.residential, [N(id: 290, east: 100, north: 1500), N(id: 271, east: 100, north: 1400)]),
         ]
     }
 
@@ -368,9 +388,10 @@ struct RoadGraphTests {
         let ways = try OPLReader.ways(in: Self.stackedNodeLines().joined(separator: "\n"))
         let (graph, stats) = try RoadGraphBuilder(classes: Set(RoadGraphBuilder.regionClasses)).build(ways: ways)
         // 12, 32, 51 and 71 are dropped from their ways' lists (the repeated
-        // ID 100 is not counted: it is the same node).
-        #expect(stats.pointsAtRepeatedCoordinate == 4)
-        #expect(stats.nodesMerged == 4)
+        // ID 100 is not counted: it is the same node); then 212, 211, 242,
+        // 243, 271 and 272 (R17.1-1).
+        #expect(stats.pointsAtRepeatedCoordinate == 10)
+        #expect(stats.nodesMerged == 10)
         #expect(stats.waysDegenerate == 1)
         #expect(!graph.edges.contains { $0.osmWayID == 7 })
 
@@ -412,6 +433,11 @@ struct RoadGraphTests {
         #expect(waysMeeting(at: try node(100, 200)) == [3, 4])
         #expect(waysMeeting(at: try node(0, 400)) == [5, 6])
         #expect(waysMeeting(at: try node(300, 0)) == [8, 9])
+        // R17.1-1: each chain is one node with every way that reaches it.
+        #expect(waysMeeting(at: try node(100, 800)) == [11, 11, 12, 13])
+        #expect(waysMeeting(at: try node(100, 1100)) == [14, 15, 16])
+        #expect(waysMeeting(at: try node(100, 1400)) == [17, 18, 19])
+        #expect(pack.nodeCount == Set((0..<pack.nodeCount).map { pack.node($0) }).count, "one node per position")
 
         // Way 3 ends and way 5 starts with the first node of the stack; the
         // edges are one segment long.

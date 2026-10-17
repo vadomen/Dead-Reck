@@ -105,6 +105,49 @@ struct RoadPackLibraryTests {
         await library.rescan()
         #expect(await library.candidates().candidates.map(\.name) == ["late.roadpack"])
     }
+
+    /// R32.4-9: `rescanQueued`. The first scan is held in its source, after
+    /// it has listed the directory; a file is copied in and two rescans are
+    /// requested while it is held. They must queue exactly one more scan,
+    /// which runs after the first finishes and sees the new file. Without
+    /// the queued scan their callers would wait forever (the time limit).
+    /// The 300 ms pause lets the two calls reach the actor before the first
+    /// scan is released; nothing else on the actor is waiting, so they get
+    /// there in microseconds.
+    @Test("R32.4-9: rescans requested during a scan queue exactly one more, which runs after it and sees a file the running one missed",
+          .timeLimit(.minutes(1)))
+    func rescanDuringScanRunsAfter() async throws {
+        let packs = try RoadPackFixture.directory()
+        defer { try? FileManager.default.removeItem(at: packs) }
+        try RoadPackFixture.write(try RoadPackFixture.data(), named: "a.roadpack", in: packs)
+        let listed = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
+        let library = RoadPackLibrary(source: {
+            let urls = RoadPackLibrary.listing(packs)
+            listed.signal()
+            _ = release.wait(timeout: .now() + 20)
+            release.signal()  // pass it on: a later scan never waits
+            return urls
+        }, cacheURL: nil)
+        func hasListed() -> Bool { listed.wait(timeout: .now()) == .success }
+
+        let first = Task { await library.rescan() }
+        while !hasListed() { try await Task.sleep(for: .milliseconds(5)) }
+        #expect(await library.status().scanning)
+        try RoadPackFixture.write(try RoadPackFixture.data(latShiftE7: 1_000), named: "b.roadpack", in: packs)
+        let second = Task { await library.rescan() }
+        let third = Task { await library.rescan() }
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(await library.scansStarted == 1, "a rescan during a scan does not start another at once")
+        release.signal()
+
+        #expect(await first.value.map(\.name) == ["a.roadpack"])
+        #expect(await second.value.map(\.name) == ["a.roadpack", "b.roadpack"])
+        #expect(await third.value.map(\.name) == ["a.roadpack", "b.roadpack"])
+        #expect(await library.scansStarted == 2)
+        let status = await library.status()
+        #expect(!status.scanning && status.scansCompleted == 2)
+        #expect(await library.candidates().candidates.map(\.name) == ["a.roadpack", "b.roadpack"])
+    }
 }
 
 @Suite("Roads diagnostics text")

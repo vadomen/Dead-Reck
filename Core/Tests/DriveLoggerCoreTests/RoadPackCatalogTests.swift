@@ -103,6 +103,12 @@ struct RoadPackCatalogTests {
         }
         var selector = RoadPackSelector(candidates: all)
         let bad = RoadSelectionRequest(latitude: .nan, longitude: 0, radiusM: 10, afterInputs: 1, t: .zero)
+        // R33.1-1: the documented order puts unusableRequest before noPacks,
+        // so an unusable request with an empty library is labelled by the request.
+        #expect(RoadPackSelection.attempt([], request: bad).outcome == .unusableRequest)
+        #expect(RoadPackSelection.attempt([], refusedAtScan: [RoadPackSelection.Refusal(names: ["x.roadpack"], reason: "truncated")],
+                                          request: bad).outcome == .unusableRequest)
+        #expect(RoadPackSelection.attempt([], request: RoadSelectionRequest(latitude: 0, longitude: 0, radiusM: 10, afterInputs: 1, t: .zero)).outcome == .noPacks)
         #expect(selector.network(for: bad) == nil)
         let good = RoadSelectionRequest(latitude: 0, longitude: 0, radiusM: 10, afterInputs: 2, t: .zero)
         #expect(selector.network(for: good) != nil && selector.requests == 2)
@@ -122,6 +128,17 @@ struct RoadPackCatalogTests {
         #expect(selector.network(for: request) == nil && selector.network(for: request) == nil)
         guard case .refused(let kept)? = selector.lastOutcome else { Issue.record("no refusal kept"); return }
         #expect(kept == mismatch)
+        // R32.4-3: the failed build is remembered once, so the second request
+        // was answered from `knownRefusals` (no second build) and added nothing.
+        #expect(selector.requests == 2 && selector.knownRefusals == [mismatch])
+        // What a known set returns is the remembered refusal, not a rebuild's:
+        // a selector told an unbuilt set is refused never builds it.
+        let single = try Self.candidates([("A", Self.packA())])
+        var told = RoadPackSelector(candidates: single)
+        told.remember(RoadPackSelection.Refusal(names: ["A"], reason: "refused earlier"))
+        let again = told.attempt(for: request)
+        #expect(again.outcome == .refused && again.network == nil && again.reason == "refused earlier")
+        #expect(told.knownRefusals.count == 1)
     }
 
     // MARK: Catalog
@@ -194,6 +211,50 @@ struct RoadPackCatalogTests {
         #expect(!newSize.entries[0].cacheHit && newSize.entries[0].isUsable)
         #expect(newSize.entries[0].verification?.contentHash == NavigationSeed.hex(try RoadPack(data: b).contentHash))
         #expect(newSize.cache.entries.count == 1)
+    }
+
+    @Test("R32.4-2: a cache hit is stored again, so the launch after a hit is a hit too (no full re-verification every other launch)")
+    func cacheHitIsStoredAgain() throws {
+        let scratch = try ScratchDirectory()
+        defer { scratch.remove() }
+        let a = try Self.write(Self.packA(), "a.roadpack", in: scratch)
+        let c = try Self.write(Self.packC(), "c.roadpack", in: scratch)
+        let first = RoadPackCatalog(urls: [a, c], cache: RoadPackVerificationCache())
+        #expect(first.entries.map(\.cacheHit) == [false, false])
+        // Each launch persists only the cache the previous one produced.
+        var cache = RoadPackVerificationCache(data: first.cache.encoded())
+        for launch in 2...4 {
+            let catalog = RoadPackCatalog(urls: [a, c], cache: cache)
+            #expect(catalog.entries.map(\.cacheHit) == [true, true], "launch \(launch)")
+            #expect(catalog.entries.map(\.verification) == first.entries.map(\.verification), "launch \(launch)")
+            #expect(catalog.cache == first.cache, "launch \(launch)")
+            cache = RoadPackVerificationCache(data: catalog.cache.encoded())
+        }
+        // Only the scanned files are kept: a file no longer offered drops out.
+        let onlyA = RoadPackCatalog(urls: [a], cache: cache)
+        #expect(onlyA.entries.map(\.cacheHit) == [true] && onlyA.cache.entries.map(\.identity.name) == ["a.roadpack"])
+    }
+
+    @Test("R32.4-4: a persisted cache of another cache version is ignored: every pack is verified again")
+    func cacheOfAnotherVersionIgnored() throws {
+        let scratch = try ScratchDirectory()
+        defer { scratch.remove() }
+        let url = try Self.write(Self.packA(), "a.roadpack", in: scratch)
+        let first = RoadPackCatalog(urls: [url], cache: RoadPackVerificationCache())
+        #expect(first.cache.cacheVersion == RoadPackVerificationCache.currentVersion && first.cache.entries.count == 1)
+        // The current version loads (control); the same entries under
+        // another version, older or newer, load empty.
+        #expect(RoadPackVerificationCache(data: first.cache.encoded()).entries.count == 1)
+        for version in [RoadPackVerificationCache.currentVersion + 1, RoadPackVerificationCache.currentVersion - 1] {
+            var other = first.cache
+            other.cacheVersion = version
+            let encoded = other.encoded()
+            #expect(String(decoding: encoded, as: UTF8.self).contains("\"cacheVersion\":\(version)"))
+            let loaded = RoadPackVerificationCache(data: encoded)
+            #expect(loaded.entries.isEmpty && loaded.cacheVersion == RoadPackVerificationCache.currentVersion, "version \(version)")
+            let catalog = RoadPackCatalog(urls: [url], cache: loaded)
+            #expect(!catalog.entries[0].cacheHit && catalog.entries[0].isUsable, "version \(version)")
+        }
     }
 
     @Test("Candidates after a cache hit: the file must keep its identity and its header the verified content hash")
