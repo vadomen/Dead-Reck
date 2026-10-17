@@ -97,6 +97,8 @@ struct NavigationFixPinTests {
         /// The accessory source's agreement run length after every
         /// location input, with its fix time.
         var agree: [(t: Double, count: Int, downweighted: Bool)] = []
+        /// After each manual fix: the counters, and each source's last pin `ns`.
+        var pinStates: [(counters: NavigationCounters, lastPinNs: [Int64?])] = []
     }
 
     static func run(_ inputs: [NavigationInput], config: NavigationConfig, roads: RoadNetwork?,
@@ -110,7 +112,9 @@ struct NavigationFixPinTests {
             }
             run.engine.ingest(input)
             switch input {
-            case .manualFix: run.decisions.append(run.engine.lastFixPinDecision)
+            case .manualFix:
+                run.decisions.append(run.engine.lastFixPinDecision)
+                run.pinStates.append((run.engine.counters, run.engine.fixPin.map { $0.lastPin?.ns }))
             case .location(_, let t):
                 if let source = run.engine.fixPin.first {
                     run.agree.append((t.seconds, source.agreeCount, source.isDownweighted))
@@ -435,6 +439,222 @@ struct NavigationFixPinTests {
                 #expect(on.engine.counters == off.engine.counters && !on.engine.counters.anyFixPin)
             }
         }
+    }
+
+    // MARK: Re-anchor (R37.1-1)
+
+    /// A plane point of `engine` as metres in the fixed test plane.
+    static func inTestPlane(_ engine: NavigationEngine, _ east: Double, _ north: Double) throws -> (east: Double, north: Double) {
+        let g = try #require(engine.tangentPlane).geodetic(east: east, north: north)
+        let p = S.plane.enu(latitude: g.latitude, longitude: g.longitude)
+        return (p.east, p.north)
+    }
+
+    static func distance(_ a: (east: Double, north: Double), _ b: (east: Double, north: Double)) -> Double {
+        ((a.east - b.east) * (a.east - b.east) + (a.north - b.north) * (a.north - b.north)).squareRoot()
+    }
+
+    /// The decision-relevant fix-pin counters (the road distance queries
+    /// are work: a re-anchor clears the per-fix cache).
+    static var fixPinVerdictCounters: [KeyPath<NavigationCounters, Int>] { [
+        \.fixPinSignificantPins, \.fixPinRoadVerdictPinAccessory, \.fixPinRoadVerdictFixesAccessory,
+        \.fixPinRoadVerdictNoneAccessory, \.fixPinTwoPinVerdictPinAccessory, \.fixPinTwoPinVerdictNoneAccessory,
+        \.fixPinDownweightsAccessory, \.fixPinDownweightedFixesAccessory, \.fixPinCourseUpdatesDownweightedAccessory,
+        \.fixPinSpeedUpdatesDownweightedAccessory, \.fixPinRestoresByRoadsAccessory, \.fixPinRestoresByAgreementAccessory,
+        \.fixPinRestoresByPinAccessory, \.fixPinReseedsBlocked, \.fixPinRejectedOffRoadDownweightedAccessory,
+        \.fixPinRoadRechecks,
+    ] }
+
+    @Test("Re-anchor while down-weighted (both keys): ring, offset and last pin carried into the new plane; verdicts and win-back unchanged")
+    func reanchorWhileDownweighted() throws {
+        let drive = Self.lDrive(eastS: 140)
+        let net = try Self.roads(drive)
+        // The offset persists (never restored), or ends at 100 s (restored by
+        // roads after both re-anchors, from a ring that straddles them).
+        // Agreement disabled, so only roads can restore.
+        for offsetUntil in [Double.infinity, 100] {
+            let label = "offset until \(offsetUntil)"
+            let inputs = Self.inputs(drive, offsetUntil: offsetUntil, pins: [(30.03, 0, 0)])
+            let fixed = Self.config(roads: 1, twoPin: 1) { $0.fixPinRestoreS = 3600 }
+            let moving = Self.config(roads: 1, twoPin: 1) { $0.fixPinRestoreS = 3600; $0.reanchorDistanceM = 500 }
+            #expect(moving.invalidReason == nil && moving.validated().reanchorDistanceM == 500)
+            let off = Self.run(inputs, config: fixed, roads: net)
+            let on = Self.run(inputs, config: moving, roads: net)
+            #expect(off.engine.counters.reanchors == 0, "\(label)")
+            #expect(on.engine.counters.reanchors >= 1, "\(label)")
+            let a = off.engine.fixPin[0], b = on.engine.fixPin[0]
+
+            // Verdicts and win-back: the same decisions, counters and restore time.
+            #expect(on.decisions == off.decisions, "\(label)")
+            for key in Self.fixPinVerdictCounters {
+                #expect(on.engine.counters[keyPath: key] == off.engine.counters[keyPath: key], "\(label): \(key)")
+            }
+            #expect(on.agree.map(\.downweighted) == off.agree.map(\.downweighted), "\(label)")
+            #expect(on.agree.map(\.count) == off.agree.map(\.count), "\(label)")
+            if offsetUntil.isFinite {
+                #expect(on.engine.counters.fixPinRestoresByRoadsAccessory == 1 && !b.isDownweighted, "\(label)")
+                let restoredAt = try #require(on.agree.first { $0.t > 31 && !$0.downweighted }?.t)
+                #expect(restoredAt > 150, "\(label): restored at \(restoredAt) s, after the re-anchors")
+            } else {
+                #expect(b.isDownweighted && on.engine.counters.fixPinRestoresByRoadsAccessory == 0, "\(label)")
+            }
+
+            // The ring: the same fixes at the same places on the ground, and
+            // some of them older than the first re-anchor (≈ 110 s), so moved.
+            #expect(a.ring.map(\.ns) == b.ring.map(\.ns), "\(label)")
+            #expect((b.ring.first?.ns ?? .max) < S.ms(105).nanoseconds, "\(label)")
+            var worst = 0.0, worstCourse = 0.0
+            for (p, q) in zip(a.ring, b.ring) {
+                worst = max(worst, Self.distance(try Self.inTestPlane(off.engine, p.east, p.north),
+                                                 try Self.inTestPlane(on.engine, q.east, q.north)))
+                #expect((p.course == nil) == (q.course == nil))
+                if let c = p.course, let d = q.course { worstCourse = max(worstCourse, abs(remainder(c - d, 2 * .pi))) }
+                #expect(p.sigma == q.sigma)
+            }
+            #expect(worst < 1e-6, "\(label): ring moved by \(worst) m on the ground")
+            #expect(worstCourse < 1e-6, "\(label): ring course moved by \(worstCourse) rad")
+
+            // The offset and the last pin's vector, as tips at the newest
+            // fix: the same on the ground (linearised at the cloud mean,
+            // ≤ |offset| × |anchor move| / R ≈ 0.02 m).
+            let pa = try #require(a.ring.last), pb = try #require(b.ring.last)
+            if let oa = a.offset {
+                let ob = try #require(b.offset)
+                let tipA = try Self.inTestPlane(off.engine, pa.east + oa.east, pa.north + oa.north)
+                let tipB = try Self.inTestPlane(on.engine, pb.east + ob.east, pb.north + ob.north)
+                #expect(Self.distance(tipA, tipB) < 0.05, "\(label): offset tip \(Self.distance(tipA, tipB)) m")
+                #expect(abs((oa.east * oa.east + oa.north * oa.north).squareRoot() - Self.offsetM) < 15)
+            } else {
+                #expect(b.offset == nil, "\(label)")
+            }
+            let la = try #require(a.lastPin, "\(label)"), lb = try #require(b.lastPin, "\(label)")
+            #expect(la.ns == lb.ns && la.obdM == lb.obdM && la.yaw == lb.yaw, "\(label)")
+            let tipA = try Self.inTestPlane(off.engine, pa.east + la.dEast, pa.north + la.dNorth)
+            let tipB = try Self.inTestPlane(on.engine, pb.east + lb.dEast, pb.north + lb.dNorth)
+            #expect(Self.distance(tipA, tipB) < 0.05, "\(label): last-pin tip \(Self.distance(tipA, tipB)) m")
+            // Covariance: invariant under the near-rotation (trace, determinant).
+            #expect(abs((la.ee + la.nn) - (lb.ee + lb.nn)) < 1e-3 * (la.ee + la.nn), "\(label)")
+            #expect(abs((la.ee * la.nn - la.en * la.en) - (lb.ee * lb.nn - lb.en * lb.en))
+                    < 1e-3 * (la.ee * la.nn - la.en * la.en), "\(label)")
+            // The estimates agree (the plane change is exact up to rounding).
+            let worstEstimate = zip(on.estimates, off.estimates).map { x, y in
+                Self.distance(S.plane.enu(latitude: x.estimate.latitude, longitude: x.estimate.longitude),
+                              S.plane.enu(latitude: y.estimate.latitude, longitude: y.estimate.longitude))
+            }.max() ?? .infinity
+            #expect(on.estimates.count == off.estimates.count && worstEstimate < 0.5, "\(label): estimate \(worstEstimate) m")
+        }
+    }
+
+    @Test("FixPinSource.transform: positions through the map; offset, last pin, course and covariance through the Jacobian")
+    func sourceTransform() throws {
+        // A synthetic plane change: rotate 30° counter-clockwise, then
+        // translate. J = [[cos, −sin], [sin, cos]] in (east, north).
+        let a = 30 * Double.pi / 180, co = cos(a), si = sin(a)
+        func map(_ e: Double, _ n: Double) -> (Double, Double) { (co * e - si * n - 500, si * e + co * n + 200) }
+        var source = FixPinSource()
+        source.append(.init(ns: 1, east: 100, north: 0, course: 0, sigma: 10, covered: true, roadA: 3, roadB: 4), windowNs: 100)
+        source.append(.init(ns: 2, east: 0, north: 50, course: nil, sigma: 12), windowNs: 100)
+        source.setRoadShift((7, 8))
+        source.offset = (240, 160)
+        source.lastPin = .init(ns: 5, dEast: 30, dNorth: -40, ee: 900, en: 100, nn: 400, obdM: 123, yaw: 0.5)
+        source.transform(map: map, jee: co, jen: -si, jne: si, jnn: co)
+
+        #expect(source.ring.count == 2 && source.roadShift == nil)
+        let f0 = source.ring[0], f1 = source.ring[1]
+        #expect(abs(f0.east - (co * 100 - 500)) < 1e-9 && abs(f0.north - (si * 100 + 200)) < 1e-9)
+        #expect(abs(f1.east - (-si * 50 - 500)) < 1e-9 && abs(f1.north - (co * 50 + 200)) < 1e-9)
+        #expect(f0.roadA == nil && f0.roadB == nil && f0.covered == true && f0.sigma == 10 && f1.course == nil)
+        // A heading (clockwise from north) turns the other way: north (0)
+        // rotated 30° counter-clockwise is a bearing of 330°.
+        let course = try #require(f0.course)
+        #expect(abs(course - (2 * .pi - a)) < 1e-9, "course \(course * 180 / .pi)°")
+        let o = try #require(source.offset)
+        #expect(abs(o.east - (co * 240 - si * 160)) < 1e-9 && abs(o.north - (si * 240 + co * 160)) < 1e-9)
+        let p = try #require(source.lastPin)
+        #expect(abs(p.dEast - (co * 30 + si * 40)) < 1e-9 && abs(p.dNorth - (si * 30 - co * 40)) < 1e-9)
+        #expect(p.ns == 5 && p.obdM == 123 && p.yaw == 0.5)
+        // P' = J P Jᵀ, written out.
+        let j = [[co, -si], [si, co]], m = [[900.0, 100], [100, 400]]
+        var q = [[0.0, 0], [0, 0]]
+        for r in 0..<2 { for c in 0..<2 { for x in 0..<2 { for y in 0..<2 { q[r][c] += j[r][x] * m[x][y] * j[c][y] } } } }
+        #expect(abs(p.ee - q[0][0]) < 1e-9 && abs(p.en - q[0][1]) < 1e-9 && abs(p.nn - q[1][1]) < 1e-9)
+        #expect(abs(q[0][1] - q[1][0]) < 1e-9)
+        // Nothing to move: no offset, no pin, an empty ring.
+        var empty = FixPinSource()
+        empty.transform(map: map, jee: co, jen: -si, jne: si, jnn: co)
+        #expect(empty.ring.isEmpty && empty.offset == nil && empty.lastPin == nil)
+    }
+
+    // MARK: Refinement (R37.1-2)
+
+    /// Genuine phone fixes on the roads (test 2), pins 150 m along-track
+    /// off on the east leg at `times`, both keys on: each first pin is
+    /// significant and judged by both arbiters (verdict fixes, no
+    /// down-weighting), so a judged pin leaves a road entry, and the
+    /// two-pin arbiter has a previous pin from the second judged one on.
+    static func refinementRun(_ times: [Double]) throws -> Run {
+        let drive = Self.lDrive(eastS: 40)
+        let net = try Self.roads(drive)
+        let inputs = Self.inputs(drive, offsetUntil: -1, accuracy: 5, accessory: false,
+                                 pins: times.map { ($0, 150, 0) })
+        return Self.run(inputs, config: Self.config(roads: 1, twoPin: 1), roads: net)
+    }
+
+    @Test("Refinement: a pin 1.5 s after the previous one is not judged; its lastPin and counters are the previous pin's")
+    func refinementWithinWindow() throws {
+        let run = try Self.refinementRun([58.03, 59.53])
+        #expect(run.decisions.count == 2 && run.pinStates.count == 2)
+        let first = try #require(run.decisions[0]), second = try #require(run.decisions[1])
+        #expect(!first.refinement && first.significant, "\(first.text)")
+        #expect(first.sources.first?.road?.verdict == .fixes, "\(first.text)")
+        #expect(second.refinement, "\(second.text)")
+        #expect(second.text.contains("(refinement, not judged)"))
+        let s = try #require(second.sources.first)
+        #expect(second.sources.count == 1 && s.source == "phone" && s.fixesInWindow > 0)
+        #expect(s.road == nil && s.twoPin == nil && s.sourceChi2 == nil && !s.downweighted && !s.restored, "\(second.text)")
+        // lastPin is still the first pin, and no verdict counter moved.
+        #expect(run.pinStates[0].lastPinNs[FixPinSource.Kind.phone.rawValue] == S.ms(58.03).nanoseconds)
+        #expect(run.pinStates[1].lastPinNs[FixPinSource.Kind.phone.rawValue] == S.ms(58.03).nanoseconds)
+        for key in Self.fixPinVerdictCounters + [\.fixPinRoadVerdictFixesPhone, \.fixPinTwoPinVerdictNonePhone,
+                                                 \.fixPinTwoPinVerdictPinPhone, \.fixPinDownweightsPhone] {
+            #expect(run.pinStates[1].counters[keyPath: key] == run.pinStates[0].counters[keyPath: key], "\(key)")
+        }
+        #expect(!run.engine.fixPin[1].isDownweighted)
+    }
+
+    @Test("Refinement: a pin 3.5 s after the previous one is judged and becomes the last pin")
+    func refinementOutsideWindow() throws {
+        let run = try Self.refinementRun([58.03, 61.53])
+        let second = try #require(run.decisions[1])
+        #expect(!second.refinement, "\(second.text)")
+        #expect(second.significant, "\(second.text)")
+        let s = try #require(second.sources.first)
+        #expect(s.road != nil && s.twoPin != nil, "\(second.text)")
+        #expect(abs((s.twoPin?.previousT ?? 0) - 58.03) < 1e-6)
+        #expect(run.pinStates[1].lastPinNs[FixPinSource.Kind.phone.rawValue] == S.ms(61.53).nanoseconds)
+        #expect(run.pinStates[1].counters.fixPinSignificantPins == run.pinStates[0].counters.fixPinSignificantPins + 1)
+    }
+
+    @Test("Refinement chain 0, 2, 4 s: rolling (each against the pin before), as the replay's pin scoring folds it")
+    func refinementChain() throws {
+        let times = [58.03, 60.03, 62.03]
+        let run = try Self.refinementRun(times)
+        let flags = run.decisions.map { $0?.refinement }
+        // The third pin is 4 s after the first but 2 s after the second.
+        #expect(flags == [false, true, true], "\(flags)")
+        for state in run.pinStates {
+            #expect(state.lastPinNs[FixPinSource.Kind.phone.rawValue] == S.ms(58.03).nanoseconds)
+            #expect(state.counters.fixPinSignificantPins == run.pinStates[0].counters.fixPinSignificantPins)
+        }
+        for d in run.decisions.dropFirst() {
+            #expect(d?.sources.allSatisfy { $0.road == nil && $0.twoPin == nil } == true)
+        }
+        // The replay's scoring rule on the same times: the same pins are
+        // refinements, both of the chain's first pin.
+        let scoring = NavigationReplay.pinScoring(manualFixTimes: times.map(S.ms), pairWindowS: NavigationReplay.defaultPinPairWindowS)
+        #expect(scoring.notScored.map { $0?.reason == .refinement } == [false, true, true])
+        #expect(scoring.notScored.dropFirst().allSatisfy { abs(($0?.firstPinT ?? 0) - 58.03) < 1e-6 })
+        #expect(NavigationEngine.fixPinRefinementWindowS == NavigationReplay.defaultPinPairWindowS)
     }
 
     // MARK: Replay output

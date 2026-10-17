@@ -149,4 +149,143 @@ struct NavigationFixPinInjectionTests {
         }
         #expect(zip(times, times.dropFirst()).allSatisfy { $1.t - $0.t >= options.minSeparationS })
     }
+
+    // MARK: Pin selection and road context (R37.1-3)
+
+    /// The L-drive (north 150 s, a 3 s right turn, east) on a sparse map in
+    /// the test plane: a north–south street along the first leg, an
+    /// east–west one along the last (crossing it at the corner), and a short
+    /// street 45 m east of the first leg, alongside it from 640 m to 960 m
+    /// north (the leg passes there at about 94–126 s).
+    static func lMap(_ drive: S) throws -> RoadNetwork {
+        let x0 = F.truth(drive, 1).east, y1 = F.truth(drive, drive.duration - 1).north
+        return try NavigationRoadTests.network([
+            NavigationRoadTests.street(1, from: (x0, -1000), to: (x0, 2000)),
+            NavigationRoadTests.street(2, from: (-500, y1), to: (2500, y1)),
+            NavigationRoadTests.street(3, from: (x0 + 45, 640), to: (x0 + 45, 960)),
+        ])
+    }
+
+    /// Every candidate pin time (no recorded pin, nothing excluded): one
+    /// per `candidateStepS`, since all of them are at least that far apart.
+    static func allPinTimes(_ inputs: [NavigationInput], roads: RoadNetwork, _ edit: (inout FixPinInjection.Options) -> Void = { _ in })
+        -> (times: [FixPinInjection.PinTime], options: FixPinInjection.Options) {
+        var options = FixPinInjection.Options()
+        options.pinsPerLog = 1000
+        options.minSeparationS = options.candidateStepS
+        edit(&options)
+        return (FixPinInjection.pinTimes(inputs, roads: roads, options: options), options)
+    }
+
+    /// The second pin by the rule, written out: the first whole second
+    /// from `twoPinMinGapS` to `twoPinMaxGapS` after `t` (and not after the
+    /// last fix) with at least the OBD path and net gyro turn since `t`.
+    static func expectedSecond(_ t: Double, inputs: [NavigationInput], options: FixPinInjection.Options) -> Double? {
+        let obd = FixPinInjection.cumulativeOBD(inputs), yaw = FixPinInjection.cumulativeYaw(inputs)
+        let last = FixPinInjection.gnssFixes(inputs).last!.t
+        guard let o0 = FixPinInjection.value(obd, at: t), let y0 = FixPinInjection.value(yaw, at: t) else { return nil }
+        var s = t + options.twoPinMinGapS
+        while s <= min(t + options.twoPinMaxGapS, last) {
+            if let o = FixPinInjection.value(obd, at: s), let y = FixPinInjection.value(yaw, at: s),
+               o - o0 >= options.twoPinMinPathM, abs(y - y0) * 180 / .pi >= options.twoPinMinTurnDeg {
+                return s
+            }
+            s += 1
+        }
+        return nil
+    }
+
+    @Test func contextOnAnLDrive() throws {
+        let drive = F.lDrive(northS: 150, eastS: 150)
+        let inputs = F.inputs(drive, offsetUntil: -.infinity)
+        let (times, options) = Self.allPinTimes(inputs, roads: try Self.lMap(drive))
+        func at(_ t: Double) throws -> FixPinInjection.PinTime { try #require(times.first { $0.t == t }, "no candidate at \(t) s") }
+        // Every candidate of the grid is there.
+        #expect(times.count > 30 && zip(times, times.dropFirst()).allSatisfy { $1.t - $0.t == options.candidateStepS })
+        // Mid-leg, on the street with nothing else near: straight.
+        for t in [140.0, 200, 250] {
+            let p = try at(t)
+            #expect(p.context == .straight && !p.junction && !p.parallel, "\(t) s: \(p.context)")
+        }
+        // The turn starts at 150 s, 19 m before the east–west street (the
+        // turn's radius), heading north: across it, so a junction.
+        let corner = try at(150)
+        #expect(corner.context == .junction && corner.junction && !corner.parallel, "\(corner.context)")
+        // 155 s: 39 m along the last leg, past the junction radius.
+        #expect(try at(155).context == .straight)
+        // 100–120 s: the street 45 m east runs alongside.
+        for t in [100.0, 110, 120] {
+            let p = try at(t)
+            #expect(p.context == .parallel && p.parallel && !p.junction, "\(t) s: \(p.context)")
+        }
+        #expect(try at(135).context == .straight, "past the parallel street's end")
+
+        // The classifier directly: the corner's crossing road is within the
+        // radius at 30°, the leg's own street never makes a junction.
+        let map = try Self.lMap(drive)
+        func context(_ east: Double, _ north: Double, course: Double?) -> (junction: Bool, parallel: Bool) {
+            let g = S.plane.geodetic(east: east, north: north)
+            return FixPinInjection.context(latitude: g.latitude, longitude: g.longitude, course: course, speed: 10,
+                                           roads: map, options: options)
+        }
+        let y1 = F.truth(drive, drive.duration - 1).north
+        #expect(context(0, y1 - 20, course: 0) == (true, false))
+        #expect(context(0, y1 - 30, course: 0) == (false, false), "outside the 25 m radius")
+        #expect(context(0, 300, course: 0) == (false, false))
+        #expect(context(0, 300, course: 180) == (false, false), "a street is two-way")
+        #expect(context(0, 800, course: 0) == (false, true))
+        #expect(context(0, 800, course: 30) == (false, false), "the street alongside at 30° is not parallel")
+        #expect(context(0, 800, course: nil) == (false, true), "no course: the nearest road's direction")
+        // On the east–west street 20 m from the north–south one, heading east.
+        #expect(context(20, y1, course: 90) == (true, false))
+    }
+
+    @Test func secondAndThirdPinSelection() throws {
+        let drive = F.lDrive(northS: 150, eastS: 150)
+        let inputs = F.inputs(drive, offsetUntil: -.infinity)
+        let map = try Self.lMap(drive)
+        let (times, options) = Self.allPinTimes(inputs, roads: map)
+        let last = try #require(FixPinInjection.gnssFixes(inputs).last?.t)
+        func at(_ t: Double) throws -> FixPinInjection.PinTime { try #require(times.first { $0.t == t }, "no candidate at \(t) s") }
+
+        // Every candidate: the second pin is the rule's, and a third one is
+        // 60 s later whenever its window ends by the last fix.
+        for p in times {
+            #expect(p.secondT == Self.expectedSecond(p.t, inputs: inputs, options: options), "\(p.t) s")
+            if let s2 = p.secondT {
+                let fits = s2 + options.thirdPinAfterS + options.windowS - options.preS <= last
+                #expect(p.thirdT == (fits ? s2 + options.thirdPinAfterS : nil), "\(p.t) s")
+            } else {
+                #expect(p.thirdT == nil)
+            }
+        }
+        // 100 s: 330 m of path by 133 s, 55° of the 30°/s turn (from 150 s)
+        // only at 151.8 s: the turn decides.
+        let early = try at(100)
+        #expect(early.secondT == 152, "\(String(describing: early.secondT))")
+        #expect(early.thirdT == 212)
+        // 130 s: the turn is done by 153 s, 330 m of path only at 163 s: the path decides.
+        let late = try at(130)
+        let s2 = try #require(late.secondT)
+        #expect(s2 >= 163 && s2 <= 164, "\(s2)")
+        // Mid-leg after the turn: no second turn ahead, no second pin.
+        for t in [160.0, 200] {
+            #expect(try at(t).secondT == nil && at(t).thirdT == nil, "\(t) s")
+        }
+        // The turn more than twoPinMaxGapS ahead: none either.
+        let (near, _) = Self.allPinTimes(inputs, roads: map) { $0.twoPinMaxGapS = 30 }
+        #expect(try #require(near.first { $0.t == 100 }).secondT == nil)
+        #expect(try #require(near.first { $0.t == 130 }).secondT == nil, "163 s is 33 s after")
+        #expect(try #require(near.first { $0.t == 125 }).secondT == nil, "the turn's 55° is 27 s after, the 330 m 33 s")
+
+        // A drive ending 80 s after the turn: the third pin's window (212 s
+        // + 30 s) runs past the last fix (233 s); the second pin stays.
+        let short = F.lDrive(northS: 150, eastS: 80)
+        let shortInputs = F.inputs(short, offsetUntil: -.infinity)
+        let shortLast = try #require(FixPinInjection.gnssFixes(shortInputs).last?.t)
+        #expect(shortLast < 242 && shortLast >= 212)
+        let (shortTimes, _) = Self.allPinTimes(shortInputs, roads: try Self.lMap(short))
+        let p = try #require(shortTimes.first { $0.t == 100 })
+        #expect(p.secondT == 152 && p.thirdT == nil, "\(String(describing: p.secondT)) / \(String(describing: p.thirdT))")
+    }
 }
