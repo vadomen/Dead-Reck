@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Сумісні авто FuGPS</title>
+<meta name="description" content="Які авто та OBD-II адаптери працюють з FuGPS.">
+<link rel="stylesheet" href="/style.css">
+<link rel="alternate" hreflang="en" href="https://fugps.pages.dev/vehicles">
+<link rel="alternate" hreflang="uk" href="https://fugps.pages.dev/uk/vehicles">
+</head>
+<body>
+<header><div class="wrap"><a class="brand" href="/uk/">Fu<span>GPS</span></a><nav><a href="/uk/vehicles" aria-current="page">Авто</a><a href="/uk/support">Підтримка</a><a href="/uk/privacy">Приватність</a><a class="lang" href="/vehicles" hreflang="en" lang="en">EN</a></nav></div></header>
+<main><div class="wrap">
+<h1>Сумісні авто</h1>
+<p class="lead">FuGPS працює з більшістю бензинових і дизельних авто зі стандартним роз'ємом OBD-II. Головне — щоб авто передавало свою швидкість через OBD-II.</p>
+
+<h2>Вимоги</h2>
+<div class="grid">
+<div class="card"><b>Роз'єм OBD-II</b><p>16-контактне гніздо, зазвичай під панеллю приладів біля колін водія.</p></div>
+<div class="card"><b>Швидкість через OBD-II</b><p>Обов'язковий стандартний PID 0D (швидкість авто). Оберти двигуна (PID 0C) використовуються, якщо доступні.</p></div>
+<div class="card"><b>Адаптер Bluetooth LE</b><p>Сумісний з ELM327 адаптер з Bluetooth Low Energy. Класичні Bluetooth- та Wi-Fi-адаптери не підтримуються.</p></div>
+</div>
+
+<h2>Які авто зазвичай підходять</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Авто</th><th>Статус</th></tr></thead>
+<tbody>
+<tr><td>Бензинові, з 2001 року (ЄС) / з 1996 року (США)</td><td>Підтримуються</td></tr>
+<tr><td>Дизельні, з 2004 року (ЄС)</td><td>Підтримуються</td></tr>
+<tr><td>Авто з шиною CAN, приблизно з 2008 року</td><td>Найкращий результат: швидкі й часті покази швидкості</td></tr>
+<tr><td>Старіші авто без CAN (K-Line, J1850)</td><td>Працюють, але повільніші покази знижують точність</td></tr>
+<tr><td>Гібриди</td><td>Зазвичай підтримуються</td></tr>
+<tr><td>Електромобілі</td><td>Часто не підтримуються — багато електромобілів не передають стандартну швидкість OBD-II</td></tr>
+<tr><td>Авто без стандартного роз'єму OBD-II</td><td>Не підтримуються</td></tr>
+</tbody>
+</table></div>
+<p class="muted">Роки випуску орієнтовні: OBD-II став обов'язковим у різних країнах у різний час, а імпортовані авто відповідають вимогам ринку, для якого їх випускали. Шлюзи безпеки на нових авто зазвичай не блокують дані для читання, які використовує FuGPS.</p>
+
+<h2>Підтримувані протоколи OBD&#8209;II</h2>
+<p>Адаптер визначає протокол автоматично: ISO 15765-4 CAN (11 і 29 біт, 250 і 500 кбіт/с), ISO 14230-4 KWP2000, ISO 9141-2, SAE J1850 PWM і VPW.</p>
+
+<h2>Перевірено</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Авто</th><th>Адаптер</th><th>Результат</th></tr></thead>
+<tbody>
+<tr><td>Volkswagen Touareg (2025)</td><td>Vgate iCar Pro Bluetooth 4.0 (BLE)</td><td>CAN 11 біт 500 кбіт/с · швидкість і оберти ≈ 16 показів/с · затримка ≈ 60 мс</td></tr>
+</tbody>
+</table></div>
+<p>Випробували FuGPS з іншим авто чи адаптером? <a href="mailto:vadpospelov@gmail.com?subject=FuGPS%20car%20report">Напишіть нам</a> марку, модель, рік і адаптер — ми додамо їх сюди.</p>
+
+<h2>Безпечно для авто</h2>
+<p>FuGPS лише зчитує дані. Кожен запит проходить через фіксований перелік дозволених команд OBD-II для читання, тож застосунок не може стерти коди помилок, змінити налаштування чи щось записати в авто.</p>
+</div></main>
+<footer><div class="wrap">© 2026 FuGPS · <a href="/uk/releases">Що нового</a> · <a href="/uk/vehicles">Сумісні авто</a> · <a href="/uk/data">Дані карт</a> · <a href="/uk/privacy">Політика конфіденційності</a> · <a href="/uk/support">Підтримка</a><br>Дані доріг © <a href="https://www.openstreetmap.org/copyright">учасники OpenStreetMap</a>, ліцензія ODbL.</div></footer>
+</body>
+</html>

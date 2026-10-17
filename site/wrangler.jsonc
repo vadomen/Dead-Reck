@@ -1,0 +1,16 @@
+// Static site for the App Store listing (marketing, privacy, support URLs)
+// plus road-pack downloads from R2 under /packs/*.
+// Not part of the iOS build: project.yml does not reference site/.
+// Deployed as Cloudflare Pages -> https://fugps.pages.dev
+// Deploy from this folder:  npx wrangler pages deploy --branch main
+{
+	"name": "fugps",
+	"compatibility_date": "2026-10-01",
+	"pages_build_output_dir": "./public",
+	"r2_buckets": [
+		{
+			"binding": "PACKS",
+			"bucket_name": "fugps-packs"
+		}
+	]
+}

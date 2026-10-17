@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FuGPS Supported Cars</title>
+<meta name="description" content="Which cars and OBD-II adapters work with FuGPS.">
+<link rel="stylesheet" href="/style.css">
+<link rel="alternate" hreflang="en" href="https://fugps.pages.dev/vehicles">
+<link rel="alternate" hreflang="uk" href="https://fugps.pages.dev/uk/vehicles">
+</head>
+<body>
+<header><div class="wrap"><a class="brand" href="/">Fu<span>GPS</span></a><nav><a href="/vehicles" aria-current="page">Cars</a><a href="/support">Support</a><a href="/privacy">Privacy</a><a class="lang" href="/uk/vehicles" hreflang="uk" lang="uk">UA</a></nav></div></header>
+<main><div class="wrap">
+<h1>Supported cars</h1>
+<p class="lead">FuGPS works with most petrol and diesel cars that have a standard OBD-II port. What matters is that the car reports its speed over OBD-II.</p>
+
+<h2>Requirements</h2>
+<div class="grid">
+<div class="card"><b>OBD-II port</b><p>A 16-pin socket, usually under the dashboard near the driver's knees.</p></div>
+<div class="card"><b>Vehicle speed over OBD-II</b><p>Standard PID 0D (vehicle speed) is required. Engine RPM (PID 0C) is used if available.</p></div>
+<div class="card"><b>Bluetooth LE adapter</b><p>An ELM327-compatible adapter with Bluetooth Low Energy. Classic Bluetooth and Wi-Fi adapters are not supported.</p></div>
+</div>
+
+<h2>Which cars usually qualify</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Car</th><th>Status</th></tr></thead>
+<tbody>
+<tr><td>Petrol, 2001 or newer (EU) / 1996 or newer (US)</td><td>Supported</td></tr>
+<tr><td>Diesel, 2004 or newer (EU)</td><td>Supported</td></tr>
+<tr><td>CAN bus cars, roughly 2008 and newer</td><td>Best results: fast, frequent speed readings</td></tr>
+<tr><td>Older non-CAN cars (K-Line, J1850)</td><td>Works, but slower readings lower accuracy</td></tr>
+<tr><td>Hybrids</td><td>Usually supported</td></tr>
+<tr><td>Fully electric cars</td><td>Often not supported — many EVs do not report standard OBD-II speed</td></tr>
+<tr><td>Cars without a standard OBD-II port</td><td>Not supported</td></tr>
+</tbody>
+</table></div>
+<p class="muted">Model years are a guide: OBD-II became mandatory at different times in different markets, and imported cars follow the rules of the market they were built for. Security gateways on newer cars normally do not block the read-only data FuGPS uses.</p>
+
+<h2>Supported OBD&#8209;II protocols</h2>
+<p>The adapter detects the protocol automatically: ISO 15765-4 CAN (11- and 29-bit, 250 and 500 kbit/s), ISO 14230-4 KWP2000, ISO 9141-2, SAE J1850 PWM and VPW.</p>
+
+<h2>Tested</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Car</th><th>Adapter</th><th>Result</th></tr></thead>
+<tbody>
+<tr><td>Volkswagen Touareg (2025)</td><td>Vgate iCar Pro Bluetooth 4.0 (BLE)</td><td>CAN 11-bit 500 kbit/s · speed and RPM ≈ 16 readings/s · ≈ 60 ms latency</td></tr>
+</tbody>
+</table></div>
+<p>Tried FuGPS with another car or adapter? <a href="mailto:vadpospelov@gmail.com?subject=FuGPS%20car%20report">Tell us</a> the make, model, year and adapter, and we will add it here.</p>
+
+<h2>Safe for your car</h2>
+<p>FuGPS only reads data. Every request goes through a fixed allowlist of read-only OBD-II commands, so the app cannot clear fault codes, change settings or write anything to the car.</p>
+</div></main>
+<footer><div class="wrap">© 2026 FuGPS · <a href="/releases">Release notes</a> · <a href="/vehicles">Supported cars</a> · <a href="/data">Map data</a> · <a href="/privacy">Privacy Policy</a> · <a href="/support">Support</a><br>Road data © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>, available under the ODbL.</div></footer>
+</body>
+</html>

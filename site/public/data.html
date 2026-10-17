@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FuGPS Map Data</title>
+<meta name="description" content="Road packs used by FuGPS, derived from OpenStreetMap and licensed under the ODbL.">
+<link rel="stylesheet" href="/style.css">
+<link rel="alternate" hreflang="en" href="https://fugps.pages.dev/data">
+<link rel="alternate" hreflang="uk" href="https://fugps.pages.dev/uk/data">
+</head>
+<body>
+<header><div class="wrap"><a class="brand" href="/">Fu<span>GPS</span></a><nav><a href="/vehicles">Cars</a><a href="/support">Support</a><a href="/privacy">Privacy</a><a class="lang" href="/uk/data" hreflang="uk" lang="uk">UA</a></nav></div></header>
+<main><div class="wrap">
+<h1>Map data</h1>
+<p class="lead">FuGPS matches your estimated position to an offline road network built from OpenStreetMap.</p>
+<p>Road data © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>. The road packs below are a database derived from OpenStreetMap and are made available under the <a href="https://opendatacommons.org/licenses/odbl/1-0/">Open Database License (ODbL) 1.0</a>. You are free to copy, distribute and adapt them, provided you attribute OpenStreetMap and keep any adapted database under the ODbL.</p>
+<h2>Road packs</h2>
+<div id="packs" data-fallback="The pack list is not available right now. The machine-readable list is at /packs/manifest.json."><p class="muted">Loading…</p></div>
+<p class="muted">Machine-readable list: <a href="/packs/manifest.json">/packs/manifest.json</a>. The file format is FuGPS's own binary road-pack format; each pack contains road geometry, connectivity and a spatial index derived from OpenStreetMap ways.</p>
+</div></main>
+<footer><div class="wrap">© 2026 FuGPS · <a href="/releases">Release notes</a> · <a href="/vehicles">Supported cars</a> · <a href="/data">Map data</a> · <a href="/privacy">Privacy Policy</a> · <a href="/support">Support</a><br>Road data © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>, available under the ODbL.</div></footer>
+<script>
+(async () => {
+  const el = document.getElementById("packs");
+  try {
+    const r = await fetch("/packs/manifest.json", { cache: "no-cache" });
+    if (!r.ok) throw new Error(r.status);
+    const m = await r.json();
+    const fmt = (n) => (n / 1e6).toFixed(1) + " MB";
+    el.innerHTML = "<div class=\"table-wrap\"><table><thead><tr><th>Pack</th><th>Size</th><th>OSM data as of</th><th>SHA-256</th></tr></thead><tbody>" +
+      m.packs.map((p) => `<tr><td><a href="${p.url}" download>${p.name}</a></td><td>${fmt(p.size)}</td><td>${(p.osmDate || "").slice(0, 10)}</td><td><code>${p.sha256}</code></td></tr>`).join("") +
+      "</tbody></table></div>";
+  } catch (e) { el.textContent = el.dataset.fallback; }
+})();
+</script>
+</body>
+</html>

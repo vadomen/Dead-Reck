@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FuGPS — keep your position when GPS lies</title>
+<meta name="description" content="FuGPS records your car's speed and the phone's motion sensors so your position can be tracked even when GPS is jammed or spoofed.">
+<link rel="stylesheet" href="/style.css">
+<link rel="alternate" hreflang="en" href="https://fugps.pages.dev/">
+<link rel="alternate" hreflang="uk" href="https://fugps.pages.dev/uk/">
+</head>
+<body>
+<header><div class="wrap"><a class="brand" href="/">Fu<span>GPS</span></a><nav><a href="/vehicles">Cars</a><a href="/support">Support</a><a href="/privacy">Privacy</a><a class="lang" href="/uk/" hreflang="uk" lang="uk">UA</a></nav></div></header>
+<main><div class="wrap">
+<h1>Keep your position when GPS lies.</h1>
+<p class="lead">In cities where satellite navigation is jammed or spoofed, FuGPS tracks your car by dead reckoning — vehicle speed from the OBD-II port plus heading from the iPhone's motion sensors, matched to an offline road map.</p>
+<div class="grid">
+<div class="card"><b>OBD-II over Bluetooth</b><p>Reads vehicle speed from a BLE ELM327-compatible adapter plugged into your car.</p></div>
+<div class="card"><b>On-device sensors</b><p>Gyroscope, accelerometer, magnetometer and barometer, sampled at high rate.</p></div>
+<div class="card"><b>Offline roads</b><p>Your estimated position is constrained to the road network, with no connection required.</p></div>
+<div class="card"><b>Private by design</b><p>No accounts, no servers, no analytics. Recordings stay on your iPhone.</p></div>
+</div>
+<h2>What you need</h2>
+<ul>
+<li>iPhone with iOS 17 or later</li>
+<li>A Bluetooth LE (BLE) ELM327-compatible OBD-II adapter and a car that reports its speed over OBD-II — see <a href="/vehicles">supported cars</a></li>
+<li>A rigid phone mount — the phone must stay in one fixed position during the drive</li>
+</ul>
+<p><a href="/releases">What’s new in version 0.1.0</a></p>
+<p class="note">FuGPS is experimental software. Do not interact with the app while driving, and do not rely on it as your only means of navigation.</p>
+</div></main>
+<footer><div class="wrap">© 2026 FuGPS · <a href="/releases">Release notes</a> · <a href="/vehicles">Supported cars</a> · <a href="/data">Map data</a> · <a href="/privacy">Privacy Policy</a> · <a href="/support">Support</a><br>Road data © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>, available under the ODbL.</div></footer>
+</body>
+</html>

@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FuGPS — позиція авто, навіть коли GPS бреше</title>
+<meta name="description" content="FuGPS записує швидкість авто й дані датчиків руху iPhone, щоб відстежувати позицію навіть тоді, коли GPS глушать або підміняють.">
+<link rel="stylesheet" href="/style.css">
+<link rel="alternate" hreflang="en" href="https://fugps.pages.dev/">
+<link rel="alternate" hreflang="uk" href="https://fugps.pages.dev/uk/">
+</head>
+<body>
+<header><div class="wrap"><a class="brand" href="/uk/">Fu<span>GPS</span></a><nav><a href="/uk/vehicles">Авто</a><a href="/uk/support">Підтримка</a><a href="/uk/privacy">Приватність</a><a class="lang" href="/" hreflang="en" lang="en">EN</a></nav></div></header>
+<main><div class="wrap">
+<h1>Ваша позиція, навіть коли GPS бреше.</h1>
+<p class="lead">У містах, де супутникову навігацію глушать або підміняють, FuGPS відстежує авто методом численення шляху (dead reckoning): швидкість з OBD-II роз'єму автомобіля плюс напрямок руху з датчиків iPhone, прив'язані до офлайн-карти доріг.</p>
+<div class="grid">
+<div class="card"><b>OBD-II через Bluetooth</b><p>Зчитує швидкість авто з BLE-адаптера ELM327, підключеного до роз'єму OBD-II.</p></div>
+<div class="card"><b>Датчики iPhone</b><p>Гіроскоп, акселерометр, магнітометр і барометр з високою частотою опитування.</p></div>
+<div class="card"><b>Офлайн-дороги</b><p>Розрахункова позиція прив'язується до мережі доріг без підключення до інтернету.</p></div>
+<div class="card"><b>Приватність за замовчуванням</b><p>Без облікових записів, серверів і аналітики. Записи залишаються на вашому iPhone.</p></div>
+</div>
+<h2>Що потрібно</h2>
+<ul>
+<li>iPhone з iOS 17 або новішою</li>
+<li>OBD-II адаптер ELM327 з Bluetooth LE (BLE) та авто, яке передає швидкість через OBD-II — див. <a href="/uk/vehicles">сумісні авто</a></li>
+<li>Жорсткий тримач для телефона: під час поїздки телефон має залишатися в одному фіксованому положенні</li>
+</ul>
+<p><a href="/uk/releases">Що нового у версії 0.1.0</a></p>
+<p class="note">FuGPS — експериментальний застосунок. Не користуйтеся ним під час керування й не покладайтеся на нього як на єдиний засіб навігації.</p>
+</div></main>
+<footer><div class="wrap">© 2026 FuGPS · <a href="/uk/releases">Що нового</a> · <a href="/uk/vehicles">Сумісні авто</a> · <a href="/uk/data">Дані карт</a> · <a href="/uk/privacy">Політика конфіденційності</a> · <a href="/uk/support">Підтримка</a><br>Дані доріг © <a href="https://www.openstreetmap.org/copyright">учасники OpenStreetMap</a>, ліцензія ODbL.</div></footer>
+</body>
+</html>

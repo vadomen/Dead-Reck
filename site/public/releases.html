@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FuGPS Release Notes</title>
+<meta name="description" content="What changed in each version of FuGPS.">
+<link rel="stylesheet" href="/style.css">
+<link rel="alternate" hreflang="en" href="https://fugps.pages.dev/releases">
+<link rel="alternate" hreflang="uk" href="https://fugps.pages.dev/uk/releases">
+</head>
+<body>
+<header><div class="wrap"><a class="brand" href="/">Fu<span>GPS</span></a><nav><a href="/vehicles">Cars</a><a href="/support">Support</a><a href="/privacy">Privacy</a><a class="lang" href="/uk/releases" hreflang="uk" lang="uk">UA</a></nav></div></header>
+<main><div class="wrap">
+<h1>Release notes</h1>
+<p class="lead">What changed in each version of FuGPS.</p>
+
+<h2 id="0.1.0">Version 0.1.0 <span class="muted">· October 2026 · first release</span></h2>
+<h3>New</h3>
+<ul>
+<li><b>Drive recording.</b> Vehicle speed and engine RPM from the OBD-II adapter (about 16 readings per second on a modern CAN car), motion sensors at 100 Hz, and GPS as a reference track — all on one shared clock.</li>
+<li><b>Recording with the screen locked.</b> Lock the phone in its mount and recording continues.</li>
+<li><b>Automatic reconnect.</b> If the adapter drops out, for example when it is unplugged or the ignition is switched off and on, the app reconnects and carries on with the same recording.</li>
+<li><b>Live map.</b> Your estimated position by dead reckoning, with an accuracy ellipse and heading-up mode, matched to offline roads of Ukraine.</li>
+<li><b>Sessions.</b> Browse, share and delete recordings. They are also available in the Files app.</li>
+<li><b>Pre-drive checklist</b> before you start a recording.</li>
+<li><b>Read-only by design.</b> FuGPS sends your car only read-only OBD-II requests from a fixed allowlist. It cannot clear fault codes or change any vehicle setting.</li>
+</ul>
+<h3>Known limitations</h3>
+<ul>
+<li>FuGPS is experimental. Without GPS the estimated position drifts over time, and accuracy depends on the phone staying fixed in its mount.</li>
+<li>Only Bluetooth LE OBD-II adapters are supported — see <a href="/vehicles">supported cars</a>.</li>
+<li>Offline roads cover Ukraine only.</li>
+<li>iPhone only, portrait orientation.</li>
+</ul>
+</div></main>
+<footer><div class="wrap">© 2026 FuGPS · <a href="/releases">Release notes</a> · <a href="/vehicles">Supported cars</a> · <a href="/data">Map data</a> · <a href="/privacy">Privacy Policy</a> · <a href="/support">Support</a><br>Road data © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>, available under the ODbL.</div></footer>
+</body>
+</html>
