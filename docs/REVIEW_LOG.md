@@ -166,3 +166,21 @@ Tests: Core 907 tests in 119 suites passed, 36 known issues (test 3); App/ uncha
 ### Run 37 summary
 
 3 rounds; 4 MAJOR fixed with tests (R37.1-1, R37.1-2, R37.1-3, R37.2-2; no production code changed by the loop), 0 rejected, 11 MINOR deferred (R37.1-4..12, R37.2-1, R37.2-3). Final: Core 907 tests passed, 36 known issues.
+
+## Run 38: agent instructions — current scope, nav ownership, acceptance file, model rule, in-project worktrees (e9a353d..8b294a5), started 2026-10-17
+
+Commits: 8b294a5 CLAUDE.md scope (logger + live DR navigator), WORKFLOW roadmap/model/worktree rules, navigation-engineer app ownership and baseline pointer, reviewer triage rows, acceptance drives in git-ignored logs/ACCEPTANCE.md, settings worktree rules for .claude/worktrees/*.
+
+### Round 1
+
+Reviewer: one fresh reviewer (sonnet) on the whole range, checks 10 and 11: privacy (diff and commit message), referenced NAVIGATION.md sections, files, config keys, flags, review runs 32/37 and backlog N3-FIXPIN-GATE, .gitignore, settings allow/ask/deny precedence for the worktree rules, ownership and model-rule consistency across WORKFLOW, agents and review-loop. Before the commit the orchestrator ran a probe worktree at .claude/worktrees/probe: RepositoryInvariantTests 4/4 passed, Core import grep clean, `xcodegen generate` left no project diff; probe and branch removed. Result: 0 BLOCKER / 0 MAJOR / 1 MINOR.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R38.1-1 | MINOR | `.claude/agents/reviewer.md` check 13 and `.claude/settings.json` use the cwd-relative `../dead-reck-mutants`; nothing says the mutation and bit-identical commands run from the main tree. A reviewer started in `.claude/worktrees/<task>` would resolve it to `.claude/worktrees/dead-reck-mutants` (the old sibling `../dead-reck-<task>` worktrees shared its parent). The git-ignored acceptance file's "or the worktree under review" has the same ambiguity. | DEFERRED | backlog. |
+
+Tests: Core not re-run: no file outside docs/, .claude/ and CLAUDE.md changed (code equals e9a353d); App/ unchanged.
+
+### Run 38 summary
+
+1 round; 0 fixed, 0 rejected, 1 MINOR deferred (R38.1-1).
