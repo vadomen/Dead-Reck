@@ -306,6 +306,129 @@ struct NavigationServiceRoadsTests {
         #expect(lines.count == finished.selectionLines)
     }
 
+    @Test("R32.4-7/R33.1-3: a pack the running engine refuses to attach (configWouldChange): the reason is shown, and the set is built once, not again at every fix")
+    func attachRefusalRememberedNotRebuilt() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let dir = try RoadPackFixture.directory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // Guaranteed radius 30 m, under the config's 50 m: it builds, and
+        // the attach is refused.
+        try RoadPackFixture.write(try RoadPackFixture.data(searchRadiusM: 30), named: "narrow.roadpack", in: dir)
+        let packs = library(dir)
+        let service = NavigationService(library: packs)
+        let (feed, tap) = makeFeed(22, scratch: scratch)
+        let task = service.start(feed)
+        let events = Self.events(1...6)
+        for event in Self.events(1...2) { tap.record(event) }
+        #expect(await waitUntil { await service.selectionAttempts >= 1 })
+        let first = await service.roadsStatus()
+        let refusal = try #require(first.refusal, "the attach refusal reaches Diagnostics")
+        #expect(refusal.hasPrefix("narrow.roadpack: ") && refusal.contains("keys: roadSearchRadiusM"))
+        #expect(first.recording && !first.inUse && first.lastOutcome == .refused)
+        #expect(RoadsDiagnosticsText.usage(first) == "none (refused: \(refusal))", "not 'looking for a pack'")
+        #expect(await RoadsWarning.current(service: service, library: packs) == RoadsWarning.refused)
+        #expect(await service.networksBuilt == 1)
+        // Two more fixes, two more attempts: the remembered set is refused
+        // again without being built.
+        for event in Self.events(2.5...4) { tap.record(event) }
+        #expect(await waitUntil { await service.selectionAttempts >= 2 })
+        for event in Self.events(4.5...6) { tap.record(event) }
+        #expect(await waitUntil { await service.selectionAttempts >= 3 })
+        #expect(await service.networksBuilt == 1, "a refused set is remembered, not rebuilt per fix")
+        let later = await service.roadsStatus()
+        #expect(later.refusal == refusal && later.lastOutcome == .refused && !later.inUse)
+        tap.finish()
+        await task.value
+
+        let lines = try NavSidecar.read(contentsOf: feed.sidecarURL).roadsSelections
+        let refused = lines.filter { $0.outcome != .unfinished }
+        #expect(refused.reduce(0) { $0 + $1.attempts } >= 3)
+        #expect(refused.allSatisfy { $0.outcome == .refused && $0.packs == ["narrow.roadpack"] })
+        #expect(refused.allSatisfy { $0.reason?.contains("keys: roadSearchRadiusM") == true })
+        let (comparison, contents) = try await comparison(feed: feed, events: events, packs: [])
+        #expect(contents.roads == nil)
+        #expect(comparison.exact, "\(comparison.report(tolerance: .default))")
+        let finished = try #require(await service.finished.first)
+        #expect(finished.roadsRefusal == refusal && finished.roadPackNames.isEmpty)
+    }
+
+    @Test("R32.4-8: requests arriving during a selection: the latest is kept and started when it finishes, with no new input")
+    func pendingRequestStartsAfterSelection() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let dir = try RoadPackFixture.directory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // An empty library whose scans wait at the gate; each passes it on.
+        let gate = DispatchSemaphore(value: 0)
+        let urls = RoadPackLibrary.listing(dir)
+        let slow = RoadPackLibrary(source: {
+            _ = gate.wait(timeout: .now() + 20)
+            gate.signal()
+            return urls
+        }, cacheURL: nil)
+        let service = NavigationService(library: slow)
+        let (feed, tap) = makeFeed(23, scratch: scratch)
+        let task = service.start(feed)
+        // Fixes at 1, 3 and 5 s: the first request's selection is held at
+        // the gate; the second arrives during it, the third replaces it.
+        let events = Self.events(1...5)
+        for event in events { tap.record(event) }
+        #expect(await waitUntil { await service.snapshot().stats.inputs == events.count })
+        #expect(await service.selectionAttempts == 0)
+        gate.signal()
+        #expect(await waitUntil { await service.selectionAttempts >= 2 }, "the pending request starts without a new input")
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(await service.selectionAttempts == 2, "one pending request, started once")
+        #expect(await service.lastAttemptOutcome == .noPacks)
+        tap.finish()
+        await task.value
+
+        let lines = try NavSidecar.read(contentsOf: feed.sidecarURL).roadsSelections
+        #expect(lines.map(\.outcome) == [.noPacks, .noPacks], "no unfinished attempt: \(lines)")
+        #expect(lines.reduce(0) { $0 + $1.attempts } == 2)
+        // The first request at the first fix; the second is the latest
+        // request (the fix at 5 s, the last input), not the one at 3 s.
+        #expect(lines.first?.afterInputs == 1 && lines.first?.t == MonotonicTimestamp(seconds: 1))
+        #expect(lines.last?.afterInputs == events.count && lines.last?.t == MonotonicTimestamp(seconds: 5))
+    }
+
+    @Test("R34.1-4: the latest outcome is per recording: the next recording starts with none, not the previous drive's warning")
+    func lastOutcomePerRecording() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let dir = try RoadPackFixture.directory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try RoadPackFixture.write(try RoadPackFixture.data(latShiftE7: 1_000_000), named: "far.roadpack", in: dir)
+        let packs = library(dir)
+        let service = NavigationService(library: packs)
+
+        let (feed, tap) = makeFeed(24, scratch: scratch)
+        let task = service.start(feed)
+        for event in Self.events(1...2) { tap.record(event) }
+        #expect(await waitUntil { await service.selectionAttempts >= 1 })
+        #expect(await service.roadsStatus().lastOutcome == .noneCovering)
+        #expect(await RoadsWarning.current(service: service, library: packs) == RoadsWarning.noneCovering)
+        tap.finish()
+        await task.value
+        #expect(await service.lastAttemptOutcome == .noneCovering)
+
+        // The next recording, before its first attempt (no input yet).
+        let (next, nextTap) = makeFeed(25, scratch: scratch)
+        let nextTask = service.start(next)
+        #expect(await waitUntil { await service.roadsStatus().recording })
+        #expect(await service.lastAttemptOutcome == .noneCovering, "the service-wide outcome is the previous drive's")
+        #expect(await service.roadsStatus().lastOutcome == nil, "this recording has no attempt yet")
+        #expect(await waitUntil(5) { await service.roadsStatus().libraryScanned })
+        #expect(await RoadsWarning.current(service: service, library: packs) == nil, "no warning carried over")
+        // Its own first attempt speaks.
+        for event in Self.events(1...2) { nextTap.record(event) }
+        #expect(await waitUntil { await service.selectionAttempts >= 2 })
+        #expect(await service.roadsStatus().lastOutcome == .noneCovering)
+        nextTap.finish()
+        await nextTask.value
+    }
+
     @Test("Identical attempts: the first line at once, the repeats as one line flushed at the end of the recording (after the last estimate, before any unfinished line)")
     func repeatsFlushedAtEnd() async throws {
         let scratch = try ScratchStore()

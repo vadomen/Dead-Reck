@@ -325,4 +325,32 @@ struct NavigationReplayLiveRoadsTests {
         #expect(e.inertConfigDifferences.isEmpty && e.configBlamed && !e.exact)
         #expect(NavigationConfig.roadOnlyKeys.count == 21 && NavigationConfig.roadOnlyKeys.allSatisfy { $0.hasPrefix("road") })
     }
+
+    /// R32.4-6: a config hash that differs while no key differs (nothing
+    /// to name: the JSON is the replay's, or could not be parsed) is still
+    /// blamed, as "(none parsed)".
+    @Test("R32.4-6: the config hash differs but no key differs: blamed as '(none parsed)', named as a cause")
+    func configHashDiffersNoKeysParsed() throws {
+        let inputs = Attach.inputs()
+        let config = Attach.config()
+        let replay = NavigationReplay.liveLines(inputs: inputs, sessionID: Attach.sessionID, config: config)
+        var sidecar = try NavSidecar.read(NavigationLiveTests.encoded(replay))
+        #expect(sidecar.header.configHash == config.hashHex)
+        sidecar.header.configHash = String(repeating: "0", count: config.hashHex.count)
+
+        let c = SidecarComparison(sidecar: sidecar, replay: replay, replayConfig: config)
+        #expect(c.configHashMismatch && c.configDifferences.isEmpty && c.inertConfigDifferences.isEmpty)
+        #expect(c.configBlamed, "a hash mismatch with no key parsed is blamed")
+        #expect(!c.seedMismatch && c.exact)
+        let report = c.report(tolerance: .default)
+        #expect(report.contains("Warning       config hash differs from the sidecar's; keys: (none parsed)\n"))
+        #expect(!report.contains("road-only keys") && !report.contains("Note          config hash"))
+
+        // Not exact: the config is the only cause named.
+        var short = sidecar
+        short.estimates.remove(at: short.estimates.count / 2)
+        let d = SidecarComparison(sidecar: short, replay: replay, replayConfig: config)
+        #expect(d.configBlamed && !d.exact && d.sidecarOnly == 0 && d.replayOnly == 1)
+        #expect(d.report(tolerance: .default).contains("; explained by a different seed or config\n"))
+    }
 }

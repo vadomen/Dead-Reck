@@ -126,6 +126,11 @@ actor NavigationService {
     /// Bounded: a count, not a list.
     private(set) var selectionAttempts = 0
     private(set) var lastAttemptOutcome: NavSidecar.RoadsSelection.Outcome?
+    /// Selection attempts that came back with a built network (`selected`,
+    /// attached or refused by the run), all recordings: a set refused once
+    /// is remembered (`RoadsState.knownRefusals`) and not built again. A
+    /// count for tests (R33.1-3); no behaviour reads it.
+    private(set) var networksBuilt = 0
 
     /// How a recording's start rescans the library: `rescan()`. Tests
     /// inject a slow one (R34.1-3).
@@ -275,6 +280,7 @@ actor NavigationService {
         let writer = run.writer
         let record = run.live.finishSelection(attempt) { writer?.append($0) }
         selectionAttempts += 1
+        if attempt.network != nil { networksBuilt += 1 }
         lastAttemptOutcome = record.outcome
         state.lastOutcome = record.outcome
         if let refusal = record.refusal {
