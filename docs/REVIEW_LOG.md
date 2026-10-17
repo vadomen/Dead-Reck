@@ -195,8 +195,8 @@ Reviewer: one fresh reviewer (sonnet), lite review, checks 10 and 11 plus the ch
 
 | ID | Tag | Finding | Status | Note |
 |---|---|---|---|---|
-| R39.1-1 | MINOR | `.claude/agents/reviewer.md:81` says "`cd <root>` once"; the shell resets its cwd after a `cd` outside the session's project directory, so a reviewer started in `.claude/worktrees/<task>` falls back to the worktree and `../dead-reck-mutants` resolves wrongly again. Fix: start each mutation/bit-identical call with `cd <root> && `, or check `pwd` first. | DEFERRED | backlog. |
-| R39.1-2 | MINOR | `docs/RELEASE_PLAN.md:148`: "`site/publish_packs.sh` ... it asks before running"; the script has no prompt of its own (only `--dry-run`); the ask is the `.claude/settings.json` permission rule. | DEFERRED | backlog. |
+| R39.1-1 | MINOR | `.claude/agents/reviewer.md:81` says "`cd <root>` once"; the shell resets its cwd after a `cd` outside the session's project directory, so a reviewer started in `.claude/worktrees/<task>` falls back to the worktree and `../dead-reck-mutants` resolves wrongly again. Fix: start each mutation/bit-identical call with `cd <root> && `, or check `pwd` first. | FIXED | fixed after the run; backlog row closed. |
+| R39.1-2 | MINOR | `docs/RELEASE_PLAN.md:148`: "`site/publish_packs.sh` ... it asks before running"; the script has no prompt of its own (only `--dry-run`); the ask is the `.claude/settings.json` permission rule. | FIXED | fixed after the run; backlog row closed. |
 
 Tests: Core not run: no file outside docs/ and .claude/ changed; App/ unchanged.
 

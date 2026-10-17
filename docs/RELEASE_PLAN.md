@@ -145,7 +145,7 @@ Cloudflare Pages. English pages in `site/public/` and a Ukrainian mirror in `sit
 - `releases.html`: release notes.
 - `404.html`.
 - `site/functions/packs/` serves road-pack downloads (Phase 3; packs stored in R2, D6).
-- `site/publish_packs.sh` publishes packs and their manifest; it asks before running.
+- `site/publish_packs.sh` publishes packs and their manifest; it supports `--dry-run`, and Claude Code asks for permission before a real run (`.claude/settings.json`).
 
 ## Order and dependencies (short)
 
