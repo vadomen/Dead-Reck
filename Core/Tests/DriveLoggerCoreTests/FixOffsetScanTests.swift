@@ -136,6 +136,41 @@ import Testing
         #expect(FixOffsetScan.testedText(w)[0].hasPrefix("  tested 266 m @326°"))
     }
 
+    /// R35.1-3: a tested shift longer than the grid's reach is scored
+    /// against the roads it lands on. The track sits 1500 m east of its
+    /// road, the grid only reaches ±50 m: before, the road field stopped at
+    /// the grid's margin, so the shift back onto the road scored every fix
+    /// at the cap (mean 100 m) instead of on the road.
+    @Test func aTestedShiftBeyondTheGridIsScoredAgainstItsRoads() throws {
+        var options = Self.fast
+        options.maxShiftM = 50
+        options.tested = [FixOffsetScan.Shift(east: -1500, north: 0)]
+        let w = try #require(FixOffsetScan.scan(Self.track(shift: (1500, 0)), roads: Self.network(), options: options))
+        #expect(w.recorded.meanM == options.capM)
+        #expect(w.tested.count == 1 && w.tested[0].score.meanM < 1)
+        // Within the grid's reach the margin is the grid's, as before.
+        options.tested = [FixOffsetScan.Shift(east: 40, north: -60)]
+        #expect(FixOffsetScan.fieldMarginM(options) == options.maxShiftM + options.capM + options.fineStepM + options.coarseStepM)
+        options.tested.append(FixOffsetScan.Shift(east: 10, north: -1500))
+        #expect(FixOffsetScan.fieldMarginM(options) == 1500 + options.capM)
+    }
+
+    /// R35.2-3: `replay_nav --fix-offset` refuses the engine run's flags
+    /// (it exited 0 with `--compare`, `--out` or `--truth` silently
+    /// ignored) and keeps the ones the scan uses.
+    @Test func fixOffsetRefusesTheEngineRunsFlags() {
+        let given = ["--fix-offset", "--roads", "--compare", "--fix-offset-max", "--out", "--truth", "--compare", "--strict",
+                     "--gps", "--set", "--write-sidecar", "--fix-source", "--fix-offset-test", "--fix-offset-trace"]
+        #expect(FixOffsetScan.refusedFlags(given) == ["--compare", "--out", "--truth", "--gps", "--set", "--write-sidecar"])
+        let scanOnly = ["--fix-offset", "--roads", "--fix-source", "--fix-offset-max", "--fix-offset-step", "--fix-max-acc",
+                        "--fix-offset-stat", "--fix-offset-course", "--fix-offset-test", "--fix-offset-trace", "--strict"]
+        #expect(FixOffsetScan.refusedFlags(scanOnly).isEmpty)
+        for flag in ["--hold-out-acc", "--seed", "--particles", "--as-live", "--file-order", "--tolerance",
+                     "--heading-tolerance", "--pin-pair-window", "--wrong-road-tolerance", "--fixpin-inject"] {
+            #expect(FixOffsetScan.refusedFlags(["--fix-offset", flag]) == [flag])
+        }
+    }
+
     @Test func distancesAreCappedAndTheCourseGateSkipsCrossingRoads() throws {
         let net = try Self.network()
         let plane = LocalTangentPlane(latitude: 0, longitude: 0)

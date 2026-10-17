@@ -62,6 +62,10 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
     /// (relative metres only). nil (absent) while both pin checks are off,
     /// and in files written before it.
     public var fixPinDecisions: [FixPinDecision]?
+    /// The worst scored checkpoint per kind (R19.1-2; `KindMaxError`).
+    /// nil (absent) in a run without a scored checkpoint with an error and
+    /// in files written before it.
+    public var maxErrorByKind: [String: KindMaxError]?
 
     public init(_ result: ReplayResult) {
         logName = result.logName
@@ -100,6 +104,7 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
         fixesExcludedByTruth = result.fixesExcludedByTruth
         let decisions = result.pins.compactMap(\.fixPin)
         fixPinDecisions = decisions.isEmpty ? nil : decisions
+        maxErrorByKind = result.maxErrorByKind.isEmpty ? nil : result.maxErrorByKind
     }
 
     /// `metrics.json` key: one row per log and mode.
@@ -118,6 +123,7 @@ extension ReplayMetrics {
         case roadsAttachedAfterInputs, attachedRoadSetHash
         case fixesExcludedByTruth
         case fixPinDecisions
+        case maxErrorByKind
     }
 
     /// Keys every `metrics.json` row has had since the first one (N2). A row
@@ -134,7 +140,7 @@ extension ReplayMetrics {
     ///   `motionStartT`, `consistency`, `consistencyWithTruthSigma`, `pins`,
     ///   `pinScoring`, `roads`, `roadSetHash`, `roadMetrics`, `scoreUntilT`,
     ///   `checkpointsAfterScoreUntil`, `roadsAttachedAfterInputs`,
-    ///   `attachedRoadSetHash`, `fixesExcludedByTruth`, `fixPinDecisions` (and any key a
+    ///   `attachedRoadSetHash`, `fixesExcludedByTruth`, `fixPinDecisions`, `maxErrorByKind` (and any key a
     ///   later build adds, which must be optional or take a default here).
     /// - `config` and `counters` decode tolerantly themselves: a config key
     ///   or counter added later takes its default (0 for a counter).
@@ -177,6 +183,7 @@ extension ReplayMetrics {
         attachedRoadSetHash = try c.decodeIfPresent(String.self, forKey: .attachedRoadSetHash)
         fixesExcludedByTruth = try c.decodeIfPresent(ReplayResult.FixExclusion.self, forKey: .fixesExcludedByTruth)
         fixPinDecisions = try c.decodeIfPresent([FixPinDecision].self, forKey: .fixPinDecisions)
+        maxErrorByKind = try c.decodeIfPresent([String: KindMaxError].self, forKey: .maxErrorByKind)
     }
 }
 
@@ -325,6 +332,7 @@ public enum ReplayReport {
         lines.append("Consistency   " + consistencyText(result.consistency) + " (engine ellipse)")
         lines.append("  + truth σ   " + consistencyText(result.consistencyWithTruthSigma) + " (engine covariance + truth σ²; gated)")
         lines.append("Max error     \(m(result.maxErrorM)) m (\(pct(result.maxErrorPercent)))")
+        if let text = maxByKindText(result.maxErrorByKind) { lines.append("Max by kind   " + text) }
         lines.append("End error     \(m(result.endErrorM)) m (\(pct(result.endErrorPercent)))\(result.endIsTruth ? "" : " [\(endNote(result.checkpoints))]")")
         if let last = result.track.last {
             lines.append(String(format: "Final         speed scale %.4f, σhead %.1f°", last.speedScale, last.headingStdDeg))
@@ -335,6 +343,19 @@ public enum ReplayReport {
             lines.append(contentsOf: roadLines(result.roadMetrics, counters: result.counters))
         }
         return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// "cleanFix 266: 218 m (t 2144.0 s), 1.10 % (t 2144.0 s); manualFix
+    /// 7: …" in `Checkpoint.Kind` order: per kind, the largest error and
+    /// the largest error as % of distance from the start (R19.1-2); nil
+    /// without a scored checkpoint.
+    public static func maxByKindText(_ byKind: [String: KindMaxError]) -> String? {
+        let parts = ReplayResult.Checkpoint.Kind.allCases.compactMap { kind -> String? in
+            guard let k = byKind[kind.rawValue] else { return nil }
+            return "\(kind.rawValue) \(k.scored): \(m(k.maxErrorM)) m" + String(format: " (t %.1f s), ", k.maxErrorT)
+                + pct(k.maxPercent) + (k.maxPercentT.map { String(format: " (t %.1f s)", $0) } ?? "")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: "; ")
     }
 
     static func share(_ value: Double?) -> String {
@@ -457,14 +478,19 @@ public enum ReplayReport {
     /// `metrics.md`: one row per run, then each run's checkpoints and config.
     public static func markdown(_ runs: [ReplayMetrics]) -> String {
         let runs = runs.sorted { $0.key < $1.key }
+        func clean(_ r: ReplayMetrics) -> KindMaxError? { r.maxErrorByKind?[ReplayResult.Checkpoint.Kind.cleanFix.rawValue] }
         var out = "# replay_nav metrics\n\n"
         out += "Error is the engine's causal estimate against information it did not receive.\n\n"
-        out += "| log | mode | distance m | checkpoints | end err m | end % | max err m | max % | inside 95 % | inside 95 % + truth σ (gated) | converged at | ms/step | max ingest ms |\n"
-        out += "|---|---|---:|---:|---:|---:|---:|---:|---|---|---:|---:|---:|\n"
+        out += "| log | mode | distance m | checkpoints | end err m | end % | max err m | max % | inside 95 % | inside 95 % + truth σ (gated) | converged at | ms/step | max ingest ms | clean-fix max err m | clean-fix max % |\n"
+        out += "|---|---|---:|---:|---:|---:|---:|---:|---|---|---:|---:|---:|---:|---:|\n"
         for r in runs {
-            out += "| \(r.logName) | \(r.mode) | \(m(r.distanceM)) | \(r.checkpoints.count)\(r.checkpointsAfterScoreUntil.map { " (\($0) after scoreUntilT)" } ?? "") | \(m(r.endErrorM))\(r.endIsTruth ? "" : "*") | \(pct(r.endErrorPercent)) | \(m(r.maxErrorM)) | \(pct(r.maxErrorPercent)) | \(consistencyText(r.consistency)) | \(consistencyText(r.consistencyWithTruthSigma)) | \(km(r.convergedDistanceM)) | \(String(format: "%.3f", r.msPerStep)) | \(String(format: "%.2f", r.maxIngestMs)) |\n"
+            out += "| \(r.logName) | \(r.mode) | \(m(r.distanceM)) | \(r.checkpoints.count)\(r.checkpointsAfterScoreUntil.map { " (\($0) after scoreUntilT)" } ?? "") | \(m(r.endErrorM))\(r.endIsTruth ? "" : "*") | \(pct(r.endErrorPercent)) | \(m(r.maxErrorM)) | \(pct(r.maxErrorPercent)) | \(consistencyText(r.consistency)) | \(consistencyText(r.consistencyWithTruthSigma)) | \(km(r.convergedDistanceM)) | \(String(format: "%.3f", r.msPerStep)) | \(String(format: "%.2f", r.maxIngestMs)) | \(m(clean(r)?.maxErrorM)) | \(pct(clean(r)?.maxPercent)) |\n"
         }
         out += "\n\\* no truth `end`: error at the last scored checkpoint.\n"
+        out += "\nmax err covers every scored checkpoint (pins and truth points too); clean-fix max err and clean-fix max % "
+            + "cover the scored withheld clean fixes only, and max % is the largest error as % of the distance from the start "
+            + "at its time (not necessarily the fix with the largest error): the figure drive-7 and drive-8 are gated on. "
+            + "n/a: no scored clean fix (or a row from an older build).\n"
         if runs.contains(where: { $0.scoreUntilT != nil }) {
             out += "\nWith a truth `scoreUntilT`, checkpoints after it are listed but not scored (no error, consistency or "
                 + "convergence figure counts them); a truth `end` after it is replaced by the last scored checkpoint (\\*).\n"

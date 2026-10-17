@@ -23,7 +23,8 @@ import RoadPackBuild
 //
 // --info prints the header, counts, sections, META, the hash check and the
 // cell statistics; --bench adds seeded lookup statistics (candidates per
-// lookup, ns per lookup). --network loads the packs together (same grid ID
+// lookup, ns per lookup), only for a pack that verified (a failed verify
+// skips it and exits 4). --network loads the packs together (same grid ID
 // required; any order: the network sorts them by content hash) and prints
 // roadSetHash and, in that canonical order, how many of each later pack's
 // segments the earlier packs shadow (de-duplication). Packs
@@ -32,8 +33,10 @@ import RoadPackBuild
 //
 // Data: © OpenStreetMap contributors, ODbL 1.0.
 //
-// Exit status: 0 ok, 1 input or build failure, 2 usage, 3 pack over the
-// size limit, 4 --info verification failed.
+// Exit status: 0 ok, 1 input or build failure, 2 usage (a bad option or
+// value: --grid-bbox needs four finite numbers with |lat| ≤ 90 and
+// |lon| ≤ 180, --bench a positive count), 3 pack over the size limit,
+// 4 --info verification failed.
 
 func fail(_ message: String, status: Int32) -> Never {
     FileHandle.standardError.write(Data("build_roads: \(message)\n".utf8))
@@ -89,6 +92,14 @@ func integer(_ key: String) -> Int64? {
     return value
 }
 
+// --bench is checked before anything is read or built (R16.1-2).
+let benchQueries: Int? = options["--bench"].map { text in
+    switch BuildRoadsArguments.benchQueries(text) {
+    case .success(let n): n
+    case .failure(let refusal): fail("\(refusal)\n\(usage)", status: 2)
+    }
+}
+
 func printBench(_ report: RoadPackBench.Report) {
     print("lookup bench (seed \(report.seed), \(report.queries) queries within the radius of a random segment):")
     print("  candidates per lookup: p50 \(report.candidatesP50), p95 \(report.candidatesP95), max \(report.candidatesMax), mean \(String(format: "%.1f", report.candidatesMean))")
@@ -108,12 +119,9 @@ if let path = options["--info"] {
     } catch {
         fail("\(path): \(error)", status: 4)
     }
-    let clock = ContinuousClock()
-    var verifyError: Error?
-    let verifyTime = clock.measure {
-        do { try pack.verify() } catch { verifyError = error }
-    }
-    let bench = integer("--bench").map { RoadPackBench.run(pack: pack, queries: Int($0)) }
+    // The bench runs only on a pack that verified (R16.2-1).
+    let inspection = BuildRoadsArguments.inspect(pack, benchQueries: benchQueries)
+    let verifyError = inspection.verifyError, bench = inspection.bench
     if flags.contains("--json") {
         struct Output: Encodable {
             var info: RoadPackInfo
@@ -122,10 +130,9 @@ if let path = options["--info"] {
             var verifySeconds: Double
             var bench: RoadPackBench.Report?
         }
-        let seconds = Double(verifyTime.components.seconds) + Double(verifyTime.components.attoseconds) / 1e18
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        let output = Output(info: pack.info, verified: verifyError == nil, verifyError: verifyError.map { "\($0)" }, verifySeconds: seconds, bench: bench)
+        let output = Output(info: pack.info, verified: verifyError == nil, verifyError: verifyError.map { "\($0)" }, verifySeconds: inspection.verifySeconds, bench: bench)
         print(String(decoding: try encoder.encode(output), as: UTF8.self))
     } else {
         let g = pack.grid
@@ -141,13 +148,13 @@ if let path = options["--info"] {
             print("    \(s.name)  offset \(s.offset)  length \(s.length)")
         }
         print("  META: \(String(decoding: pack.metaData, as: UTF8.self))")
-        let ms = Double(verifyTime.components.seconds) * 1000 + Double(verifyTime.components.attoseconds) / 1e15
+        let ms = inspection.verifySeconds * 1000
         if let verifyError {
             print("  verify: FAILED (\(verifyError)) in \(String(format: "%.0f", ms)) ms")
         } else {
             print("  verify: ok (hash and structure) in \(String(format: "%.0f", ms)) ms")
         }
-        if let bench { printBench(bench) }
+        if let bench { printBench(bench) } else if benchQueries != nil, verifyError != nil { print("  bench: skipped (verify failed)") }
     }
     exit(verifyError == nil ? 0 : 4)
 }
@@ -222,11 +229,12 @@ let cellSize = number("--cell-size") ?? RoadGrid.defaultCellSizeM
 let radius = number("--radius") ?? RoadGrid.defaultSearchRadiusM
 let grid: RoadGrid
 if let text = options["--grid-bbox"] {
-    let parts = text.split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
-    guard parts.count == 4 else { fail("--grid-bbox: expected minLon,minLat,maxLon,maxLat", status: 2) }
-    let sw = RoadPoint(latE7: Int32((min(parts[1], parts[3]) * 1e7).rounded(.down)), lonE7: Int32((min(parts[0], parts[2]) * 1e7).rounded(.down)))
-    let ne = RoadPoint(latE7: Int32((max(parts[1], parts[3]) * 1e7).rounded(.up)), lonE7: Int32((max(parts[0], parts[2]) * 1e7).rounded(.up)))
-    grid = RoadGrid(southWest: sw, northEast: ne, cellSizeM: cellSize, searchRadiusM: radius)
+    switch BuildRoadsArguments.gridBox(text) {
+    case .success(let box):
+        grid = RoadGrid(southWest: box.southWest, northEast: box.northEast, cellSizeM: cellSize, searchRadiusM: radius)
+    case .failure(let refusal):
+        fail("\(refusal)", status: 2)
+    }
 } else {
     // The pack's own bounding box: fine for one pack, but another pack
     // gets a different grid ID and cannot be loaded with it.
@@ -297,9 +305,9 @@ print("  data: \(RoadPackFormat.attribution), \(RoadPackFormat.license)")
 print("  ways read \(b.waysRead), kept \(b.waysKept) (oneway \(b.waysOneway), reversed \(b.waysReversed)); dropped: class \(b.waysWrongClass), area \(b.waysArea), parking aisle \(b.waysParkingAisle), degenerate \(b.waysDegenerate); node refs without location \(b.nodesWithoutLocation); points at a repeated coordinate \(b.pointsAtRepeatedCoordinate) (node IDs merged \(b.nodesMerged))")
 print("  nodes \(i.nodes), edges \(i.edges), points \(i.points), segments \(i.segments), cells \(i.cells), cell entries \(i.cellEntries) (R_eff \(String(format: "%.3f", i.effectiveRadiusM)) m)")
 print("  time: read \(seconds(parsed - started)), build \(seconds(built - parsed)), write + verify \(seconds(finished - built)), total \(seconds(finished - started))")
-if let n = integer("--bench") {
+if let n = benchQueries {
     do {
-        printBench(RoadPackBench.run(pack: try RoadPack(contentsOf: outURL, verify: false), queries: Int(n)))
+        printBench(RoadPackBench.run(pack: try RoadPack(contentsOf: outURL, verify: false), queries: n))
     } catch {
         fail("\(outURL.path): \(error)", status: 1)
     }

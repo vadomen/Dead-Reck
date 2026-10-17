@@ -34,7 +34,9 @@ import Foundation
 // frame, and genuine. Relative metres,
 // bearings and session seconds only.
 // --fix-offset (repeatable, needs --roads): analysis only, no engine, no
-// metrics files. For each window of clean fixes (≤ 15 m, session seconds;
+// metrics files; the engine run's flags (--gps, --truth, --out, --compare,
+// --write-sidecar, --set, …: `FixOffsetScan.engineOnlyFlags`) are refused
+// with it (status 2). For each window of clean fixes (≤ 15 m, session seconds;
 // `auto` = sliding windows, default 60 s every 30 s) from --fix-source
 // (default any; accessory = `isProducedByAccessory` fixes, phone = the
 // rest), prints the capped distance-to-road distribution of the recorded
@@ -65,7 +67,8 @@ import Foundation
 //   are selected and attached at once. The metrics replay and the written
 //   sidecar attach at the same input;
 // - with --compare: at the sidecar's `roads` line (`afterInputs`), the whole
-//   given set; with a sidecar that used no roads, the live rule above. A
+//   given set (the mode label gets -attach-sidecar); with a sidecar that
+//   used no roads, the live rule above (-attach-live unless --as-live). A
 //   roadSetHash that differs from the sidecar's, or packs on one side only,
 //   is a warning naming the hashes, and the verdict is never PASS (exact).
 // --wrong-road-tolerance m (default 20): a
@@ -81,6 +84,7 @@ import Foundation
 // after the previous one is a refinement of it and is not scored (it is still
 // ingested); see `NavigationReplay.pinScoring`. Truth-file `excludePins` mark
 // manual fixes that are not scored either. Scoring only: estimates are the same.
+// A window other than 3 adds -pair-window-<s> to the mode label.
 // A truth-file `scoreUntilT` (session seconds) leaves every checkpoint after
 // it listed but unscored (the truth `end` included); also scoring only.
 // Truth-file `excludeFixes` ranges ({fromT, toT}, inclusive) make the fixes
@@ -165,6 +169,7 @@ var fixPinTwoPins = false
 var fixPinSurvey = false
 var fixPinEngineRoads = true
 var fixPinOptions = FixPinInjection.Options()
+var givenFlags: [String] = []
 
 func number(_ text: String, _ flag: String) -> Double {
     guard let value = Double(text), value.isFinite else { fail("\(flag) needs a number, got \(text)\n\(usage)", status: 2) }
@@ -173,6 +178,7 @@ func number(_ text: String, _ flag: String) -> Double {
 
 while !arguments.isEmpty {
     let argument = arguments.removeFirst()
+    if argument.hasPrefix("--") { givenFlags.append(argument) }
     func value() -> String {
         guard !arguments.isEmpty else { fail("\(argument) needs a value\n\(usage)", status: 2) }
         return arguments.removeFirst()
@@ -310,6 +316,14 @@ while !arguments.isEmpty {
     }
 }
 guard !paths.isEmpty else { fail(usage, status: 2) }
+// R35.2-3: --fix-offset runs no engine and writes no metrics, so an engine
+// flag with it would be silently ignored.
+if !fixOffsetWindows.isEmpty {
+    let refused = FixOffsetScan.refusedFlags(givenFlags)
+    guard refused.isEmpty else {
+        fail("--fix-offset is the offset scan only (no engine, no metrics files): drop \(refused.joined(separator: ", "))\n\(usage)", status: 2)
+    }
+}
 if asLive {
     guard !explicitSeed, !explicitParticles, overrides.isEmpty else {
         fail("--as-live replays the live app: the header's seed and the default config; drop --seed N, --particles and --set\n\(usage)", status: 2)

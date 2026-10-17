@@ -31,7 +31,8 @@
 # leaves a rebuilt pack's contentHash unchanged; "-dirty" is appended when any
 # of them has an uncommitted or untracked change. A pack over 150 MB is not
 # written (build_roads exits with status 3); split the region at admin_level 6.
-# An empty "packs" list is an error (status 2).
+# An empty "packs" list, or a pack without a non-empty string "name" or
+# with a name another pack already has, is an error (status 2).
 #
 # Needs osmium-tool (brew install osmium-tool), jq, shasum and the Xcode
 # toolchain (DEVELOPER_DIR is set to Xcode if xcode-select points elsewhere).
@@ -63,6 +64,10 @@ jq -e '.packs | type == "array"' "$CONFIG" >/dev/null \
     || { echo "build_packs: $CONFIG: \"packs\" must be an array" >&2; exit 2; }
 COUNT="$(jq '.packs | length' "$CONFIG")"
 [ "$COUNT" -gt 0 ] || { echo "build_packs: $CONFIG: \"packs\" is empty, nothing to build" >&2; exit 2; }
+# Each name is a file name (osm/packs/<name>.roadpack, osm/work/<name>.*):
+# a missing one would build "null.roadpack", a repeated one overwrite a pack.
+jq -e '[.packs[] | if type == "object" then .name else null end] | all(type == "string" and length > 0) and (length == (unique | length))' "$CONFIG" >/dev/null \
+    || { echo "build_packs: $CONFIG: every pack needs a non-empty string \"name\", and names must be unique" >&2; exit 2; }
 if [ -z "${DEVELOPER_DIR:-}" ] && [ -d /Applications/Xcode.app/Contents/Developer ] \
     && [ "$(xcode-select -p 2>/dev/null)" != /Applications/Xcode.app/Contents/Developer ]; then
     export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer

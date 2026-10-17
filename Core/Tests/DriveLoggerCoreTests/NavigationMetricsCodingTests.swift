@@ -178,7 +178,8 @@ struct NavigationMetricsCodingTests {
         #expect(later.map(\.stringValue).sorted()
             == ["consistency", "consistencyWithTruthSigma", "motionStartT", "pinScoring", "pins",
                 "checkpointsAfterScoreUntil", "roadMetrics", "roadSetHash", "roads", "scoreUntilT",
-                "roadsAttachedAfterInputs", "attachedRoadSetHash", "fixesExcludedByTruth", "fixPinDecisions"].sorted())
+                "roadsAttachedAfterInputs", "attachedRoadSetHash", "fixesExcludedByTruth", "fixPinDecisions",
+                "maxErrorByKind"].sorted())
         for key in later {
             var old = row
             old.removeValue(forKey: key.stringValue)
@@ -200,6 +201,7 @@ struct NavigationMetricsCodingTests {
             case .attachedRoadSetHash: #expect(decoded.attachedRoadSetHash == nil)
             case .fixesExcludedByTruth: #expect(decoded.fixesExcludedByTruth == nil)
             case .fixPinDecisions: #expect(decoded.fixPinDecisions == nil)
+            case .maxErrorByKind: #expect(decoded.maxErrorByKind == nil)
             default: Issue.record("unexpected later key \(key)")
             }
         }

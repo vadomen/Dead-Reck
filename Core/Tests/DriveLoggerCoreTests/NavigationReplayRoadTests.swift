@@ -46,6 +46,41 @@ struct NavigationReplayRoadTests {
         #expect(options.label == "use-holdout-100-as-live")
     }
 
+    /// R18.1-3: a non-default `--pin-pair-window` scores pins differently,
+    /// so it has its own row in one `--out`; the default adds nothing.
+    /// R32.1-5: a `--compare` replay that attaches the roads at the
+    /// sidecar's `afterInputs` (or by the live rule without `--as-live`)
+    /// does not take the from-start or `--as-live` row.
+    @Test("Mode label: a non-default pin pair window and a sidecar or live road attach get their own part")
+    func labelPairWindowAndAttach() throws {
+        let net = try Self.northStreet()
+        let roads = "-roads-" + net.roadSetHashHex.prefix(8)
+        var options = Self.options(roads: nil)
+        #expect(options.pinPairWindowS == NavigationReplay.defaultPinPairWindowS && options.label == "mask-after-10")
+        options.pinPairWindowS = 0
+        #expect(options.label == "mask-after-10-pair-window-0")
+        options.pinPairWindowS = 1.5
+        #expect(options.label == "mask-after-10-pair-window-1.5")
+        options.pinPairWindowS = NavigationReplay.defaultPinPairWindowS
+
+        options = Self.options(roads: net)
+        #expect(options.label == "mask-after-10" + roads)
+        options.roadAttach = .afterInputs(1234)
+        #expect(options.label == "mask-after-10" + roads + "-attach-sidecar")
+        options.asLive = true
+        #expect(options.label == "mask-after-10-as-live" + roads + "-attach-sidecar")
+        options.roadAttach = .live
+        #expect(options.label == "mask-after-10-as-live" + roads)
+        options.asLive = false
+        #expect(options.label == "mask-after-10" + roads + "-attach-live")
+        options.fileOrder = true
+        #expect(options.label == "mask-after-10-file-order" + roads + "-attach-live")
+        // Without roads the attach is unused and not named.
+        options.roads = nil
+        options.roadAttach = .afterInputs(1234)
+        #expect(options.label == "mask-after-10-file-order")
+    }
+
     @Test("ReplayRoadSet: equal by the set of the packs' content hashes, in any order; records hash, version, OSM time and grid per pack")
     func roadSetIdentity() throws {
         let aData = try RoadFixture.buildData([R.street(1, from: (0, -300), to: (0, 300))])
