@@ -795,3 +795,28 @@ Tests: Core passes 876 tests in 117 suites, 36 known issues (test 3). The simula
 ### Run 36 summary
 
 1 round; 0 fixed, 0 rejected, 2 MINOR deferred (R36.1-1, R36.1-2).
+
+## Run 37: N3-FIXPIN close (main..n3-fixpin, 4de80cd..52ab3db), started 2026-10-17
+
+Commits: 4de80cd truth excludeFixes; 9b6e008 N3-FIXPIN engine (keys default off); 8d8b47d replay_nav --fixpin-inject (injection study, replay only); 3e43317 RoadNetwork.covers cheapest coverage test first (byte-identical); 417f719 docs (measured, not adopted); 52ab3db review round 1 tests.
+
+### Round 1
+
+Reviewer: three fresh reviewers (opus) in parallel on disjoint sets: engine (FixPin, NavigationConfig/Engine/Estimate, RoadMatcher, RoadNetwork + tests), replay/tooling (Replay/*, replay_nav, injection + tests), docs. Key-off bit-identity re-run: drive-8 roads seed 1 main vs HEAD (identical incl. metrics/stdout via identity.py); clean + drive-8 seed 2 GeoJSON identical vs logs/fixpin/acc/main; injection clean seed 1 jsonl byte-identical. Mutations: engine M1 (re-anchor transform no-op) and M2 (refinement never true) survived, M3 (win-back against inflated σ) killed; replay M1 (junction angle), M2 (second-pin path min 0), M3 (t0 prefix bound) survived.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R37.1-1 | MAJOR | `NavigationEngine.swift:819-821` / `FixPin.swift:108-128` re-anchor `FixPinSource.transform` untested (mutation survives; no test sets reanchorDistanceM). | CONFIRMED | FIXED 52ab3db: `reanchorWhileDownweighted`, `sourceTransform`; all transform mutations killed. |
+| R37.1-2 | MAJOR | `NavigationEngine.swift:1191-1193` engine refinement rule untested. | CONFIRMED | FIXED 52ab3db: `refinementWithinWindow`, `refinementOutsideWindow`, `refinementChain` (engine and pinScoring both rolling: each pin vs the one before). |
+| R37.1-3 | MAJOR | `Replay/FixPinInjection.swift:222-249, 292-319` road-context classifier and second/third pin selection untested (backs the measured-not-adopted tables). | CONFIRMED | FIXED 52ab3db: `contextOnAnLDrive`, `secondAndThirdPinSelection`; mutations killed. |
+| R37.1-4 | MINOR | `docs/NAVIGATION.md:345, 348`: "Key off = main, byte-identical on every run"; only GeoJSON is byte-identical, metrics.json/md/stdout gain the 9 config keys and the fix-pin counters at 0; key-off vs main compared at seeds 1–2 only. | DEFERRED | backlog. |
+| R37.1-5 | MINOR | `docs/NAVIGATION.md:400-401` "with roads the road key decides first": both arbiters run and are OR-ed (`NavigationEngine.swift:1806-1838`); with both keys on and two pins displaced alike, the two-pin "pin" wins over road "fixes"; that both-keys case was never measured. | DEFERRED | backlog. |
+| R37.1-6 | MINOR | `docs/NAVIGATION.md:371` vs `:411`: "0 of 1536" is pooled over 3 seeds while the text says per seed (512 per seed). | DEFERRED | backlog. |
+| R37.1-7 | MINOR | `docs/NAVIGATION.md:434-438`: phone timing proposal; `pin.prior` is written before the ingest (`LiveNavigationRun.swift:240-246`), so `prior.maxStepMs` cannot hold the verdict step; `maxStepMs` is a session running max (`:291-308`), so the verdict shows only as a new maximum. | DEFERRED | backlog. |
+| R37.1-8 | MINOR | `docs/NAVIGATION.md:580-592`: replay_nav synopsis omits `--fixpin-inject` and its sub-flags. | DEFERRED | backlog. |
+| R37.1-9 | MINOR | `FixPinInjection.swift:464-469`: injected pins always record speedSource obd with the last OBD speed however old; the app's ManualFixGate falls back to GPS/unknown when OBD is stale, changing σ and χ². | DEFERRED | backlog. |
+| R37.1-10 | MINOR | `FixPinInjection.swift:32-33`: `preS` (90 s) is not tied to `config.fixPinWindowS`; `--set fixPinWindowS=120` silently mixes unshifted fixes into the ring. | DEFERRED | backlog. |
+| R37.1-11 | MINOR | `FixPinInjection.swift:404`: the t0 prefix boundary (a fix exactly at t0) is untested (mutation survives); negligible on real drives. | DEFERRED | backlog. |
+| R37.1-12 | MINOR | (found while fixing R37.1-2) `NavigationEngine.swift:1183-1184` vs `NavigationReplay.swift:903-915`: the engine skips a manual fix with impossible coordinates before updating lastManualFixNs, pinScoring counts every manual fix, so a valid pin < 3 s after an invalid one is a refinement in scoring but judged by the engine. Recorded pins never carry such coordinates. | DEFERRED | backlog. |
+
+Tests: Core 907 tests in 119 suites passed, 36 known issues (test 3); App/ unchanged (build-for-testing succeeded at 3e43317).
