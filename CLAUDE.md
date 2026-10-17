@@ -5,9 +5,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 DriveLogger (working name) is an iPhone app that records in-car sensor logs — OBD-II
-over Bluetooth, CoreMotion, CoreLocation — for offline dead-reckoning research.
-The app's job is capture fidelity, not navigation: nothing is computed live that
-could be computed later from a recording.
+over Bluetooth, CoreMotion, CoreLocation — and runs a live dead-reckoning navigator
+(particle filter, optional OSM road packs) on the same streams. Capture fidelity still
+comes first: the log is the source of truth, and live navigation never changes what
+is recorded (its output goes to the `.nav.jsonl` sidecar, reproducible with `replay_nav`).
 
 iOS 17+, iPhone only, portrait. SwiftUI app lifecycle, Swift 6 language mode with
 strict concurrency.

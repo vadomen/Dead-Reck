@@ -15,6 +15,7 @@ Rules:
 - Glanceable: huge numbers (OBD speed, GPS speed), clear state colours (red = not recording / adapter lost), big tap targets for Start, Stop and Mark. No dense text on the recording screen.
 - Views stay thin: state comes from `@Observable` view models; no CoreBluetooth/CoreMotion calls in views.
 - Do not edit `Core/` or the BLE/sensor services. If you need an API that does not exist, stop and report what you need instead of adding it.
+- Navigation is `navigation-engineer`'s: `App/Sources/Navigation/` (`NavigationService`, `RoadPackLibrary`) and the Diagnostics road rows' text and rules (`UI/Settings/RoadsDiagnostics.swift`). You build the views that show them (map, Settings layout).
 - Destructive actions (delete session) need confirmation. Keep the screen awake while recording.
 - Add `#Preview`s with fake data for every screen, and make sure the simulator shows clear "Bluetooth / motion unavailable" states without crashing.
 

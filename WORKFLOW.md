@@ -1,14 +1,14 @@
 # DriveLogger v1 - agent workflow
 
-Install once from the repo root: `mkdir -p .claude && cp -R claude-setup/ .claude/ && rm -rf claude-setup && chmod +x .claude/hooks/*.sh`, then commit (`git add .claude WORKFLOW.md`). Hooks need `jq` (`brew install jq`) and use full Xcode automatically if `xcode-select` points at CommandLineTools. The main Claude Code session is the orchestrator; it delegates to the subagents below and never merges a milestone without the reviewer.
+Hooks need `jq` (`brew install jq`) and use full Xcode automatically if `xcode-select` points at CommandLineTools. The main Claude Code session is the orchestrator; it delegates to the subagents below and never merges a milestone without the reviewer.
 
 | Agent | Model | Owns | Can edit |
 |---|---|---|---|
-| main session | Sonnet (Opus to verify findings / judge adoption) | plan, contracts, merges, orchestration | yes |
+| main session | Opus (verifies findings in place) | plan, contracts, merges, orchestration | yes |
 | elm-ble-engineer | Opus | ELM327 protocol (Core), mock adapter, CoreBluetooth transport | yes |
 | sensors-logging-engineer | Opus | sensors, clock, log format, writer/reader, background, inspect_log | yes |
 | ios-ui-engineer | Sonnet | SwiftUI screens | App UI only |
-| navigation-engineer | Opus | DR engine, replay_nav, road graph, map matching | yes |
+| navigation-engineer | Opus | DR engine, replay_nav, road graph, map matching, app NavigationService / RoadPackLibrary / Diagnostics road rows | yes |
 | reviewer | Opus | review vs invariants | no |
 | docs-editor | Sonnet | docs-only edits, ledger/backlog row moves | docs only, no shell |
 | drive-analyst | Sonnet | field-log debrief | no |
@@ -280,7 +280,7 @@ New drive: <path outside the repo>. Use drive-analyst for the debrief. If the ve
 
 ## Navigator roadmap
 
-Dead reckoning on top of the logger. The model, config, replay commands, acceptance runs and baselines are in `docs/NAVIGATION.md`. Owner: `navigation-engineer`, with `ios-ui-engineer` for the map and `sensors-logging-engineer` for anything touching the logger.
+Dead reckoning on top of the logger. The model, config, replay commands, acceptance runs and baselines are in `docs/NAVIGATION.md`. Owner: `navigation-engineer`, including the app side (App/Sources/Navigation: NavigationService, RoadPackLibrary; the Diagnostics road rows), with `ios-ui-engineer` for the views (map, Settings layout) and `sensors-logging-engineer` for anything touching the logger.
 
 - **N2 - engine + replay — done.** Causal, deterministic particle filter in `Core/Navigation`, plus the `replay_nav` evaluation CLI (docs/NAVIGATION.md).
 - **N2.1 / N2.2 - tuning — done.** Speed-scale prior, manual-fix σ from map span, network-fix tempering, ellipse consistency metric, stale-fix σ growth (docs/NAVIGATION.md: acceptance, adoption rule).
@@ -294,24 +294,26 @@ Dead reckoning on top of the logger. The model, config, replay commands, accepta
   - **N3.2d - pre-declared grids — done.** No config chosen.
   - **N3.2e - level rule across packs — done.** Re-run of the declared candidates and a trade-off table against N3.0.
   - **N3.2 - done (2026-10-14).** Default config: N3.2e item 1 plus `roadCorrelationM` 100, a trade-off the user accepted (drive-7 consistency fails; docs/NAVIGATION.md "N3.2 decision").
-  - **N3.3 - enable roads on the live path (sidecar v2) — next.** Waits for a Release-build ms/step measured on the phone (device item).
-  - **N3.4 - packs in the app (import), display — after N3.3.**
+  - **N3.3 - roads on the live path (sidecar v2) — done.** Mid-run attach, sidecar v2 roads line, pack selection, Documents/RoadPacks bridge with Diagnostics rows (docs/NAVIGATION.md "N3.3: roads live"; review run 32).
+  - **N3-FIXPIN - pin against a GNSS source — done: measured, not adopted.** Keys `roadFixPinCheck` and `fixPinTwoPinCheck` stay default off; injection study via `replay_nav --fixpin-inject`; review run 37. Follow-up: backlog N3-FIXPIN-GATE.
+  - **N3.4 - packs in the app (import), display — next.**
 - **NAV-NOOBD - navigation without OBD — after N3.** See docs/BACKLOG_UX.md.
+- **App Store release and site/** — in progress. App Store website and road-pack downloads on Cloudflare Pages in `site/` (`site/publish_packs.sh`); TestFlight, then App Store. The release plan is not in the repo yet.
 
 Every engine change is judged on the replay set first and goes through `/review-loop` before merge.
 
 ---
 
 ## Rules for the orchestrator
-- **Model.** The main session runs on Sonnet by default. Switch to Opus (`/model`) only to verify review findings (CONFIRMED / REJECTED) or to judge an adoption-rule verdict yourself (docs/NAVIGATION.md), then switch back. Engineer agents and the reviewer stay on Opus with effort high (their frontmatter); `ios-ui-engineer`, `drive-analyst` and `docs-editor` run on Sonnet.
-- **Delegate by default.** Code and analysis go to the owning agent with a self-contained brief: `navigation-engineer` (Core/Navigation, Replay, replay_nav, Roads, RoadPackBuild, tools/roads), `sensors-logging-engineer` (clock, log, sensors, RecordingSession), `elm-ble-engineer` (ELM327/OBD/BLE), `ios-ui-engineer` (App UI), `drive-analyst` (recordings), `docs-editor` (docs).
+- **Model.** The main session runs on Opus; verification of review findings (CONFIRMED / REJECTED) and adoption-rule verdicts (docs/NAVIGATION.md) happens in place, no model switch. Engineer agents and the reviewer stay on Opus with effort high (their frontmatter); `ios-ui-engineer`, `drive-analyst` and `docs-editor` run on Sonnet.
+- **Delegate by default.** Code and analysis go to the owning agent with a self-contained brief: `navigation-engineer` (Core/Navigation, Replay, replay_nav, Roads, RoadPackBuild, tools/roads; in the app NavigationService, RoadPackLibrary and the Diagnostics road rows), `sensors-logging-engineer` (clock, log, sensors, RecordingSession), `elm-ble-engineer` (ELM327/OBD/BLE), `ios-ui-engineer` (App UI views), `drive-analyst` (recordings), `docs-editor` (docs).
   - Give the agent a self-contained brief: files to read, goal, exit criteria, memory limits.
   - Take back a short result: what changed, commits, test counts, numbers, open decisions.
 - **The main session itself only** plans, asks me for decisions, verifies review findings, runs the final checks, commits and merges. It does not read large source files or run replay grids itself; it reads the agent's summary.
 - **API limit.** If an agent stops on an API limit, start a fresh one with a brief that says "resume from the last commit on <branch>".
 - **Archive.** `docs/archive/` is history: read it only on demand, never as default context for an agent. When a backlog row closes (DONE, FIXED, SUPERSEDED, OBSOLETE), move it to `docs/archive/BACKLOG-closed.md` unchanged; superseded NAVIGATION result tables go to `docs/archive/NAVIGATION-history.md`. Keep working docs small: once a stage is done, move its plan text and superseded measurements to `docs/archive/` (with a one-paragraph stub under the old heading); when `docs/REVIEW_LOG.md` holds more than ~5 merged runs, move the older ones to a `docs/archive/REVIEW_LOG-runs-<a>-<b>.md` file and list them in its index.
 - **Docs-only work goes to `docs-editor`**, not `navigation-engineer` or another engineer: wording fixes, ledger/backlog row moves, plan text. It has no shell, so you run tests and commit.
-- **One engineer agent at a time in the main working tree.** Parallel sessions each get their own git worktree: `git worktree add ../dead-reck-<task> -b <task>`.
+- **One engineer agent at a time in the main working tree.** Parallel sessions each get their own git worktree: `git worktree add .claude/worktrees/<task> -b <task>` (git-ignored, inside the project so its permissions apply; the same place `isolation: worktree` uses). The reviewer's mutation worktree `../dead-reck-mutants` is separate and stays where it is.
   - Merge them one at a time.
   - Run `cd Core && swift test` after each merge, plus the simulator build if `App/` changed.
   - Remove the worktree and branch once merged.

@@ -11,6 +11,10 @@ color: green
 
 You own navigation accuracy. A number measured on a recorded drive beats any argument.
 
+## What you own
+- Core: `Navigation/` (engine, config, sidecar, live run), `Replay/`, `Roads/`, `replay_nav`, `RoadPackBuild`, `build_roads`, `tools/roads`.
+- App: `App/Sources/Navigation/` (`NavigationService`, `RoadPackLibrary`, `MemoryFootprint`) and the Diagnostics road rows' text and rules (`App/Sources/UI/Settings/RoadsDiagnostics.swift`). The SwiftUI views around them (map, Settings layout) are `ios-ui-engineer`'s.
+
 ## What is already known (validated on real drives - start from this)
 - Yaw rate = `rotationRate · ĝ`, with ĝ = normalised CoreMotion `gravity` (points down). Positive = clockwise seen from above, so heading integrates like a compass bearing. Mount orientation does not matter.
 - CoreMotion `rotationRate` is already bias-corrected. Adding our own bias estimate (EMA or from the 5 s calibration) made results worse (~0.33°/s drift). Do not add one unless replay proves it helps.
@@ -18,7 +22,7 @@ You own navigation accuracy. A number measured on a recorded drive beats any arg
 - OBD speed is truncated to whole km/h: use `v + 0.5` when `v > 0`. With that, OBD vs clean GPS speed matches within ~0.5%.
 - Gyro turns match GPS course changes within ~1-2°. The dominant error is the initial heading: 11° wrong gives ~400 m off after 2 km.
 - Under jamming iOS gives tower/Wi-Fi fixes: horizontalAccuracy ~1414 m typical, speed and course = -1, errors correlated over minutes. Offline, one heading fitted to them with 1/acc² weights was within ~1° of the truth after ~6 km.
-- Baselines (offline, not causal): clean-GPS drive, heading from 30 s of GPS then pure DR -> max 24 m over 1.8 km. Jammed drives -> 1.4-2.4% of distance at the end. Manual-fix-anchored drive -> 139 m after 6.35 km (2.2%).
+- Current baselines are in docs/NAVIGATION.md: "Acceptance runs" (drive set, criteria), "N3.2 decision" (the default config's numbers, seeds 1–5) and "N3.3: roads live" (as-live with roads). Never quote baseline numbers from memory or from this file.
 - `manualFix` events (format v3) are ground truth with ~30 m uncertainty (a finger on a map); they are also the user's position reset.
 
 ## Reading (context budget)

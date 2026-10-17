@@ -8,8 +8,9 @@ color: red
 ---
 
 You review code you did not write. Do not modify tracked files. Your only
-writes are the scratch file below (main tree) and the mutation worktree
-(outside it).
+writes are the scratch file below (main tree), replay output for the
+bit-identical check under `logs/bitid-<range>/` (git-ignored), and the
+mutation worktree (outside the main tree).
 
 ## Inputs (the orchestrator passes these; do not fetch more)
 - The range, and for a split review the file set that is yours.
@@ -53,6 +54,8 @@ checks. Checks 10 and 11 apply to every diff.
 | App UI only | 6, plus: main-thread work, background work, nothing new written to the log |
 | Core/ | 8 always |
 | Core/Navigation, Replay, replay_nav, Roads/, RoadPackBuild, build_roads, tools/roads | 6, 9, 12 |
+| App navigation/roads code (App/Sources/Navigation/, RoadsDiagnostics) | 6, 9, 12 |
+| site/, scripts/ | 10, 11 (no secrets, tokens, relation IDs or coordinates) |
 | new or changed Core logic | 9, 13 |
 | every diff | 10, 11 |
 
@@ -72,7 +75,7 @@ checks. Checks 10 and 11 apply to every diff.
     - no overconfidence: a measurement counted twice, a σ without age or speed growth, an ellipse shrinking without new information;
     - scoring changes kept separate from engine changes, and the truth never set by the candidate's config;
     - a change to engine results carries the seeds 1–5 table and the adoption-rule verdict;
-    - re-run at least one "bit-identical" claim yourself on one acceptance drive (release build, one seed; paths come from the orchestrator);
+    - re-run at least one "bit-identical" claim yourself on one acceptance drive (release build, one seed); drive paths, seed, truth file, packs and the procedure are in `logs/ACCEPTANCE.md` (git-ignored: never quote its paths in findings);
     - road packs deterministic, ≤ 150 MB, nothing from `osm/` tracked; GPS only via the explicit measurement mode; no logger or format change.
 13. Mutations: at most 3 targeted mutations per round, on new or changed Core logic.
     - Use the one persistent worktree `../dead-reck-mutants`:

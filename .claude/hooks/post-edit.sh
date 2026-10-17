@@ -9,7 +9,7 @@ tool=$(jq -r '.tool_name // empty' <<<"$input")
 [[ -n "$file" ]] || exit 0
 
 # Checks run against the tree that holds the file: the main tree or a
-# worktree (../dead-reck-<task>, .claude/worktrees/*). Files outside the repo
+# worktree (.claude/worktrees/<task>, ../dead-reck-mutants). Files outside the repo
 # (scratchpad, memory) are not checked.
 dir=$(cd "$(dirname "$file")" 2>/dev/null && pwd -P) || exit 0
 root=$(repo_root "$dir") || exit 0
