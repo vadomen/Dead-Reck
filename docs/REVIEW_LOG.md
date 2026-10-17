@@ -414,3 +414,17 @@ Tests: `cd Core && swift test` 956 passed, 36 known issues; simulator build OK; 
 ### Run 50 summary
 
 1 round; 0 fixed, 0 rejected, 2 MINOR deferred (R50.1-1, R50.1-2).
+
+## Run 51: backlog sweep nav batch 3, roads/packs tests (1e1be23..a9c1749, branch sweep-nav3), started 2026-10-18
+
+Commits: a9c1749 tests for R16.1-6 (golden hash with COVR and timestamp), R17.1-1, R28.1-4, R32.4-2, R32.4-3, R32.4-4, R32.4-9 (App), R33.1-1, R34.1-1; tests only. R32.1-6 left (needs a production seam).
+
+### Round 1
+
+Reviewer: one fresh reviewer (sonnet), checks 9–11 by reading (the mutants worktree was assigned to another agent): each listed mutation would fail its test; the R32.4-9 test fails rather than passes on a late arrival; fixtures synthetic. The orchestrator ran 3 of the author's mutations in `../dead-reck-mutants`: `cache.store` removed → `cacheHitIsStoredAgain` fails; `outcome ==` dropped from `isRepeat` → `outcomeAloneSeparatesAttempts` fails; `a == b` early return removed → `multiPackBFSEqualsPackAdjacency` fails. Result: 0 BLOCKER / 0 MAJOR / 0 MINOR.
+
+Tests: `cd Core && swift test` 970 passed, 36 known issues; AppTests RoadPackLibraryTests 4 passed ×6 (author).
+
+### Run 51 summary
+
+1 round; 0 fixed, 0 rejected, 0 deferred.
