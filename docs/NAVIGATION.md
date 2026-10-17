@@ -615,6 +615,13 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   `isProducedByAccessory` fixes or the rest. `--fix-max-acc` widens the
   15 m clean limit; the header then says the run is not the clean-fix
   rule. `--fix-offset-trace` lists each fix's distance to the road.
+  A tested shift longer than the grid's reach is scored against the roads
+  it lands on (the road field reaches the longest tested shift, R35.1-3).
+  The engine run's flags (`--gps`, `--hold-out-acc`, `--truth`, `--seed`,
+  `--particles`, `--set`, `--out`, `--as-live`, `--file-order`,
+  `--compare` and its tolerances, `--write-sidecar`, `--pin-pair-window`,
+  `--wrong-road-tolerance`, `--fixpin-*`; `FixOffsetScan.engineOnlyFlags`)
+  are refused with `--fix-offset` (status 2, R35.2-3): it would ignore them.
   Results: "Constant-offset GNSS check" below.
 
 - Inputs: motion, OBD, location and manualFix from any v1–v3 recording, fed in
@@ -669,7 +676,8 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
 
   The GeoJSON adds `matchedEdge` (the engine's matched OSM edge every 10 s)
   and `fixRejectedOffRoad` (fixes the road fix gate ignored). Without
-  `--roads`, every output is byte-identical to N3.0.
+  `--roads`, the road code changes no output (byte-identical to N3.0 when
+  it was added).
 - `--seed header`: each log's seed is derived from its header's `sessionID`
   (`NavigationSeed`), the seed the live app used.
 - `--as-live`: replay as the app ran live: file order, `--seed header` and the
@@ -703,7 +711,10 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   differ only in road-only keys are named inert, not blamed (N3-CMPHASH).
   With `--roads`: a sidecar `roads` line attaches the given set at its
   `afterInputs` (the metrics replay too); a sidecar without one gets the live
-  rule. A `roadSetHash` that differs, or packs on one side only, is a warning
+  rule. The mode label then gets `-attach-sidecar` (attached at the
+  sidecar's `afterInputs`) or, without `--as-live`, `-attach-live`, so the
+  row and GeoJSON do not overwrite the from-start or `--as-live` run's
+  (R32.1-5). A `roadSetHash` that differs, or packs on one side only, is a warning
   naming the hashes, and the verdict is never PASS (exact). Format and
   verdicts:
   [NAV_SIDECAR.md](NAV_SIDECAR.md).
@@ -746,6 +757,10 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   far are 0.95–1.60 s apart, and the closest pins that are not a pair are
   27.5 s apart. 3 s is about twice the widest pair and the length of the app's
   Undo toast, during which the user is still looking at the pin just placed.
+  A window other than 3 s adds `-pair-window-<s>` to the mode label (R18.1-3),
+  so runs with different windows keep their own rows in one `--out`. Seed,
+  `--particles` and `--set` are not in the label: a sweep over them needs
+  one `--out` per value.
 - **Excluded pins**: a truth-file `excludePins` entry marks the manual fix
   nearest its `t` within 0.1 s as not scored. The engine still ingests it, and
   it still opens a pair window. An entry that matches no pin is printed.
@@ -791,7 +806,13 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   semi-axis a becomes √(a² + 5.991 σ²). Same denominator as above. It is
   computed in the replay only; the engine and its ellipse are unchanged.
 - Per log: distance, checkpoints, max and end error (end = truth `end`, else the
-  last checkpoint), heading-convergence distance (first time `converged` then
+  last checkpoint; max over every scored checkpoint, pins and truth points
+  included, with the % of distance at that checkpoint), the max per kind
+  (R19.1-2: `maxErrorByKind` in `metrics.json`, the summary's "Max by kind"
+  line; per kind the largest error with its `t`, and the largest error as %
+  of the distance from the start at its time with its `t`, which need not be
+  the same checkpoint; `metrics.md` shows the clean fixes' two as "clean-fix
+  max err m" and "clean-fix max %"), heading-convergence distance (first time `converged` then
   holds for 30 s, inclusive; a shorter run does not count), steps, ms/step
   (engine `ingest` wall time only), seed and config. Distance holds the last
   OBD speed for at most `obdMaxAgeS` (2 s) across a reply gap, so a dropout
@@ -1082,7 +1103,9 @@ under those aliases (kept outside the repository or in the git-ignored `logs/`).
     refinements, 2 excluded).
   - **Criterion (decided 2026-10-12 by the user).**
     Every withheld clean fix after 1800 s is within 2.5 % of the distance
-    travelled at its time (∫ OBD speed from the start, as for jammed-A/B). Rule: drive-7 is a
+    travelled at its time (∫ OBD speed from the start, as for jammed-A/B):
+    `replay_nav`'s "clean-fix max %" (`maxErrorByKind.cleanFix.maxPercent`,
+    R19.1-2), not "max %", which covers the pins too. Rule: drive-7 is a
     jammed drive, so it takes the jammed drives' existing threshold
     unchanged, set in N2 before drive-7 existed; nothing about the
     threshold was chosen from this drive's numbers. It applies to the worst
@@ -1100,7 +1123,7 @@ under those aliases (kept outside the repository or in the git-ignored `logs/`).
     over seeds) is taken over all scored checkpoints, the clean fixes and the
     7 scored pin priors together, not over the clean fixes alone
     (`EllipseConsistency` counts every checkpoint with `isScored`,
-    `NavigationReplay.swift:1396-1403`; the two excluded pins and the 3
+    in `NavigationReplay.swift`; the two excluded pins and the 3
     refinements are not scored).
   - **Timing.** The live build that recorded drive-7 was **Debug**
     (`-Onone`). Its sidecar's `msPerStep` (median 2.8 ms) and `maxStepMs`
@@ -1123,7 +1146,7 @@ under those aliases (kept outside the repository or in the git-ignored `logs/`).
     for this drive.
   - **Criterion (decided 2026-10-14 by the user).** Every scored withheld
     clean fix is within 2.5 % of the distance travelled at its time (∫ OBD
-    speed from the start, as for drive-7). Rule: drive-8 takes the jammed
+    speed from the start, as for drive-7; "clean-fix max %"). Rule: drive-8 takes the jammed
     drives' 2.5 % threshold unchanged, chosen before any run, like drive-7.
     For the adoption rule drive-8 is a drive scored in % of distance.
   - **Reported, not gated:** the max error in metres, the error as a share

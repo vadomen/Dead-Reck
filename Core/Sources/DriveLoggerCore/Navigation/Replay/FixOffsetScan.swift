@@ -182,6 +182,27 @@ public enum FixOffsetScan {
         public var gyroYawDeg: Double?
     }
 
+    // MARK: replay_nav flags
+
+    /// The `replay_nav` flags of an engine run, which `--fix-offset` (no
+    /// engine, no metrics files) would not use. `replay_nav` refuses them
+    /// together with `--fix-offset` (status 2, R35.2-3) instead of exiting
+    /// 0 without the comparison, sidecar or metrics they ask for.
+    public static let engineOnlyFlags: Set<String> = [
+        "--gps", "--hold-out-acc", "--truth", "--seed", "--particles", "--set", "--out",
+        "--as-live", "--file-order", "--compare", "--tolerance", "--heading-tolerance", "--write-sidecar",
+        "--pin-pair-window", "--wrong-road-tolerance",
+        "--fixpin-inject", "--fixpin-two-pins", "--fixpin-survey", "--fixpin-pins", "--fixpin-separation",
+        "--fixpin-engine-no-roads",
+    ]
+
+    /// The engine-only flags among `given` (the command line's flags), each
+    /// once, in the order given; empty when the scan may run.
+    public static func refusedFlags(_ given: [String]) -> [String] {
+        var seen = Set<String>()
+        return given.filter { engineOnlyFlags.contains($0) && seen.insert($0).inserted }
+    }
+
     // MARK: Inputs
 
     /// Fixes with `0 ≤ horizontalAccuracy ≤ maxAccuracyM` (by default the
@@ -213,7 +234,7 @@ public enum FixOffsetScan {
             return (sin(c), cos(c))
         }
         let minAbsCos = options.courseToleranceDeg.map { cos($0 * .pi / 180) } ?? 0
-        let margin = options.maxShiftM + options.capM + options.fineStepM + options.coarseStepM
+        let margin = fieldMarginM(options)
         let field = RoadField(roads: roads, plane: plane, points: points, marginM: margin, capM: options.capM)
         var buffer = [Double](repeating: 0, count: points.count)
         func distances(_ shift: Shift) -> [Double] {
@@ -290,6 +311,20 @@ public enum FixOffsetScan {
             runnerUp: runnerUp?.shift, runnerUpScore: runnerUp?.score, offRoad: offRoad, found: found, unique: unique,
             tested: tested, recordedDistancesM: recordedDistances
         )
+    }
+
+    /// How far beyond the fixes' bounding box the road field reaches: the
+    /// farthest any scored shift moves a fix along either axis, plus `capM`
+    /// (a road within the cap of a shifted fix must be in the field). The
+    /// grid reaches `maxShiftM`, its refinement one more coarse step plus a
+    /// fine step; a tested shift (`--fix-offset-test`) reaches its own
+    /// east and north components, which may be longer (R35.1-3: a 326 m
+    /// test with `--fix-offset-max 50` was scored against a field missing
+    /// the roads it lands on).
+    static func fieldMarginM(_ options: Options) -> Double {
+        let grid = options.maxShiftM + options.fineStepM + options.coarseStepM
+        let tested = options.tested.map { max(abs($0.east), abs($0.north)) }.max() ?? 0
+        return max(grid, tested) + options.capM
     }
 
     /// Windows of `lengthS` every `stepS` over the fixes' time span; a

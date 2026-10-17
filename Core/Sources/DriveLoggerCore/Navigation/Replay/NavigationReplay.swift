@@ -95,11 +95,33 @@ public struct ReplayOptions: Hashable, Sendable {
         self.config = config
     }
 
+    /// The mode: the `metrics.json` key with the log name, and the GeoJSON
+    /// file name. Every option that changes a run's numbers and is not a
+    /// config field gets its own part, so two such runs never overwrite
+    /// each other's row in one `--out`; at their defaults the parts are
+    /// absent and the label is as before them.
+    /// - `-pair-window-<s>`: a `pinPairWindowS` other than the default
+    ///   (R18.1-3).
+    /// - `-attach-sidecar`: roads attached at a sidecar's `afterInputs`
+    ///   (`--compare`), and `-attach-live`: the live rule without
+    ///   `--as-live` (`--compare` with a sidecar that used no roads), so
+    ///   neither overwrites the from-start or `--as-live` row (R32.1-5).
+    ///   `--as-live` already names the live rule.
     public var label: String {
         var label = gps.label
         if let holdOutAccuracyM { label += "-holdout-\(GPSMode.format(holdOutAccuracyM))" }
         if asLive { label += "-as-live" } else if fileOrder { label += "-file-order" }
-        if let roads { label += "-" + roads.labelSuffix }
+        if pinPairWindowS != NavigationReplay.defaultPinPairWindowS {
+            label += "-pair-window-\(GPSMode.format(pinPairWindowS))"
+        }
+        if let roads {
+            label += "-" + roads.labelSuffix
+            switch roadAttach {
+            case .fromStart: break
+            case .live: if !asLive { label += "-attach-live" }
+            case .afterInputs: label += "-attach-sidecar"
+            }
+        }
         return label
     }
 }
@@ -593,7 +615,9 @@ public struct ReplayResult: Hashable, Sendable, Codable {
     /// ∫ OBD speed (primary ECU, `v + 0.5` km/h when moving), metres.
     public var distanceM: Double
     public var checkpoints: [Checkpoint]
-    /// Largest checkpoint error (m) and its percentage of distance so far.
+    /// Largest checkpoint error (m) over every scored checkpoint, pins and
+    /// truth points included, and its percentage of distance so far.
+    /// Per kind, and the largest percentage: `maxErrorByKind`.
     public var maxErrorM: Double?
     public var maxErrorPercent: Double?
     /// The truth `end` checkpoint, else the last scored checkpoint.
@@ -637,6 +661,11 @@ public struct ReplayResult: Hashable, Sendable, Codable {
     /// What the truth file's `excludeFixes` kept from being truth; nil
     /// without it.
     public var fixesExcludedByTruth: FixExclusion? = nil
+
+    /// The worst scored checkpoint per kind (`Checkpoint.Kind` raw value;
+    /// a kind with no scored checkpoint with an error is absent), R19.1-2.
+    /// `cleanFix`'s `maxPercent` is the gated figure of drive-7 and drive-8.
+    public var maxErrorByKind: [String: KindMaxError] = [:]
 
     /// The road set the engine used (N3.2): per pack in canonical order
     /// (ascending content hash), and FNV-1a 64 over their content hashes.
@@ -1234,6 +1263,7 @@ private struct ReplayRun {
             pinScoring: pinScoring
         )
         result.fixesExcludedByTruth = fixExclusion()
+        result.maxErrorByKind = KindMaxError.byKind(checkpoints)
         if let scoreUntilT = truth?.scoreUntilT {
             result.scoreUntilT = scoreUntilT
             result.checkpointsAfterScoreUntil = checkpoints.filter { $0.afterScoreUntilT == true }.count
@@ -1371,6 +1401,54 @@ struct DistanceIntegrator {
 /// initialisation has no ellipse and is in neither count. Every "inside
 /// 95 %" figure `replay_nav` prints, per kind included (the clean-fix line
 /// of the summary and `metrics.md`), is taken from here.
+/// The worst scored checkpoints of one kind (R19.1-2). The run's
+/// `maxErrorM` covers every kind together, so on a drive with pins it can
+/// be a pin's; the drives gated on their withheld clean fixes (drive-7,
+/// drive-8: every one within 2.5 % of the distance travelled from the start
+/// at its time) need the clean fixes alone, and the largest percentage,
+/// which need not be the largest error in metres.
+public struct KindMaxError: Hashable, Sendable, Codable {
+    /// Scored checkpoints of the kind with an error (the engine had an
+    /// estimate at their time).
+    public var scored: Int
+    /// The largest error, metres, and its checkpoint's `t`.
+    public var maxErrorM: Double
+    public var maxErrorT: Double
+    /// The largest `errorPercent` (error as a percentage of the distance
+    /// travelled from the start at its time), and its checkpoint's `t`;
+    /// nil when none of them had a distance yet.
+    public var maxPercent: Double?
+    public var maxPercentT: Double?
+
+    public init(scored: Int, maxErrorM: Double, maxErrorT: Double, maxPercent: Double? = nil, maxPercentT: Double? = nil) {
+        self.scored = scored
+        self.maxErrorM = maxErrorM
+        self.maxErrorT = maxErrorT
+        self.maxPercent = maxPercent
+        self.maxPercentT = maxPercentT
+    }
+
+    /// Per kind over the scored checkpoints with an error (`isScored`:
+    /// refinements, excluded pins and checkpoints after `scoreUntilT` do
+    /// not count); ties keep the earliest checkpoint.
+    public static func byKind(_ checkpoints: [ReplayResult.Checkpoint]) -> [String: KindMaxError] {
+        var out: [String: KindMaxError] = [:]
+        for cp in checkpoints where cp.isScored {
+            guard let error = cp.errorM else { continue }
+            let key = cp.kind.rawValue
+            var m = out[key] ?? KindMaxError(scored: 0, maxErrorM: error, maxErrorT: cp.t)
+            m.scored += 1
+            if error > m.maxErrorM { m.maxErrorM = error; m.maxErrorT = cp.t }
+            if let percent = cp.errorPercent, percent > (m.maxPercent ?? -.infinity) {
+                m.maxPercent = percent
+                m.maxPercentT = cp.t
+            }
+            out[key] = m
+        }
+        return out
+    }
+}
+
 public struct EllipseConsistency: Hashable, Sendable, Codable {
     public struct Count: Hashable, Sendable, Codable {
         public var inside: Int

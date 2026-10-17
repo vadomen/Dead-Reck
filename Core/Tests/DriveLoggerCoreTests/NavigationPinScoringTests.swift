@@ -124,7 +124,11 @@ struct NavigationPinScoringTests {
     func replayPairs() throws {
         let (events, truth) = Self.scenario(pinTimes: [40, 41.5, 55])
         let new = Self.run(events, truth: truth, window: 3)
-        let old = Self.run(events, truth: truth, window: 0)
+        var old = Self.run(events, truth: truth, window: 0)
+        // R18.1-3: the window has its own mode (row and file name); apart
+        // from it the GeoJSON is byte-identical.
+        #expect(new.mode == "use" && old.mode == "use-pair-window-0")
+        old.mode = new.mode
         #expect(try ReplayReport.geoJSON(new) == ReplayReport.geoJSON(old))
         #expect(Self.estimates(new) == Self.estimates(old))
         #expect(new.counters.manualFixes == 3 && old.counters.manualFixes == 3, "every pin is ingested")

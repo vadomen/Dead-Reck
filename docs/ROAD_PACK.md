@@ -400,6 +400,13 @@ swift run -c release build_roads --info ../osm/packs/$P.roadpack --bench 100000
 swift run -c release build_roads --network ../osm/packs/national.roadpack ../osm/packs/$P.roadpack
 ```
 
+Checks before anything is built: `build_roads` exits 2 (usage) on a bad value:
+`--grid-bbox` needs four finite numbers with |lat| ≤ 90 and |lon| ≤ 180, `--bench`
+a positive count. `--info --bench` runs the bench only on a pack that verifies; one
+that fails `verify()` exits 4 without it. `build_packs.sh` exits 2 when an entry
+of `packs` has no non-empty string `name`, or two entries share one (each name is
+the pack's file name, `osm/packs/<name>.roadpack`, and its work files').
+
 The national pack is not cut by a polygon. It takes its classes from `roads.osm.pbf`
 (`osmium tags-filter $W/roads.osm.pbf w/highway=motorway,…,primary_link`), so it
 keeps the extract's border spillover. Its coverage polygon is the country relation,
