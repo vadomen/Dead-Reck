@@ -196,6 +196,45 @@ struct NavigationZeroFixGateTests {
         #expect(shortRun.counters.zuptVetoedSteps == 290, "\(shortRun.counters.zuptVetoedSteps)")
     }
 
+    @Test("A vetoed step moves like a stale one: each particle's speed takes the OU unknown-speed noise, so the cloud spreads along track")
+    func vetoedStepTakesStaleSpeedNoise() throws {
+        // Fixes until 2 s (arriving 2.05 s), then none; OBD stays at 0.
+        // Steps 0–2.0 s are ZUPT (offsets reset to 0), 2.1 s on are vetoed
+        // (until 5.0 s); stop at 4.95 s, 2.9 s of vetoed steps.
+        let end = S.ms(4.95)
+        let events = Self.stuckEvents(fixesUntil: 2).filter { NavigationInput($0)!.arrival <= end }
+        let noisy = Self.config(gate: 1)
+        var quiet = noisy
+        quiet.staleSpeedNoiseMpsPerSqrtS = 0
+        let (on, onSamples) = S.run(events, config: noisy, sampleTimes: [4.95])
+        let ref = S.run(events, config: quiet).engine
+        #expect(on.counters.zuptVetoedSteps == 29, "vetoed \(on.counters.zuptVetoedSteps)")
+        #expect(ref.counters.zuptVetoedSteps == on.counters.zuptVetoedSteps)
+        #expect(on.counters.staleSpeedSteps == 0, "vetoed steps are not counted as stale")
+
+        // OU from 0 over 2.9 s (σ 2.5 m/s/√s, τ 20 s): std ≈ 4.0 m/s per
+        // particle. 400 particles put the sample std within a few percent.
+        func spread(_ e: NavigationEngine) -> Double {
+            let w = e.weight.reduce(0, +)
+            let mean = zip(e.weight, e.speedOffset).reduce(0) { $0 + $1.0 * $1.1 } / w
+            let variance = zip(e.weight, e.speedOffset).reduce(0) { $0 + $1.0 * ($1.1 - mean) * ($1.1 - mean) } / w
+            return variance.squareRoot()
+        }
+        #expect(spread(on) > 3 && spread(on) < 5, "speed offset std \(spread(on)) m/s")
+        #expect(ref.speedOffset.allSatisfy { $0 == 0 })
+
+        // The offsets reach the positions: the reference run draws the same
+        // random numbers with the offsets × 0, so particle by particle the
+        // two clouds differ by the integrated offsets alone (OU integral
+        // over 2.9 s: ≈ 7 m rms).
+        let shifts = zip(zip(on.east, on.north), zip(ref.east, ref.north)).map { a, b in
+            ((a.0 - b.0) * (a.0 - b.0) + (a.1 - b.1) * (a.1 - b.1)).squareRoot()
+        }
+        let rms = (shifts.map { $0 * $0 }.reduce(0, +) / Double(shifts.count)).squareRoot()
+        #expect(rms > 5 && rms < 10, "particle shift rms \(rms) m")
+        #expect(try #require(onSamples[0]).stationary == false)
+    }
+
     @Test("A stale OBD 0 (parked, no IMU motion) is vetoed by moving fixes as a fresh one is")
     func parkedIsVetoed() throws {
         // OBD answers 0 until 5 s, then nothing; constant speed, so the
