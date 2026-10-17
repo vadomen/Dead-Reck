@@ -54,6 +54,10 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
     /// the start, when none was attached, and in files written before N3.3.
     public var roadsAttachedAfterInputs: Int?
     public var attachedRoadSetHash: String?
+    /// The truth file's `excludeFixes` and how many fixes it kept from
+    /// being truth. nil (absent) in a run without it and in files written
+    /// before it.
+    public var fixesExcludedByTruth: ReplayResult.FixExclusion?
 
     public init(_ result: ReplayResult) {
         logName = result.logName
@@ -89,6 +93,7 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
         checkpointsAfterScoreUntil = result.checkpointsAfterScoreUntil
         roadsAttachedAfterInputs = result.roadsAttachedAfterInputs
         attachedRoadSetHash = result.attachedRoadSetHash
+        fixesExcludedByTruth = result.fixesExcludedByTruth
     }
 
     /// `metrics.json` key: one row per log and mode.
@@ -105,6 +110,7 @@ extension ReplayMetrics {
         case roads, roadSetHash, roadMetrics
         case scoreUntilT, checkpointsAfterScoreUntil
         case roadsAttachedAfterInputs, attachedRoadSetHash
+        case fixesExcludedByTruth
     }
 
     /// Keys every `metrics.json` row has had since the first one (N2). A row
@@ -121,7 +127,7 @@ extension ReplayMetrics {
     ///   `motionStartT`, `consistency`, `consistencyWithTruthSigma`, `pins`,
     ///   `pinScoring`, `roads`, `roadSetHash`, `roadMetrics`, `scoreUntilT`,
     ///   `checkpointsAfterScoreUntil`, `roadsAttachedAfterInputs`,
-    ///   `attachedRoadSetHash` (and any key a
+    ///   `attachedRoadSetHash`, `fixesExcludedByTruth` (and any key a
     ///   later build adds, which must be optional or take a default here).
     /// - `config` and `counters` decode tolerantly themselves: a config key
     ///   or counter added later takes its default (0 for a counter).
@@ -162,6 +168,7 @@ extension ReplayMetrics {
         checkpointsAfterScoreUntil = try c.decodeIfPresent(Int.self, forKey: .checkpointsAfterScoreUntil)
         roadsAttachedAfterInputs = try c.decodeIfPresent(Int.self, forKey: .roadsAttachedAfterInputs)
         attachedRoadSetHash = try c.decodeIfPresent(String.self, forKey: .attachedRoadSetHash)
+        fixesExcludedByTruth = try c.decodeIfPresent(ReplayResult.FixExclusion.self, forKey: .fixesExcludedByTruth)
     }
 }
 
@@ -301,6 +308,9 @@ public enum ReplayReport {
         }
         if let text = scoreUntilText(result.scoreUntilT, result.checkpoints) {
             lines.append("Scored until  " + text)
+        }
+        if let exclusion = result.fixesExcludedByTruth {
+            lines.append("Fixes excl.   by truth excludeFixes " + exclusion.text)
         }
         lines.append("Consistency   " + consistencyText(result.consistency) + " (engine ellipse)")
         lines.append("  + truth σ   " + consistencyText(result.consistencyWithTruthSigma) + " (engine covariance + truth σ²; gated)")
@@ -452,6 +462,9 @@ public enum ReplayReport {
             }
             if let text = scoreUntilText(r.scoreUntilT, r.checkpoints) {
                 out += "Scored until \(text).\n\n"
+            }
+            if let exclusion = r.fixesExcludedByTruth {
+                out += "Fixes excluded by truth (excludeFixes): \(exclusion.text).\n\n"
             }
             out += "| kind | t s | distance m | error m | % of distance | σ heading ° | inside 95 % | + truth σ | truth σ m | 95 % ellipse |\n|---|---:|---:|---:|---:|---:|---|---|---:|---|\n"
             for cp in r.checkpoints where cp.kind != .cleanFix {

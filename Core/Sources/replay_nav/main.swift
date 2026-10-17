@@ -63,6 +63,9 @@ import Foundation
 // manual fixes that are not scored either. Scoring only: estimates are the same.
 // A truth-file `scoreUntilT` (session seconds) leaves every checkpoint after
 // it listed but unscored (the truth `end` included); also scoring only.
+// Truth-file `excludeFixes` ranges ({fromT, toT}, inclusive) make the fixes
+// in them never truth (no clean-fix checkpoint, no road truth) in any --gps
+// mode; the engine still gets what --gps gives it.
 // --seed header: each log's seed is derived from its header's sessionID
 // (`NavigationSeed`), as the live app does. --as-live: replay as the app ran
 // live — inputs in file order (the tap's order), the header's seed and the

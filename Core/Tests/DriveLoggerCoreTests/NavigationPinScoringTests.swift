@@ -227,3 +227,178 @@ struct NavigationPinScoringTests {
         #expect(ReplayReport.existingMetricsDecodeError(nil) == nil)
     }
 }
+
+// MARK: - excludeFixes (truth-file fix ranges, N3-FIXPIN step 0)
+
+/// The truth file's `excludeFixes`: a location fix in a range is never truth
+/// (no clean-fix checkpoint, no road truth), in any GPS mode. Scoring only:
+/// the engine receives exactly the fixes the GPS mode gives it.
+extension NavigationPinScoringTests {
+    /// Clean fixes (5 m, course) every second over ~85 s, a pin at 5 s on
+    /// the truth (it initialises the engine under `--gps none`), truth `end`.
+    static func fixRangeScenario() -> (events: [LogEvent], truth: TruthFile.Entry) {
+        let drive = S(initialHeadingDeg: 30, initialSpeed: 10, [
+            .straight(seconds: 35, speed: 10), .turn(degrees: 70, seconds: 6, speed: 8),
+            .straight(seconds: 35, speed: 10), .ramp(seconds: 4, from: 10, to: 0), .stop(seconds: 5),
+        ])
+        let state = drive.truth(at: 5)
+        let p = S.plane.geodetic(east: state.east, north: state.north)
+        let pin = LogEvent(timestamp: S.ms(5), payload: .manualFix(ManualFixSample(
+            latitude: p.latitude, longitude: p.longitude, pressedT: S.ms(5), mapSpanM: 200, speedSource: "obd")))
+        let events = drive.events(fix: S.cleanFix(accuracy: 5, positionNoise: 1), extra: [pin])
+        let end = drive.truth(at: drive.duration)
+        let e = S.plane.geodetic(east: end.east, north: end.north)
+        return (events, TruthFile.Entry(end: TruthFile.Position(latitude: e.latitude, longitude: e.longitude, sigmaM: 10)))
+    }
+
+    static func fixRangeRun(_ events: [LogEvent], truth: TruthFile.Entry?, gps: GPSMode) -> ReplayResult {
+        NavigationReplay.run(logName: "synthetic.jsonl.gz", inputs: NavigationReplay.inputs(from: events),
+                             options: ReplayOptions(gps: gps, config: S.config(particles: 200)), truth: truth)
+    }
+
+    /// Everything the engine produced (track, ellipses, pin priors, counters,
+    /// fix list): must not depend on `excludeFixes`.
+    static func engineOutput(_ r: ReplayResult) -> [String] {
+        ["\(r.track)", "\(r.ellipses)", "\(r.pins)", "\(r.counters)", "\(r.fixes)"]
+    }
+
+    static func location(_ input: NavigationInput) -> (sample: LocationSample, t: MonotonicTimestamp)? {
+        if case .location(let sample, let t) = input { return (sample, t) }
+        return nil
+    }
+
+    @Test("Truth file: excludeFixes decodes; an entry without it decodes unchanged (nil)")
+    func truthFileExcludeFixes() throws {
+        let json = """
+            {"A.jsonl.gz": {"excludeFixes": [{"fromT": -1, "toT": 251, "reason": "offset"}, {"fromT": 300.5, "toT": 300.5}],
+                            "excludePins": [{"t": 3}], "note": "x"},
+             "B.jsonl.gz": {"end": {"latitude": 0, "longitude": 0}, "excludePins": [{"t": 3}], "scoreUntilT": 9}}
+            """
+        let truth = try TruthFile(data: Data(json.utf8))
+        let a = try #require(truth.entry(forLog: "A.jsonl.gz"))
+        #expect(a.excludeFixes == [.init(fromT: -1, toT: 251, reason: "offset"), .init(fromT: 300.5, toT: 300.5)])
+        #expect(a.excludePins == [.init(t: 3)])
+        let b = try #require(truth.entry(forLog: "B.jsonl.gz"))
+        #expect(b == TruthFile.Entry(end: TruthFile.Position(latitude: 0, longitude: 0), excludePins: [.init(t: 3)],
+                                     scoreUntilT: 9))
+        #expect(b.excludeFixes == nil && !b.excludesFix(at: S.ms(0)))
+    }
+
+    @Test("Truth file: a range with fromT > toT or a missing bound fails the whole file; non-finite bounds are invalid and match nothing")
+    func truthFileBadRange() throws {
+        for bad in [#"{"fromT": 10, "toT": 9.999}"#, #"{"fromT": 10}"#, #"{"toT": 10}"#, #"{"fromT": "a", "toT": 10}"#] {
+            let json = #"{"A.jsonl.gz": {"excludeFixes": ["# + bad + "]}}"
+            #expect(throws: DecodingError.self, "\(bad)") { try TruthFile(data: Data(json.utf8)) }
+        }
+        // JSON has no NaN or infinity literal and Foundation refuses an
+        // out-of-range number, so a non-finite bound only exists in code.
+        #expect(throws: (any Error).self) {
+            try TruthFile(data: Data(#"{"A.jsonl.gz": {"excludeFixes": [{"fromT": 0, "toT": 1e400}]}}"#.utf8))
+        }
+        let infinite = TruthFile.ExcludedFixRange(fromT: 0, toT: .infinity)
+        let nan = TruthFile.ExcludedFixRange(fromT: .nan, toT: 10)
+        let reversed = TruthFile.ExcludedFixRange(fromT: 10, toT: 5)
+        #expect(infinite.problem != nil && nan.problem != nil && reversed.problem != nil)
+        #expect(!infinite.contains(S.ms(1)) && !nan.contains(S.ms(5)) && !reversed.contains(S.ms(7)))
+        // fromT == toT is a valid one-instant range.
+        let instant = TruthFile.ExcludedFixRange(fromT: 7, toT: 7)
+        #expect(instant.problem == nil && instant.contains(S.ms(7)) && !instant.contains(MonotonicTimestamp(nanoseconds: 7_000_000_001)))
+    }
+
+    @Test("--gps none: an excluded range removes exactly its clean-fix checkpoints (inclusive), consistency shrinks with it, the engine is unchanged")
+    func excludedRangeGpsNone() throws {
+        let (events, truth) = Self.fixRangeScenario()
+        var excluded = truth
+        excluded.excludeFixes = [.init(fromT: 20, toT: 30, reason: "shifted")]
+        let base = Self.fixRangeRun(events, truth: truth, gps: .none)
+        let with = Self.fixRangeRun(events, truth: excluded, gps: .none)
+
+        #expect(Self.engineOutput(with) == Self.engineOutput(base))
+        #expect(with.fixes.allSatisfy { $0.withheld == .gpsNone }, "the GPS mode alone decides what the engine gets")
+        let baseClean = base.checkpoints.filter { $0.kind == .cleanFix }
+        let inRange = baseClean.filter { $0.t >= 20 && $0.t <= 30 }
+        #expect(inRange.count == 11 && inRange.first?.t == 20 && inRange.last?.t == 30, "fixes at 20, 21, …, 30 s, both ends")
+        #expect(baseClean.filter { $0.t > 5 }.allSatisfy { $0.inside95 != nil }, "every clean fix after the pin has an estimate")
+        #expect(inRange.allSatisfy { $0.inside95 != nil })
+        // Exactly those checkpoints are gone; the rest are unchanged.
+        let kept = base.checkpoints.filter { !($0.kind == .cleanFix && $0.t >= 20 && $0.t <= 30) }
+        #expect(with.checkpoints == kept)
+        #expect(with.checkpoints.contains { $0.kind == .cleanFix && $0.t == 19 }
+            && with.checkpoints.contains { $0.kind == .cleanFix && $0.t == 31 })
+        #expect(with.consistency == EllipseConsistency(kept))
+        #expect(with.consistencyWithTruthSigma == EllipseConsistency(kept, withTruthSigma: true))
+        #expect(with.consistency.byKind["cleanFix"]?.scored == (base.consistency.byKind["cleanFix"]?.scored ?? 0) - 11)
+        #expect(with.consistency.all.scored == base.consistency.all.scored - 11)
+        #expect(with.maxErrorM == kept.filter(\.isScored).compactMap(\.errorM).max())
+        #expect(with.endErrorM == base.endErrorM && with.endIsTruth)
+        #expect(with.fixesExcludedByTruth == .init(ranges: excluded.excludeFixes!, fixes: 11, cleanFixes: 11,
+                                                   cleanFixCheckpoints: 11))
+        #expect(base.fixesExcludedByTruth == nil)
+
+        // One nanosecond inside each bound drops the two boundary fixes.
+        var inner = truth
+        inner.excludeFixes = [.init(fromT: 20.000_000_001, toT: 29.999_999_999)]
+        let narrow = Self.fixRangeRun(events, truth: inner, gps: .none)
+        #expect(narrow.fixesExcludedByTruth?.cleanFixCheckpoints == 9)
+        #expect(narrow.checkpoints.contains { $0.kind == .cleanFix && $0.t == 20 }
+            && narrow.checkpoints.contains { $0.kind == .cleanFix && $0.t == 30 })
+
+        // Reports: the summary line and metrics.md name the range and counts;
+        // metrics.json round-trips the new key.
+        let summary = ReplayReport.summary(with)
+        #expect(summary.contains("Fixes excl.   by truth excludeFixes t 20.0 … 30.0 s (shifted): 11 fixes, 11 clean (≤ 15 m), 11 withheld clean-fix checkpoints; never truth"))
+        #expect(summary.contains("cleanFix      \(kept.filter { $0.kind == .cleanFix }.count) withheld clean fixes"))
+        let markdown = ReplayReport.markdown([ReplayMetrics(with)])
+        #expect(markdown.contains("Fixes excluded by truth (excludeFixes): t 20.0 … 30.0 s (shifted): 11 fixes"))
+        let data = try ReplayReport.metricsJSON([ReplayMetrics(with)])
+        #expect(try JSONDecoder().decode([ReplayMetrics].self, from: data) == [ReplayMetrics(with)])
+        let row = try #require(try JSONSerialization.jsonObject(with: data) as? [[String: Any]])[0]
+        let saved = try #require(row["fixesExcludedByTruth"] as? [String: Any])
+        #expect(saved["cleanFixCheckpoints"] as? Int == 11 && saved["fixes"] as? Int == 11)
+    }
+
+    @Test("Any GPS mode: fixes given to the engine stay given (use, mask-after); only withheld ones lose their checkpoint")
+    func excludedRangeOtherModes() throws {
+        let (events, truth) = Self.fixRangeScenario()
+        var excluded = truth
+        excluded.excludeFixes = [.init(fromT: 15, toT: 40)]
+        // use: nothing is withheld, so there is no clean-fix checkpoint to drop.
+        let useBase = Self.fixRangeRun(events, truth: truth, gps: .use)
+        let use = Self.fixRangeRun(events, truth: excluded, gps: .use)
+        #expect(Self.engineOutput(use) == Self.engineOutput(useBase))
+        #expect(use.checkpoints == useBase.checkpoints)
+        #expect(use.fixesExcludedByTruth == .init(ranges: excluded.excludeFixes!, fixes: 26, cleanFixes: 26,
+                                                  cleanFixCheckpoints: 0))
+        // mask-after 25: 15…25 s are used as before, 26…40 s lose their checkpoint.
+        let maskBase = Self.fixRangeRun(events, truth: truth, gps: .maskAfter(seconds: 25))
+        let mask = Self.fixRangeRun(events, truth: excluded, gps: .maskAfter(seconds: 25))
+        #expect(Self.engineOutput(mask) == Self.engineOutput(maskBase))
+        #expect(mask.counters.fixesUsed == maskBase.counters.fixesUsed)
+        #expect(mask.checkpoints == maskBase.checkpoints.filter { !($0.kind == .cleanFix && $0.t <= 40) })
+        #expect(maskBase.checkpoints.filter { $0.kind == .cleanFix && $0.t <= 40 }.count == 15)
+        #expect(mask.fixesExcludedByTruth?.cleanFixCheckpoints == 15 && mask.fixesExcludedByTruth?.fixes == 26)
+    }
+
+    @Test("No excludeFixes (absent or empty): no new key in metrics.json or reports; outputs byte-identical")
+    func noExcludeFixesUnchanged() throws {
+        let (events, truth) = Self.fixRangeScenario()
+        var empty = truth
+        empty.excludeFixes = []
+        let base = Self.fixRangeRun(events, truth: truth, gps: .maskAfter(seconds: 20))
+        let none = Self.fixRangeRun(events, truth: empty, gps: .maskAfter(seconds: 20))
+        #expect(base.fixesExcludedByTruth == nil && none.fixesExcludedByTruth == nil)
+        #expect(try ReplayReport.geoJSON(none) == ReplayReport.geoJSON(base))
+        #expect(none.checkpoints == base.checkpoints)
+        func untimed(_ r: ReplayResult) -> ReplayMetrics {
+            var m = ReplayMetrics(r)
+            m.msPerStep = 0
+            m.maxIngestMs = 0
+            return m
+        }
+        let json = try ReplayReport.metricsJSON([untimed(none)])
+        #expect(json == (try ReplayReport.metricsJSON([untimed(base)])))
+        #expect(!String(decoding: json, as: UTF8.self).contains("fixesExcludedByTruth"))
+        #expect(ReplayReport.markdown([untimed(none)]) == ReplayReport.markdown([untimed(base)]))
+        #expect(!ReplayReport.summary(none).contains("excludeFixes"))
+    }
+}

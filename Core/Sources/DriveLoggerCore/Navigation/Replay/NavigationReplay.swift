@@ -464,6 +464,39 @@ public struct ReplayResult: Hashable, Sendable, Codable {
         }
     }
 
+    /// The truth file's `excludeFixes` in a run: its ranges and how many
+    /// location fixes they covered (`TruthFile.ExcludedFixRange`). Scoring
+    /// only: the engine received exactly the fixes the GPS mode gives it.
+    public struct FixExclusion: Hashable, Sendable, Codable {
+        public var ranges: [TruthFile.ExcludedFixRange]
+        /// Location fixes in the ranges, used or withheld, any accuracy.
+        public var fixes: Int
+        /// Of those, at or under `NavigationReplay.cleanFixTruthAccM`: kept
+        /// out of the offline road truth (residuals) and, when withheld, out
+        /// of the checkpoints.
+        public var cleanFixes: Int
+        /// Withheld clean fixes that are not clean-fix checkpoints because
+        /// of the ranges.
+        public var cleanFixCheckpoints: Int
+
+        public init(ranges: [TruthFile.ExcludedFixRange], fixes: Int = 0, cleanFixes: Int = 0,
+                    cleanFixCheckpoints: Int = 0) {
+            self.ranges = ranges
+            self.fixes = fixes
+            self.cleanFixes = cleanFixes
+            self.cleanFixCheckpoints = cleanFixCheckpoints
+        }
+
+        /// "t -1.0 … 251.0 s (reason): 840 fixes, 812 clean (≤ 15 m), 0
+        /// withheld clean-fix checkpoints; never truth".
+        public var text: String {
+            ranges.map { String(format: "t %.1f … %.1f s", $0.fromT, $0.toT) + ($0.reason.map { " (\($0))" } ?? "") }
+                .joined(separator: ", ")
+                + ": \(fixes) fix\(fixes == 1 ? "" : "es"), \(cleanFixes) clean (≤ \(GPSMode.format(NavigationReplay.cleanFixTruthAccM)) m), "
+                + "\(cleanFixCheckpoints) withheld clean-fix checkpoint\(cleanFixCheckpoints == 1 ? "" : "s"); never truth"
+        }
+    }
+
     /// How the manual fixes of a run were scored.
     public struct PinScoring: Hashable, Sendable, Codable {
         /// `ReplayOptions.pinPairWindowS`; 0: every pin scored.
@@ -601,6 +634,10 @@ public struct ReplayResult: Hashable, Sendable, Codable {
     /// Checkpoints after `scoreUntilT`; nil without a cutoff.
     public var checkpointsAfterScoreUntil: Int? = nil
 
+    /// What the truth file's `excludeFixes` kept from being truth; nil
+    /// without it.
+    public var fixesExcludedByTruth: FixExclusion? = nil
+
     /// The road set the engine used (N3.2): per pack in canonical order
     /// (ascending content hash), and FNV-1a 64 over their content hashes.
     /// nil without roads.
@@ -670,6 +707,10 @@ private struct ReplayRun {
     var skippedInputs: Set<Int> = []
 
     var pinScoring = ReplayResult.PinScoring(pairWindowS: 0)
+
+    /// Withheld clean fixes the truth file's `excludeFixes` keeps from being
+    /// checkpoints, by index in `inputs`.
+    var excludedCheckpointInputs: Set<Int> = []
 
     /// Roads (N3.2): the offline truth matcher and what the run collects
     /// for the road metrics. nil / empty without roads.
@@ -841,6 +882,12 @@ private struct ReplayRun {
                 guard NavigationReplay.withholdReason(sample, at: t, options: options, motionStart: motionStart) != nil,
                       sample.horizontalAccuracy >= 0,
                       sample.horizontalAccuracy <= NavigationReplay.cleanFixTruthAccM else { continue }
+                // Truth `excludeFixes`: still withheld (or not) as the GPS
+                // mode says, but never a checkpoint.
+                if truth?.excludesFix(at: t) == true {
+                    excludedCheckpointInputs.insert(index)
+                    continue
+                }
                 schedule.append(Scheduled(t: t.nanoseconds, kind: .cleanFix, latitude: sample.latitude,
                                           longitude: sample.longitude, sigma: sample.horizontalAccuracy,
                                           inputIndex: index))
@@ -921,6 +968,23 @@ private struct ReplayRun {
             scoreRoad(sample, checkpoint: checkpoint, estimate: estimate.map(inTruthFrame))
         }
         checkpoints.append(checkpoint)
+    }
+
+    /// What the truth file's `excludeFixes` took out of truth; nil without
+    /// a (non-empty) `excludeFixes`. Counts the location fixes on the
+    /// replay's timeline (a skipped input, R14.2-3, is not counted).
+    func fixExclusion() -> ReplayResult.FixExclusion? {
+        guard let ranges = truth?.excludeFixes, !ranges.isEmpty else { return nil }
+        var exclusion = ReplayResult.FixExclusion(ranges: ranges)
+        for (index, input) in inputs.enumerated() where !skippedInputs.contains(index) {
+            guard case .location(let sample, let t) = input, truth?.excludesFix(at: t) == true else { continue }
+            exclusion.fixes += 1
+            if sample.horizontalAccuracy >= 0, sample.horizontalAccuracy <= NavigationReplay.cleanFixTruthAccM {
+                exclusion.cleanFixes += 1
+            }
+            if excludedCheckpointInputs.contains(index) { exclusion.cleanFixCheckpoints += 1 }
+        }
+        return exclusion
     }
 
     /// Whether session time `ns` is after the truth file's `scoreUntilT`
@@ -1041,12 +1105,13 @@ private struct ReplayRun {
         m.rejectedFixes = fixes.filter { $0.rejectedOffRoad == true }.map { [$0.t, $0.accuracyM] }
         // Offline residuals: every clean fix of the recording on the
         // replay's timeline, used or withheld, with a usable course and a
-        // matched truth edge.
+        // matched truth edge, except those the truth file's `excludeFixes`
+        // covers.
         var byClass: [String: [Double]] = [:]
         var all: [Double] = []
         for (index, input) in inputs.enumerated() where !skippedInputs.contains(index) {
             guard case .location(let sample, let t) = input, !isAfterCutoff(t.nanoseconds), sample.horizontalAccuracy >= 0,
-                  sample.horizontalAccuracy <= NavigationReplay.cleanFixTruthAccM,
+                  sample.horizontalAccuracy <= NavigationReplay.cleanFixTruthAccM, truth?.excludesFix(at: t) != true,
                   let course = NavigationReplay.RoadTruth.course(of: sample) else { continue }
             let match = matcher.match(latitude: sample.latitude, longitude: sample.longitude,
                                       accuracyM: sample.horizontalAccuracy, courseDeg: course,
@@ -1159,6 +1224,7 @@ private struct ReplayRun {
             pins: pins,
             pinScoring: pinScoring
         )
+        result.fixesExcludedByTruth = fixExclusion()
         if let scoreUntilT = truth?.scoreUntilT {
             result.scoreUntilT = scoreUntilT
             result.checkpointsAfterScoreUntil = checkpoints.filter { $0.afterScoreUntilT == true }.count

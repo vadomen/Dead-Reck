@@ -664,6 +664,7 @@ file name. The values here are illustrative:
     "end":    { "latitude": 0.0, "longitude": 0.0, "sigmaM": 30, "source": "…" },
     "points": [ { "t": 100.0, "latitude": 0.0, "longitude": 0.0, "sigmaM": 30, "source": "…" } ],
     "excludePins": [ { "t": 250.125, "reason": "doubtful tap" } ],
+    "excludeFixes": [ { "fromT": 0.0, "toT": 251.0, "reason": "shifted fixes" } ],
     "scoreUntilT": 1500.0,
     "note": "unknown keys are ignored" } }
 ```
@@ -691,6 +692,27 @@ checkpoint, as without a truth `end`. Distance is still to the last input.
 The summary ("Scored until"), `metrics.md` and `metrics.json`
 (`scoreUntilT`, `checkpointsAfterScoreUntil`) record the cutoff and the
 count; a run without it writes none of these keys, so its outputs are
+byte-identical to the build before it.
+
+`excludeFixes` (optional, N3-FIXPIN; session-clock seconds): location fixes
+that are never truth, for a recording whose GNSS fixes are known to be wrong
+while they claim to be clean (drive-10's constant-offset accessory fixes). A
+fix whose event `t` satisfies `fromT` ≤ `t` ≤ `toT` (inclusive, compared in
+whole nanoseconds) is, in every GPS mode, not a clean-fix checkpoint, and not
+a clean fix of the offline road truth (road fixes and their wrong / off /
+unmapped verdicts, and the residuals, which count used and withheld fixes
+alike). It is scoring only: whether the engine receives the fix still
+follows `--gps` and `--hold-out-acc` exactly as without it, so with
+`--gps use` the engine still ingests those fixes. Manual fixes in the range
+are not affected (`excludePins` is for them); the 1 Hz on-road samples are
+the engine's, not fix truth, and are not affected either. Several ranges may
+overlap. A range with `fromT` > `toT`, a missing bound or a non-numeric one
+fails the whole truth file (`replay_nav` stops with status 1, as for any
+malformed truth file); JSON cannot hold a non-finite bound. The summary
+("Fixes excl."), `metrics.md` and `metrics.json` (`fixesExcludedByTruth`:
+the ranges, the location fixes in them, how many of those are clean, and
+how many withheld clean-fix checkpoints they removed) record it; a run
+without it (absent or empty) writes none of these keys, so its outputs are
 byte-identical to the build before it.
 
 ## Live in the app (N4 B)
