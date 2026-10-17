@@ -344,6 +344,98 @@ updates reweight only by what heading and scale actually predict.
     `fixPinDecisions` only while a key is on (or a counter is not 0), so
     key-off outputs are byte-identical. No sidecar or log-format change.
     Relative metres and bearings only.
+  - **5-seed acceptance** (seeds 1–5, all acceptance drives, roads on and
+    off). Key off = main, byte-identical on every run; 0 false triggers
+    outside drive-10. drive-10, road key: gated error 21.35 % → 1.41 %,
+    pin-2 prior 327 → 22 m (inside its ellipse, 5 of 5 seeds). Margin: pin 1
+    road B = 14.86 m against the 15 m limit, 0.14 m (A = 33.09 m). Two-pin
+    key on drive-10: FAIL criterion, pin 2 stays out of its ellipse (327 m).
+    By construction: the two-pin verdict only decides AT pin 2, so pin 2's
+    own prior is never helped; it helps pins 3+ (priors 167 / 76 / 68 / 86 /
+    170 m against 191 / 135 / 193 / 39 / 212 keys off, no roads; the 436 s
+    pin got worse, see below). With the road key the road fix gate rejects
+    39 of the down-weighted source's fixes per seed (195 over 5 seeds),
+    course and speed included (BACKLOG N3-FIXPIN-GATE).
+  - **Injection study** (2026-10-17; replay only, `replay_nav
+    --fixpin-inject`, no engine or log change). Per case an engine snapshot,
+    the decisions come from the engine itself (a post-hoc recomputation of
+    the road verdict agrees in 4032 of 4032 cases). Sensitivity: every
+    accessory/phone fix in a window is shifted by d ∈ {100, 200, 335, 500} m
+    × 8 bearings, a genuine pin 90 s in. Specificity: genuine fixes, the
+    pin displaced by {30, 75, 150, 300} m × 8 bearings (a mis-tapped pin).
+    Applicable drives: clean-long, clean, drive-8 only, 21 pin times (8 / 5 /
+    8) over straight, junction and parallel roads. manual, manual-3, drive-9
+    and drive-10 after its spoofed span have no fix with a valid speed
+    (or none that is accurate), which the arbiter never judges. Seeds 1–3
+    are nearly identical (the verdict category differs in 2 of 2688 cases),
+    so the numbers are per seed.
+  - **Road key results** (roads on, one pin, offRoad 15 / margin 10).
+    Sensitivity, pin verdicts, all drives:
+
+    | d (m) | 100 | 200 | 335 | 500 | ≥ 200 |
+    |---|---|---|---|---|---|
+    | pin | 50 % | 80 % | 89 % | 86 % | 85 % (428/504) |
+
+    Per drive at d ≥ 200: clean-long 92 %, drive-8 93 %, clean 60 %.
+    Specificity: 2 false pins of 672 per seed, both at clean 415 s, where
+    the genuine ring itself is 52 m from mapped roads (likely unmapped, not
+    proven) and a displacement of 150 m @ 0° or 300 m @ 135° lands it near a
+    road. The other displaced pins give "fixes" or "none" (at 150 and 300 m
+    "fixes" in 79 % and 88 % of cases). Grid, d ≥ 200 sensitivity / false pins of
+    672 per seed: offRoad 12 / margin 5 89 % / 1; 12 / 10 87 % / 1; 15 / 5
+    and 15 / 10 85 % / 2; 20 / 5 and 20 / 10 78 % / 5. No cell reaches 90 %
+    with 0 false pins. Misses at d ≥ 200 (76 of 504): 43 shifted ring still
+    within 15 m of a mapped road (dense grid), 22 ring unmapped even
+    unshifted, 10 not significant, 1 margin. A / B against the limits: the
+    genuine ring's A is ≤ 10 m at every mapped pin time (a gap on that side
+    of 15 m), but the shifted ring's A is a continuum (12–15 m: 27 cases,
+    15–20 m: 57, 20–30 m: 122 of 613), so the 15 m line sits in a crowd
+    (a shift of 100–500 m often lands the ring within 15 m of some other
+    road). B of the shifted-back ring is ≤ 10 m in 581 of 613. When it
+    fires it works: end-of-window error median 4–6 m (clean-long, drive-8)
+    and 49–50 m (clean) against 200–500 m keys off.
+  - **Verdict, `roadFixPinCheck`: measured, not adopted.** Sensitivity 85 %
+    < 90 % at d ≥ 200, 2 false pins, and it fails at offRoad 12 and 20 too.
+    Default stays 0.
+  - **Two-pin results** (`fixPinTwoPinCheck`, roads off; with roads the
+    road key decides first). The one-pin cases cannot trigger it (it decides
+    at a second pin ≥ 300 m and ≥ 45° after the first), so it has its own
+    cases: pin 1 genuine, pin 2 genuine after the first turn meeting the
+    minimums, a genuine pin 3 60 s later. 5 of 21 pin times never meet the
+    minimums (clean-long 2 of 8, clean 3 of 5, drive-8 0 of 8): verdict
+    impossible, no case. Sensitivity (pin at pin 2): 100 % at d ≥ 200
+    (384 of 384 per seed), 92 % at d = 100 (not significant otherwise). Pin
+    3 prior median 8 m against 200–500 m keys off, better by > 5 m in every
+    case; at d = 100 no change (pin-2 χ² 8–11 is below the 25 reset, a tight
+    cloud takes a partial update). Specificity (pin 1 displaced, pin 2 as
+    named): genuine pin 2 0 false of 1536; car-frame variant (extra) 0 of
+    1536; same displacement on the map 0 false at 30 and 75 m and 100 %
+    false at 150 and 300 m (χ² 0.00 between the two pins): two pins
+    displaced alike are indistinguishable from a shifted source. At 300 m
+    the estimate is then held ~298 m off (keys off: 1 m). The key stays
+    off. Removal is not proposed: it adds something over no key (the
+    sensitivity above). Keep-or-drop is the user's call.
+  - **drive-10 436 s** (two-pin, no roads: the 436 s pin's prior is 39 m keys
+    off, 87 m key on). Both runs dead-reckon the same motion from 392 to 436 s (paths
+    234 / 236 m, separation constant at 47 m), and no GNSS-source fix exists
+    after 251 s, so the source is inert there. The 47 m is set by the 391 s
+    pin: keys off, the prior (191 m) lies beyond χ² 25 and resets the cloud
+    onto the pin; key on, the prior (68 m) is closer but overconfident, not
+    significant, and only updates (53 m of the error survives). The keys-off
+    reset has a χ² between 25 and 40: with `manualFixResetChi2` 40 or 60 it
+    disappears and the 435.5 s prior is 194 m (87 m key on). So the
+    regression is the luck of that reset, not an effect of the key; the
+    mechanism is the pin update / reset rule.
+  - **Timing.** The road verdict step on the Mac (drive-10 pin 1, release)
+    was 4.84 ms (key off 0.09 ms), 78 % of it in the coverage
+    point-in-polygon of the ring fixes against the national pack's single
+    ~80 k-vertex ring. `RoadNetwork.covers` now tests the cheapest pack first
+    (an OR over packs, so byte-identical: proof in commit 3e43317): 1.14 ms.
+    On the phone, with no new event kind: a one-off local Release build with
+    `roadFixPinCheck` 1 (never committed), a drive with at least one pin
+    while roads are attached. The sidecar's `configHash` identifies the
+    build; `estimate.msPerStep` / `maxStepMs` and the pin's
+    `prior.maxStepMs` give the verdict step cost.
 - **Local plane re-anchoring** (R13.1-3): the plane's east axis uses each
   point's own cos φ, so far from the anchor it is sheared, and true north tilts
   by about Δλ·sin φ (1.28° at 100 km east, latitude 55°). That would bias
