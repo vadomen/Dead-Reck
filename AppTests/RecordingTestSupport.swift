@@ -96,6 +96,8 @@ class FakeSource: SensorSource {
     var startError: (any Error)?
     private(set) var starts = 0
     private(set) var stops = 0
+    /// Called by `stop()` before the source stops.
+    var onStop: (@MainActor () -> Void)?
     private var ticker: SimulatedSampleTicker?
 
     init(name: String = "fakeIMU") {
@@ -115,6 +117,7 @@ class FakeSource: SensorSource {
     }
 
     func stop() {
+        onStop?()
         stops += 1
         ticker?.stop()
         ticker = nil
@@ -211,6 +214,43 @@ final class FakeDisk: DiskSpaceProvider {
     }
 }
 
+/// Stands in for `UIApplication.beginBackgroundTask` (R4.1-3): `log` holds
+/// `begin <name>` and `end <name> (<describeAtEnd()>)` in call order, plus
+/// whatever the test `note`s.
+@MainActor
+final class BackgroundTaskSpy {
+    private(set) var log: [String] = []
+    /// Names of the tasks begun and not yet ended.
+    private(set) var held: [String] = []
+    /// Evaluated when a task ends, e.g. whether the file is finished.
+    var describeAtEnd: (@MainActor () -> String)?
+
+    func begin(_ name: String) -> @MainActor () -> Void {
+        log.append("begin \(name)")
+        held.append(name)
+        let token = Token()
+        return { [self] in
+            guard !token.ended else { return }
+            token.ended = true
+            if let index = held.firstIndex(of: name) { held.remove(at: index) }
+            log.append("end \(name) (\(describeAtEnd?() ?? ""))")
+        }
+    }
+
+    func note(_ entry: String) { log.append(entry) }
+
+    @MainActor
+    private final class Token { var ended = false }
+}
+
+/// Blocks the calling thread — the main actor, in these tests — for
+/// `seconds`. Work whose wait ends meanwhile (a timer, a `Task.sleep`) is
+/// queued on the main actor behind the current turn, so the test decides
+/// what runs before it.
+func blockMainActor(seconds: Double) {
+    Thread.sleep(forTimeInterval: seconds)
+}
+
 /// Records every `isIdleTimerDisabled` assignment.
 @MainActor
 final class IdleTimerSpy {
@@ -252,11 +292,13 @@ enum RecordingFixtures {
         store: LogStore,
         disk: FakeDisk = FakeDisk(roomy),
         idle: IdleTimerSpy? = nil,
+        backgroundTasks: BackgroundTaskSpy? = nil,
         statsInterval: Duration = .milliseconds(300),
         flushInterval: Duration = .milliseconds(100),
         manualFixUndoWindow: Duration = .milliseconds(150)
     ) -> RecordingSession {
         let idle = idle ?? IdleTimerSpy()
+        let backgroundTasks = backgroundTasks ?? BackgroundTaskSpy()
         return RecordingSession(
             link: link ?? FakeLink(),
             sources: sources ?? [FakeSource()],
@@ -270,7 +312,8 @@ enum RecordingFixtures {
             statsInterval: statsInterval,
             diskRefreshInterval: .seconds(3_600),
             manualFixUndoWindow: manualFixUndoWindow,
-            setIdleTimerDisabled: { idle.set($0) }
+            setIdleTimerDisabled: { idle.set($0) },
+            beginBackgroundTask: { backgroundTasks.begin($0) }
         )
     }
 

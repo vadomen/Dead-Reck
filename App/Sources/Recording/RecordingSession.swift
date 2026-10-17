@@ -188,6 +188,11 @@ struct RecordingNavigationFeed: Sendable {
 ///   `finish()`. Then `idle` with `lastStopReason`, or rule 4's `failed`.
 /// - *Write failure* (rule 4).
 ///
+/// Each path holds a background task (`DriveLogger.stop`,
+/// `DriveLogger.writeFailure`) from before its sources stop until the file
+/// is finished (R4.1-3): stopping the location source ends the background
+/// location session that kept a locked phone running.
+///
 /// **Disk space: warn, then stop at a floor.** This is the recorder's one
 /// low-disk policy. The thresholds are `warningFreeBytes` (default 200 MB)
 /// and `stopFreeBytes` (default 50 MB), handed unchanged to `LogFileWriter`,
@@ -242,9 +247,10 @@ struct RecordingNavigationFeed: Sendable {
 /// **Start and calibration (R3-2).** `start` re-checks the state after every
 /// suspension. Stop (or rule 2, or rule 4) during `calibrating` ends the
 /// recording; when the calibration wait then returns, `start` sees the
-/// recording is gone and neither writes `calibrationEnd` nor sets
-/// `recording`. `isStarting` is cleared as soon as the recording exists
-/// (R4.1-2), so once such a stop returns, `startBlocker` no longer reports
+/// recording is gone, stopping, or past its last row (rule 4's error row is
+/// queued before the state changes, R32.3-2) and neither writes
+/// `calibrationEnd` nor sets `recording`. `isStarting` is cleared as soon
+/// as the recording exists (R4.1-2), so once such a stop returns, `startBlocker` no longer reports
 /// `.recordingInProgress` and a new recording can start while the old
 /// `start` call is still in its calibration wait.
 ///
@@ -335,6 +341,9 @@ final class RecordingSession {
     @ObservationIgnored private let statsInterval: Duration
     @ObservationIgnored private let diskRefreshInterval: Duration
     @ObservationIgnored private let setIdleTimerDisabled: @MainActor (Bool) -> Void
+    /// Begins a background task with the given name and returns the call
+    /// that ends it (idempotent).
+    @ObservationIgnored private let beginBackgroundTask: @MainActor (String) -> @MainActor () -> Void
     /// How long a staged manual fix can be undone before it is written.
     @ObservationIgnored let manualFixUndoWindow: Duration
     @ObservationIgnored private var nextPendingFixID = 0
@@ -369,6 +378,8 @@ final class RecordingSession {
     ///     60 s in the app; shorter in tests.
     ///   - setIdleTimerDisabled: `UIApplication.shared.isIdleTimerDisabled`
     ///     in the app; injectable for tests.
+    ///   - beginBackgroundTask: `UIApplication.beginBackgroundTask` in the
+    ///     app (`systemBackgroundTask`); injectable for tests.
     /// - Precondition: `stopFreeBytes < warningFreeBytes`.
     init(
         link: any OBDLinkServicing,
@@ -386,7 +397,8 @@ final class RecordingSession {
         statsInterval: Duration = .seconds(10),
         diskRefreshInterval: Duration = .seconds(60),
         manualFixUndoWindow: Duration = .seconds(3),
-        setIdleTimerDisabled: @escaping @MainActor (Bool) -> Void = { UIApplication.shared.isIdleTimerDisabled = $0 }
+        setIdleTimerDisabled: @escaping @MainActor (Bool) -> Void = { UIApplication.shared.isIdleTimerDisabled = $0 },
+        beginBackgroundTask: @escaping @MainActor (String) -> @MainActor () -> Void = RecordingSession.systemBackgroundTask
     ) {
         precondition(stopFreeBytes < warningFreeBytes, "stopFreeBytes must be below warningFreeBytes")
         self.link = link
@@ -404,6 +416,7 @@ final class RecordingSession {
         self.statsInterval = statsInterval
         self.diskRefreshInterval = diskRefreshInterval
         self.setIdleTimerDisabled = setIdleTimerDisabled
+        self.beginBackgroundTask = beginBackgroundTask
         self.manualFixUndoWindow = manualFixUndoWindow
 
         // The one subscription, taken now so nothing the link reports after
@@ -562,7 +575,10 @@ final class RecordingSession {
             try? await Task.sleep(for: calibration)
         }
         // Stopped, failed or replaced meanwhile (R3-2): nothing more to do.
-        guard recording === rec, state == .calibrating else { return }
+        // `isWritable` too (R32.3-2): a write failure queues its error row
+        // and the end path before the state leaves `calibrating`, and a
+        // wake-up already queued must not write after that row.
+        guard recording === rec, state == .calibrating, rec.isWritable else { return }
         let lasted = calibrationStart.interval(to: clock.now())
         rec.record(LifecycleSample(
             .calibrationEnd,
@@ -673,6 +689,11 @@ final class RecordingSession {
         pendingManualFixes.removeAll { ids.contains($0.id) }
         for fix in fixes {
             recording?.pendingFixTimers.removeValue(forKey: fix.id)?.cancel()
+            // Not writable: a fix whose window closes between a write
+            // failure's error row and `performFail` (R15.1-3). The recording
+            // and generation checks can't fail today — every end path's
+            // `finishRecording` drops the ending recording's fixes and cancels
+            // their timers before `recording` changes — and stay as guards.
             guard let rec = recording, rec.generation == fix.generation, rec.isWritable else {
                 droppedManualFixIDs.insert(fix.id)
                 continue
@@ -772,6 +793,11 @@ final class RecordingSession {
             return
         }
         guard let rec = recording, state == .calibrating || state == .recording else { return }
+        // Held until the file is finished, from before `quiesce` stops the
+        // sources and with them the location background session (R4.1-3):
+        // a stop with the phone locked must not be suspended mid-tail.
+        let endBackgroundTask = beginBackgroundTask("DriveLogger.stop")
+        defer { endBackgroundTask() }
         // `stopping` from the moment stop is called, not when the end path's
         // body first runs (R4.1-1): a write failure delivered in between is
         // then remembered, and the UI never shows `recording` after Stop.
@@ -1016,13 +1042,20 @@ final class RecordingSession {
 
     private func flushInBackgroundTask(_ rec: ActiveRecording, reason: String) {
         let writer = rec.writer
-        let task = BackgroundTask(name: "DriveLogger.flush.\(reason)")
+        let endBackgroundTask = beginBackgroundTask("DriveLogger.flush.\(reason)")
         Task {
             // A throw is this call's result, not a report: the writer
             // delivers each failure once on `failures` (rule 4).
             try? await writer.flush()
-            task.end()
+            endBackgroundTask()
         }
+    }
+
+    /// The app's `beginBackgroundTask`: a `UIApplication` background task,
+    /// ended by the returned call or by expiry, whichever comes first.
+    static func systemBackgroundTask(_ name: String) -> @MainActor () -> Void {
+        let task = BackgroundTask(name: name)
+        return { task.end() }
     }
 
     // MARK: - Internals: ending
@@ -1132,7 +1165,10 @@ final class RecordingSession {
         // source ticking on its own queue, a link row, a manual fix or an
         // in-flight `stats` row would otherwise land after the error row
         // until `performFail` runs. `performFail`'s own `quiesce` is then a
-        // no-op, and a second report writes no row.
+        // no-op, and a second report writes no row. A background task is
+        // held from before `quiesce` until the file is finished (R4.1-3).
+        let endBackgroundTask = beginBackgroundTask("DriveLogger.writeFailure")
+        defer { endBackgroundTask() }
         quiesce(rec)
         rec.record(LifecycleSample(.error, detail: "write failed: \(Self.describe(failure))"))
         rec.stopRowQueued = true
