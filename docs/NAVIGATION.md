@@ -434,8 +434,10 @@ updates reweight only by what heading and scale actually predict.
     On the phone, with no new event kind: a one-off local Release build with
     `roadFixPinCheck` 1 (never committed), a drive with at least one pin
     while roads are attached. The sidecar's `configHash` identifies the
-    build; `estimate.msPerStep` / `maxStepMs` and the pin's
-    `prior.maxStepMs` give the verdict step cost.
+    build; `msPerStep` / `maxStepMs` on the `estimate` lines after the pin give the
+    verdict step cost (`maxStepMs` is the largest step so far, so it jumps at the
+    pin when the verdict step is the largest). Not the pin's `prior.maxStepMs`: the
+    prior is written before the engine ingests the pin.
 - **Local plane re-anchoring** (R13.1-3): the plane's east axis uses each
   point's own cos φ, so far from the anchor it is sheared, and true north tilts
   by about Δλ·sin φ (1.28° at 100 km east, latitude 55°). That would bias
@@ -1090,9 +1092,16 @@ under those aliases (kept outside the repository or in the git-ignored `logs/`).
     adoption rule (mean worse by at most 0.1 pp) is the tighter check. For
     that rule drive-7 is a drive scored in % of distance.
   - **Reported, not gated:** the max error in metres, the error as a share
-    of the distance since the last pin, the consistency over the clean fixes
-    and over the 7 scored pins. The pins are not gated because two were
-    likely placed wrong and the truth for the rest is a finger on a map.
+    of the distance since the last pin, and the per-kind consistency over the
+    clean fixes and over the 7 scored pins. The pins' own error is not gated
+    because two were likely placed wrong and the truth for the rest is a
+    finger on a map.
+  - **Consistency gate:** the gated figure (`consistencyWithTruthSigma`, mean
+    over seeds) is taken over all scored checkpoints, the clean fixes and the
+    7 scored pin priors together, not over the clean fixes alone
+    (`EllipseConsistency` counts every checkpoint with `isScored`,
+    `NavigationReplay.swift:1396-1403`; the two excluded pins and the 3
+    refinements are not scored).
   - **Timing.** The live build that recorded drive-7 was **Debug**
     (`-Onone`). Its sidecar's `msPerStep` (median 2.8 ms) and `maxStepMs`
     (45 ms) are not a device performance number. The sidecar predates the
@@ -1238,8 +1247,10 @@ With roads:
   last fix received" (drive-8 has no pins); the two pin columns are replaced
   by "+ truth σ" and "after scoreUntilT"; separate no-roads and roads tables,
   because drive-7's baseline predates roads.
-- Without roads the error over the dead-reckoned distance is 2.35–2.74 %,
-  above 2.5 % on seeds 3 and 5. Reported, not gated, like drive-7's "since the
+- Without roads the error over the dead-reckoned distance, taken at the
+  max-%-from-start fix (the "at" column; not the maximum of that ratio over all
+  scored fixes, which this table does not give), is 2.35–2.74 %, above 2.5 %
+  on seeds 3 and 5. Reported, not gated, like drive-7's "since the
   last pin". The gate (distance from the start) passes with about 0.9 pp
   margin.
 - Seed 4's max in metres is 259.16 m at 1946.1 s; its max in % is at

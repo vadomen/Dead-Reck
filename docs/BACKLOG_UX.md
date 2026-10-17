@@ -19,7 +19,7 @@ engine receives. Status: OPEN until done.
   the log.
 - **Safety.** Nothing here may add interaction while driving. Anything the
   driver must do stays possible at a stop, with large targets.
-- **Manual fix rules unchanged** (a double tap above a 300 m span is refused with "Zoom in…" but still zooms in, so the second double tap passes; with UX-6 the span at 80 km/h and above is over 300 m, so expect to need two taps there): double tap at the finger, 300 m visible-span
+- **Manual fix rules unchanged** (a double tap above a 300 m span is refused with "Zoom in…" but still zooms in, so the second double tap passes; with UX-6 the span is over 300 m from about 55 km/h, and for about 6 s after slowing down, so expect to need two taps there): double tap at the finger, 300 m visible-span
   rule, undo window.
 - **Tests:** pure logic in the `MapCameraLogicTests` pattern; device checks go
   to `docs/PLAN.md` §6 as "not verified".
