@@ -229,3 +229,17 @@ Tests: Core not run: no file outside docs/ and .claude/ changed; App/ unchanged.
 ### Run 40 summary
 
 2 rounds; 3 fixed (R40.1-1..3), 0 rejected, 0 deferred.
+
+## Run 41 (lite): backlog triage sweep phase A (fb6c108..18bd76d), started 2026-10-17
+
+Commits: 18bd76d 60 DEFERRED rows closed under the reviewer's MINOR bar (52 BELOW-BAR, 6 FIXED, 2 OBSOLETE) and 3 already-closed rows moved to `docs/archive/BACKLOG-closed.md`; KI-1 added for the `NavigationRoadOffRoadTests` known issue.
+
+### Round 1
+
+Reviewer: one fresh reviewer (sonnet), lite run, checks 10 and 11: all 6 FIXED rows hold at HEAD, both OBSOLETE texts gone, KI-1 facts match (12 checks per seed not re-run), all 52 BELOW-BAR rows read and the recording/link/release ones spot-checked: none hides a concrete failure. Privacy clean. Result: 0 BLOCKER / 0 MAJOR / 0 MINOR.
+
+Tests: Core not run: no file outside docs/ changed.
+
+### Run 41 summary
+
+1 round; 0 fixed, 0 rejected, 0 deferred.
