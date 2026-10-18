@@ -65,7 +65,9 @@ import Foundation
 /// **OBD zero against moving fixes** (N4B1-1, `zuptFixGate`): an OBD 0
 /// that would freeze a step is vetoed while good fixes taken after the
 /// zeros began show the car moving; the step then moves like a stale one
-/// at the newest such fix's Doppler speed.
+/// at the newest such fix's Doppler speed. Its history still holds OBD's
+/// 0, so fixes taken then keep the OBD-0 course veto (R53.1-2): a car
+/// parked across a ferry keeps its gyro heading, not the ferry's course.
 ///
 /// **Held stale fix** (N4B-1): a stale fix (older than `maxFixAgeS`) is
 /// used only while the car is stopped. When it arrives before OBD can say
@@ -692,7 +694,11 @@ public struct NavigationEngine: Sendable {
         lastStepStationary = false
         lastMeanSpeed = meanSpeed
         lastMovingStepNs = ns
-        history.append(ns, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: stale ? nil : vObd, held: vObd)
+        // A vetoed step's held speed is what OBD says (0), not the Doppler
+        // speed it moved at: the course veto of fixes taken then reads it
+        // (R53.1-2), so a car parked on a ferry keeps its gyro heading.
+        history.append(ns, cumulativeEast, cumulativeNorth, cumulativeYaw, speed: stale ? nil : vObd,
+                       held: vetoed ? heldOBDSpeed : vObd)
         recordMotion(at: ns, obdDistance: vObd * dt)
         cumulativeOBDM += vObd * dt
         if counters.steps % reanchorCheckSteps == 0 {
