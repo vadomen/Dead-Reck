@@ -2,10 +2,16 @@
 # Upload the packs listed in osm/packs.json (built into osm/packs/) to the R2 bucket behind https://fugps.pages.dev/packs/
 # and publish packs/manifest.json pointing at them.
 #
-#   site/publish_packs.sh [--dry-run] [--bucket <name>]
+#   site/publish_packs.sh [--dry-run] [--prune] [--bucket <name>]
 #
 # Already-uploaded keys are remembered in site/.packs-build/uploaded.txt and skipped;
 # delete that file to force a full re-upload.
+#
+# --prune: after the new manifest is up, delete from R2 every pack key in
+# uploaded.txt that the new manifest no longer lists (older builds of a pack).
+# Each full rebuild adds ~1 GB, so prune after rebuilds to stay inside the
+# 10 GB free tier. Only keys this machine uploaded are known; anything else in
+# the bucket is left alone.
 #
 # Pack objects are content-addressed (packs/v1/<name>-<contentHash>.roadpack) and
 # immutable, so a re-run only changes the manifest. The manifest is uploaded last,
@@ -16,10 +22,12 @@ set -euo pipefail
 die() { echo "error: $*" >&2; exit 1; }
 
 dry_run=0
+prune=0
 bucket="fugps-packs"
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) dry_run=1 ;;
+    --prune) prune=1 ;;
     --bucket) [ $# -ge 2 ] || die "--bucket needs a value"; bucket="$2"; shift ;;
     -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
     *) die "unknown argument: $1" ;;
@@ -121,7 +129,15 @@ with open(uploads_path, "w") as f:
 PY
 
 echo "manifest: $manifest"
+
+done_list="$build_dir/uploaded.txt"; touch "$done_list"
+# Keys uploaded earlier that the new manifest no longer lists.
+stale="$build_dir/stale.txt"
+cut -f2 "$uploads" | sort -u > "$build_dir/current.txt"
+sort -u "$done_list" | comm -23 - "$build_dir/current.txt" > "$stale"
+
 if [ "$dry_run" = 1 ]; then
+  if [ "$prune" = 1 ] && [ -s "$stale" ]; then echo "would prune:"; sed 's/^/  /' "$stale"; fi
   echo "dry run: nothing uploaded"; exit 0
 fi
 
@@ -131,7 +147,6 @@ put() { # <file> <key> <content-type> <cache-control>
 }
 
 # Keys already uploaded from this machine (content-addressed, so never stale).
-done_list="$build_dir/uploaded.txt"; touch "$done_list"
 while IFS=$'\t' read -r file key; do
   if grep -qxF "$key" "$done_list"; then echo "skip (already uploaded) $key"; continue; fi
   echo "uploading $key"
@@ -141,5 +156,17 @@ done < "$uploads"
 
 echo "uploading packs/manifest.json"
 put "$manifest" "packs/manifest.json" "application/json; charset=utf-8" "public, max-age=300"
+
+if [ "$prune" = 1 ]; then
+  while read -r key; do
+    [ -n "$key" ] || continue
+    echo "pruning $key"
+    npx --yes wrangler r2 object delete "$bucket/$key" --remote
+    grep -vxF "$key" "$done_list" > "$done_list.tmp" || true
+    mv "$done_list.tmp" "$done_list"
+  done < "$stale"
+elif [ -s "$stale" ]; then
+  echo "note: $(wc -l < "$stale" | tr -d ' ') older pack object(s) are no longer listed; run with --prune to delete them"
+fi
 
 echo "done: https://fugps.pages.dev/packs/manifest.json"
