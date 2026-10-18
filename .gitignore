@@ -73,3 +73,6 @@ Package.resolved
 # Reviewer scratch files (resume after an API-limit stop). Deleted once a
 # round is in docs/REVIEW_LOG.md. Never commit.
 .claude/review-scratch/
+
+# Cloudflare Wrangler local state (site/)
+.wrangler/
