@@ -367,7 +367,7 @@ struct MarkSheet: View {
                             .submitLabel(.send)
                             .onSubmit(sendCustom)
                         Button("Mark", action: sendCustom)
-                            .buttonStyle(.borderedProminent)
+                            .prominentButton()
                             .controlSize(.large)
                             .disabled(custom.trimmingCharacters(in: .whitespaces).isEmpty)
                     }

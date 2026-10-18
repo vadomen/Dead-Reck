@@ -608,7 +608,7 @@ struct GPSMapView: View {
                         }
                     }
                     .font(.headline)
-                    .buttonStyle(.borderedProminent)
+                    .prominentButton()
                     .frame(minHeight: 56)
                 }
             }
