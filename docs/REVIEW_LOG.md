@@ -508,3 +508,26 @@ Tests: `cd Core && swift test` 992 passed, 36 known issues (after merge); releas
 ### Run 56 summary
 
 1 round; 0 fixed, 0 rejected, 0 deferred; R53.1-2 closed.
+
+## Run 57 (lite): M7.1-1 closed, R5.1-3 pipes escaped; throwaway worktree per mutation run (7fc5f3f, 7fc5f3f..432c835, merged 86625ca), started 2026-10-18
+
+Commits: 7fc5f3f M7.1-1 closed as BELOW-BAR (user decision), R5.1-3 `||` escaped (user request). 432c835 mutation runs (reviewer check 13, author-side mutations) use a throwaway detached `.claude/worktrees/mut-<short-sha>`, removed after; authors commit first; shared `../dead-reck-mutants` and its settings rules dropped; mut-* add/undo/diff/status allowed, `..` denied. Lite at the user's request although the range touches `.claude/settings.json` and a hook comment. Measured: cold build 32 s, new worktree with the shared build dir 19–25 s, incremental after a one-line mutation 5 s.
+
+### Round 1
+
+Reviewer: one fresh reviewer (sonnet), lite run, checks 10 and 11 plus every documented command form against the allow/deny rules.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R57.1-1 | MAJOR | 2d3c45c (Run 56 ledger, between the two ranges) truncated `docs/REVIEW_LOG.md` (496 → 15 lines) and `docs/archive/BACKLOG-closed.md` (270 → 1 row). | CONFIRMED, FIXED | Orchestrator's script opened each file for writing before reading it. 632bdeb restores both from 2d3c45c^ and appends the Run 56 section and the R53.1-2 row (additions only). |
+| R57.1-2 | MINOR | `.claude/settings.json`: `git -C .claude/worktrees/mut-* checkout -f -- .` also matches a second `-C <main tree>`, auto-approving a discard of the main tree's uncommitted changes. | FIXED | 632bdeb: deny `Bash(git -C .claude/worktrees/mut-* -C *)`. Fixed in the run, not deferred: it is in the rules this range introduces. |
+
+### Round 2
+
+Reviewer: one fresh reviewer (sonnet), lite: restore is additions only against 2d3c45c^ (265 → 266 archive IDs, the new one R53.1-2; M7.1-1 and R5.1-3 byte-identical; runs 35–56 in order); the new deny rule blocks no documented form; privacy clean. Result: 0 BLOCKER / 0 MAJOR / 0 MINOR.
+
+Tests: Core not run: no Core change (lite).
+
+### Run 57 summary
+
+2 rounds; 2 fixed (R57.1-1, R57.1-2), 0 rejected, 0 deferred.
