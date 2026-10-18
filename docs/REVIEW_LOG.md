@@ -562,3 +562,25 @@ Tests: Core not run: no Core change (lite).
 ### Run 58 summary
 
 2 rounds; 4 fixed (R58.1-1, R58.1-2, R58.1-3, R58.2-1), 0 rejected, 0 deferred, 1 accepted (R58.1-4).
+
+## Run 59: UX-1 part 1, Navigate mode state machine and engine without a writer (main..ux1-navigate-core: 3947b69, 679bb5c, ad03c68), started 2026-10-18
+
+Commits: 3947b69 `NavigationService` runs a `RecordingNavigationFeed` with `Output.navigateOnly` (no sidecar writer; same engine path), `RoadsStatus.recording` → `active`. 679bb5c Core `LogSink.tapOnly` (keeps nothing, taps like a writer's sink); `RecordingSession` Navigate mode (`NavigateState` off/calibrating/running/waitingForOBD, auto-start at `polling`, 5 s still phase at speed 0, reconnect keeps the session, auto-stop after 5 min on `ContinuousClock`, Record ends Navigate and Stop returns to it, pins in Navigate go to the tap only, idle timer, no background location in Navigate via `ReferenceLocationSource.holdsBackgroundLocation`). ad03c68 map track/pins reset per run generation, fix age from the run clock, Diagnostics "Roads in use".
+
+### Round 1
+
+Reviewers: two fresh reviewers (opus) in parallel. A: Core sink, `RecordingSession`/`NavigateMode`, `AppServices`, `ReferenceLocationSource`, their tests, PLAN.md; re-ran author mutation 1 (`LogFile.swift:160` drop `isTapped`): killed by `tapsLikeAWritersSink`, `keepsNothing`; no further mutations (the author's three cover the changed Core logic). B: `NavigationService`, feed struct, map/UI files and their tests; no mutations (no Core logic); bit-identical acceptance re-run skipped by both (engine, config and Record's path unchanged). Both: no BLOCKER or MAJOR.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R59.1-1 | MINOR | PLAN.md §6 D1 and "Clears", NAVIGATION.md: still name the Diagnostics row "Recording uses", renamed "Roads in use" in this range. | FIXED | Run 59 ledger commit (one-line wording, stale because of this range). |
+| R59.1-2 | MINOR | `scripts/push_packs.sh:131-146`: its in-use guard looks only for a recently changed log file; Navigate maps packs with no log, so a push during Navigate can SIGBUS the app. | DEFERRED | docs/BACKLOG.md R59.1-2. |
+| R59.1-3 | MINOR | PLAN.md §6 "Added by UX-1 part 1" item 2: `navigateState` is not shown anywhere, so the still-phase check cannot be done on the device. | FIXED | Run 59 ledger commit: observe it in the debugger until UX-1 part 2 shows it. |
+
+Not a finding (reviewer B, recorded for the record): the road-pack library's rescan at a run's start may rewrite `RoadPackVerification.json` in Application Support when the pack set changed — already the case for a recording's start or opening Diagnostics; pack names, sizes and hashes only, no positions, not visible in Files. Not counted against "Navigate writes nothing while driving".
+
+Tests at HEAD (ad03c68): `cd Core && swift test` 997 tests in 129 suites passed (36 known issues, KI-1); App simulator `test` 382 tests in 55 suites passed. Core `Navigation/` logic unchanged (doc comments only), so the release perf suites were not required (navigation engineer ran them: 9 passed).
+
+### Run 59 summary
+
+1 round; 0 BLOCKER/MAJOR; 2 MINOR fixed in the ledger commit (R59.1-1, R59.1-3), 1 deferred (R59.1-2), 0 rejected.
