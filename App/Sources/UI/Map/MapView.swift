@@ -131,23 +131,23 @@ struct MapFeed: View {
             }
             .onChange(of: session.live.referenceFix) { _, fix in
                 model.ingest(
-                    fix, file: session.currentFile, isActive: scenePhase == .active,
-                    elapsed: session.live.elapsed
+                    fix, file: session.currentFile, run: session.currentRunGeneration,
+                    isActive: scenePhase == .active, elapsed: runElapsed
                 )
             }
             // A new Start resets the track before its first fix arrives.
-            .onChange(of: session.currentFile) { _, file in
+            .onChange(of: session.currentRunGeneration) { _, run in
                 model.ingest(
-                    session.live.referenceFix, file: file, isActive: scenePhase == .active,
-                    elapsed: session.live.elapsed
+                    session.live.referenceFix, file: session.currentFile, run: run,
+                    isActive: scenePhase == .active, elapsed: runElapsed
                 )
             }
             .onChange(of: scenePhase) { _, phase in
                 // Pick up a change missed while inactive.
                 if phase == .active {
                     model.ingest(
-                        session.live.referenceFix, file: session.currentFile, isActive: true,
-                        elapsed: session.live.elapsed
+                        session.live.referenceFix, file: session.currentFile,
+                        run: session.currentRunGeneration, isActive: true, elapsed: runElapsed
                     )
                 }
             }
@@ -155,6 +155,12 @@ struct MapFeed: View {
 }
 
 extension MapFeed {
+    /// The run's clock time now, for fix age. `live.elapsed` only ticks in
+    /// Record; the run clock is right in Navigate too.
+    fileprivate var runElapsed: TimeInterval {
+        session.manualFixTapTime()?.seconds ?? session.live.elapsed
+    }
+
     fileprivate func refreshStationary() {
         model.setOBDSpeed(
             session.live.obdSpeedKmh, replyUptime: session.obdSpeedReplyUptime,

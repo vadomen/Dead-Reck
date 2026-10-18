@@ -69,7 +69,7 @@ struct SettingsContent<Recording: View, Console: View>: View {
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }
-                    LabeledContent("Recording uses", value: RoadsDiagnosticsText.usage(roads.roads))
+                    LabeledContent("Roads in use", value: RoadsDiagnosticsText.usage(roads.roads))
                     if roads.roads.inUse {
                         LabeledContent("On road", value: RoadsDiagnosticsText.onRoadShare(roads.roads.onRoadShare))
                     }

@@ -1495,6 +1495,11 @@ final class RecordingSession {
         }
     }
 
+    /// Read-only, for the map: the generation of the run that is live now
+    /// (the recording, else the Navigate session); nil when none. One
+    /// counter, so Navigate, Record, Navigate each give a different value.
+    var currentRunGeneration: Int? { currentRun?.generation }
+
     /// The running Navigate session's generation (its feed's), for tests.
     var navigateGeneration: Int? { navigate?.generation }
 

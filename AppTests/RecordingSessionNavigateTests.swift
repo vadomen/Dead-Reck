@@ -441,6 +441,31 @@ struct RecordingSessionNavigateTests {
         #expect(await eventually(10) { rig.tee.ended.contains(second) })
     }
 
+    @Test("currentRunGeneration follows the live run; the run clock ages in Navigate while live.elapsed does not tick")
+    func runGenerationAndClock() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let rig = NavigateRig(store: scratch.store, undoWindow: .seconds(30))
+        await rig.connect(speed: 0)
+        #expect(rig.session.currentRunGeneration == nil)
+        rig.session.enableNavigate(Self.quick)
+        let first = try #require(rig.session.navigateGeneration)
+        #expect(rig.session.currentRunGeneration == first)
+        let t0 = try #require(rig.session.manualFixTapTime()).seconds
+        rig.uptime.set(NavigateRig.base + 40)
+        let t1 = try #require(rig.session.manualFixTapTime()).seconds
+        #expect(t1 - t0 >= 39, "the run clock advances")
+        #expect(rig.session.live.elapsed == 0, "live.elapsed is Record-only")
+        try await rig.session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
+        let rec = try #require(rig.session.currentGeneration)
+        #expect(rig.session.currentRunGeneration == rec && rec != first)
+        await rig.session.stop()
+        let second = try #require(rig.session.navigateGeneration)
+        #expect(rig.session.currentRunGeneration == second && second != rec)
+        rig.session.disableNavigate()
+        #expect(rig.session.currentRunGeneration == nil)
+    }
+
     @Test("Record failure and a Start that throws after ending Navigate both return to a fresh Navigate session")
     func failurePathsReturnToNavigate() async throws {
         let scratch = try ScratchStore()
