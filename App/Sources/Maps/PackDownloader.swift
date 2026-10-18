@@ -75,6 +75,8 @@ actor PackDownloader {
     private let library: RoadPackLibrary
     private let makeConfiguration: @Sendable () -> URLSessionConfiguration
     private let runActive: @Sendable () async -> Bool
+    /// `sha256(of:)` in the app; tests slow it down to pause mid-hash.
+    private let hash: @Sendable (URL) throws -> String?
 
     private var queue: [Job] = []
     private var running: Running?
@@ -93,16 +95,20 @@ actor PackDownloader {
     ///     `URLProtocol`. The cellular flags are set on top of it.
     ///   - runActive: whether a Navigate or Record run is active (for the
     ///     "used from the next start" note), as for `RoadPackLibrary`.
+    ///   - hash: the file's SHA-256, nil when cancelled (`sha256(of:)`);
+    ///     run detached at `.utility`. Tests only.
     init(directory: URL, library: RoadPackLibrary, connection: PackDownloadRules.Connection = .none,
          cellularAllowed: Bool = false,
          makeConfiguration: @escaping @Sendable () -> URLSessionConfiguration = PackDownloader.defaultConfiguration,
-         runActive: @escaping @Sendable () async -> Bool = { false }) {
+         runActive: @escaping @Sendable () async -> Bool = { false },
+         hash: @escaping @Sendable (URL) throws -> String? = { try PackDownloader.sha256(of: $0) }) {
         self.directory = directory
         self.library = library
         self.connection = connection
         self.cellularAllowed = cellularAllowed
         self.makeConfiguration = makeConfiguration
         self.runActive = runActive
+        self.hash = hash
     }
 
     @Sendable
@@ -226,7 +232,9 @@ actor PackDownloader {
         let job = queue.removeFirst()
         running = Running(job: job)
         states[job.pack.name] = .downloading(received: 0, total: job.pack.size)
-        pumping = Task { [self] in
+        // `.utility` whoever queued it (the UI): the download's file I/O
+        // must not compete with a recording's writer.
+        pumping = Task(priority: .utility) { [self] in
             await run(job)
             finishRun()
         }
@@ -367,8 +375,9 @@ actor PackDownloader {
         if recordActive || stopped() { return setStopOutcome(job, files: files) }
         states[pack.name] = .verifying
         let file = files.partial
+        let hash = self.hash
         let hashTask = Task.detached(priority: .utility) { () -> Result<String?, Error> in
-            Result { try Self.sha256(of: file) }
+            Result { try hash(file) }
         }
         running?.hashTask = hashTask
         let hashed = await hashTask.value

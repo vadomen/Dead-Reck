@@ -1,6 +1,5 @@
 import DriveLoggerCore
 import Foundation
-import Observation
 import UIKit
 
 /// The services that live for the whole app run, created once at launch.
@@ -25,11 +24,12 @@ final class AppServices {
     /// once each.
     let roadPacks: RoadPackLibrary
     /// The road pack list (cached, fetched when Settings → Maps opens) and
-    /// the downloads (UX-8). Record pauses downloads: see `RecordActiveObserver`.
+    /// the downloads (UX-8). Record pauses downloads (Navigate does not):
+    /// `RecordingSession.onRecordActiveChange` through `recordActivity`.
     let manifest: PackManifestService
     let downloader: PackDownloader
     private let network = PackNetworkMonitor()
-    private var recordObserver: RecordActiveObserver?
+    private let recordActivity: RecordActivityRelay
 
     init(
         link: any OBDLinkServicing = OBDLinkFactory.makeDefault(),
@@ -79,9 +79,12 @@ final class AppServices {
         self.downloader = downloader
         Task(priority: .utility) { await manifest.loadCache() }
         network.start { connection in Task { await downloader.setConnection(connection) } }
-        recordObserver = RecordActiveObserver(session: session) { active in
-            Task { await downloader.setRecordActive(active) }
-        }
+        // UX-8: every Record-active change, in order, from the first line of
+        // `start` to the end of the end path; one task delivers them, so a
+        // quick true/false pair can't reach the downloader reversed.
+        let recordActivity = RecordActivityRelay { active in await downloader.setRecordActive(active) }
+        self.recordActivity = recordActivity
+        session.onRecordActiveChange = { active in recordActivity.send(active) }
         // Synchronous inside `start`, before any row: only start the task.
         session.onNavigationFeed = { feed in navigation.start(feed) }
         // The sidecar is flushed with the log on background (R14.1-4).
@@ -92,35 +95,34 @@ final class AppServices {
     }
 }
 
-/// Tells the downloader whether Record is active (calibrating, recording or
-/// stopping): downloads pause while it is (UX-8). Navigate does not pause
-/// them. A first version, observing `RecordingSession.state`.
-@MainActor
-final class RecordActiveObserver {
-    private let session: RecordingSession
-    private let onChange: @MainActor (Bool) -> Void
+/// Hands `RecordingSession.isRecordActive` changes to the road-pack
+/// downloader (UX-8: downloads pause while Record is active; Navigate does
+/// not pause them). `send` is synchronous and never blocks, so the session
+/// calls it inside `start` before its first suspension; one task delivers
+/// the values in the order sent, each awaited before the next, so the
+/// downloader always ends on the latest value (separate `Task`s per change
+/// could reach the actor in either order).
+final class RecordActivityRelay: Sendable {
+    private let continuation: AsyncStream<Bool>.Continuation
+    private let task: Task<Void, Never>
 
-    nonisolated static func isActive(_ state: RecordingState) -> Bool {
-        switch state {
-        case .calibrating, .recording, .stopping: true
-        case .idle, .failed: false
+    /// - Parameter deliver: called with each value, one at a time, in order.
+    ///   Off the main actor, at `.userInitiated` so a pause is prompt (the
+    ///   downloader's own I/O and hashing stay at `.utility`).
+    init(deliver: @escaping @Sendable (Bool) async -> Void) {
+        let (stream, continuation) = AsyncStream.makeStream(of: Bool.self)
+        self.continuation = continuation
+        task = Task.detached(priority: .userInitiated) {
+            for await value in stream { await deliver(value) }
         }
     }
 
-    init(session: RecordingSession, onChange: @escaping @MainActor (Bool) -> Void) {
-        self.session = session
-        self.onChange = onChange
-        observe()
+    func send(_ value: Bool) {
+        continuation.yield(value)
     }
 
-    private func observe() {
-        let session = session
-        let active = withObservationTracking {
-            Self.isActive(session.state)
-        } onChange: { [weak self] in
-            Task { @MainActor in self?.observe() }
-        }
-        onChange(active)
+    deinit {
+        continuation.finish()
     }
 }
 

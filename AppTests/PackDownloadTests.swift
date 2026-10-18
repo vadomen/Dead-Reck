@@ -129,9 +129,11 @@ struct DownloadEnv {
     }
 
     func downloader(connection: PackDownloadRules.Connection = .unmetered, cellular: Bool = false,
-                    runActive: @escaping @Sendable () async -> Bool = { false }) -> PackDownloader {
+                    runActive: @escaping @Sendable () async -> Bool = { false },
+                    hash: @escaping @Sendable (URL) throws -> String? = { try PackDownloader.sha256(of: $0) })
+        -> PackDownloader {
         PackDownloader(directory: dirs.store, library: library, connection: connection, cellularAllowed: cellular,
-                       makeConfiguration: PackStub.configuration, runActive: runActive)
+                       makeConfiguration: PackStub.configuration, runActive: runActive, hash: hash)
     }
 
     /// `ok` replies with the whole file.
@@ -397,6 +399,52 @@ struct PackDownloaderTests {
         #expect(env.installedFiles.count == 1)
     }
 
+    @Test("Record starting mid-hash: the hash is abandoned promptly, the partial kept; after Record a verify-only pass installs it")
+    func recordPausesHashing() async throws {
+        let env = try DownloadEnv()
+        defer { env.dirs.remove() }
+        let stub = PackStub { _, _ in .init(status: 500) }
+        let pack = env.pack(stub)
+        try env.seedPartial(pack, bytes: env.data.count)
+        let calls = HashCallCounter()
+        // The first hash runs until its task is cancelled (at most 10 s,
+        // then it finishes and the test fails on the install below).
+        let downloader = env.downloader(hash: { url in
+            if calls.next() == 1 {
+                let deadline = Date(timeIntervalSinceNow: 10)
+                while !Task.isCancelled, Date() < deadline { Thread.sleep(forTimeInterval: 0.002) }
+            }
+            return try PackDownloader.sha256(of: url)
+        })
+        await downloader.start(pack)
+        #expect(await eventually { await downloader.snapshot().states["region-a"] == .verifying && calls.value == 1 })
+        let paused = ContinuousClock.now
+        await downloader.setRecordActive(true)
+        #expect(await eventually(timeout: 2) { await downloader.snapshot().states["region-a"] == .pausedForRecording })
+        #expect(ContinuousClock.now - paused < .seconds(2), "abandoned promptly")
+        #expect(env.downloadFiles.count == 2, "the partial and its metadata are kept: \(env.storeEntries())")
+        #expect(env.installedFiles.isEmpty)
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(calls.value == 1, "no hash starts while Record is active")
+        #expect(await downloader.snapshot().states["region-a"] == .pausedForRecording)
+        await downloader.setRecordActive(false)
+        await downloader.waitUntilIdle()
+        #expect(calls.value == 2)
+        #expect(stub.requests.isEmpty, "verify-only: the complete partial needs no request")
+        #expect(env.installedFiles.count == 1 && env.downloadFiles.isEmpty)
+    }
+
+    @Test("Navigate-style activity (runActive) never pauses a download")
+    func runActiveDoesNotPause() async throws {
+        let env = try DownloadEnv()
+        defer { env.dirs.remove() }
+        let stub = PackStub { _, _ in env.full() }
+        let downloader = env.downloader(runActive: { true })
+        await downloader.start(env.pack(stub))
+        await downloader.waitUntilIdle()
+        #expect(env.installedFiles.count == 1 && stub.requests.count == 1)
+    }
+
     @Test("Cellular without permission waits for Wi-Fi and makes no request; allowing it starts the download")
     func cellularPolicy() async throws {
         let env = try DownloadEnv()
@@ -602,12 +650,293 @@ struct PackNetworkTests {
         #expect(PackNetwork.connection(satisfied: false, expensive: true, constrained: true, cellular: true) == .none)
     }
 
-    @Test("Calibrating, recording and stopping are Record-active; idle and failed are not")
-    func recordActive() {
-        #expect(RecordActiveObserver.isActive(.calibrating))
-        #expect(RecordActiveObserver.isActive(.recording))
-        #expect(RecordActiveObserver.isActive(.stopping))
-        #expect(!RecordActiveObserver.isActive(.idle))
-        #expect(!RecordActiveObserver.isActive(.failed(reason: "x", unwrittenEvents: 0)))
+    @Test("SHA-256 of a cancelled task is nil, not a digest")
+    func hashCancelled() async throws {
+        let env = try DownloadEnv()
+        defer { env.dirs.remove() }
+        try FileManager.default.createDirectory(at: env.dirs.store, withIntermediateDirectories: true)
+        let file = env.dirs.store.appendingPathComponent("blob")
+        try Data(count: 3 << 20).write(to: file)
+        let cancelled = await Task.detached { () -> String?? in
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try? PackDownloader.sha256(of: file)
+        }.value
+        #expect(cancelled == .some(nil))
+        let digest = try PackDownloader.sha256(of: file)
+        #expect(digest == SHA256.hash(data: Data(count: 3 << 20)).map { String(format: "%02x", $0) }.joined())
+    }
+
+    @Test("Downloads never touch the recordings: the pack store and the manifest cache are outside Documents/logs")
+    func separateFromRecordings() {
+        let logs = LogStore.defaultDirectory.standardizedFileURL.path + "/"
+        let others = [RoadPackStore.defaultDirectory(), RoadPackLibrary.defaultCacheURL().deletingLastPathComponent()]
+            .map { $0.standardizedFileURL.path + "/" }
+        for other in others {
+            #expect(!other.hasPrefix(logs) && !logs.hasPrefix(other), "\(other) vs \(logs)")
+        }
+    }
+}
+
+/// Thread-safe call counter for `@Sendable` test closures.
+final class HashCallCounter: Sendable {
+    private let lock = NSLock()
+    private nonisolated(unsafe) var count = 0   // guarded by `lock`
+
+    /// Increments and returns the new value.
+    func next() -> Int { lock.withLock { count += 1; return count } }
+    var value: Int { lock.withLock { count } }
+}
+
+/// What `RecordingSession.onRecordActiveChange` saw, and the session at that
+/// moment.
+@MainActor
+final class RecordActiveSpy {
+    struct Change: Equatable {
+        var active: Bool
+        var state: RecordingState
+        var isStarting: Bool
+        var hasFile: Bool
+        var storeEntries: Int
+        var sourcesRunning: Bool
+        /// When `watch` is set at a change to false: the file reads strictly
+        /// and has a `stop` or `error` row and a final `stats` row.
+        var fileFinished: Bool?
+    }
+
+    private(set) var changes: [Change] = []
+    var values: [Bool] { changes.map(\.active) }
+    /// The recording to check when Record ends.
+    var watch: URL?
+
+    init(_ session: RecordingSession, store: LogStore, sources: [FakeSource] = []) {
+        session.onRecordActiveChange = { [weak self, weak session] active in
+            guard let self, let session else { return }
+            #expect(session.isRecordActive == active, "the hook runs after the property changed")
+            var finished: Bool?
+            if !active, let url = watch {
+                finished = (try? RecordingFixtures.read(url)).map { read in
+                    let rows = RecordingFixtures.lifecycle(read.events).map(\.sample.event)
+                    return read.report.failure == nil && !read.report.truncatedTail && read.report.readError == nil
+                        && (rows.contains("stop") || rows.contains("error"))
+                        && read.events.last?.payload.kind == LogEventKind.stats.rawValue
+                } ?? false
+            }
+            let entries = (try? FileManager.default.contentsOfDirectory(atPath: store.directory.path).count) ?? 0
+            changes.append(Change(active: active, state: session.state, isStarting: session.isStarting,
+                                  hasFile: session.currentFile != nil, storeEntries: entries,
+                                  sourcesRunning: sources.contains { $0.isRunning }, fileFinished: finished))
+        }
+    }
+}
+
+/// Collects what a `RecordActivityRelay` delivers; notes overlapping calls.
+private actor RelaySink {
+    private(set) var values: [Bool] = []
+    private(set) var overlapped = false
+    private var inFlight = 0
+
+    func add(_ value: Bool) async {
+        inFlight += 1
+        if inFlight > 1 { overlapped = true }
+        if values.count % 5 == 0 { await Task.yield() }
+        values.append(value)
+        inFlight -= 1
+    }
+}
+
+/// UX-8: Record pauses road-pack downloads. The session's `isRecordActive`
+/// and its hook, the relay that carries it to the downloader, and the two
+/// together. Navigate never pauses them.
+@Suite("Record-active signal (UX-8)", .serialized)
+@MainActor
+struct RecordActiveSignalTests {
+    @Test("Start → calibrating → recording → stop: true before the file, writer or sources exist; false only once the file is finished")
+    func recordCycle() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let source = FakeSource()
+        let session = RecordingFixtures.session(sources: [source], store: scratch.store)
+        let spy = RecordActiveSpy(session, store: scratch.store, sources: [source])
+        #expect(!session.isRecordActive && spy.values.isEmpty)
+
+        let starting = Task { try await session.start(mount: "", vehicle: "", allowWithoutOBD: false,
+                                                      calibration: .milliseconds(300)) }
+        #expect(await eventually(5) { session.state == .calibrating })
+        let first = try #require(spy.changes.first)
+        #expect(first == .init(active: true, state: .idle, isStarting: true, hasFile: false, storeEntries: 0,
+                               sourcesRunning: false, fileFinished: nil),
+                "flipped in the starting phase, before anything of the recording exists")
+        #expect(session.isRecordActive && spy.values == [true])
+        try await starting.value
+        #expect(session.state == .recording && session.isRecordActive && spy.values == [true])
+        spy.watch = session.currentFile
+        await session.stop()
+        #expect(spy.values == [true, false])
+        let last = try #require(spy.changes.last)
+        #expect(last.state == .idle && !last.hasFile && !last.sourcesRunning && !last.isStarting)
+        #expect(last.fileFinished == true, "the writer's finish() is done when Record releases")
+        #expect(!session.isRecordActive)
+    }
+
+    @Test("Stop during calibration: stays true through stopping, false once ended; the late calibration wake-up changes nothing")
+    func stopWhileCalibrating() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let source = FakeSource()
+        let session = RecordingFixtures.session(sources: [source], store: scratch.store)
+        let spy = RecordActiveSpy(session, store: scratch.store)
+        // The end path stops the sources while `stopping`, before finish().
+        var duringStop: (state: RecordingState, active: Bool)?
+        source.onStop = { [weak session] in
+            if let session { duringStop = (session.state, session.isRecordActive) }
+        }
+        let starting = Task { try await session.start(mount: "", vehicle: "", allowWithoutOBD: false,
+                                                      calibration: .milliseconds(500)) }
+        #expect(await eventually(5) { session.state == .calibrating })
+        spy.watch = session.currentFile
+        await session.stop()
+        #expect(duringStop?.state == .stopping && duringStop?.active == true)
+        try await starting.value
+        #expect(spy.values == [true, false])
+        #expect(spy.changes.last?.fileFinished == true && spy.changes.last?.state == .idle)
+    }
+
+    @Test("A write failure: false only when the state is failed, after finish()")
+    func failure() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let session = RecordingFixtures.session(store: scratch.store)
+        let spy = RecordActiveSpy(session, store: scratch.store)
+        try await session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
+        let generation = try #require(session.currentGeneration)
+        await session.handleWriteFailure(.diskFull, generation: generation)
+        #expect(spy.values == [true, false])
+        guard case .failed? = spy.changes.last?.state else {
+            Issue.record("released in \(String(describing: spy.changes.last?.state))")
+            return
+        }
+        #expect(!session.isRecordActive)
+    }
+
+    @Test("A Start that throws (no OBD, low disk, store not creatable) releases at once; the next Start flips again")
+    func startThatThrows() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let link = FakeLink()
+        link.state = .idle
+        let disk = FakeDisk(RecordingFixtures.roomy)
+        let session = RecordingFixtures.session(link: link, store: scratch.store, disk: disk)
+        let spy = RecordActiveSpy(session, store: scratch.store)
+
+        await #expect(throws: RecordingStartBlocker.obdNotReady) {
+            try await session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
+        }
+        #expect(spy.values == [true, false] && !session.isRecordActive)
+
+        disk.set(1)
+        await #expect(throws: RecordingStartBlocker.self) {
+            try await session.start(mount: "", vehicle: "", allowWithoutOBD: true, calibration: .zero)
+        }
+        #expect(spy.values == [true, false, true, false] && !session.isRecordActive)
+        disk.set(RecordingFixtures.roomy)
+
+        try await session.start(mount: "", vehicle: "", allowWithoutOBD: true, calibration: .zero)
+        #expect(spy.values == [true, false, true, false, true])
+        await session.stop()
+        #expect(spy.values == [true, false, true, false, true, false])
+
+        // The store's parent is a file: creating it throws after the checks.
+        let blocker = FileManager.default.temporaryDirectory.appendingPathComponent("drivelogger-ux8-\(UUID().uuidString)")
+        try Data("x".utf8).write(to: blocker)
+        defer { try? FileManager.default.removeItem(at: blocker) }
+        let broken = RecordingFixtures.session(store: LogStore(directory: blocker.appendingPathComponent("logs")))
+        let brokenSpy = RecordActiveSpy(broken, store: scratch.store)
+        await #expect(throws: (any Error).self) {
+            try await broken.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
+        }
+        #expect(brokenSpy.values == [true, false] && !broken.isRecordActive && broken.state == .idle)
+    }
+
+    @Test("Navigate never flips it; Navigate → Record → Navigate flips exactly once each way")
+    func navigate() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let rig = NavigateRig(store: scratch.store)
+        let spy = RecordActiveSpy(rig.session, store: scratch.store)
+        await rig.connect(speed: 0)
+        rig.session.enableNavigate(RecordingSessionNavigateTests.quick)
+        let first = try #require(rig.session.navigateGeneration)
+        await rig.drive(0..<2)
+        #expect(spy.values.isEmpty && !rig.session.isRecordActive, "Navigate is not Record")
+
+        try await rig.session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
+        #expect(spy.values == [true])
+        #expect(spy.changes.first?.state == .idle && spy.changes.first?.hasFile == false)
+        spy.watch = rig.session.currentFile
+        await rig.session.stop()
+        #expect(spy.values == [true, false])
+        #expect(spy.changes.last?.fileFinished == true)
+        let second = try #require(rig.session.navigateGeneration, "back to Navigate")
+        #expect(second != first)
+        await rig.drive(2..<3)
+        rig.session.disableNavigate()
+        #expect(spy.values == [true, false] && !rig.session.isRecordActive)
+    }
+
+    @Test("The relay delivers every value in the order sent, one at a time")
+    nonisolated func relayOrder() async {
+        let sink = RelaySink()
+        let relay = RecordActivityRelay { await sink.add($0) }
+        let sent = (0..<400).map { ($0 * 7919) % 3 == 0 }
+        for value in sent { relay.send(value) }
+        #expect(await eventually { await sink.values.count == sent.count })
+        #expect(await sink.values == sent)
+        #expect(await !sink.overlapped)
+    }
+
+    @Test("Session → relay → downloader: Record pauses a running download (partial kept) and its end resumes it; Navigate does not")
+    func endToEnd() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let env = try DownloadEnv()
+        defer { env.dirs.remove() }
+        let first: PackStub.Reply = {
+            var r = env.full()
+            r.hold = true
+            return r
+        }()
+        let stub = PackStub { request, attempt in
+            if attempt == 0 { return first }
+            let offset = Int(request.value(forHTTPHeaderField: "Range")?.dropFirst(6).dropLast() ?? "") ?? 0
+            return env.partial(from: offset)
+        }
+        let downloader = env.downloader()
+        let rig = NavigateRig(store: scratch.store)
+        let relay = RecordActivityRelay { await downloader.setRecordActive($0) }
+        rig.session.onRecordActiveChange = { relay.send($0) }
+        await rig.connect(speed: 0)
+        rig.session.enableNavigate(RecordingSessionNavigateTests.quick)
+        #expect(rig.session.navigateGeneration != nil)
+
+        await downloader.start(env.pack(stub))
+        #expect(await eventually { @Sendable in
+            if case .downloading(let received, _)? = await downloader.snapshot().states["region-a"] { return received > 0 }
+            return false
+        }, "downloading while Navigate runs")
+
+        try await rig.session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
+        #expect(await eventually { @Sendable in await downloader.snapshot().states["region-a"] == .pausedForRecording })
+        #expect(env.downloadFiles.count == 2 && env.installedFiles.isEmpty)
+        let requests = stub.requests.count
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(stub.requests.count == requests, "nothing requested while Record runs")
+        #expect(await downloader.snapshot().states["region-a"] == .pausedForRecording)
+
+        await rig.session.stop()
+        #expect(rig.session.navigateGeneration != nil, "back in Navigate, which does not pause")
+        await downloader.waitUntilIdle()
+        #expect(env.installedFiles.count == 1 && env.downloadFiles.isEmpty)
+        #expect(stub.requests.last?.value(forHTTPHeaderField: "Range") != nil, "resumed, not restarted")
+        rig.session.disableNavigate()
     }
 }

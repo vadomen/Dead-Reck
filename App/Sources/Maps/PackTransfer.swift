@@ -103,6 +103,9 @@ final class PackTransfer: NSObject, URLSessionDataDelegate, @unchecked Sendable 
         await withCheckedContinuation { (continuation: CheckedContinuation<Result, Never>) in
             let queue = OperationQueue()
             queue.maxConcurrentOperationCount = 1
+            // The delegate appends to the partial file: background-ish
+            // work, never above `.utility` (UX-8, capture fidelity first).
+            queue.qualityOfService = .utility
             let session = URLSession(configuration: configuration, delegate: self, delegateQueue: queue)
             let task = session.dataTask(with: request)
             let cancelled = lock.withLock { () -> Bool in
