@@ -498,6 +498,15 @@ struct GPSMapView: View {
             .accessibilityLabel(MapAttribution.text)
     }
 
+    /// Standard map; DEBUG `-uiBlankMap 1` uses plain imagery (no street, POI or
+    /// place text) so simulator screenshots carry no place names.
+    private static var baseStyle: MapStyle {
+        #if DEBUG
+        if UserDefaults.standard.bool(forKey: "uiBlankMap") { return .imagery }
+        #endif
+        return .standard
+    }
+
     private func color(_ band: AccuracyBand, stale: Bool) -> Color {
         stale ? .gray : band.color
     }
@@ -525,6 +534,7 @@ struct GPSMapView: View {
                 }
             }
             .coordinateSpace(.named(Self.space))
+            .mapStyle(Self.baseStyle)
             .onMapCameraChange(frequency: .onEnd) { context in
                 // Not our own write: the driver zoomed.
                 headingState.zoom.cameraReported(distance: context.camera.distance)
