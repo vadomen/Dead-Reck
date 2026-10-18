@@ -10,10 +10,24 @@ Usage: scripts/push_packs.sh [--dry-run] [--force] [--device <id|udid|name>]
 
 Copies osm/packs/*.roadpack to Documents/RoadPacks/ in the DriveLogger app
 container on the connected iPhone. The bundle ID comes from
-Config/Local.xcconfig (PRODUCT_BUNDLE_IDENTIFIER).
+Config/Local.xcconfig (PRODUCT_BUNDLE_IDENTIFIER), the app's name from
+project.yml.
 
-  --dry-run         show copied / skipped per pack, copy nothing
-  --force           copy even if a recording looks to be in progress
+Close the app first: swipe it away in the app switcher, push, then launch it.
+The app memory-maps packs from Documents/RoadPacks while it navigates or
+records (Navigate or Record), and devicectl overwrites a pack in place, which
+can crash it (SIGBUS). The script refuses when:
+  - the app process is running on the phone (an app left suspended in the
+    app switcher still has its packs mapped), or the phone's process list
+    cannot be read;
+  - a file under Documents/logs changed in the last 30 s (a recording).
+A dry run reports what these guards found and exits 0.
+
+  --dry-run         show copied / skipped per pack and what the guards found,
+                    copy nothing
+  --force           copy even if the app is running (Navigate or Record), its
+                    process list cannot be read, or a recording looks to be in
+                    progress
   --device <id>     CoreDevice identifier, UDID or name, when more than one
                     iPhone is connected
   -h, --help        this text
@@ -21,17 +35,30 @@ Config/Local.xcconfig (PRODUCT_BUNDLE_IDENTIFIER).
 A pack is skipped when its size + sha256 equal what was last pushed to this
 device (stamp file osm/.push_packs_stamps.tsv, git-ignored) AND the phone's
 listing shows the file with the same size.
-
-Do not copy during a recording: packs are memory-mapped from
-Documents/RoadPacks and overwriting one in place can crash the app (SIGBUS).
 USAGE
 }
 
 die() { echo "error: $*" >&2; exit 1; }
 
+# refuse <reason> <what to do>: a guard that would stop the copy. --force
+# continues, --dry-run reports it and goes on listing the packs, otherwise the
+# script stops here.
+blocked=0
+refuse() {
+  if [ $force -eq 1 ]; then
+    echo "warning: $1 (--force given, copying anyway)" >&2
+  elif [ $dry_run -eq 1 ]; then
+    echo "dry run: a real run would refuse: $1. $2" >&2
+    blocked=1
+  else
+    die "$1. $2"
+  fi
+}
+
 dry_run=0
 force=0
 device_arg=""
+processes_json_file=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) dry_run=1 ;;
@@ -39,6 +66,12 @@ while [ $# -gt 0 ]; do
     --device)
       [ $# -ge 2 ] || die "--device needs a value"
       device_arg="$2"; shift ;;
+    # Tests only (not in --help): run the process-list parser on a saved
+    # `devicectl device info processes --json-output` file and exit with its
+    # verdict (0 not running, 1 running, 2 unreadable). Needs no phone.
+    --processes-json)
+      [ $# -ge 2 ] || die "--processes-json needs a file"
+      processes_json_file="$2"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) usage >&2; die "unknown argument: $1" ;;
   esac
@@ -46,6 +79,61 @@ while [ $# -gt 0 ]; do
 done
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# The app's executable inside its bundle, "<name>.app/<name>": the name of the
+# project.yml target with `type: application` (PRODUCT_NAME and EXECUTABLE_NAME
+# default to it), or that target's PRODUCT_NAME if project.yml sets one.
+app_name="$(awk '
+  /^targets:/ { in_t = 1; next }
+  in_t && /^[^[:space:]#]/ { in_t = 0 }
+  in_t && /^  [A-Za-z0-9_.-]+:[[:space:]]*$/ { t = $1; sub(/:$/, "", t); next }
+  in_t && t != "" && /^    type:[[:space:]]*application[[:space:]]*$/ { app = t }
+  in_t && t != "" && t == app && /^[[:space:]]+PRODUCT_NAME:/ { v = $0; sub(/^[^:]*:[[:space:]]*/, "", v); gsub(/"/, "", v); pn = v }
+  END { if (pn != "") print pn; else print app }
+' "$repo_root/project.yml")"
+[ -n "$app_name" ] || die "no target with 'type: application' found in project.yml."
+app_executable="$app_name.app/$app_name"
+
+# Reads `devicectl device info processes --json-output` on stdin. Prints
+# "<pid> <path>" for each process whose executable is .../<app_executable>.
+# Exit 0: the list was read and the app is not in it; 1: it is; 2: no
+# result.runningProcesses array, an empty one (a phone always runs
+# processes, so an empty list means the read failed, not "app closed"), or
+# no entry with a string `executable` (the shape changed: refuse, R60.1-1).
+app_processes() {
+  /usr/bin/python3 -I -c '
+import json, sys, urllib.parse
+suffix = "/" + sys.argv[1]
+try:
+    procs = json.load(sys.stdin)["result"]["runningProcesses"]
+except Exception:
+    sys.exit(2)
+if not isinstance(procs, list) or not procs:
+    sys.exit(2)
+hits = []
+named = 0
+for p in procs:
+    exe = p.get("executable") if isinstance(p, dict) else None
+    if not isinstance(exe, str):
+        continue
+    named += 1
+    path = urllib.parse.unquote(urllib.parse.urlparse(exe).path if exe.startswith("file:") else exe)
+    if path.endswith(suffix):
+        hits.append("%s %s" % (p.get("processIdentifier", "?"), path))
+if not named:
+    sys.exit(2)
+if hits:
+    print("\n".join(hits))
+    sys.exit(1)
+' "$app_executable"
+}
+
+if [ -n "$processes_json_file" ]; then
+  rc=0
+  app_processes < "$processes_json_file" || rc=$?
+  exit $rc
+fi
+
 packs_dir="$repo_root/osm/packs"
 xcconfig="$repo_root/Config/Local.xcconfig"
 stamp_file="$repo_root/osm/.push_packs_stamps.tsv"
@@ -104,6 +192,42 @@ rc=$?
 set -e
 [ $rc -eq 0 ] || exit 1
 
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+
+# Two guards stop a copy into packs the app may have memory-mapped (devicectl
+# overwrites in place; there is no temp-name-and-rename, so a mapped pack can
+# SIGBUS the app). Both are checked once, before the first copy: launching the
+# app while the script copies is not detected.
+#
+# Guard 1: the app process is running. Navigate (UX-1) maps packs whenever the
+# app runs and OBD polls, without writing any log, so guard 2 cannot see it. A
+# suspended app still has its packs mapped, hence "swipe it away". The process
+# is matched by its executable path, .../<app_executable>, so another app with
+# the same name would also block (fails safe). Fail closed: if the process list
+# cannot be read (phone locked, older devicectl, JSON shape changed), refuse.
+proc_rc=0
+if xcrun devicectl device info processes --device "$device_id" \
+     --quiet --json-output - > "$tmp_dir/processes.json" 2> "$tmp_dir/processes.err"; then
+  app_processes < "$tmp_dir/processes.json" > "$tmp_dir/app_pids" || proc_rc=$?
+else
+  proc_rc=3
+fi
+case $proc_rc in
+  0) echo "Guard 1 (app process): $app_executable is not running." ;;
+  1)
+    echo "Guard 1 (app process): the app is running on the phone (pid, executable):" >&2
+    sed 's/^/  /' "$tmp_dir/app_pids" >&2
+    refuse "the app is running (Navigate or Record maps the packs)" \
+      "Swipe it away in the app switcher, then re-run; or re-run with --force." ;;
+  *)
+    reason="unexpected JSON (no or empty result.runningProcesses)"
+    [ $proc_rc -eq 3 ] && reason="$(tail -n 1 "$tmp_dir/processes.err" 2>/dev/null)"
+    echo "Guard 1 (app process): could not read the phone's process list: ${reason:-devicectl failed}" >&2
+    refuse "cannot tell whether the app is running" \
+      "Swipe the app away in the app switcher, unlock the phone and re-run; or re-run with --force." ;;
+esac
+
 # Phone listing of Documents (recursive): "relativePath<TAB>size<TAB>age_seconds".
 listing=""
 listing_ok=1
@@ -128,30 +252,27 @@ if [ $listing_ok -eq 0 ]; then
   echo "         Falling back to the local stamp file alone; a pack deleted on the phone will NOT be re-pushed." >&2
 fi
 
-# Recording in progress? Heuristic: a file under Documents/logs touched recently.
-echo "Note: do not copy packs while a recording is running. Packs are memory-mapped by the app and"
-echo "      devicectl overwrites them in place (no temp-name-and-rename available), which can crash it."
+# Guard 2: a recording in progress. Heuristic: a file under Documents/logs
+# changed in the last 30 s (recording_window_s; log write times may lag, clock
+# skew is ignored). A recording implies guard 1 too; this one is kept as a
+# second, independent signal (it does not depend on the process list). Without
+# the phone listing it is unavailable (warned above).
 if [ $listing_ok -eq 1 ]; then
   recent="$(printf '%s\n' "$listing" | awk -F'\t' -v w="$recording_window_s" '$1 ~ /^logs\// && $3 <= w && $3 >= -w {print $1}')"
   if [ -n "$recent" ]; then
-    echo "A recording file changed in the last ${recording_window_s} s (heuristic: log write times may lag, and clock skew is ignored):" >&2
-    printf '  %s\n' $recent >&2
-    if [ $force -eq 1 ]; then
-      echo "--force given, continuing." >&2
-    else
-      die "a recording looks to be in progress. Stop it first, or re-run with --force."
-    fi
+    echo "Guard 2 (recent log write): a recording file changed in the last ${recording_window_s} s (heuristic: log write times may lag, and clock skew is ignored):" >&2
+    printf '%s\n' "$recent" | sed 's/^/  /' >&2
+    refuse "a recording looks to be in progress" \
+      "Stop it and swipe the app away, then re-run; or re-run with --force."
   else
-    echo "      (no log file on the phone changed in the last ${recording_window_s} s; this check is a heuristic, not proof.)"
+    echo "Guard 2 (recent log write): no log file on the phone changed in the last ${recording_window_s} s (a heuristic, not proof)."
   fi
 else
-  echo "      (recording detection unavailable without the phone listing.)"
+  echo "Guard 2 (recent log write): unavailable without the phone listing."
 fi
 
 mkdir -p "$(dirname "$stamp_file")"
 touch "$stamp_file"
-new_stamps="$(mktemp)"
-trap 'rm -f "$new_stamps"' EXIT
 
 copied=0
 skipped=0
@@ -201,6 +322,9 @@ done
 
 verb="copied"; [ $dry_run -eq 1 ] && verb="would be copied"
 echo "Summary: $copied $verb, $skipped skipped (unchanged), $failed failed."
+if [ $blocked -eq 1 ]; then
+  echo "Dry run: a real run would refuse (see above); close the app or use --force."
+fi
 if [ $dry_run -eq 0 ] && [ $copied -gt 0 ]; then
   echo "Next: open the app, Settings > Diagnostics, and check the packs show Verified."
 fi

@@ -318,16 +318,23 @@ struct RecordingSessionNavigateTests {
 
     // MARK: Nothing written
 
-    @Test("A Navigate drive with pins, a link drop and a roads attach writes nothing anywhere")
+    @Test("A Navigate drive with pins, a link drop and a roads attach writes nothing anywhere but the packs' verification cache")
     func navigateWritesNothing() async throws {
+        typealias S = NavigationServiceNavigateTests
+        await FootprintLock.shared.acquire()
+        defer { FootprintLock.shared.release() }
         let packs = try RoadPackFixture.directory()
         defer { try? FileManager.default.removeItem(at: packs) }
         try RoadPackFixture.write(try RoadPackFixture.data(), named: "fixture.roadpack", in: packs)
-        // No verification cache (cacheURL nil): the only file a rescan may
-        // write, so nothing in Application Support needs excluding.
+        // The app's real verification cache, as `makeDefault()` uses it, set
+        // aside (removed) so the run's rescan must write it: the one file a
+        // Navigate run may write, and it may hold nothing of the drive.
+        let cache = try S.SetAsideCache()
+        defer { cache.restore() }
+        #expect(!FileManager.default.fileExists(atPath: cache.url.path))
         let service = NavigationService(
             flushInterval: .milliseconds(1),
-            library: RoadPackLibrary(source: RoadPackLibrary.directorySource(packs), cacheURL: nil))
+            library: RoadPackLibrary(source: RoadPackLibrary.directorySource(packs), cacheURL: cache.url))
         let store = Self.absentStore()
         let tempBefore = Set((try? FileManager.default.contentsOfDirectory(atPath: NSTemporaryDirectory())) ?? [])
         let before = NavigationServiceNavigateTests.Footprint()
@@ -369,7 +376,15 @@ struct RecordingSessionNavigateTests {
         #expect(finished.roadPackNames == ["fixture.roadpack"])
         #expect(Self.kinds(rig.tee.inputs[feed.generation] ?? [])["manualFix"] == 2)
         #expect(!FileManager.default.fileExists(atPath: store.directory.path), "no recordings directory")
-        #expect(before.writtenSince(sessionID: feed.header.sessionID) == [])
+        // One change in Documents and Application Support, the cache the
+        // scan rewrote; no new or modified file anywhere names the session.
+        #expect(before.writtenSince(sessionID: feed.header.sessionID)
+                == ["Application Support/" + RoadPackLibrary.cacheFileName])
+        // It holds the pack and nothing of the drive: fixes at 1…5 s (6 too,
+        // to spare), the pins at 5.9 and 9.9 s.
+        S.expectCacheIsPacksOnly(
+            cache.url, packs: packs, names: ["fixture.roadpack"], sessionID: feed.header.sessionID,
+            coordinates: S.coordinates(((1...6).map { Double($0) } + [5.9, 9.9]).map { S.position($0) }))
         // Nothing of ours in temp either (other suites write there, never
         // under these names).
         let tempAfter = Set((try? FileManager.default.contentsOfDirectory(atPath: NSTemporaryDirectory())) ?? [])

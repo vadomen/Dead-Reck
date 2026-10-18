@@ -70,7 +70,7 @@ cd Core && swift run -c release inspect_log <file.jsonl.gz> [--csv <dir>] [--str
 cd Core && swift run -c release replay_nav <file.jsonl.gz>... --truth ../logs/truth.json --out ../logs/out   # flags: docs/NAVIGATION.md "replay_nav"
 xcodebuild -project DriveLogger.xcodeproj -scheme DriveLogger -destination 'generic/platform=iOS Simulator' build
 xcodebuild -project DriveLogger.xcodeproj -scheme DriveLogger -destination 'platform=iOS Simulator,id=<UDID>' test   # id=, not name=
-scripts/push_packs.sh [--dry-run] [--force] [--device <id>]   # never during a recording: packs are memory-mapped
+scripts/push_packs.sh [--dry-run] [--force] [--device <id>]   # never while the app runs (Navigate or Record): packs are memory-mapped
 xcodegen generate
 ```
 

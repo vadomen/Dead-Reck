@@ -584,3 +584,23 @@ Tests at HEAD (ad03c68): `cd Core && swift test` 997 tests in 129 suites passed 
 ### Run 59 summary
 
 1 round; 0 BLOCKER/MAJOR; 2 MINOR fixed in the ledger commit (R59.1-1, R59.1-3), 1 deferred (R59.1-2), 0 rejected.
+
+## Run 60: UX-1 follow-ups, push_packs.sh app guard (R59.1-2) and navigateWritesNothing with the real verification cache (main..ux1-followups: 435deab, 89ba551), started 2026-10-18
+
+Commits: 435deab `scripts/push_packs.sh` refuses while the app process runs on the phone (`devicectl device info processes`, executable path ending `/DriveLogger.app/DriveLogger`, name read from project.yml), fails closed when the list can't be read, keeps the log-mtime guard; `--force` overrides both, `--dry-run` reports both; hidden `--processes-json` for tests; help text, PLAN §6 D1/D2/Clears/N3.4, CLAUDE.md command comment. 89ba551 both `navigateWritesNothing` tests use `RoadPackLibrary.defaultCacheURL()` (set aside and restored, `FootprintLock`); exactly `Application Support/RoadPackVerification.json` may change (size and mtime compared), it must equal a scan of the pack files alone, and hold no session ID (any case, no hyphens, raw bytes) and no drive coordinates (exact, 4–6 dp, E7; coordinate-named keys only as the pack bounds). The cache rewrite itself is accepted by the user.
+
+### Round 1
+
+Reviewer: one fresh reviewer (opus). Parser fed fabricated JSON under `/bin/bash` 3.2; tests read for vacuity and flakiness; checks 10 and 11. No mutations (no Core logic; no App mutation justified). No BLOCKER or MAJOR.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R60.1-1 | MINOR | `scripts/push_packs.sh:111-118`: entries without a string `executable` were skipped, so a renamed key (e.g. `executableURL`, or a dict) gave "not running" (rc 0) and the packs could be overwritten while mapped; the comment claimed a changed shape refuses. | FIXED | 5485f69: no entry with a string `executable` exits 2 (refuse). Fixed in the run, not deferred: a fail-open in the guard this range adds (as R58.2-1). Orchestrator check via `--processes-json`: renamed key / dict → 2, empty → 2, other app only → 0, app listed → 1. |
+
+Device checks for the guard: PLAN §6 "Added by run 60". R59.1-2 closed (moved to docs/archive/BACKLOG-closed.md).
+
+Tests at 89ba551: `cd Core && swift test` 997 tests in 129 suites passed (36 known issues, KI-1); App simulator `test` 382 tests in 55 suites passed. 5485f69 touches only the script.
+
+### Run 60 summary
+
+1 round; 0 BLOCKER/MAJOR; 1 MINOR fixed in the run (R60.1-1), 0 deferred, 0 rejected; R59.1-2 closed.
