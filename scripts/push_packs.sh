@@ -97,8 +97,9 @@ app_executable="$app_name.app/$app_name"
 # Reads `devicectl device info processes --json-output` on stdin. Prints
 # "<pid> <path>" for each process whose executable is .../<app_executable>.
 # Exit 0: the list was read and the app is not in it; 1: it is; 2: no
-# result.runningProcesses array, or an empty one (a phone always runs
-# processes, so an empty list means the read failed, not "app closed").
+# result.runningProcesses array, an empty one (a phone always runs
+# processes, so an empty list means the read failed, not "app closed"), or
+# no entry with a string `executable` (the shape changed: refuse, R60.1-1).
 app_processes() {
   /usr/bin/python3 -I -c '
 import json, sys, urllib.parse
@@ -110,13 +111,17 @@ except Exception:
 if not isinstance(procs, list) or not procs:
     sys.exit(2)
 hits = []
+named = 0
 for p in procs:
     exe = p.get("executable") if isinstance(p, dict) else None
     if not isinstance(exe, str):
         continue
+    named += 1
     path = urllib.parse.unquote(urllib.parse.urlparse(exe).path if exe.startswith("file:") else exe)
     if path.endswith(suffix):
         hits.append("%s %s" % (p.get("processIdentifier", "?"), path))
+if not named:
+    sys.exit(2)
 if hits:
     print("\n".join(hits))
     sys.exit(1)
