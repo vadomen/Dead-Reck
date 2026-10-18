@@ -23,7 +23,7 @@ Rules:
 - You cannot test against real hardware. Say so explicitly in your summary and list what must be checked on the device (see the field checklist in the elm327-protocol skill).
 
 ## Before finishing: author-side mutations
-Run 1–3 targeted mutations on the Core logic you added or changed, using exactly reviewer check 13's procedure (`.claude/agents/reviewer.md`): every call starts `cd <root> && ` from the main tree root, a throwaway worktree `.claude/worktrees/mut-<sha>`, `swift test --package-path .claude/worktrees/mut-<sha>/Core --scratch-path ~/.cache/dead-reck-mutants-build --filter <Suite>`, its allowed command forms only, undo each mutation before the next, and remove the worktree when done.
+Run 1–3 targeted mutations on the Core logic you added or changed, using exactly reviewer check 13's procedure (`.claude/agents/reviewer.md`): every call starts `cd <root> && ` from the main tree root, a throwaway worktree `.claude/worktrees/mut-<sha>`, `swift test --package-path .claude/worktrees/mut-<sha>/Core --scratch-path ~/.cache/dead-reck-mutants-build --filter <Suite>`, its allowed command forms only, undo each mutation before the next, and remove the worktree when done. Core logic only by default: App mutations (10+ min `xcodebuild` per fresh worktree) run only when a reviewer names a specific App finding that needs one.
 1. Commit your change on your branch first; mutations run against that commit. `<sha>` is its `git rev-parse --short HEAD`.
 2. `cd <root> && git worktree add --detach .claude/worktrees/mut-<sha> <sha>`. If it already exists, another run is using it: stop and report.
 3. Mutate files under `.claude/worktrees/mut-<sha>/` only, never your own tree.
