@@ -428,6 +428,20 @@ Tests: `cd Core && swift test` 970 passed, 36 known issues; AppTests RoadPackLib
 ### Run 51 summary
 
 1 round; 0 fixed, 0 rejected, 0 deferred.
+## Run 52: backlog sweep nav batch 4 (6605dc5..f5fce9e, branch sweep-nav4), started 2026-10-18
+
+Commits: f5fce9e replay, scoring, fix-offset and FixPin tests (R18.1-1, R20.2-1, R22.3-3, R27.3-2, R35.1-2, R37.1-11, R37.2-1, R37.2-3, R49.1-1); `KindMaxError` moved off `EllipseConsistency`'s doc comment (R49.1-2); internal `identityOf` seam in `RoadPackCatalog`, public API unchanged (R32.1-6).
+
+### Round 1
+
+Reviewer: one fresh reviewer (opus), checks 9–13. Mutations (orchestrator): `excludePins` tie `<` → `<=`, `--fixpin-separation` dropped from `engineOnlyFlags`, file-changed guard forced true: all killed. Mutations (reviewer, own scratch worktree): odd/even speed offsets re-paired in `macroStep` (1075.7 m vs < 1000 m bound), `jen`/`jne` swapped in the re-anchor transform (60° case fails, 0° passes), FixPin prefix `<` → `<=`: all killed. `engineOnlyFlags` matches NAVIGATION.md "replay_nav" and the six `--fixpin-*` flags. Privacy clean (latitude-60 plane synthetic). Result: 0 BLOCKER / 0 MAJOR / 0 MINOR.
+
+Tests: `cd Core && swift test` 989 passed, 36 known issues (after merge); release timing suites passed; no App change.
+
+### Run 52 summary
+
+1 round; 0 fixed, 0 rejected, 0 deferred; 11 backlog rows closed.
+
 ## Run 53: backlog sweep nav batch 2 (1e1be23..d130298, branch sweep-nav2), started 2026-10-18
 
 Commits: d130298 N4B1-1 `zuptFixGate` (default on: an OBD 0 does not freeze the cloud while ≥ 2 consecutive good fixes after the zeros began read ≥ 5 m/s; adoption rule: seeds 1–5 identical on every acceptance drive with and without roads, 0 vetoed steps; simulator drift 523 m → < 1 m), R14.1-4 sidecar flushed on background through an `onFlush` hook and `--compare` names an early end, R34.1-3 "No road packs" waits for this recording's own rescan.
