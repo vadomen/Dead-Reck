@@ -249,6 +249,20 @@ public final class RoadNetwork: @unchecked Sendable {
         }
     }
 
+    /// The shape points of a matched edge (`NavigationEstimate.matchedEdge`,
+    /// whose `pack` is an index in this network's canonical order), in the
+    /// edge's order, both end nodes included; nil when the pack or edge
+    /// index is out of range or the way ID does not match (an edge of
+    /// another network). O(points of the edge).
+    public func points(of edge: MatchedRoadEdge) -> [RoadPoint]? {
+        guard packs.indices.contains(edge.pack) else { return nil }
+        let pack = packs[edge.pack]
+        guard edge.edge >= 0, edge.edge < pack.edgeCount else { return nil }
+        let record = pack.edge(edge.edge)
+        guard record.osmWayID == edge.osmWayID else { return nil }
+        return (0..<Int(record.pointCount)).map { pack.point(Int(record.firstPoint) + $0) }
+    }
+
     /// The de-duplicated segments listed in the cell of a position.
     public func segments(nearLatitude latitude: Double, longitude: Double) -> [SegmentRef] {
         let c = grid.cell(latitude: latitude, longitude: longitude)

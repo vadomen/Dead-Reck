@@ -10,6 +10,7 @@ struct RootView: View {
     @State private var console: ConsoleViewModel
     @State private var roads: RoadsDiagnosticsModel
     @State private var roadsWarning: RoadsWarningModel
+    @State private var maps: MapsModel
     private let session: RecordingSession
     private let services: AppServices
     @State private var nav: AppNavigation
@@ -26,9 +27,23 @@ struct RootView: View {
         _console = State(initialValue: ConsoleViewModel(services: services))
         _roads = State(initialValue: RoadsDiagnosticsModel(library: services.roadPacks, service: service))
         let library = services.roadPacks
-        _roadsWarning = State(initialValue: RoadsWarningModel(source: {
+        var mapsModel = MapsModel(library: library)
+        #if DEBUG
+        // `-uiFakeMaps 1`: two synthetic installed packs and one pending removal
+        // (simulator screenshots; the simulator has no packs).
+        if UserDefaults.standard.bool(forKey: "uiFakeMaps") { mapsModel = MapsModel(status: DebugFakes.mapsStatus) }
+        #endif
+        _maps = State(initialValue: mapsModel)
+        var warningModel = RoadsWarningModel(source: {
             await RoadsWarning.current(service: service, library: library)
-        }))
+        }, attributionSource: {
+            await RoadsWarning.attributionCurrent(service: service)
+        })
+        #if DEBUG
+        // `-uiFakeRoads 1`: the map shows the attribution as if roads were attached.
+        if UserDefaults.standard.bool(forKey: "uiFakeRoads") { warningModel = RoadsWarningModel(message: nil, attribution: true) }
+        #endif
+        _roadsWarning = State(initialValue: warningModel)
         var initial = AppNavigation()
         var forceFirstLaunch = false
         #if DEBUG
@@ -40,6 +55,8 @@ struct RootView: View {
         // `-uiTab N` opens a tab at launch (simulator screenshots), N in tab order:
         // 0 = Map (default), 1 = Sessions, 2 = Settings.
         initial.tab = AppTab(launchValue: UserDefaults.standard.integer(forKey: "uiTab"))
+        // `-uiMaps 1` opens Settings → Maps.
+        if UserDefaults.standard.bool(forKey: "uiMaps") { initial.tab = .settings; initial.settingsPath = [.maps] }
         #endif
         _nav = State(initialValue: initial)
     }
@@ -52,13 +69,13 @@ struct RootView: View {
                     services.sensors.sources.lazy
                         .compactMap { $0 as? any CachedLocationProviding }.first?.cachedLocation
                 },
-                onOpenDiagnostics: { nav.tab = .settings; nav.settingsPath = [] },
+                onOpenMaps: { nav.tab = .settings; nav.settingsPath = [.maps] },
                 roadsWarning: roadsWarning
             )
         } sessions: {
             SessionsScreen(model: sessions)
         } settings: {
-            SettingsScreen(path: $nav.settingsPath, roads: roads, onShowChecklist: { firstLaunch.showAgain() }) {
+            SettingsScreen(path: $nav.settingsPath, roads: roads, maps: maps, onShowChecklist: { firstLaunch.showAgain() }) {
                 RecordingScreen(model: recording)
             } console: {
                 ConsoleScreen(model: console)

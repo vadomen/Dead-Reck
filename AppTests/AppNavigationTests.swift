@@ -19,9 +19,9 @@ struct AppNavigationTests {
         #expect(AppNavigation().tab == .map)
     }
 
-    @Test("Console is a Settings row, two taps from any tab")
+    @Test("Console and Maps are Settings rows, two taps from any tab")
     func consoleRoute() {
-        #expect(SettingsRoute.allCases == [.recording, .console])
+        #expect(SettingsRoute.allCases == [.recording, .console, .maps])
     }
 
     @Test("Indicator while calibrating, recording or stopping; nothing otherwise (Start is in Settings)")

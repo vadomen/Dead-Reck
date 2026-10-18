@@ -120,6 +120,9 @@ actor NavigationService {
         let writer: NavSidecarWriter?
         let openFailure: String?
         var lastFlush: ContinuousClock.Instant
+        /// The matched edge's shape for snapshots, rebuilt only when the
+        /// matched edge changes (N3.4 item 6).
+        var edgeGeometry = MatchedEdgeGeometry.Cache()
     }
 
     let flushInterval: Duration
@@ -382,11 +385,17 @@ actor NavigationService {
     // MARK: Reading
 
     /// The newest run's estimate at `t` (on that run's session clock,
-    /// `clock`) and the run's statistics. `.idle` when no run is
-    /// navigating. Cost: one pass over the particles.
+    /// `clock`), the run's statistics (`stats.onRoadShare` included) and,
+    /// with roads, the matched edge's shape (`matchedEdgeGeometry`, for the
+    /// map's debug drawing). `.idle` when no run is navigating. Cost: one
+    /// pass over the particles; the edge shape is rebuilt only when the
+    /// matched edge changes.
     func snapshot(at t: MonotonicTimestamp) -> NavigationSnapshot {
         guard let generation = current, let run = runs[generation] else { return .idle(at: t) }
-        return run.live.snapshot(at: t, droppedInputs: run.feed.droppedInputs)
+        var cache = run.edgeGeometry
+        let snapshot = run.live.snapshot(at: t, droppedInputs: run.feed.droppedInputs, edgeGeometry: &cache)
+        runs[generation]?.edgeGeometry = cache
+        return snapshot
     }
 
     /// `snapshot(at: clock.now())` on the newest run's clock.
@@ -402,4 +411,9 @@ actor NavigationService {
 
     /// The generation (`RecordingNavigationFeed.generation`) snapshots follow.
     var currentGeneration: Int? { current }
+
+    /// A run is being consumed (from its feed's start until the feed has
+    /// drained): it may have road packs mapped. `RoadPackLibrary.remove`
+    /// asks this before deleting a pack file.
+    var hasActiveRun: Bool { !runs.isEmpty }
 }

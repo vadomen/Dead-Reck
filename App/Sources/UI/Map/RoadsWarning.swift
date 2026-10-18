@@ -7,7 +7,7 @@ import Observation
 enum RoadsWarning {
     static let noPacks = "No road packs \u{2014} roads off"
     static let noneCovering = "No road pack covers this area \u{2014} roads off"
-    static let refused = "Road packs refused \u{2014} see Diagnostics"
+    static let refused = "Road packs refused \u{2014} see Maps"
 
     /// The line to show, or nil.
     ///
@@ -52,30 +52,51 @@ extension RoadsWarning {
     }
 }
 
+extension RoadsWarning {
+    /// Whether the map credits OSM: the run is navigating and has packs attached.
+    static func attributionCurrent(service: NavigationService) async -> Bool {
+        let roads = await service.roadsStatus()
+        return MapAttribution.visible(runActive: roads.active, packsInUse: roads.packNames.count)
+    }
+}
+
 /// Observed by the map. `message` is written only when it changes.
 @MainActor
 @Observable
 final class RoadsWarningModel {
     typealias Source = @Sendable () async -> String?
+    typealias AttributionSource = @Sendable () async -> Bool
 
     /// Polled once a second: two actor hops, no more.
     static let pollInterval: Duration = .seconds(1)
 
     private(set) var message: String?
+    /// The map shows "© OpenStreetMap contributors" (`MapAttribution`).
+    private(set) var attribution = false
     /// How many times `message` was assigned (a test sees the guard; R34.1-5).
     @ObservationIgnored private(set) var messageWrites = 0
     @ObservationIgnored private let source: Source?
+    @ObservationIgnored private let attributionSource: AttributionSource?
 
-    init(source: @escaping Source) { self.source = source }
+    init(source: @escaping Source, attributionSource: AttributionSource? = nil) {
+        self.source = source
+        self.attributionSource = attributionSource
+    }
 
     /// Previews and tests: a fixed line.
-    init(message: String?) {
+    init(message: String?, attribution: Bool = false) {
         self.message = message
+        self.attribution = attribution
         source = nil
+        attributionSource = nil
     }
 
     func refresh() async {
         guard let source else { return }
+        if let attributionSource {
+            let credit = await attributionSource()
+            if credit != attribution { attribution = credit }
+        }
         let next = await source()
         if next != message {
             message = next

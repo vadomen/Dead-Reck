@@ -34,14 +34,14 @@ struct RoadPacksRowTests {
 
     func details(_ rows: [LifecycleSample]) -> [String?] { rows.map(\.detail) }
 
-    @Test("No packs: one row, none in Documents/RoadPacks")
+    @Test("No packs: one row, none installed")
     func noPacks() async throws {
         let scratch = try ScratchStore()
         defer { scratch.remove() }
         let dir = try RoadPackFixture.directory()
         defer { try? FileManager.default.removeItem(at: dir) }
         let library = RoadPackLibrary(source: RoadPackLibrary.directorySource(dir), cacheURL: nil)
-        #expect(details(try await rows(library: library, scratch: scratch)) == ["none in Documents/RoadPacks"])
+        #expect(details(try await rows(library: library, scratch: scratch)) == ["none installed"])
     }
 
     @Test("All packs verified: n found, n verified")
@@ -96,8 +96,18 @@ struct RoadPacksRowTests {
             .init(name: name, verified: reason == nil, refusal: reason, sizeBytes: nil, osmTimestamp: nil,
                   hashPrefix: nil, cacheHit: false, verifySeconds: nil)
         }
-        #expect(RoadPackLibrary.roadPacksDetail([]) == "none in Documents/RoadPacks")
+        #expect(RoadPackLibrary.roadPacksDetail([]) == "none installed")
         #expect(RoadPackLibrary.roadPacksDetail([pack("z.roadpack", "bad hash"), pack("a.roadpack", nil), pack("m.roadpack", "old")])
                 == "3 found, 1 verified; m.roadpack: old; z.roadpack: bad hash")
+        // N3.4: packs marked for removal and inbox refusals follow the
+        // counts and are not counted.
+        var pending = pack("b-00000000000000bb.roadpack", RoadPackLibrary.removalPendingText)
+        pending.pendingRemoval = true
+        var inbox = pack("x.roadpack", "bad magic")
+        inbox.inInbox = true
+        #expect(RoadPackLibrary.roadPacksDetail([inbox, pending, pack("a.roadpack", nil)])
+                == "1 found, 1 verified; b-00000000000000bb.roadpack: removal pending (after restart); inbox x.roadpack: bad magic")
+        #expect(RoadPackLibrary.roadPacksDetail([inbox, pending])
+                == "none installed; b-00000000000000bb.roadpack: removal pending (after restart); inbox x.roadpack: bad magic")
     }
 }

@@ -175,6 +175,20 @@ struct RoadsDiagnosticsTextTests {
         #expect(RoadsDiagnosticsText.attribution == "© OpenStreetMap contributors")
     }
 
+    @Test("Pack state: verified, refused, removal pending, inbox refusal")
+    func packState() {
+        func pack(_ reason: String?, pending: Bool = false, inbox: Bool = false) -> RoadPackLibrary.PackStatus {
+            .init(name: "region-a-00000000000000aa.roadpack", verified: reason == nil, refusal: reason, sizeBytes: nil,
+                  osmTimestamp: nil, hashPrefix: nil, cacheHit: false, verifySeconds: nil,
+                  pendingRemoval: pending, inInbox: inbox)
+        }
+        #expect(RoadsDiagnosticsText.state(pack(nil)) == "Verified")
+        #expect(RoadsDiagnosticsText.state(pack("bad hash")) == "Refused: bad hash")
+        #expect(RoadsDiagnosticsText.state(pack(RoadPackLibrary.removalPendingText, pending: true))
+                == "Removal pending (after restart)")
+        #expect(RoadsDiagnosticsText.state(pack("bad magic", inbox: true)) == "Not installed: bad magic")
+    }
+
     @Test("Usage text: none, looking, refused, in use")
     func usage() {
         #expect(RoadsDiagnosticsText.usage(.none) == "none")

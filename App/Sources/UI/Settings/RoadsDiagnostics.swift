@@ -10,7 +10,9 @@ enum RoadsDiagnosticsText {
     static func attributionVisible(packsInUse: Int) -> Bool { packsInUse > 0 }
 
     static func state(_ pack: RoadPackLibrary.PackStatus) -> String {
-        pack.verified ? "Verified" : "Refused: " + (pack.refusal ?? "not usable")
+        if pack.pendingRemoval { return "Removal pending (after restart)" }
+        if pack.inInbox { return "Not installed: " + (pack.refusal ?? "refused") }
+        return pack.verified ? "Verified" : "Refused: " + (pack.refusal ?? "not usable")
     }
 
     /// "12.3 MB · OSM 2026-10-01 · a1b2c3d4 · cached".
@@ -29,6 +31,12 @@ enum RoadsDiagnosticsText {
             parts.append("verified in " + duration(s))
         }
         return parts.joined(separator: " · ")
+    }
+
+    /// Developer row for one pack: "cached" or "verified in 1.2 s".
+    static func verifyLine(_ pack: RoadPackLibrary.PackStatus) -> String {
+        if pack.cacheHit { return "cached" }
+        return pack.verifySeconds.map { "verified in " + duration($0) } ?? "not verified"
     }
 
     /// Below 1 s whole milliseconds ("42 ms"), else seconds with one decimal ("1.2 s").

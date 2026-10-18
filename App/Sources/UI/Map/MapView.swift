@@ -47,8 +47,8 @@ struct MapScreen: View {
     var isSelected: Bool
     /// Read once when the tab opens with no fix; the system's last position.
     var cachedLocation: @MainActor () -> CachedLocation?
-    /// The roads warning was tapped: the app opens Settings (Diagnostics).
-    var onOpenDiagnostics: () -> Void = {}
+    /// The roads warning was tapped: the app opens Settings → Maps.
+    var onOpenMaps: () -> Void = {}
     var roadsWarning: RoadsWarningModel?
     @Environment(\.scenePhase) private var scenePhase
     @State private var thermal = ProcessInfo.processInfo.thermalState
@@ -80,7 +80,8 @@ struct MapScreen: View {
             showsEstimate: status.showsEstimate,
             showNavStats: $showNavStats,
             roadsWarning: roadsWarning?.message,
-            onRoadsWarningTap: onOpenDiagnostics,
+            onRoadsWarningTap: onOpenMaps,
+            roadsAttribution: roadsWarning?.attribution ?? false,
             recordingControl: AnyView(MapRecordingButton(session: session, onStop: { [session] in await session.stop() })),
             statusLine: AnyView(MapNavigateStatusLine(session: session))
         )
@@ -244,6 +245,9 @@ struct GPSMapView: View {
     /// One line when roads are off for a fixable reason (`RoadsWarning`).
     var roadsWarning: String?
     var onRoadsWarningTap: () -> Void
+    /// A road pack is attached to the run (`MapAttribution.visible`): the
+    /// OSM credit is shown.
+    var roadsAttribution = false
     /// Start button or recording indicator, left of the map controls. A view
     /// of its own (it reads the recorder), so this view stays plain values.
     var recordingControl: AnyView?
@@ -302,6 +306,7 @@ struct GPSMapView: View {
         showNavStats: Binding<Bool> = .constant(false),
         roadsWarning: String? = nil,
         onRoadsWarningTap: @escaping () -> Void = {},
+        roadsAttribution: Bool = false,
         recordingControl: AnyView? = nil,
         statusLine: AnyView? = nil
     ) {
@@ -326,6 +331,7 @@ struct GPSMapView: View {
         self._showNavStats = showNavStats
         self.roadsWarning = roadsWarning
         self.onRoadsWarningTap = onRoadsWarningTap
+        self.roadsAttribution = roadsAttribution
         self.recordingControl = recordingControl
         self.statusLine = statusLine
         self._toast = State(initialValue: initialToast)
@@ -460,6 +466,9 @@ struct GPSMapView: View {
         }
         .overlay(alignment: .bottom) {
             VStack(alignment: .trailing, spacing: 8) {
+                if roadsAttribution {
+                    attributionLabel
+                }
                 // Above the fix toast and the controls: stacked, never overlapping.
                 if let statusLine {
                     statusLine
@@ -475,6 +484,29 @@ struct GPSMapView: View {
         }
     }
 
+    /// Small credit above the controls, clear of Apple's logo and Legal link
+    /// (bottom corners, below the controls). Material keeps it legible in
+    /// light and dark.
+    private var attributionLabel: some View {
+        Text(MapAttribution.text)
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(.regularMaterial, in: Capsule())
+            .padding(.horizontal, 16)
+            .accessibilityLabel(MapAttribution.text)
+    }
+
+    /// Standard map; DEBUG `-uiBlankMap 1` uses plain imagery (no street, POI or
+    /// place text) so simulator screenshots carry no place names.
+    private static var baseStyle: MapStyle {
+        #if DEBUG
+        if UserDefaults.standard.bool(forKey: "uiBlankMap") { return .imagery }
+        #endif
+        return .standard
+    }
+
     private func color(_ band: AccuracyBand, stale: Bool) -> Color {
         stale ? .gray : band.color
     }
@@ -484,7 +516,7 @@ struct GPSMapView: View {
             Map(position: $position) {
                 TrackOverlay(track: track)
                 if let estimate {
-                    NavOverlay(feed: estimate, headingUp: headingUp, cameraHeading: cameraHeading)
+                    NavOverlay(feed: estimate, headingUp: headingUp, cameraHeading: cameraHeading, showEdge: showNavStats)
                 }
                 if let latest, let band = AccuracyBand(accuracy: latest.horizontalAccuracy) {
                     let c = color(band, stale: stale)
@@ -502,6 +534,7 @@ struct GPSMapView: View {
                 }
             }
             .coordinateSpace(.named(Self.space))
+            .mapStyle(Self.baseStyle)
             .onMapCameraChange(frequency: .onEnd) { context in
                 // Not our own write: the driver zoomed.
                 headingState.zoom.cameraReported(distance: context.camera.distance)
@@ -574,7 +607,7 @@ struct GPSMapView: View {
     }
 
     /// Same look as the other toasts (material capsule, headline weight), one
-    /// line; tap opens Settings, where Diagnostics lists the packs.
+    /// line; tap opens Settings → Maps, which lists the packs.
     private func roadsWarningView(_ text: String) -> some View {
         Button(action: onRoadsWarningTap) {
             Label(text, systemImage: "road.lanes")
@@ -925,8 +958,14 @@ private struct NavOverlay: MapContent {
     var feed: NavigationFeed
     var headingUp: Bool
     var cameraHeading: Double
+    /// The roads debug switch (`RoadDebugOverlay`).
+    var showEdge: Bool
 
     var body: some MapContent {
+        if let edge = RoadDebugOverlay.edge(enabled: showEdge, points: feed.matchedEdge) {
+            MapPolyline(coordinates: edge.map(\.coordinate))
+                .stroke(Color.orange, lineWidth: 6)
+        }
         if let nav = feed.display {
             if NavLayers.showEllipse(nav) {
                 MapPolygon(coordinates: EllipsePolygon.ring(nav).map(\.coordinate))
@@ -985,10 +1024,15 @@ private struct NavStatsView: View {
     var feed: NavigationFeed
 
     var body: some View {
-        Text(feed.stats?.line ?? "nav: idle")
-            .font(.caption2.monospacedDigit())
-            .foregroundStyle(.secondary)
-            .multilineTextAlignment(.center)
+        VStack(spacing: 2) {
+            Text(feed.stats?.line ?? "nav: idle")
+            if let share = RoadDebugOverlay.shareLine(enabled: true, share: feed.stats?.onRoadShare) {
+                Text(share)
+            }
+        }
+        .font(.caption2.monospacedDigit())
+        .foregroundStyle(.secondary)
+        .multilineTextAlignment(.center)
     }
 }
 
@@ -1183,6 +1227,23 @@ extension MapPreviewData {
         headingUp: .constant(true), bearing: 40,
         navigation: NavigationFeed(display: MapPreviewData.nav(converged: true), stats: MapPreviewData.navStats),
         showNavStats: .constant(true)
+    )
+}
+
+#Preview("Roads attached: attribution, matched edge, on road") {
+    GPSMapView(
+        track: MapPreviewData.track,
+        latest: MapPreviewData.fix(59, accuracy: 12, gapAfter: 60),
+        lastFixInstant: .now, isReceiving: true, thermal: .nominal, isLive: true,
+        follow: .constant(FollowController(following: true)),
+        navigation: NavigationFeed(
+            display: MapPreviewData.nav(converged: true),
+            stats: NavStatsDisplay(
+                msPerStep: 0.06, maxMsPerStep: 1.4, effectiveSampleSize: 1480,
+                headingStdDeg: 3.2, speedScale: 1.016, droppedInputs: 0, onRoadShare: 0.93),
+            matchedEdge: (0..<10).map { GeoPoint(latitude: Double(55 + $0) * 0.0002, longitude: sin(Double(55 + $0) / 6) * 0.002) }),
+        showNavStats: .constant(true),
+        roadsAttribution: true
     )
 }
 

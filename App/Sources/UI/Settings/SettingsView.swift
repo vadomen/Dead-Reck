@@ -6,13 +6,15 @@ struct SettingsScreen<Recording: View, Console: View>: View {
     @Binding var path: [SettingsRoute]
     var info: AppInfo = .read()
     var roads: RoadsDiagnosticsModel
+    var maps: MapsModel
     var onShowChecklist: () -> Void = {}
     @ViewBuilder var recording: () -> Recording
     @ViewBuilder var console: () -> Console
     @State private var thermal = ProcessInfo.processInfo.thermalState
 
     var body: some View {
-        SettingsContent(path: $path, info: info, thermal: thermal, roads: roads.value, onShowChecklist: onShowChecklist, recording: recording, console: console)
+        SettingsContent(path: $path, info: info, thermal: thermal, roads: roads.value, onShowChecklist: onShowChecklist,
+                        recording: recording, console: console, maps: { MapsScreen(model: maps) })
             .onReceive(NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)) { _ in
                 thermal = ProcessInfo.processInfo.thermalState
             }
@@ -22,7 +24,7 @@ struct SettingsScreen<Recording: View, Console: View>: View {
 }
 
 /// Plain-values presentation of Settings.
-struct SettingsContent<Recording: View, Console: View>: View {
+struct SettingsContent<Recording: View, Console: View, Maps: View>: View {
     @Binding var path: [SettingsRoute]
     let info: AppInfo
     let thermal: ProcessInfo.ThermalState
@@ -30,6 +32,10 @@ struct SettingsContent<Recording: View, Console: View>: View {
     var onShowChecklist: () -> Void = {}
     @ViewBuilder var recording: () -> Recording
     @ViewBuilder var console: () -> Console
+    @ViewBuilder var maps: () -> Maps
+    /// Shows the matched road, the on-road share and the engine numbers on
+    /// the map; the map's long-press on the speed number sets it too.
+    @AppStorage("debug.navStats") private var showNavStats = false
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -44,6 +50,11 @@ struct SettingsContent<Recording: View, Console: View>: View {
                         Label("Mount and orientation", systemImage: "iphone.gen3")
                             .font(.title3)
                             .foregroundStyle(Color.primary)
+                            .frame(minHeight: 44)
+                    }
+                    NavigationLink(value: SettingsRoute.maps) {
+                        Label("Maps", systemImage: "map")
+                            .font(.title3)
                             .frame(minHeight: 44)
                     }
                     NavigationLink(value: SettingsRoute.console) {
@@ -62,17 +73,17 @@ struct SettingsContent<Recording: View, Console: View>: View {
                     LabeledContent("Build", value: AppInfo.configuration)
                     LabeledContent("Memory", value: MemoryFootprint.format(roads.footprintBytes))
                 }
-                Section("Road packs") {
-                    if roads.library.packs.isEmpty {
-                        Text(roads.library.scansCompleted == 0 ? "Looking for packs" : "No packs found")
-                            .foregroundStyle(.secondary)
+                Section("Roads") {
+                    Toggle("Navigation debug on map", isOn: $showNavStats)
+                    ForEach(roads.library.installedPacks) { pack in
+                        LabeledContent(pack.displayName, value: RoadsDiagnosticsText.verifyLine(pack))
                     }
-                    ForEach(roads.library.packs) { pack in
+                    ForEach(roads.library.inboxRefusals) { pack in
                         VStack(alignment: .leading, spacing: 2) {
                             Text(pack.name).font(.body)
                             Text(RoadsDiagnosticsText.state(pack))
                                 .fontWeight(.semibold)
-                                .foregroundStyle((pack.verified ? Tone.good : Tone.bad).color)
+                                .foregroundStyle(Tone.bad.color)
                             Text(RoadsDiagnosticsText.detail(pack))
                                 .font(.caption).foregroundStyle(.secondary)
                         }
@@ -96,34 +107,40 @@ struct SettingsContent<Recording: View, Console: View>: View {
                 case .console:
                     // Sets its own title.
                     console()
+                case .maps:
+                    maps()
+                        .navigationTitle("Maps")
+                        .navigationBarTitleDisplayMode(.inline)
                 }
             }
         }
     }
 }
 
-private let previewPack = RoadPackLibrary.PackStatus(
-    name: "region.roadpack", verified: true, refusal: nil, sizeBytes: 48_000_000, osmTimestamp: 1_760_000_000,
-    hashPrefix: "a1b2c3d4", cacheHit: true, verifySeconds: 2.4)
-private let previewBad = RoadPackLibrary.PackStatus(
-    name: "broken.roadpack", verified: false, refusal: "truncated", sizeBytes: 1_000, osmTimestamp: nil,
-    hashPrefix: nil, cacheHit: false, verifySeconds: 0.1)
+private let previewPack = RoadPackLibrary.PackStatus.preview("region-a")
+private var previewInbox: RoadPackLibrary.PackStatus {
+    var pack = RoadPackLibrary.PackStatus(
+        name: "broken.roadpack", verified: false, refusal: "truncated", sizeBytes: 1_000, osmTimestamp: nil,
+        hashPrefix: nil, cacheHit: false, verifySeconds: 0.1)
+    pack.inInbox = true
+    return pack
+}
 
 #Preview("Settings") {
     SettingsContent(
         path: .constant([]), info: AppInfo(name: "DriveLogger", version: "0.1.0", build: "1"),
         thermal: .nominal,
         roads: RoadsDiagnostics(
-            library: .init(packs: [previewPack, previewBad], scansCompleted: 1),
-            roads: .init(active: true, packNames: ["region.roadpack"], packHashPrefixes: ["a1b2c3d4"],
+            library: .init(packs: [previewPack, previewInbox], scansCompleted: 1),
+            roads: .init(active: true, packNames: ["region-a"], packHashPrefixes: ["a1b2c3d4"],
                          roadSetHashPrefix: "0f0f0f0f", activeAtSessionS: 12, onRoadShare: 0.93),
             footprintBytes: 210_000_000)
-    ) { Text("Recording") } console: { Text("Console") }
+    ) { Text("Recording") } console: { Text("Console") } maps: { Text("Maps") }
 }
 
 #Preview("Settings, serious thermal") {
     SettingsContent(
         path: .constant([]), info: AppInfo(name: "DriveLogger", version: "0.1.0", build: "1"),
         thermal: .serious
-    ) { Text("Recording") } console: { Text("Console") }
+    ) { Text("Recording") } console: { Text("Console") } maps: { Text("Maps") }
 }

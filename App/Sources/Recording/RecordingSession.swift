@@ -892,6 +892,10 @@ final class RecordingSession {
         recording ?? navigate
     }
 
+    /// A recording or a Navigate run exists, or Start is in progress: the
+    /// run may map road packs (N3.4: Remove then marks instead of deleting).
+    var hasActiveRun: Bool { recording != nil || navigate != nil || isStarting }
+
     /// Writes `background`/`foreground` rows while recording; flushes on
     /// background inside a background task. Refreshes free space on becoming
     /// active.

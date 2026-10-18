@@ -19,7 +19,9 @@ final class AppServices {
     /// session (UX-1): it consumes every feed and writes a recording's
     /// sidecar (none for Navigate).
     let navigation: NavigationService
-    /// The road packs (developer bridge: Documents/RoadPacks), verified once each.
+    /// The road packs: the store in Application Support/RoadPacks (filled
+    /// from the developer inbox Documents/RoadPacks at launch), verified
+    /// once each.
     let roadPacks: RoadPackLibrary
 
     init(
@@ -45,10 +47,23 @@ final class AppServices {
         )
         let roadPacks = RoadPackLibrary.makeDefault()
         self.roadPacks = roadPacks
-        // Verification runs off the main actor at .utility; never awaited here.
-        Task(priority: .utility) { await roadPacks.rescan() }
         let navigation = NavigationService(library: roadPacks)
         self.navigation = navigation
+        // Remove (Settings → Maps) deletes only when no run may have a pack
+        // mapped: no recording or Navigate run in the session (starting
+        // included) and none still draining in the navigation service.
+        let session = session
+        let runActivity: RoadPackLibrary.RunActivity = {
+            if await session.hasActiveRun { return true }
+            return await navigation.hasActiveRun
+        }
+        // The first scan runs launch maintenance (inbox install, cleanup)
+        // and verification off the main actor at .utility; never awaited
+        // here. Sessions map packs only via `candidates()`, which awaits it.
+        Task(priority: .utility) {
+            await roadPacks.setRunActivity(runActivity)
+            await roadPacks.rescan()
+        }
         // Synchronous inside `start`, before any row: only start the task.
         session.onNavigationFeed = { feed in navigation.start(feed) }
         // The sidecar is flushed with the log on background (R14.1-4).

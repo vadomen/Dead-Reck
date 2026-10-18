@@ -570,10 +570,13 @@ The stage texts of N3.0, N3.1, N3.2 and N3.3 moved unchanged on 2026-10-17 to [d
 
 **Deliverables:**
 - **Replaces the N3.3 developer bridge** (`Documents/RoadPacks/`, see the N3.3 amendment); the loader and verification cache stay, only the file source changes.
-- **Getting packs onto the phone (decided, Q1):** import via Files or AirDrop
-  (`UIDocumentPicker`, "Open in DriveLogger"), stored in Application Support. No pack is
-  bundled and none is downloaded. A pack is at most 150 MB; import refuses a larger one. It is verified
-  once on import, and the list shows OSM date, size, hash prefix and coverage.
+- **Getting packs onto the phone (Q1 superseded):** ~~import via Files or AirDrop (`UIDocumentPicker`, "Open in DriveLogger")~~. Packs are downloaded (UX-8, 2026-10-17) and there is no user import (user, 2026-10-18); `Documents/RoadPacks/` stays as a developer inbox only. No pack is bundled. A pack is at most 150 MB. It is verified once on install, and the list shows OSM date, size, hash prefix and coverage.
+- **Storage and install path, as built (branch `n34-pack-storage`, 2026-10-18):**
+  - Packs live in `Application Support/RoadPacks/` (excluded from backup), files `<name>-<contentHash>.roadpack` (16 lowercase hex, the server key scheme). Name rules in Core `RoadPackStoreRules`: `[a-z0-9_-]`, 1–64 chars, lower case only, not starting or ending with `-`. `RoadPackLibrary`'s source is the store's active set; the verification cache is unchanged.
+  - One active pack per name: newest `osmTimestamp`, then install time (file creation date), then content hash. Superseded files, removal-marked files and leftover `.install-*.tmp` files are deleted only by launch maintenance, the first step of the library's first scan; sessions map packs only via `candidates()`, which awaits that scan. Remove during a recording or Navigate run marks the files (`RoadPackStoreState.json` in the store); they leave the active set at once, show "Removal pending (after restart)" and are deleted at the next launch; with no run active they are deleted at once.
+  - One install path, `RoadPackInstaller.install(from:name:)`: refuse > 150 MB before copying, copy to a temp file in the store, verify the copy (`RoadPackCatalog`), name from the verified hash, `renamex_np(RENAME_EXCL)` (an existing file is never overwritten: "already installed"). The source is never mapped or modified. Verification is cached under the final identity, so the next scan and a relaunch are cache hits. No Info.plist document types, no picker, no "Open in".
+  - Developer inbox `Documents/RoadPacks/`: at launch each `*.roadpack` is installed (name from `<name>.roadpack` or `<name>-<hash>.roadpack`) and removed from the inbox; a refused file stays and is reported in Diagnostics and the lifecycle `roadPacks` row. `scripts/push_packs.sh` still pushes into the inbox and refuses while the app runs; skip-if-unchanged = stamp match and the file present (store as `<name>-<contentHash>`, or inbox) with the same size; `--force` re-pushes.
+- **Done on this branch:** storage, install path, inbox, Settings → Maps (installed list, Remove, total storage, empty state "No road maps installed"), attribution capsule on the map while the run has packs attached, matched-edge debug overlay with `onRoadShare` (navigation debug switch, also in Diagnostics), invariant test `RepositoryInvariantTests/noMapKitRouting`, and the border check (UX-8 (b)): Core test `RoadPackBorderTests`. **Remaining:** device checks D1–D4 (PLAN §6) and the OSM-vs-Apple mismatch screenshots from a device drive.
 - **Display (`ios-ui-engineer`, MapKit unchanged as base map):**
   - the DR dot and ellipse as today;
   - a debug toggle drawing the matched OSM edge and `onRoadShare` in the stats overlay;
@@ -681,7 +684,7 @@ off the road the filter matched.
 - **Deviations from the brief** (split wide Gaussians, tempering by distance, GPS gate at
   the fix, no `--roads` bit-identical to N3.0, metrics tooling first, sidecar v2 in N3.3,
   no country or region names in committed docs): accepted as written.
-- **Q1:** packs are imported via Files or AirDrop; ≤ 150 MB per pack.
+- **Q1:** packs are imported via Files or AirDrop; ≤ 150 MB per pack. **Superseded (2026-10-18):** packs are downloaded (UX-8, 2026-10-17); no user import (user, 2026-10-18), developer inbox only; ≤ 150 MB per pack stands.
 - **Q2 (proposed default, accepted):** national highways plus region packs at `admin_level` 4 and 6.
 - **Q3:** ellipse consistency adds the truth's σ. The adoption-rule change is recorded
   explicitly in docs/NAVIGATION.md (in N3.0).

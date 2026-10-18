@@ -971,13 +971,15 @@ actor. Data: © OpenStreetMap contributors, ODbL 1.0.
 **Live roads in the app (N3.3).** The path from a pack file to a road
 update in a recording:
 - **Library.** `App/Sources/Navigation/RoadPackLibrary.swift`, an actor,
-  lists the `*.roadpack` files of `Documents/RoadPacks/` (the developer
-  bridge: Finder → iPhone → Files; N3.4 replaces only this source) and
+  lists the active packs of the store `Application Support/RoadPacks/`
+  (N3.4: `<name>-<contentHash>.roadpack`, one active pack per name; the
+  developer inbox `Documents/RoadPacks/` is installed into it at launch,
+  see docs/N3_PLAN.md "N3.4") and
   verifies each once through `RoadPackCatalog`. The verification cache is
   `Application Support/RoadPackVerification.json`, keyed by file identity.
   Listing, verification and opening run in a detached `.utility` task, at
   launch, when a recording starts and when Diagnostics appears; a cache hit
-  costs one `stat`. No pack is bundled or downloaded.
+  costs one `stat`. No pack is bundled; downloads arrive with UX-8.
 - **Selection and attach.** `NavigationService` hands each
   `RoadSelectionRequest` of the recording's `LiveNavigationRun` to a
   detached task. The task takes the library's candidates (and the files
