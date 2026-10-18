@@ -76,7 +76,8 @@ struct MapScreen: View {
             manual: marking,
             run: model.runKey,
             cachedLocation: cachedLocation,
-            navigation: status.showsEstimate ? navigation : nil,
+            navigation: navigation,
+            showsEstimate: status.showsEstimate,
             showNavStats: $showNavStats,
             roadsWarning: roadsWarning?.message,
             onRoadsWarningTap: onOpenDiagnostics,
@@ -231,6 +232,9 @@ struct GPSMapView: View {
     var cachedLocation: @MainActor () -> CachedLocation? = { nil }
     /// Live dead reckoning; nil in previews of the plain reference map.
     var navigation: NavigationFeed?
+    /// False without OBD (UX-1 (d)): the feed is still passed and polled, so
+    /// it is fresh the moment Navigate starts, but nothing draws or follows it.
+    var showsEstimate = true
     @Binding var showNavStats: Bool
     /// One line when roads are off for a fixable reason (`RoadsWarning`).
     var roadsWarning: String?
@@ -289,6 +293,7 @@ struct GPSMapView: View {
         cachedLocation: @escaping @MainActor () -> CachedLocation? = { nil },
         initialToast: MapToast? = nil,
         navigation: NavigationFeed? = nil,
+        showsEstimate: Bool = true,
         showNavStats: Binding<Bool> = .constant(false),
         roadsWarning: String? = nil,
         onRoadsWarningTap: @escaping () -> Void = {},
@@ -312,6 +317,7 @@ struct GPSMapView: View {
         self.run = run
         self.cachedLocation = cachedLocation
         self.navigation = navigation
+        self.showsEstimate = showsEstimate
         self._showNavStats = showNavStats
         self.roadsWarning = roadsWarning
         self.onRoadsWarningTap = onRoadsWarningTap
@@ -327,7 +333,7 @@ struct GPSMapView: View {
                 if old == nil {
                     // First fix of a recording.
                     frame(center: fix.coordinate, accuracy: fix.horizontalAccuracy)
-                } else if follow.isFollowing, navigation?.latest == nil {
+                } else if follow.isFollowing, estimate?.latest == nil {
                     // With a dead-reckoning estimate the 100 ms loop follows it.
                     recenter(center: fix.coordinate)
                 }
@@ -355,7 +361,9 @@ struct GPSMapView: View {
             // Opening the map: frame on a fresh estimate, then one 100 ms loop
             // while the map is visible and the scene active: it polls the
             // navigation feed, then turns/centres the camera.
-            .task(id: isLive) {
+            // Keyed on showsEstimate too: the loop's captured copy of this view
+            // would otherwise keep the value from when it started (R61.1-1).
+            .task(id: MapLoopKey(isLive: isLive, showsEstimate: showsEstimate)) {
                 await frameOnOpen()
                 await runLoop()
             }
@@ -404,7 +412,7 @@ struct GPSMapView: View {
     /// What heading-up turns to: the dead-reckoning heading once converged,
     /// otherwise the GPS-course bearing (M4.3).
     private var effectiveBearing: Double? {
-        let nav = navigation?.latest
+        let nav = estimate?.latest
         return CameraHeading.targetBearing(
             drHeading: nav?.headingDeg, converged: nav?.converged ?? false, gpsBearing: bearing
         )
@@ -412,7 +420,7 @@ struct GPSMapView: View {
 
     /// Where Following centres: the estimate once initialised, else the GPS fix.
     private var followCenter: CLLocationCoordinate2D? {
-        FollowTarget.center(dr: navigation?.latest?.position, gps: latest?.geo)?.coordinate
+        FollowTarget.center(dr: estimate?.latest?.position, gps: latest?.geo)?.coordinate
     }
 
     /// Resumes Following if the deadline has passed. True when it did.
@@ -430,6 +438,9 @@ struct GPSMapView: View {
         body(&next)
         if next != follow { follow = next }
     }
+
+    /// The feed, for drawing and following; nil while the estimate is hidden.
+    private var estimate: NavigationFeed? { showsEstimate ? navigation : nil }
 
     private var stale: Bool { isStale || !isReceiving }
 
@@ -467,8 +478,8 @@ struct GPSMapView: View {
         MapReader { proxy in
             Map(position: $position) {
                 TrackOverlay(track: track)
-                if let navigation {
-                    NavOverlay(feed: navigation, headingUp: headingUp, cameraHeading: cameraHeading)
+                if let estimate {
+                    NavOverlay(feed: estimate, headingUp: headingUp, cameraHeading: cameraHeading)
                 }
                 if let latest, let band = AccuracyBand(accuracy: latest.horizontalAccuracy) {
                     let c = color(band, stale: stale)
@@ -623,7 +634,7 @@ struct GPSMapView: View {
     /// position instead, once there is one).
     private func frame(center: CLLocationCoordinate2D, accuracy: Double) {
         reseedHeading()
-        let center = navigation?.latest?.position.coordinate ?? center
+        let center = estimate?.latest?.position.coordinate ?? center
         let span = MapFraming.spanMeters(horizontalAccuracy: accuracy)
         if headingUp, follow.isFollowing, effectiveBearing != nil {
             // A region would be north-up; keep the mode.
@@ -655,7 +666,7 @@ struct GPSMapView: View {
     fileprivate func recenter(center: CLLocationCoordinate2D) {
         let heading = targetHeading
         headingState.gate.noteWrite(heading, at: ContinuousClock.now)
-        let d = followDistance(navigation?.latest)
+        let d = followDistance(estimate?.latest)
         position = .camera(MapCamera(centerCoordinate: center, distance: d, heading: heading, pitch: 0))
     }
 
@@ -683,7 +694,8 @@ struct GPSMapView: View {
     /// (R14.1-3). Without an estimate the last fix, then the cached location.
     private func frameOnOpen() async {
         guard isLive else { return }
-        let nav = await navigation?.refreshed()
+        let polled = await navigation?.refreshed()
+        let nav = showsEstimate ? polled : nil
         if Task.isCancelled { return }
         if let fix = latest {
             frame(center: fix.coordinate, accuracy: fix.horizontalAccuracy)
@@ -715,7 +727,7 @@ struct GPSMapView: View {
             let dt = Double((now - last).components.seconds)
                 + Double((now - last).components.attoseconds) / 1e18
             last = now
-            let nav = navigation?.latest
+            let nav = estimate?.latest
             let target = CameraHeading.targetBearing(
                 drHeading: nav?.headingDeg, converged: nav?.converged ?? false, gpsBearing: inputs.bearing
             )
@@ -742,7 +754,7 @@ struct GPSMapView: View {
     /// the user rotates the map.
     @ViewBuilder
     private func carMarker(color: Color) -> some View {
-        if headingUp, let bearing, navigation?.latest == nil {
+        if headingUp, let bearing, estimate?.latest == nil {
             Image(systemName: "location.north.fill")
                 .font(.system(size: 30))
                 .foregroundStyle(color)
@@ -779,15 +791,15 @@ struct GPSMapView: View {
                         .frame(minHeight: 32)
                         .background(speed.quality.chipFill, in: Capsule())
                 }
-                if let navigation {
-                    NavCalibratingIcon(feed: navigation)
+                if let estimate {
+                    NavCalibratingIcon(feed: estimate)
                 }
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(speed.summary)
             if showNavStats {
-                if let navigation {
-                    NavStatsView(feed: navigation)
+                if let estimate {
+                    NavStatsView(feed: estimate)
                 }
                 Text("Thermal: \(ThermalText.label(thermal))")
                     .font(.caption.weight(.medium))

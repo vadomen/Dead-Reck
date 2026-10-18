@@ -143,4 +143,18 @@ struct FirstLaunchAndTestDriveTests {
         #expect(session.navigateState == .off)
         #expect(session.navigateStartedAt == nil)
     }
+
+    @Test("R61.1-1: the map's loop task restarts when the estimate becomes visible (OBD connects after the app opened)")
+    func loopKeyFollowsShowsEstimate() {
+        let noOBD = NavigateStatus.make(
+            navigate: .off, recording: .idle, startedAt: nil, timings: NavigateConfiguration(), now: .now)
+        let running = NavigateStatus.make(
+            navigate: .running, recording: .idle, startedAt: nil, timings: NavigateConfiguration(), now: .now)
+        let before = MapLoopKey(isLive: true, showsEstimate: noOBD.showsEstimate)
+        let after = MapLoopKey(isLive: true, showsEstimate: running.showsEstimate)
+        #expect(before != after, "keyed on isLive alone (the old wiring) the loop kept its no-estimate copy")
+        #expect(before == MapLoopKey(isLive: true, showsEstimate: false))
+        #expect(after == MapLoopKey(isLive: true, showsEstimate: true))
+        #expect(after != MapLoopKey(isLive: false, showsEstimate: true))
+    }
 }

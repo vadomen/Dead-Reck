@@ -215,3 +215,11 @@ struct MapRunKey: Equatable, Sendable {
     var file: URL?
     var run: Int?
 }
+
+/// What the map's frame-and-follow task is keyed on: it restarts when either
+/// changes, so the loop's captured copy of the view never keeps a stale
+/// `showsEstimate` (R61.1-1).
+struct MapLoopKey: Equatable, Sendable {
+    var isLive: Bool
+    var showsEstimate: Bool
+}
