@@ -172,6 +172,48 @@ struct RoadPackCatalogTests {
         #expect(candidates[0].coverage.rings != nil)
     }
 
+    /// R32.1-6: the identity read again after verification differs from the
+    /// one read before (a file copied in meanwhile): the entry is a file
+    /// error, nothing is cached, and the next scan verifies it again. Read
+    /// fails on the second read count as changed too.
+    @Test("R32.1-6: a file that changed while it was being verified is not used and not cached")
+    func fileChangedDuringVerification() throws {
+        let scratch = try ScratchDirectory()
+        defer { scratch.remove() }
+        let a = try Self.write(Self.packA(), "a.roadpack", in: scratch)
+        let c = try Self.write(Self.packC(), "c.roadpack", in: scratch)
+        let before = try RoadPackFileIdentity(contentsOf: a)
+        // Reads of a.roadpack: the real identity, then `second` of it; c.roadpack is steady.
+        func scan(second: (RoadPackFileIdentity) throws -> RoadPackFileIdentity) -> RoadPackCatalog {
+            var readsOfA = 0
+            return RoadPackCatalog(urls: [a, c], cache: RoadPackVerificationCache()) { url in
+                let identity = try RoadPackFileIdentity(contentsOf: url)
+                guard url == a else { return identity }
+                readsOfA += 1
+                return readsOfA == 1 ? identity : try second(identity)
+            }
+        }
+        let changed = scan { identity in
+            var newer = identity
+            newer.modificationTimeNs += 1_000_000_000
+            return newer
+        }
+        let entry = changed.entries[0]
+        #expect(entry.identity == before && entry.verification == nil && !entry.cacheHit && !entry.isUsable)
+        #expect(entry.fileError == "the file changed while it was being verified" && entry.refusal == entry.fileError)
+        #expect(changed.entries[1].isUsable, "the steady file is unaffected")
+        #expect(changed.cache.entries.map(\.identity.name) == ["c.roadpack"], "the changed file is not cached")
+
+        let unreadable = scan { _ in throw CocoaError(.fileReadNoSuchFile) }
+        #expect(unreadable.entries[0].fileError == "the file changed while it was being verified")
+        #expect(unreadable.cache.entries.map(\.identity.name) == ["c.roadpack"])
+
+        // Steady identity (the production reader): verified and cached; then a hit.
+        let steady = RoadPackCatalog(urls: [a, c], cache: changed.cache)
+        #expect(steady.entries.map(\.isUsable) == [true, true] && !steady.entries[0].cacheHit && steady.entries[1].cacheHit)
+        #expect(steady.cache.verification(for: before)?.verified == true)
+    }
+
     @Test("Cache hit skips verification; a file re-written (new mtime or size) is verified again; the cache round-trips as JSON")
     func cacheByIdentity() throws {
         let scratch = try ScratchDirectory()

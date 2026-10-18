@@ -57,6 +57,40 @@ struct NavigationRun20Tests {
         #expect(speed[2] > 19.1, "speed \(speed[2]) m/s at 100 s")
     }
 
+    // MARK: R20.2-1 a macro step keeps each particle's learned offset
+
+    /// `learnedStaleSpeed`'s drive held at 25 m/s until 200 s; every input
+    /// is lost after 90 s (fixes end at 89 s) and the 110 s gap is caught
+    /// up in macro steps by one motion sample at 200 s. Returns the error
+    /// (m) at 200 s, N = 1000.
+    static func learnedStaleSpeedThroughMacro(seed: UInt64) throws -> Double {
+        let drive = S(initialHeadingDeg: 0, initialSpeed: 15, [
+            .straight(seconds: 30, speed: 15), .ramp(seconds: 60, from: 15, to: 25), .straight(seconds: 110, speed: 25),
+        ])
+        let clean = S.cleanFix(accuracy: 5, positionNoise: 0)
+        let events = drive.events(obdSpeed: { t, state in t < 30 ? (state.speed * 3.6).rounded(.down) : nil },
+                                  fix: { t, state, rng in t < 90 ? clean(t, state, &rng) : nil })
+            .filter { $0.timestamp.seconds <= 90.001 }
+        var engine = NavigationEngine(config: S.config(particles: 1000, seed: seed))
+        for input in S.inputs(events) { engine.ingest(input) }
+        let macroBefore = engine.counters.macroSteps
+        engine.ingest(NavigationB0Tests.motion(200))
+        #expect(macroBefore == 0 && engine.counters.macroSteps > 0, "macro steps \(engine.counters.macroSteps)")
+        return drive.error(try #require(engine.estimate(at: S.ms(200))), at: 200)
+    }
+
+    @Test("R20.2-1: a gap caught up in macro steps keeps the stale speed offsets the fixes taught (no re-pairing in macroStep)")
+    func macroStepKeepsLearnedSpeedOffsets() throws {
+        var error = 0.0
+        for seed in UInt64(1)...3 {
+            error += try Self.learnedStaleSpeedThroughMacro(seed: seed) / 3
+        }
+        // Review run 20, round 2: 923–937 m at HEAD; with the offsets
+        // re-paired (odd = −even) at the start of `macroStep`,
+        // 1064–1084 m (the cloud falls back towards the stale 15 m/s).
+        #expect(error < 1000, "error \(error) m at 200 s")
+    }
+
     // MARK: R20.1-2 M2: macro steps count as moving for R11.1-5
 
     /// 12 m/s north with clean fixes until 15 s and fresh OBD until 20 s;

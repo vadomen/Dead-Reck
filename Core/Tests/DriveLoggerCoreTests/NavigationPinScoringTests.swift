@@ -69,6 +69,18 @@ struct NavigationPinScoringTests {
                                             exclusions: [.init(t: 50.1)]).notScored[0]?.reason == .excluded)
     }
 
+    @Test("excludePins: an exclusion exactly halfway between two pins excludes the earlier one, whatever the input order")
+    func exclusionTieKeepsEarlier() {
+        // 50.05 s is 50 ms from both pins (exact in nanoseconds); window 0 so nothing folds.
+        let exclusion = [TruthFile.ExcludedPin(t: 50.05, reason: "tie")]
+        let inOrder = NavigationReplay.pinScoring(manualFixTimes: Self.times([50, 50.1]), pairWindowS: 0, exclusions: exclusion)
+        #expect(inOrder.notScored == [.init(reason: .excluded, note: "tie"), nil])
+        #expect(inOrder.unmatchedExclusions.isEmpty)
+        // The rule is by time, not input order: the earlier pin given second is still the one.
+        let reversed = NavigationReplay.pinScoring(manualFixTimes: Self.times([50.1, 50]), pairWindowS: 0, exclusions: exclusion)
+        #expect(reversed.notScored == [nil, .init(reason: .excluded, note: "tie")])
+    }
+
     @Test("Truth file: excludePins decodes; files without it still decode")
     func truthFileExcludePins() throws {
         let json = """

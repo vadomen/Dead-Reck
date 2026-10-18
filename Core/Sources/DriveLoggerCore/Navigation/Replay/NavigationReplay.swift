@@ -1385,22 +1385,6 @@ struct DistanceIntegrator {
     }
 }
 
-/// How often the truth lies inside the engine's 95 % ellipse: over every
-/// scored checkpoint (withheld clean fixes, manual-fix priors, truth points
-/// and end), and per checkpoint kind. A calibrated filter scores about 95 %;
-/// much lower means the ellipse is overconfident. With `withTruthSigma:
-/// false` (`consistency`) the truth's own σ is not added to the ellipse; with
-/// `withTruthSigma: true` (`consistencyWithTruthSigma`, the gated variant,
-/// Q3) it is: P + σ_truth² I, σ_truth frozen in replay code. A checkpoint
-/// that is not scored (`notScored`: a refinement pin, or one the truth file
-/// excludes; `afterScoreUntilT`: after the truth file's cutoff) is not
-/// counted.
-///
-/// **The one denominator (R13.1-8):** a checkpoint counts when it is scored
-/// and the engine had an estimate at its time (`inside95` set). One before
-/// initialisation has no ellipse and is in neither count. Every "inside
-/// 95 %" figure `replay_nav` prints, per kind included (the clean-fix line
-/// of the summary and `metrics.md`), is taken from here.
 /// The worst scored checkpoints of one kind (R19.1-2). The run's
 /// `maxErrorM` covers every kind together, so on a drive with pins it can
 /// be a pin's; the drives gated on their withheld clean fixes (drive-7,
@@ -1449,6 +1433,22 @@ public struct KindMaxError: Hashable, Sendable, Codable {
     }
 }
 
+/// How often the truth lies inside the engine's 95 % ellipse: over every
+/// scored checkpoint (withheld clean fixes, manual-fix priors, truth points
+/// and end), and per checkpoint kind. A calibrated filter scores about 95 %;
+/// much lower means the ellipse is overconfident. With `withTruthSigma:
+/// false` (`consistency`) the truth's own σ is not added to the ellipse; with
+/// `withTruthSigma: true` (`consistencyWithTruthSigma`, the gated variant,
+/// Q3) it is: P + σ_truth² I, σ_truth frozen in replay code. A checkpoint
+/// that is not scored (`notScored`: a refinement pin, or one the truth file
+/// excludes; `afterScoreUntilT`: after the truth file's cutoff) is not
+/// counted.
+///
+/// **The one denominator (R13.1-8):** a checkpoint counts when it is scored
+/// and the engine had an estimate at its time (`inside95` set). One before
+/// initialisation has no ellipse and is in neither count. Every "inside
+/// 95 %" figure `replay_nav` prints, per kind included (the clean-fix line
+/// of the summary and `metrics.md`), is taken from here.
 public struct EllipseConsistency: Hashable, Sendable, Codable {
     public struct Count: Hashable, Sendable, Codable {
         public var inside: Int

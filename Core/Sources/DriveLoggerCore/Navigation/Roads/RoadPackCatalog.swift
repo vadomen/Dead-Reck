@@ -193,12 +193,18 @@ public struct RoadPackCatalog: Sendable {
     public private(set) var cache: RoadPackVerificationCache
 
     public init(urls: [URL], cache old: RoadPackVerificationCache) {
+        self.init(urls: urls, cache: old, identityOf: RoadPackFileIdentity.init(contentsOf:))
+    }
+
+    /// `identityOf` reads a file's identity (production: the file system);
+    /// a test seam for the file changing during verification (R32.1-6).
+    init(urls: [URL], cache old: RoadPackVerificationCache, identityOf: (URL) throws -> RoadPackFileIdentity) {
         var cache = RoadPackVerificationCache()
         var entries: [Entry] = []
         for url in urls {
             let identity: RoadPackFileIdentity
             do {
-                identity = try RoadPackFileIdentity(contentsOf: url)
+                identity = try identityOf(url)
             } catch {
                 entries.append(Entry(url: url, identity: nil, verification: nil, cacheHit: false,
                                      fileError: "cannot read the file: \(error.localizedDescription)"))
@@ -217,7 +223,7 @@ public struct RoadPackCatalog: Sendable {
             }
             // A file copied in while it was verified: the result may not be
             // this file's; verify it again next time.
-            guard (try? RoadPackFileIdentity(contentsOf: url)) == identity else {
+            guard (try? identityOf(url)) == identity else {
                 entries.append(Entry(url: url, identity: identity, verification: nil, cacheHit: false,
                                      fileError: "the file changed while it was being verified"))
                 continue

@@ -336,10 +336,11 @@ struct NavigationReplayTests {
 extension NavigationReplayTests {
     /// `scenario()` (clean fixes 1 Hz, pin at 50 s, truth point at 70 s, end
     /// at the last input ~95 s) masked after 20 s, with `scoreUntilT`.
-    static func cutoffRun(_ scoreUntilT: Double?) -> ReplayResult {
+    static func cutoffRun(_ scoreUntilT: Double?, excludePins: [TruthFile.ExcludedPin]? = nil) -> ReplayResult {
         let (_, events, truth) = Self.scenario()
         var entry = truth
         entry.scoreUntilT = scoreUntilT
+        if let excludePins { entry.excludePins = excludePins }
         var options = ReplayOptions(gps: .maskAfter(seconds: 20), config: S.config(particles: 200))
         options.convergenceHoldS = cutoffHoldS
         return NavigationReplay.run(logName: "synthetic.jsonl.gz", inputs: NavigationReplay.inputs(from: events),
@@ -457,6 +458,10 @@ extension NavigationReplayTests {
         #expect(markdown.contains(" (\(cut.checkpointsAfterScoreUntil!) after scoreUntilT) |"))
         #expect(markdown.contains(" (after scoreUntilT, not scored) | | | | | | | | | |"), "the clean fixes after it, counted")
         #expect(markdown.contains("| cleanFix ×\(cleanAfter) (after scoreUntilT, not scored) |"))
+        // R27.3-2: the per-run "Scored until" line and the table footnote.
+        #expect(markdown.contains("Scored until t 69.9 s (truth scoreUntilT): \(cut.checkpointsAfterScoreUntil!) checkpoints after it listed, not scored (cleanFix "))
+        #expect(markdown.contains("\nWith a truth `scoreUntilT`, checkpoints after it are listed but not scored (no error, consistency or "
+            + "convergence figure counts them); a truth `end` after it is replaced by the last scored checkpoint (\\*).\n"))
 
         // metrics.json records the cutoff and the flags, and round-trips.
         let data = try ReplayReport.metricsJSON([ReplayMetrics(cut)])
@@ -488,6 +493,15 @@ extension NavigationReplayTests {
         #expect(summary.contains("1 manual fix: 0 scored, 0 refinements folded into pairs (pair window 3 s), 0 excluded by truth, 1 after scoreUntilT"))
         #expect(summary.contains("Pin estimate  t 50.0 s") && summary.contains("[after scoreUntilT, not scored]\n"))
         #expect(Self.engineOutput(beforePin) == Self.engineOutput(base))
+
+        // R27.3-2: a pin both excluded by truth and after the cutoff gives both reasons, joined.
+        let both = Self.cutoffRun(49.9, excludePins: [.init(t: 50, reason: "doubtful")])
+        let joined = "excluded by truth (doubtful), not scored; after scoreUntilT, not scored"
+        let bothPin = try #require(both.checkpoints.first { $0.kind == .manualFix })
+        #expect(bothPin.notScored?.reason == .excluded && bothPin.afterScoreUntilT == true)
+        #expect(bothPin.notScoredText == joined)
+        #expect(ReplayReport.summary(both).contains("[\(joined)]\n"))
+        #expect(ReplayReport.markdown([ReplayMetrics(both)]).contains("| manualFix (\(joined)) | 50.0 |"))
     }
 
     @Test("Cutoff after every checkpoint: every figure as without one; only scoreUntilT and the zero count are added")
