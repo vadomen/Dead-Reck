@@ -14,7 +14,7 @@ Hooks need `jq` (`brew install jq`) and use full Xcode automatically if `xcode-s
 | drive-analyst | Sonnet | field-log debrief | no |
 
 Skills: `elm327-protocol`, `ios-build-test`, `drive-log-debrief` (preloaded into the agents that need them), `review-loop` (`/review-loop <range>`).
-Hooks: after every edit -> incremental Core build + Foundation-only import check, XcodeGen reminders, no hand-edits of the .xcodeproj, recordings guard. On stop -> `cd Core && swift test` if Core changed. Before a `git commit` -> append-only guard: blocked if the commit removes more than 5 lines from `docs/REVIEW_LOG.md` or `docs/archive/**` (moving rows out of `docs/BACKLOG.md` is fine); only the user can override, with `APPEND_ONLY_OVERRIDE=1` in the shell that starts Claude Code (a command that names the variable is refused, so commit messages that mention it go through `git commit -F <file>`).
+Hooks: after every edit -> incremental Core build + Foundation-only import check, XcodeGen reminders, no hand-edits of the .xcodeproj, recordings guard. On stop -> `cd Core && swift test` if Core changed. Before any command with `git` and `commit` -> append-only guard: blocked if `docs/REVIEW_LOG.md` and `docs/archive/**` in the working tree have lost more than 5 lines against HEAD (text removed and not added back in them, staged or not; moving runs or rows unchanged into `docs/archive/`, and moving rows out of `docs/BACKLOG.md`, pass); only the user can override, with `APPEND_ONLY_OVERRIDE=1` in the shell that starts Claude Code (such a command that names the variable is refused, so commit messages that mention it go through `git commit -F <file>`, with the file written separately).
 
 Each of M2–M5 is self-contained: start it with **"Run Mx as in WORKFLOW.md"**.
 
