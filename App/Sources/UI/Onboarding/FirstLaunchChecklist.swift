@@ -68,7 +68,7 @@ struct FirstLaunchChecklistView: View {
             Button(action: onContinue) {
                 Text("Continue").font(.title2.bold()).frame(maxWidth: .infinity, minHeight: 64)
             }
-            .buttonStyle(.borderedProminent)
+            .prominentButton()
             .disabled(!canContinue)
             Text("You can see this again in Settings.")
                 .font(.footnote).foregroundStyle(.secondary)

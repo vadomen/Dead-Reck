@@ -182,7 +182,7 @@ struct ConsoleContent: View {
                     .submitLabel(.send)
                     .onSubmit { actions.send(nil) }
                 Button("Send") { actions.send(nil) }
-                    .buttonStyle(.borderedProminent)
+                    .prominentButton()
                     .disabled(!canSend)
             }
         }
@@ -202,7 +202,7 @@ struct ResultView: View {
             }
             if let onReinitialise {
                 Button("Re-initialise", systemImage: "arrow.clockwise", action: onReinitialise)
-                    .buttonStyle(.borderedProminent)
+                    .prominentButton()
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

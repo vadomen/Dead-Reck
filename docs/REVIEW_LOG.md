@@ -661,3 +661,17 @@ Tests at HEAD: unchanged since round 1 (docs only): Core 999 tests in 129 suites
 ### Run 62 summary
 
 2 rounds; 1 MAJOR fixed (R62.1-1, docs); 0 rejected; 1 MINOR deferred (R62.2-1). R61.1-4 and T61-1 closed by the range.
+
+## Run 63: R62.2-1 prominent buttons readable in dark mode (main..r62-accent-contrast: 00c58fe), started 2026-10-18
+
+### Round 1
+
+Reviewer: one fresh reviewer (sonnet; 40-line view-only change, run at user's "lite is fine" with full checks). No mutations (view-only). Checked WCAG ratios from the colorsets (dark: black on accent 9.42:1, was white 2.23:1; light: white 10.85:1), every `.borderedProminent` now through `.prominentButton()`, disabled state (grey label, reads disabled), label colour through `.font`/`.frame`, no `.tint` conflicts, privacy and docs.
+
+No findings.
+
+Tests at HEAD: App simulator `test` 407 tests in 58 suites passed; Core unchanged from main (999 tests in 129 suites passed, 36 known issues).
+
+### Run 63 summary
+
+1 round; 0 findings. R62.2-1 closed.
