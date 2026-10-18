@@ -27,11 +27,4 @@ struct AppNavigation: Equatable {
         self.tab = tab
         self.settingsPath = settingsPath
     }
-
-    /// The map's Start button: Settings, with Recording pushed. It starts
-    /// nothing itself; the checklist and Start live there.
-    mutating func openRecordingSettings() {
-        tab = .settings
-        settingsPath = [.recording]
-    }
 }

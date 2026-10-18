@@ -30,6 +30,9 @@ final class MapViewModel {
     /// The run (recording or Navigate session) the track belongs to.
     private(set) var currentRun: Int?
 
+    /// Identifies the run the track belongs to, for the map's heading reset.
+    var runKey: MapRunKey { MapRunKey(file: currentFile, run: currentRun) }
+
     /// When the latest fix arrived (stamped at ingest, not read from the
     /// recorder), for the stale-fix display.
     private(set) var lastFixInstant: ContinuousClock.Instant?

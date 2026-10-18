@@ -429,6 +429,10 @@ final class RecordingSession {
     /// Navigate mode (UX-1; see the type's doc and `NavigateState`). Always
     /// `.off` until `enableNavigate(_:)`.
     private(set) var navigateState: NavigateState = .off
+    /// When the current Navigate session began its still phase (UX-1 part 2:
+    /// the map's countdown is `stillCalibration` from here). Display only;
+    /// set at the session's start, nil when no session runs.
+    private(set) var navigateStartedAt: ContinuousClock.Instant?
 
     @ObservationIgnored private let link: any OBDLinkServicing
     @ObservationIgnored private let sources: [any SensorSource]
@@ -1500,6 +1504,9 @@ final class RecordingSession {
     /// counter, so Navigate, Record, Navigate each give a different value.
     var currentRunGeneration: Int? { currentRun?.generation }
 
+    /// Navigate's timings while it is enabled (the map's countdowns); nil when not.
+    var navigateTimings: NavigateConfiguration? { navigateConfiguration }
+
     /// The running Navigate session's generation (its feed's), for tests.
     var navigateGeneration: Int? { navigate?.generation }
 
@@ -1588,6 +1595,7 @@ final class RecordingSession {
         live.gpsSpeedKmh = nil
         live.referenceFix = nil
         navigateState = .calibrating
+        navigateStartedAt = .now
         onNavigationFeed?(RecordingNavigationFeed(
             generation: nav.generation, header: header, clock: clock, output: .navigateOnly, tap: navigationTap))
         replayStartupInit(nav)
@@ -1644,6 +1652,7 @@ final class RecordingSession {
         dropPendingManualFixes(nav)
         navigate = nil
         navigateState = .off
+        navigateStartedAt = nil
         live.gpsSpeedKmh = nil
         live.referenceFix = nil
     }

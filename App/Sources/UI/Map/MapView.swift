@@ -47,8 +47,6 @@ struct MapScreen: View {
     var isSelected: Bool
     /// Read once when the tab opens with no fix; the system's last position.
     var cachedLocation: @MainActor () -> CachedLocation?
-    /// Start was tapped: the app opens Settings, Recording.
-    var onStart: () -> Void = {}
     /// The roads warning was tapped: the app opens Settings (Diagnostics).
     var onOpenDiagnostics: () -> Void = {}
     var roadsWarning: RoadsWarningModel?
@@ -56,6 +54,11 @@ struct MapScreen: View {
     @State private var thermal = ProcessInfo.processInfo.thermalState
 
     var body: some View {
+        // Without OBD, Navigate shows the plain GPS position only (UX-1 (d)):
+        // no dead-reckoning dot or ellipse.
+        let status = NavigateStatus.make(
+            navigate: session.navigateState, recording: session.state, startedAt: session.navigateStartedAt,
+            timings: session.navigateTimings ?? NavigateConfiguration(), now: .now)
         GPSMapView(
             track: model.track,
             latest: model.latest,
@@ -71,13 +74,14 @@ struct MapScreen: View {
             manualFixes: model.drawnManualFixes(excluding: session.droppedManualFixIDs),
             pendingFixIDs: Set(session.pendingManualFixes.map(\.id)),
             manual: marking,
-            recordingFile: model.currentFile,
+            run: model.runKey,
             cachedLocation: cachedLocation,
-            navigation: navigation,
+            navigation: status.showsEstimate ? navigation : nil,
             showNavStats: $showNavStats,
             roadsWarning: roadsWarning?.message,
             onRoadsWarningTap: onOpenDiagnostics,
-            recordingControl: AnyView(MapRecordingButton(session: session, onStart: onStart, onStop: { [session] in await session.stop() }))
+            recordingControl: AnyView(MapRecordingButton(session: session, onStop: { [session] in await session.stop() })),
+            statusLine: AnyView(MapNavigateStatusLine(session: session))
         )
         .onReceive(NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)) { _ in
             thermal = ProcessInfo.processInfo.thermalState
@@ -219,7 +223,8 @@ struct GPSMapView: View {
     var pendingFixIDs: Set<Int> = []
     var manual: ManualFixMarking = .unavailable
     /// The recording the map shows.
-    var recordingFile: URL?
+    /// The run (recording or Navigate session) the track belongs to.
+    var run: MapRunKey?
     /// Last known system position, read when the tab opens with no fix.
     var cachedLocation: @MainActor () -> CachedLocation? = { nil }
     /// Live dead reckoning; nil in previews of the plain reference map.
@@ -231,6 +236,8 @@ struct GPSMapView: View {
     /// Start button or recording indicator, left of the map controls. A view
     /// of its own (it reads the recorder), so this view stays plain values.
     var recordingControl: AnyView?
+    /// Navigate's status line (UX-1), above the controls.
+    var statusLine: AnyView?
 
     @State private var position: MapCameraPosition = .automatic
     /// Visible north-south extent, metres, from the camera.
@@ -276,14 +283,15 @@ struct GPSMapView: View {
         bearing: Double? = nil, isStationary: Bool = false, manualFixes: [ConfirmedFix] = [],
         pendingFixIDs: Set<Int> = [],
         manual: ManualFixMarking = .unavailable,
-        recordingFile: URL? = nil,
+        run: MapRunKey? = nil,
         cachedLocation: @escaping @MainActor () -> CachedLocation? = { nil },
         initialToast: MapToast? = nil,
         navigation: NavigationFeed? = nil,
         showNavStats: Binding<Bool> = .constant(false),
         roadsWarning: String? = nil,
         onRoadsWarningTap: @escaping () -> Void = {},
-        recordingControl: AnyView? = nil
+        recordingControl: AnyView? = nil,
+        statusLine: AnyView? = nil
     ) {
         self.track = track
         self.latest = latest
@@ -299,13 +307,14 @@ struct GPSMapView: View {
         self.manualFixes = manualFixes
         self.pendingFixIDs = pendingFixIDs
         self.manual = manual
-        self.recordingFile = recordingFile
+        self.run = run
         self.cachedLocation = cachedLocation
         self.navigation = navigation
         self._showNavStats = showNavStats
         self.roadsWarning = roadsWarning
         self.onRoadsWarningTap = onRoadsWarningTap
         self.recordingControl = recordingControl
+        self.statusLine = statusLine
         self._toast = State(initialValue: initialToast)
     }
 
@@ -354,10 +363,12 @@ struct GPSMapView: View {
                 // A deadline that passed while away (screen off, other tab).
                 resumeIfDue()
             }
-            // Start: a toast from the previous recording would offer a dead Undo.
-            .onChange(of: recordingFile) {
+            // A new recording or Navigate session: a toast from the previous
+            // one would offer a dead Undo, and its heading must not turn the map.
+            .onChange(of: run) { old, new in
+                guard HeadingReset.isNewRun(from: old, to: new) else { return }
                 toast = nil
-                HeadingReset.newRecording(
+                HeadingReset.newRun(
                     smoother: &headingState.smoother, gate: &headingState.gate,
                     publishPending: &headingState.publishPending)
             }
@@ -432,6 +443,9 @@ struct GPSMapView: View {
         .overlay(alignment: .bottom) {
             VStack(alignment: .trailing, spacing: 8) {
                 // Above the fix toast and the controls: stacked, never overlapping.
+                if let statusLine {
+                    statusLine
+                }
                 if let roadsWarning {
                     roadsWarningView(roadsWarning)
                 }

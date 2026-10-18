@@ -93,8 +93,16 @@ enum FollowResumeLoop {
 /// When the heading smoother and write gate are cleared (M9.1-1/M9.1-2),
 /// pure so the rules are testable without the view.
 enum HeadingReset {
-    /// A new recording file: nothing of the last drive may turn the map.
-    static func newRecording(
+    /// Whether the run changed to a different one: a new recording or a new
+    /// Navigate session. `nil` (after Stop the model keeps the old key, so
+    /// nil only before the first run) never resets.
+    static func isNewRun(from old: MapRunKey?, to new: MapRunKey?) -> Bool {
+        guard let new, new.file != nil || new.run != nil else { return false }
+        return new != old
+    }
+
+    /// A new run: nothing of the last drive may turn the map.
+    static func newRun(
         smoother: inout HeadingSmoother, gate: inout HeadingWriteGate, publishPending: inout Bool
     ) {
         smoother = HeadingSmoother()
@@ -198,4 +206,12 @@ extension MapFraming {
     static let distancePerSpan = 1.87
 
     static func cameraDistance(spanMeters: Double) -> Double { spanMeters * distancePerSpan }
+}
+
+/// What identifies a run on the map: the recording's file and the session's
+/// run generation (one counter for recordings and Navigate sessions; a
+/// Navigate session has no file).
+struct MapRunKey: Equatable, Sendable {
+    var file: URL?
+    var run: Int?
 }
