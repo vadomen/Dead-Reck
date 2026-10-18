@@ -709,3 +709,13 @@ Reviewers: three parallel opus reviewers (A: Core + docs, B: App storage/library
 Tests before review: Core 1016 tests in 132 suites passed (36 known issues); release `NavigationRoadPerfTests|NavigationB0Tests` 9 tests in 2 suites passed; AppTests 436 tests in 65 suites passed.
 
 Round 1 outcome: R65.1-1 fixed (preview helper no longer DEBUG-only); Release and Debug simulator builds succeed; Core unchanged since the pre-review run.
+
+### Round 2
+
+Reviewer: one fresh sonnet reviewer on the fix commit (f5ea05f) plus a Release-only sweep of the range. Release simulator build verified; no other DEBUG-guarded symbol used outside its guard. No new findings.
+
+Tests at f5ea05f: AppTests 436 tests in 65 suites passed; Debug and Release simulator builds succeed; Core unchanged since round 1 (1016 tests in 132 suites passed, 36 known issues; release perf 9 tests in 2 suites passed).
+
+### Run 65 summary
+
+2 rounds; 1 MAJOR fixed (R65.1-1), 0 rejected, 3 MINOR deferred (R65.1-2, R65.1-3, R65.1-4).
