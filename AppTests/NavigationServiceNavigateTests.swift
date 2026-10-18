@@ -128,8 +128,8 @@ struct NavigationServiceNavigateTests {
         return (north * north + east * east).squareRoot()
     }
 
-    func library(_ dir: URL) -> RoadPackLibrary {
-        RoadPackLibrary(source: RoadPackLibrary.directorySource(dir), cacheURL: nil)
+    func library(_ dir: URL, cacheURL: URL?) -> RoadPackLibrary {
+        RoadPackLibrary(source: RoadPackLibrary.directorySource(dir), cacheURL: cacheURL)
     }
 
     /// A library whose every scan waits for `gate` (and passes it on), so
@@ -145,21 +145,40 @@ struct NavigationServiceNavigateTests {
 
     // MARK: No file
 
-    /// Every path under `root` (recursive), relative to it.
-    nonisolated static func listing(_ root: URL) -> Set<String> {
-        guard let walker = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil) else { return [] }
-        var out = Set<String>()
+    /// A file's size and modification time; nil for a directory (its
+    /// entries are listed themselves, so presence is all it adds).
+    struct Stamp: Equatable {
+        var size: Int?
+        var modified: Date?
+    }
+
+    /// Every path under `root` (recursive), relative to it, with its stamp.
+    nonisolated static func listing(_ root: URL) -> [String: Stamp] {
+        let keys: [URLResourceKey] = [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey]
+        guard let walker = FileManager.default.enumerator(at: root, includingPropertiesForKeys: keys) else { return [:] }
+        var out: [String: Stamp] = [:]
         let prefix = root.resolvingSymlinksInPath().path
         for case let url as URL in walker {
-            out.insert(String(url.resolvingSymlinksInPath().path.dropFirst(prefix.count)))
+            let values = try? url.resourceValues(forKeys: Set(keys))
+            let stamp = values?.isDirectory == true
+                ? Stamp() : Stamp(size: values?.fileSize, modified: values?.contentModificationDate)
+            out[String(url.resolvingSymlinksInPath().path.dropFirst(prefix.count))] = stamp
         }
         return out
     }
 
-    /// The app's file system as far as this run could touch it: Documents
-    /// and Application Support must not change at all (no test writes
-    /// there); anywhere in the container (temp included, where other suites
-    /// write concurrently) no new file may name this run's `sessionID`.
+    /// Paths created, modified (size or modification time) or removed
+    /// between two listings, sorted.
+    nonisolated static func changed(_ old: [String: Stamp], _ new: [String: Stamp]) -> [String] {
+        Set(old.keys).union(new.keys).filter { old[$0] != new[$0] }.sorted()
+    }
+
+    /// The app's file system as far as this run could touch it: in
+    /// Documents and Application Support nothing may appear, change or go
+    /// (no other test writes there; the tests that do hold
+    /// `FootprintLock`); anywhere in the container (temp included, where
+    /// other suites write concurrently) no new or modified file may name
+    /// this run's `sessionID`.
     struct Footprint {
         static let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
         let documents = listing(.documentsDirectory)
@@ -170,28 +189,167 @@ struct NavigationServiceNavigateTests {
         func writtenSince(sessionID: UUID) -> [String] {
             var found: [String] = []
             let now = Footprint()
-            found += now.documents.subtracting(documents).map { "Documents" + $0 }
-            found += now.support.subtracting(support).map { "Application Support" + $0 }
-            let id = Data(sessionID.uuidString.utf8), lower = Data(sessionID.uuidString.lowercased().utf8)
-            for path in now.all.subtracting(all) {
+            found += changed(documents, now.documents).map { "Documents" + $0 }
+            found += changed(support, now.support).map { "Application Support" + $0 }
+            for path in changed(all, now.all) where now.all[path] != nil {
                 let url = Self.home.appendingPathComponent(path)
                 guard let data = try? Data(contentsOf: url), data.count < 50_000_000 else { continue }
-                if data.range(of: id) != nil || data.range(of: lower) != nil { found.append(path) }
+                if !sessionIDTraces(in: data, sessionID).isEmpty { found.append(path) }
             }
             return found
         }
     }
 
+    /// The forms of `id` found in `data`: its string in any letter case,
+    /// with or without hyphens, and its 16 raw bytes.
+    nonisolated static func sessionIDTraces(in data: Data, _ id: UUID) -> [String] {
+        var found: [String] = []
+        let text = String(decoding: data, as: UTF8.self).lowercased()
+        let string = id.uuidString.lowercased()
+        if text.contains(string) { found.append("sessionID string") }
+        if text.contains(string.replacingOccurrences(of: "-", with: "")) { found.append("sessionID hex") }
+        if data.range(of: withUnsafeBytes(of: id.uuid) { Data($0) }) != nil { found.append("sessionID bytes") }
+        return found
+    }
+
+    // MARK: The real verification cache
+
+    /// The app's own verification cache (`RoadPackLibrary.defaultCacheURL()`,
+    /// what `makeDefault()` uses), set aside for one test: its bytes and
+    /// modification date are saved and the file removed, so the test's first
+    /// scan must write it afresh (`old == nil`, packs found); `restore()`
+    /// puts both back, or removes the file if there was none. Hold
+    /// `FootprintLock` for as long as it is set aside.
+    struct SetAsideCache {
+        let url: URL
+        private let saved: (data: Data, modified: Date?)?
+
+        init() throws {
+            url = RoadPackLibrary.defaultCacheURL()   // creates Application Support, before any Footprint
+            if FileManager.default.fileExists(atPath: url.path) {
+                let modified = try FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date
+                saved = (try Data(contentsOf: url), modified)
+                try FileManager.default.removeItem(at: url)
+            } else {
+                saved = nil
+            }
+        }
+
+        func restore() {
+            try? FileManager.default.removeItem(at: url)
+            guard let saved else { return }
+            try? saved.data.write(to: url, options: .atomic)
+            if let modified = saved.modified {
+                try? FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: url.path)
+            }
+        }
+    }
+
+    /// Latitudes and longitudes of `positions`, flattened.
+    static func coordinates(_ positions: [(latitude: Double, longitude: Double)]) -> [Double] {
+        positions.flatMap { [$0.latitude, $0.longitude] }
+    }
+
+    /// Everything in a verification cache file that could be about a drive:
+    /// a form of `sessionID`; a key named like a coordinate; a number equal
+    /// to one of `coordinates`, to it rounded to 4–6 decimals, or to its E7
+    /// integer; a string containing one printed exactly or to 4–6 decimals.
+    /// Roundings that come out 0 are skipped: a 0 says nothing, and the
+    /// cache has zeros of its own. The one exception is the pack's own
+    /// bounding box (`entries[].verification.bounds`, E7 keys): it comes
+    /// from the pack file, and `expectCacheIsPacksOnly` checks it equals
+    /// what a scan of the packs alone gives.
+    static func driveTraces(inCache data: Data, sessionID: UUID, coordinates: [Double]) -> [String] {
+        var found = sessionIDTraces(in: data, sessionID)
+        var numbers = Set<Double>(), strings = Set<String>()
+        for c in coordinates {
+            numbers.insert(c)
+            strings.insert("\(c)")
+            for decimals in 4...6 {
+                let scale = pow(10, Double(decimals)), rounded = (c * scale).rounded() / scale
+                guard rounded != 0 else { continue }
+                numbers.insert(rounded)
+                strings.insert(String(format: "%.\(decimals)f", c))
+            }
+            if (c * 1e7).rounded() != 0 { numbers.insert((c * 1e7).rounded()) }
+        }
+        let bounds: Set<String> = ["southLatE7", "westLonE7", "northLatE7", "eastLonE7"]
+        func walk(_ value: Any, _ path: String) {
+            switch value {
+            case let object as [String: Any]:
+                for (key, child) in object {
+                    let lower = key.lowercased()
+                    let coordinateLike = ["lat", "lon", "lng", "coord"].contains { lower.contains($0) }
+                    let packBounds = bounds.contains(key) && path.hasSuffix(".verification.bounds")
+                    if coordinateLike && !packBounds { found.append("key \(path).\(key)") }
+                    walk(child, "\(path).\(key)")
+                }
+            case let array as [Any]:
+                for (i, child) in array.enumerated() { walk(child, "\(path)[\(i)]") }
+            case let number as NSNumber:
+                // Within 1e-9 relative: JSONSerialization does not always
+                // parse a double back to the same bits (an exact
+                // coordinate slipped through a `==` check).
+                let n = number.doubleValue
+                if numbers.contains(where: { abs(n - $0) <= abs($0) * 1e-9 }) {
+                    found.append("number \(path) = \(number)")
+                }
+            case let string as String:
+                if strings.contains(where: { string.contains($0) }) { found.append("string \(path) = \(string)") }
+            default:
+                break
+            }
+        }
+        // A coordinate printed exactly, anywhere in the text (as JSONEncoder
+        // prints a Double).
+        let text = String(decoding: data, as: UTF8.self)
+        found += coordinates.map { "\($0)" }.filter { text.contains($0) }.map { "text \($0)" }
+        guard let json = try? JSONSerialization.jsonObject(with: data) else { return found + ["not JSON"] }
+        walk(json, "")
+        return found
+    }
+
+    /// The cache file at `url` exists, names exactly the packs in `packs`
+    /// (verified, with their content hashes), equals what a scan of those
+    /// files alone writes (verification timings aside), and holds nothing
+    /// of the drive (`driveTraces`).
+    static func expectCacheIsPacksOnly(_ url: URL, packs: URL, names: [String], sessionID: UUID,
+                                       coordinates: [Double], sourceLocation: SourceLocation = #_sourceLocation) {
+        guard let data = try? Data(contentsOf: url) else {
+            Issue.record("no verification cache at \(url.path)", sourceLocation: sourceLocation)
+            return
+        }
+        let cache = RoadPackVerificationCache(data: data)
+        #expect(cache.entries.map(\.identity.name) == names, sourceLocation: sourceLocation)
+        #expect(cache.entries.allSatisfy { $0.verification.verified && $0.verification.contentHash?.count == 16 },
+                "\(cache.entries)", sourceLocation: sourceLocation)
+        func untimed(_ c: RoadPackVerificationCache) -> [RoadPackVerificationCache.Entry] {
+            c.entries.map { var e = $0; e.verification.verifySeconds = 0; return e }
+        }
+        let packsOnly = RoadPackCatalog(urls: RoadPackLibrary.listing(packs), cache: RoadPackVerificationCache()).cache
+        #expect(cache.cacheVersion == packsOnly.cacheVersion && untimed(cache) == untimed(packsOnly),
+                "the cache is a function of the pack files", sourceLocation: sourceLocation)
+        #expect(driveTraces(inCache: data, sessionID: sessionID, coordinates: coordinates) == [],
+                sourceLocation: sourceLocation)
+    }
+
     // MARK: Tests
 
-    @Test("A Navigate feed writes nothing: no file or directory, estimates all the same, Finished has no sidecar")
+    @Test("A Navigate feed writes nothing but the packs' verification cache: estimates all the same, Finished has no sidecar")
     func navigateWritesNothing() async throws {
+        await FootprintLock.shared.acquire()
+        defer { FootprintLock.shared.release() }
         let dir = try RoadPackFixture.directory()
         defer { try? FileManager.default.removeItem(at: dir) }
         try RoadPackFixture.write(try RoadPackFixture.data(), named: "fixture.roadpack", in: dir)
+        // The app's real verification cache, set aside (removed) so the
+        // run's rescan must write it: the one file a Navigate run may write.
+        let cache = try SetAsideCache()
+        defer { cache.restore() }
+        #expect(!FileManager.default.fileExists(atPath: cache.url.path))
         let header = Self.header()
         let before = Footprint()
-        let service = NavigationService(flushInterval: .milliseconds(1), library: library(dir))
+        let service = NavigationService(flushInterval: .milliseconds(1), library: library(dir, cacheURL: cache.url))
         let (feed, tap) = Self.feed(1, header: header, sidecarIn: nil)
         #expect(feed.output == .navigateOnly && feed.sidecarURL == nil && feed.recordingURL == nil)
         let task = service.start(feed)
@@ -211,7 +369,13 @@ struct NavigationServiceNavigateTests {
         #expect(finished.sidecarFailure == nil, "no sidecar is not a failure")
         #expect(finished.inputs == events.count && finished.estimates >= 7)
         #expect(finished.sessionID == header.sessionID)
-        #expect(before.writtenSince(sessionID: header.sessionID) == [])
+        // One change in Documents and Application Support, the cache the
+        // scan rewrote; no new or modified file anywhere names the session.
+        #expect(before.writtenSince(sessionID: header.sessionID)
+                == ["Application Support/" + RoadPackLibrary.cacheFileName])
+        // It holds the pack and nothing of the drive (fixes at 1…6 s).
+        Self.expectCacheIsPacksOnly(cache.url, packs: dir, names: ["fixture.roadpack"], sessionID: header.sessionID,
+                                    coordinates: Self.coordinates((1...6).map { Self.position(Double($0)) }))
     }
 
     @Test("Navigate and Record runs of the same inputs and header give bit-identical estimates; the sidecar is Core's loop")
@@ -303,6 +467,8 @@ struct NavigationServiceNavigateTests {
 
     @Test("Roads attach mid-run without a sidecar, at the same input and with the same result as with one")
     func roadsAttachWithoutSidecar() async throws {
+        await FootprintLock.shared.acquire()
+        defer { FootprintLock.shared.release() }
         let scratch = try ScratchStore()
         defer { scratch.remove() }
         let dir = try RoadPackFixture.directory()
@@ -370,6 +536,47 @@ struct NavigationServiceNavigateTests {
         let written = before.writtenSince(sessionID: header.sessionID)
         #expect(written.allSatisfy { $0.contains(scratch.store.directory.lastPathComponent) }, "\(written)")
         #expect(written.count == 1, "the recording run's sidecar only: \(written)")
+    }
+}
+
+/// Held, one test at a time, by every test that compares a `Footprint` or
+/// writes the app's real verification cache (`SetAsideCache`). They live in
+/// different suites, which Swift Testing runs in parallel when parallel
+/// testing is on (`.serialized` orders only a suite's own tests; the
+/// DriveLogger scheme has the target `parallelizable = NO` today, so this
+/// guards against that changing): interleaved, one test's cache write and
+/// restore show in another's footprint and cache. An async mutex, not a
+/// blocking lock: the holders are main-actor tests that await.
+final class FootprintLock: Sendable {
+    static let shared = FootprintLock()
+
+    private let state = OSAllocatedUnfairLock<(held: Bool, waiters: [CheckedContinuation<Void, Never>])>(
+        initialState: (false, []))
+
+    func acquire() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let now = state.withLock { state -> Bool in
+                if state.held {
+                    state.waiters.append(continuation)
+                    return false
+                }
+                state.held = true
+                return true
+            }
+            if now { continuation.resume() }
+        }
+    }
+
+    /// Hands the lock to the next waiter, if any (it stays held).
+    func release() {
+        let next = state.withLock { state -> CheckedContinuation<Void, Never>? in
+            if state.waiters.isEmpty {
+                state.held = false
+                return nil
+            }
+            return state.waiters.removeFirst()
+        }
+        next?.resume()
     }
 }
 
