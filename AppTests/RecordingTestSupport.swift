@@ -258,6 +258,18 @@ final class IdleTimerSpy {
     func set(_ value: Bool) { values.append(value) }
 }
 
+extension RecordingNavigationFeed {
+    /// A recording feed's file; a Navigate feed fails the test (not a crash).
+    var requiredRecordingURL: URL {
+        get throws { try #require(recordingURL, "a recording feed") }
+    }
+
+    /// A recording feed's sidecar; a Navigate feed fails the test (not a crash).
+    var requiredSidecarURL: URL {
+        get throws { try #require(sidecarURL, "a recording feed") }
+    }
+}
+
 /// A temporary directory used as the session's `LogStore`.
 struct ScratchStore {
     let store: LogStore

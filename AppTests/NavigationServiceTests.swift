@@ -91,7 +91,7 @@ struct NavigationServiceTests {
         #expect(await service.snapshot(at: .zero) == .idle(at: .zero), "no recording: idle")
 
         for (index, feed) in harness.feeds.enumerated() {
-            let (comparison, contents) = try Self.asLiveComparison(recording: feed.recordingURL, sidecar: feed.sidecarURL)
+            let (comparison, contents) = try Self.asLiveComparison(recording: feed.requiredRecordingURL, sidecar: feed.requiredSidecarURL)
             #expect(contents.header.seed == NavigationSeed.derive(header: feed.header))
             #expect(contents.header.sessionID == feed.header.sessionID)
             #expect(contents.header.configHash == NavigationConfig(seed: contents.header.seed).hashHex)
@@ -125,14 +125,14 @@ struct NavigationServiceTests {
         _ = try #require(session.stageManualFix(latitude: pinLatitude, longitude: pinLongitude, tapT: tapT, mapSpanM: 240))
         try await Task.sleep(for: .milliseconds(1_200))
         // Mid-recording the sidecar holds at least the header (flushed at start).
-        let early = try NavSidecar.read(contentsOf: feed.sidecarURL)
+        let early = try NavSidecar.read(contentsOf: feed.requiredSidecarURL)
         #expect(early.header.sessionID == feed.header.sessionID)
         await session.stop()
         await harness.finished(0)
 
-        let data = try Data(contentsOf: feed.sidecarURL)
+        let data = try Data(contentsOf: feed.requiredSidecarURL)
         #expect(data.last == 0x0A, "closed after a whole line")
-        let (comparison, contents) = try Self.asLiveComparison(recording: feed.recordingURL, sidecar: feed.sidecarURL)
+        let (comparison, contents) = try Self.asLiveComparison(recording: feed.requiredRecordingURL, sidecar: feed.requiredSidecarURL)
         #expect(!contents.truncatedLastLine && contents.unrecognizedLines == 0)
         #expect(contents.estimates.count >= 2)
         #expect(contents.estimates.allSatisfy { $0.t.nanoseconds % 1_000_000_000 == 0 && $0.msPerStep != nil })
@@ -140,7 +140,7 @@ struct NavigationServiceTests {
         #expect(contents.pins.count == 1)
         #expect(pin.latitude == pinLatitude && pin.longitude == pinLongitude && pin.mapSpanM == 240)
         #expect(pin.prior != nil, "the engine was initialised by fixes before the pin")
-        let (_, events, _) = try RecordingFixtures.read(feed.recordingURL)
+        let (_, events, _) = try RecordingFixtures.read(feed.requiredRecordingURL)
         let fixT = events.first { if case .manualFix = $0.payload { true } else { false } }?.timestamp
         #expect(pin.t == fixT)
         #expect(pin.t == tapT, "the engine got the tap time, not the write time")
@@ -175,15 +175,15 @@ struct NavigationServiceTests {
         }
         // Ingested, estimates emitted, but the hour-long timer has not fired:
         // only the header (flushed at start) is on disk.
-        let before = try NavSidecar.read(contentsOf: feed.sidecarURL)
+        let before = try NavSidecar.read(contentsOf: feed.requiredSidecarURL)
         #expect(before.estimates.isEmpty)
         await service.flush()
-        let after = try NavSidecar.read(contentsOf: feed.sidecarURL)
+        let after = try NavSidecar.read(contentsOf: feed.requiredSidecarURL)
         #expect(after.estimates.map(\.t.seconds) == [1, 2, 3, 4])
         tap.finish()
         await harness.finished(0)
         // Everything the run emitted was already on disk.
-        #expect(try NavSidecar.read(contentsOf: feed.sidecarURL).estimates == after.estimates)
+        #expect(try NavSidecar.read(contentsOf: feed.requiredSidecarURL).estimates == after.estimates)
     }
 
     @Test("Going to the background flushes the sidecar with the log, inside the log's background task (R14.1-4)")
@@ -199,7 +199,7 @@ struct NavigationServiceTests {
         session.onFlush = { await service.flush() }
         try await session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
         let feed = try #require(harness.feeds.first)
-        func sidecarEstimates() -> Int { (try? NavSidecar.read(contentsOf: feed.sidecarURL))?.estimates.count ?? -1 }
+        func sidecarEstimates() -> Int { (try? NavSidecar.read(contentsOf: feed.requiredSidecarURL))?.estimates.count ?? -1 }
         #expect(await eventually(5) { session.live.referenceFix != nil })
         try await Task.sleep(for: .milliseconds(2_500))
         #expect(await service.snapshot().initialized)
@@ -271,7 +271,7 @@ struct NavigationServiceTests {
 
         tap.finish()
         await harness.finished(0)
-        let contents = try NavSidecar.read(contentsOf: feed.sidecarURL)
+        let contents = try NavSidecar.read(contentsOf: feed.requiredSidecarURL)
         #expect(contents.estimates.map(\.t.seconds) == [2, 3, 4])
         #expect(contents.estimates.allSatisfy { $0.droppedInputs == 92 })
         #expect(contents.droppedInputs == 92)

@@ -88,36 +88,81 @@ struct PendingManualFix: Hashable, Identifiable, Sendable {
     let sample: ManualFixSample
 }
 
-/// What a live consumer of navigation input needs about one recording (N4 A).
-/// Handed to `RecordingSession.onNavigationFeed` once per recording, at Start.
+/// What a live consumer of navigation input needs about one run (N4 A,
+/// UX-1): a recording (Record mode) or a Navigate run, which writes nothing.
+/// Handed to `RecordingSession.onNavigationFeed` once per run, at its start.
 ///
 /// `inputs` carries every `motion`, `location`, `obd` and `manualFix` event of
-/// this recording in file order (`LogSink`, "Tap"); it ends after the
-/// recording's writer has finished, once the buffered inputs are taken.
-/// Single consumer. If the consumer falls `NavigationTap.defaultBufferLimit`
-/// inputs behind, the oldest are dropped and counted in `droppedInputs`; the
-/// log itself never loses a row to the tap.
+/// the run in the order the sink saw them (`LogSink`, "Tap": a recording's
+/// file order); it ends once the run's sink has finished (for a recording:
+/// its writer) and the buffered inputs are taken. Single consumer. If the
+/// consumer falls `NavigationTap.defaultBufferLimit` inputs behind, the
+/// oldest are dropped and counted in `droppedInputs`; a log never loses a
+/// row to the tap.
+///
+/// The two kinds differ only in `output`: the engine is fed the same way
+/// (same seed from `header.sessionID`, same inputs in the same order), so
+/// the same sources give bit-identical estimates in both.
 struct RecordingNavigationFeed: Sendable {
-    /// The recording this feed belongs to (`ActiveRecording.generation`).
+    /// Where a run's files go.
+    enum Output: Sendable, Hashable {
+        /// Record: the `.jsonl.gz` being written and where its navigation
+        /// sidecar goes (`LogStore.navSidecarURL(for:)`);
+        /// `NavigationService` (N4 B) writes the sidecar.
+        case recording(recordingURL: URL, sidecarURL: URL)
+        /// Navigate (UX-1): no recording and no sidecar; the service creates
+        /// no file and no directory for this run.
+        case navigateOnly
+    }
+
+    /// The run this feed belongs to. Unique across every feed handed to one
+    /// `NavigationService`, recordings and Navigate runs alike: the service
+    /// keys its runs by it, and two runs can overlap while one drains.
     let generation: Int
-    /// The header handed to the writer (seed: `sessionID`). Encodes to the
-    /// file's first line; `startedAt` here still has the sub-second part the
-    /// file's ISO 8601 date drops.
+    /// The run's header (seed: `sessionID`). For a recording, the header
+    /// handed to the writer, which encodes it to the file's first line
+    /// (`startedAt` here still has the sub-second part the file's ISO 8601
+    /// date drops); in Navigate, built the same way and never written.
     let header: LogHeader
-    /// The recording's one clock: every input's `t` is on it.
+    /// The run's one clock: every input's `t` is on it.
     let clock: SessionClock
-    /// The `.jsonl.gz` being written.
-    let recordingURL: URL
-    /// Where this recording's navigation sidecar goes
-    /// (`LogStore.navSidecarURL(for:)`); `NavigationService` (N4 B) writes it.
-    let sidecarURL: URL
+    let output: Output
     /// The tap behind `inputs`.
     let tap: NavigationTap
     /// Writes the `roadPacks` lifecycle row with this `detail` if the
     /// recording is still running; called by the navigation service when
     /// its library scan finishes. Does nothing after Stop and after the
-    /// first call. Default: no-op (feeds built without a session).
+    /// first call. Default: no-op (feeds built without a session, and
+    /// Navigate runs: no recording, no row).
     var recordRoadPacks: @Sendable (String) -> Void = { _ in }
+
+    init(generation: Int, header: LogHeader, clock: SessionClock, output: Output, tap: NavigationTap,
+         recordRoadPacks: @escaping @Sendable (String) -> Void = { _ in }) {
+        self.generation = generation
+        self.header = header
+        self.clock = clock
+        self.output = output
+        self.tap = tap
+        self.recordRoadPacks = recordRoadPacks
+    }
+
+    /// A recording's feed: `output` is `.recording(recordingURL:sidecarURL:)`.
+    init(generation: Int, header: LogHeader, clock: SessionClock, recordingURL: URL, sidecarURL: URL,
+         tap: NavigationTap, recordRoadPacks: @escaping @Sendable (String) -> Void = { _ in }) {
+        self.init(generation: generation, header: header, clock: clock,
+                  output: .recording(recordingURL: recordingURL, sidecarURL: sidecarURL), tap: tap,
+                  recordRoadPacks: recordRoadPacks)
+    }
+
+    /// The `.jsonl.gz` being written; nil in Navigate.
+    var recordingURL: URL? {
+        if case .recording(let url, _) = output { url } else { nil }
+    }
+
+    /// Where the navigation sidecar goes; nil in Navigate (none is written).
+    var sidecarURL: URL? {
+        if case .recording(_, let url) = output { url } else { nil }
+    }
 
     var inputs: AsyncStream<NavigationInput> { tap.inputs }
     /// Inputs dropped so far because the consumer fell behind.

@@ -56,6 +56,7 @@
 		81F5EBBAA98312994EF58596 /* NavigationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B18D429E4AABA5D1F5FC2F96 /* NavigationService.swift */; };
 		82891859E116200BA6C5A457 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86A02542CBEAAABFB5818C05 /* SettingsView.swift */; };
 		877A22BD2347363272765DC5 /* MotionSources.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3E3CAE3C8FF82BB7ADEA4E5 /* MotionSources.swift */; };
+		89EB1F3B0F2B6E6020F824D1 /* NavigationServiceNavigateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B39D06A2ABBC27C741D74CCB /* NavigationServiceNavigateTests.swift */; };
 		8B0089338F96B96E3F665026 /* ConsoleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9265F3575667230ECE67A93 /* ConsoleView.swift */; };
 		9703F9AAE2A112783A148671 /* DriveLoggerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38660F590E620FC9E95617BC /* DriveLoggerApp.swift */; };
 		978340FB408CAA88EEC5B0A2 /* NavigationFeed.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CEF883B97D59B155B858636 /* NavigationFeed.swift */; };
@@ -152,6 +153,7 @@
 		B03770A2F4197C0EC3E1CACE /* RecordingTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingTestSupport.swift; sourceTree = "<group>"; };
 		B18D429E4AABA5D1F5FC2F96 /* NavigationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NavigationService.swift; sourceTree = "<group>"; };
 		B1995CA170A05E96A1DA0885 /* RecordingViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingViewModel.swift; sourceTree = "<group>"; };
+		B39D06A2ABBC27C741D74CCB /* NavigationServiceNavigateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NavigationServiceNavigateTests.swift; sourceTree = "<group>"; };
 		B3E3CAE3C8FF82BB7ADEA4E5 /* MotionSources.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MotionSources.swift; sourceTree = "<group>"; };
 		B53946399BBD92F429878756 /* DisplayFormat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayFormat.swift; sourceTree = "<group>"; };
 		B5487E70F68E5078A7332C59 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
@@ -216,6 +218,7 @@
 				81484511F34B0A4E437C7239 /* MapSpeedTests.swift */,
 				E10D65817793B02936D47090 /* MapTrackTests.swift */,
 				405DDC15D444E14982ABE749 /* NavigationFeedTests.swift */,
+				B39D06A2ABBC27C741D74CCB /* NavigationServiceNavigateTests.swift */,
 				637DF8CB01E9F26F79D3563B /* NavigationServiceRoadsTests.swift */,
 				C06C7BF25C0632C6C10B1222 /* NavigationServiceTests.swift */,
 				4757331FF2FA81D7AC0192A2 /* OBDLinkServiceTests.swift */,
@@ -545,6 +548,7 @@
 				E2D706B12EA35B46C0814BC5 /* MapSpeedTests.swift in Sources */,
 				FC673B69DBDB4E4311B6B23C /* MapTrackTests.swift in Sources */,
 				5EC1979BE339D4AFC4791413 /* NavigationFeedTests.swift in Sources */,
+				89EB1F3B0F2B6E6020F824D1 /* NavigationServiceNavigateTests.swift in Sources */,
 				665B29E7FECB248FAA85AE34 /* NavigationServiceRoadsTests.swift in Sources */,
 				E3A034DD4E4F285512F443AD /* NavigationServiceTests.swift in Sources */,
 				9D68BF8B1CC07439C59B8590 /* OBDLinkServiceTests.swift in Sources */,

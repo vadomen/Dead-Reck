@@ -107,7 +107,7 @@ private let previewBad = RoadPackLibrary.PackStatus(
         thermal: .nominal,
         roads: RoadsDiagnostics(
             library: .init(packs: [previewPack, previewBad], scansCompleted: 1),
-            roads: .init(recording: true, packNames: ["region.roadpack"], packHashPrefixes: ["a1b2c3d4"],
+            roads: .init(active: true, packNames: ["region.roadpack"], packHashPrefixes: ["a1b2c3d4"],
                          roadSetHashPrefix: "0f0f0f0f", activeAtSessionS: 12, onRoadShare: 0.93),
             footprintBytes: 210_000_000)
     ) { Text("Recording") } console: { Text("Console") }
