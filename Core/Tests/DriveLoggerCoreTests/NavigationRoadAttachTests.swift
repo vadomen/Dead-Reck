@@ -166,6 +166,33 @@ struct NavigationRoadAttachTests {
         #expect(majorDiffersFromMinor)
     }
 
+    /// R32.4-5: `ingest` clears `newSelectionRequest` before the time-jump
+    /// guard, so a rejected input right after a request leaves none pending
+    /// (else the app would select the same circle a second time).
+    @Test("(a3) A rejected time jump right after a selection request leaves no new request; the selector is not asked again")
+    func rejectedInputClearsNewRequest() throws {
+        let inputs = Self.inputs()
+        var run = LiveNavigationRun(sessionID: Self.sessionID, config: Self.config(), appBuild: "test")
+        var asked: [RoadSelectionRequest] = []
+        var index = 0
+        while run.newSelectionRequest == nil {
+            try #require(index < inputs.count)
+            run.ingest(inputs[index], selectRoads: { asked.append($0); return nil }) { _ in }
+            index += 1
+        }
+        let raised = try #require(run.newSelectionRequest)
+        #expect(asked == [raised] && run.selectionRequest == raised)
+        // An implausible forward jump: rejected and counted, nothing else.
+        let jump = NavigationLiveTests.motion(1e9)
+        #expect(!run.engine.accepts(jump))
+        run.ingest(jump, selectRoads: { asked.append($0); return nil }) { _ in Issue.record("a rejected input emits nothing") }
+        #expect(run.engine.counters.inputsRejectedTimeJump == 1 && run.inputs == index + 1)
+        #expect(run.newSelectionRequest == nil, "a rejected input raises no request")
+        #expect(asked == [raised], "the selector is not asked again for the same circle")
+        // The rule's latest request is unchanged.
+        #expect(run.selectionRequest == raised)
+    }
+
     // MARK: (b) attach after k inputs
 
     @Test("(b) Attach after k inputs: every line before the attach is the no-roads run's; the engine state there too")

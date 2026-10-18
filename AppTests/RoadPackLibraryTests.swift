@@ -11,10 +11,14 @@ import Testing
 enum RoadPackFixture {
     /// A one-road pack around (0.001, 0.002) degrees. A different
     /// `cellSizeM` gives a different grid, so two such packs cannot be
-    /// combined.
-    static func data(cellSizeM: Double = 64, osmTimestamp: Int64 = 1_700_000_000, latShiftE7: Int32 = 0) throws -> Data {
+    /// combined. A `searchRadiusM` under the config's `roadSearchRadiusM`
+    /// (50 m) gives a pack a running engine refuses to attach
+    /// (`configWouldChange`).
+    static func data(cellSizeM: Double = 64, osmTimestamp: Int64 = 1_700_000_000, latShiftE7: Int32 = 0,
+                     searchRadiusM: Double = RoadGrid.defaultSearchRadiusM) throws -> Data {
         let grid = RoadGrid(southWest: RoadPoint(latE7: latShiftE7 - 100_000, lonE7: -100_000),
-                            northEast: RoadPoint(latE7: latShiftE7 + 100_000, lonE7: 100_000), cellSizeM: cellSizeM)
+                            northEast: RoadPoint(latE7: latShiftE7 + 100_000, lonE7: 100_000), cellSizeM: cellSizeM,
+                            searchRadiusM: searchRadiusM)
         let graph = RoadGraph(edges: [RoadGraph.Edge(
             fromNode: 1, toNode: 2,
             points: [RoadPoint(latE7: latShiftE7, lonE7: 0), RoadPoint(latE7: latShiftE7 + 10_000, lonE7: 20_000),
