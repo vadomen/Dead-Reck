@@ -621,3 +621,17 @@ Reviewer: one fresh reviewer (opus). Mutation: author's `SensorSource.swift show
 | R61.1-4 | MINOR | Decision (d) says the map shows the plain GPS position without OBD, but with Navigate off and no earlier run no location source runs: the map shows no position dot, the cached location only frames the camera. | DEFERRED | User decision: run the location source for display only while off, or amend (d). BACKLOG row R61.1-4. |
 
 Tests at 1d12c3c: `cd Core && swift test` 999 tests in 129 suites passed (36 known issues); App simulator `test` 397 tests in 57 suites passed. At 66f7ed5: App 400 tests in 57 suites passed; Core unchanged since 1d12c3c.
+
+### Round 2
+
+Reviewer: one fresh reviewer (opus). Whole range, focus on 33f73de and 66f7ed5. Mutation: author's `SimulatedLocationSource.show` callback removed, killed by `displayCallback`. No engine input path touched. No BLOCKER or MAJOR.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R61.2-1 | MINOR | `docs/PLAN.md:255-257`: the UX-3 device checks still described the removed map Start button ("Start opens Settings, Recording", "the indicator turns back into Start") and the old row name "Recording", contradicting UX-1 part 2 item 3. | FIXED | In this ledger commit: UX-3 items 2–4 reworded (row "Test drive recording", no Start, the indicator disappears after Stop). A one-line docs fix to stale wording this range caused. |
+
+Tests at 66f7ed5 (unchanged by round 2, docs only): `cd Core && swift test` 999 tests passed (36 known issues); App simulator `test` 400 tests in 57 suites passed.
+
+### Run 61 summary
+
+2 rounds; 1 MAJOR fixed (R61.1-1); 3 MINOR fixed (R61.1-2, R61.1-3, R61.2-1), 1 deferred (R61.1-4, user decision on (d)), 0 rejected; T61-1 (pre-existing flaky Core test) logged.
