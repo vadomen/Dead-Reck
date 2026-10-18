@@ -2,9 +2,9 @@ import DriveLoggerCore
 import Foundation
 import Observation
 
-/// State of the Map tab. Consumes the recorder's own reference fix
-/// (`RecordingSession.live.referenceFix`); it owns no location manager and
-/// writes nothing.
+/// State of the Map tab. Consumes the recorder's own reference fix as it
+/// arrives (`RecordingSession.latestFix`, R24.1-1); it owns no location
+/// manager and writes nothing.
 @MainActor
 @Observable
 final class MapViewModel {

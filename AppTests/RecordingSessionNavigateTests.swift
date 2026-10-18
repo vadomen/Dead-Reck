@@ -107,6 +107,13 @@ final class FeedTee {
     }
 }
 
+/// What `mapFixOnArrival` saw from inside a recording's Stop.
+@MainActor
+final class LateFixProbe {
+    var state: RecordingState?
+    var fix: LocationSample?
+}
+
 /// One session on a `FakeLink` and a `ScriptedSource`, its uptime on the
 /// script's clock, and the drive the test feeds it.
 @MainActor
@@ -732,6 +739,68 @@ struct RecordingSessionNavigateTests {
         await rig.session.stop()
         #expect(location.startedWithBackgroundLocation == [false, true, false])
         rig.session.disableNavigate()
+    }
+
+    @Test("Map fix on arrival (R24.1-1): latestFix takes each fix as the source shows it, in Navigate and Record, without the 1 s live tick; never a fix of an ended run")
+    func mapFixOnArrival() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let location = FakeReferenceFixSource(name: "fakeLocation")
+        let rig = NavigateRig(store: scratch.store, extraSources: [location])
+        await rig.connect(speed: 0)
+        rig.session.enableNavigate(Self.quick)
+        #expect(rig.session.latestFix == nil)
+
+        // No suspension between the fix and the checks: the live timer
+        // cannot run, so only on-arrival delivery can set `latestFix`.
+        let first = location.fix(speed: 14)
+        location.show(first)
+        #expect(rig.session.latestFix == first)
+        #expect(rig.session.live.referenceFix == nil, "not via the live tick")
+        let second = location.fix(speed: 15)
+        location.show(second)
+        #expect(rig.session.latestFix == second)
+        // The 1 s copy for the manual-fix gate still comes from the tick.
+        #expect(await eventually(3) { rig.session.live.referenceFix == second })
+
+        // Record: the same path; its start clears what Navigate showed.
+        let navigateCallback = try #require(location.onReferenceFix)
+        try await rig.session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
+        #expect(rig.session.latestFix == nil)
+        navigateCallback(first)
+        #expect(rig.session.latestFix == nil, "a late fix of the ended Navigate run")
+        let recorded = location.fix(speed: 16)
+        location.show(recorded)
+        #expect(rig.session.latestFix == recorded)
+        let recordCallback = try #require(location.onReferenceFix)
+        // A fix shown while Stop is in progress (sources stopped, the
+        // recording not yet finished) is not taken either.
+        let late = location.fix(speed: 30)
+        let seen = LateFixProbe()
+        location.onStop = { [session = rig.session] in
+            Task { @MainActor in
+                recordCallback(late)
+                seen.state = session.state
+                seen.fix = session.latestFix
+            }
+        }
+        await rig.session.stop()
+        location.onStop = nil
+        #expect(seen.state == .stopping)
+        #expect(seen.fix == recorded, "the late fix is dropped during Stop")
+        #expect(rig.session.latestFix == nil)
+        recordCallback(recorded)
+        #expect(rig.session.latestFix == nil, "a late fix of the ended recording")
+
+        // Back in Navigate: delivered again; nothing once Navigate is off.
+        let again = location.fix(speed: 17)
+        location.show(again)
+        #expect(rig.session.latestFix == again)
+        let lastCallback = try #require(location.onReferenceFix)
+        rig.session.disableNavigate()
+        #expect(rig.session.latestFix == nil)
+        lastCallback(again)
+        #expect(rig.session.latestFix == nil, "no run is live")
     }
 
     @Test("Without enableNavigate the session is Record-only: polling starts nothing")

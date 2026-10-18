@@ -114,8 +114,9 @@ extension MapScreen {
 }
 
 /// Invisible feed from the recorder to the map model. It is the only view
-/// that observes `session.live`, so the 16 Hz OBD updates re-run just this
-/// trivial body and not the tab hierarchy.
+/// that observes `session.live` and `session.latestFix`, so the 16 Hz OBD
+/// updates and each fix re-run just this trivial body and not the tab
+/// hierarchy.
 struct MapFeed: View {
     let session: RecordingSession
     let model: MapViewModel
@@ -133,7 +134,8 @@ struct MapFeed: View {
                     try? await Task.sleep(for: .milliseconds(500))
                 }
             }
-            .onChange(of: session.live.referenceFix) { _, fix in
+            // Each fix as it arrives (R24.1-1), not on the 1 s live tick.
+            .onChange(of: session.latestFix) { _, fix in
                 model.ingest(
                     fix, file: session.currentFile, run: session.currentRunGeneration,
                     isActive: scenePhase == .active, elapsed: runElapsed
@@ -142,7 +144,7 @@ struct MapFeed: View {
             // A new Start resets the track before its first fix arrives.
             .onChange(of: session.currentRunGeneration) { _, run in
                 model.ingest(
-                    session.live.referenceFix, file: session.currentFile, run: run,
+                    session.latestFix, file: session.currentFile, run: run,
                     isActive: scenePhase == .active, elapsed: runElapsed
                 )
             }
@@ -150,7 +152,7 @@ struct MapFeed: View {
                 // Pick up a change missed while inactive.
                 if phase == .active {
                     model.ingest(
-                        session.live.referenceFix, file: session.currentFile,
+                        session.latestFix, file: session.currentFile,
                         run: session.currentRunGeneration, isActive: true, elapsed: runElapsed
                     )
                 }

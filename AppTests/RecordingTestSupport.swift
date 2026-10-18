@@ -150,7 +150,15 @@ final class FakeLocationSource: FakeBackgroundSource, LocationAuthorizationRepor
 @MainActor
 final class FakeReferenceFixSource: FakeSource, LiveReferenceFixReporting {
     var latestReferenceFix: LocationSample?
+    var onReferenceFix: (@MainActor (LocationSample) -> Void)?
     private(set) var clock: SessionClock?
+
+    /// What the real sources do when a fix arrives: show it, then call
+    /// `onReferenceFix` with it, synchronously.
+    func show(_ fix: LocationSample) {
+        latestReferenceFix = fix
+        onReferenceFix?(fix)
+    }
 
     override func start(clock: SessionClock, sink: LogSink) throws {
         self.clock = clock

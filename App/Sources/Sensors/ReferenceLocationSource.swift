@@ -78,6 +78,9 @@ final class ReferenceLocationSource: SensorSource, LiveReferenceFixReporting, Ba
     /// The most recent fix, for the dashboard only. Never written anywhere
     /// and never an input.
     private(set) var latestReferenceFix: LocationSample?
+    /// Called on the main actor with each fix as `latestReferenceFix` takes
+    /// it (`LiveReferenceFixReporting`). Display only.
+    var onReferenceFix: (@MainActor (LocationSample) -> Void)?
 
     private let manager: CLLocationManager
     /// Internal for tests (`handleFailure(_:authorization:)`).
@@ -136,7 +139,11 @@ final class ReferenceLocationSource: SensorSource, LiveReferenceFixReporting, Ba
         }
         let gate = SampleGate(source: name, clock: clock, sink: sink)
         delegate.begin(gate: gate) { [weak self] fix in
-            Task { @MainActor in self?.latestReferenceFix = fix }
+            Task { @MainActor in
+                guard let self else { return }
+                self.latestReferenceFix = fix
+                self.onReferenceFix?(fix)
+            }
         }
         manager.desiredAccuracy = kCLLocationAccuracyBest
         manager.distanceFilter = kCLDistanceFilterNone
@@ -182,13 +189,18 @@ final class ReferenceLocationSource: SensorSource, LiveReferenceFixReporting, Ba
 }
 
 /// A source that can show its latest reference fix on the dashboard
-/// (`RecordingSession.live.gpsSpeedKmh`). Display only: the fix is a copy
-/// of one already handed to the sink, never written again and never an
-/// input. `ReferenceLocationSource` on a phone; Core's
+/// (`RecordingSession.live.gpsSpeedKmh`) and the map. Display only: the fix
+/// is a copy of one already handed to the sink, never written again and
+/// never an input. `ReferenceLocationSource` on a phone; Core's
 /// `SimulatedLocationSource` in simulator builds (M2-S2).
 @MainActor
 protocol LiveReferenceFixReporting: AnyObject {
+    /// Polled once a second by the session (`live.referenceFix`).
     var latestReferenceFix: LocationSample? { get }
+    /// Called on the main actor with each fix as `latestReferenceFix` takes
+    /// it, so the map gets a fix on arrival (R24.1-1). Set by
+    /// `RecordingSession` before each start.
+    var onReferenceFix: (@MainActor (LocationSample) -> Void)? { get set }
 }
 
 /// A source whose running keeps the app executing while the phone is locked

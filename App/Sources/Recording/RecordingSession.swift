@@ -59,7 +59,8 @@ struct LiveStatus: Hashable, Sendable {
     /// speed.
     var gpsSpeedKmh: Double?
     /// The latest reference fix, while recording or navigating (UX-1; for
-    /// the Map tab and the manual-fix gate). Display
+    /// the manual-fix gate; the Map tab reads `RecordingSession.latestFix`,
+    /// set on arrival, R24.1-1). Display
     /// only: never written and never an input. Same source, 1 Hz cadence and
     /// nil rules as `gpsSpeedKmh` — nil when not recording and before the
     /// first fix. Unlike `gpsSpeedKmh` it is the whole fix, kept even when
@@ -376,6 +377,16 @@ struct RecordingNavigationFeed: Sendable {
 final class RecordingSession {
     private(set) var state: RecordingState = .idle
     private(set) var live = LiveStatus()
+    /// The latest reference fix of the live run (recording or Navigate), set
+    /// the moment a `LiveReferenceFixReporting` source shows it — on
+    /// arrival, not on the 1 s `live` tick (R24.1-1). **For the Map tab
+    /// only**: never written, never an input, and the manual-fix gate keeps
+    /// reading `live.referenceFix`. Set from the source's own display hook,
+    /// after the fix went to the sink, so nothing that reaches the sink or
+    /// the navigation tap changes. Its own property, outside `live`, so a fix
+    /// re-renders only views that read it. nil when no run is live, and from
+    /// a run's start until its first fix.
+    private(set) var latestFix: LocationSample?
     /// The file being written, nil when no recording is active.
     private(set) var currentFile: URL?
     /// How the last recording ended through `stop`, for the UI ("Stopped:
@@ -664,6 +675,7 @@ final class RecordingSession {
         // `obdSpeedT` names an `obd` row, and pre-Start readings aren't in
         // this file. The recording's first reading sets it again.
         live = LiveStatus(obdSpeedKmh: nil, obdHz: live.obdHz, availableDiskBytes: nil)
+        latestFix = nil
         obdSpeedUptime = nil
         state = .calibrating
         updateIdleTimer()
@@ -1142,6 +1154,12 @@ final class RecordingSession {
             if let configurable = source as? any BackgroundLocationConfigurable {
                 configurable.holdsBackgroundLocation = rec.holdsBackgroundLocation
             }
+            if let reporting = source as? any LiveReferenceFixReporting {
+                let generation = rec.generation
+                reporting.onReferenceFix = { [weak self] fix in
+                    self?.referenceFixArrived(fix, generation: generation)
+                }
+            }
             do {
                 try source.start(clock: rec.clock, sink: rec.sink)
                 rec.startedSources.append(source)
@@ -1218,6 +1236,14 @@ final class RecordingSession {
         updateLiveReferenceFix()
         let bytes = await rec.writer.bytesWritten
         if recording === rec { live.fileBytes = bytes }
+    }
+
+    /// A source showed `fix` (R24.1-1): the map's `latestFix`, if it belongs
+    /// to the live run and that run's sources still run. A fix shown late,
+    /// after its run stopped its sources or ended, is dropped. Display only.
+    private func referenceFixArrived(_ fix: LocationSample, generation: Int) {
+        guard let run = currentRun, run.generation == generation, !run.startedSources.isEmpty else { return }
+        latestFix = fix
     }
 
     /// `live.gpsSpeedKmh` and `live.referenceFix` from the sources, once a
@@ -1330,6 +1356,7 @@ final class RecordingSession {
         currentFile = nil
         live.gpsSpeedKmh = nil
         live.referenceFix = nil
+        latestFix = nil
         startNavigateIfPossible()
         updateIdleTimer()
         refreshBackgroundRisk()
@@ -1594,6 +1621,7 @@ final class RecordingSession {
         obdSpeedUptime = nil
         live.gpsSpeedKmh = nil
         live.referenceFix = nil
+        latestFix = nil
         navigateState = .calibrating
         navigateStartedAt = .now
         onNavigationFeed?(RecordingNavigationFeed(
@@ -1655,6 +1683,7 @@ final class RecordingSession {
         navigateStartedAt = nil
         live.gpsSpeedKmh = nil
         live.referenceFix = nil
+        latestFix = nil
     }
 
     // MARK: - Formatting
