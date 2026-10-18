@@ -54,8 +54,8 @@ root=$(repo_root "$dir") || root=$(repo_root "${cwd:-.}") || exit 0
 lost=$( {
   git -C "$root" diff HEAD -U0 --no-renames --no-color -- docs/REVIEW_LOG.md docs/archive 2>/dev/null
   git -C "$root" ls-files -z --others --exclude-standard -- docs/archive 2>/dev/null |
-    while IFS= read -r -d '' f; do sed 's/^/+/' "$root/$f"; done
-} | awk '
+    while IFS= read -r -d '' f; do LC_ALL=C sed 's/^/+/' "$root/$f"; done
+} | LC_ALL=C awk '
   /^--- (a\/|\/dev\/null)/ || /^\+\+\+ (b\/|\/dev\/null)/ { next }
   /^Binary files/ { bin++ ; next }
   /^-/ { del[substr($0, 2)]++ ; next }
@@ -65,6 +65,8 @@ lost=$( {
     for (l in del) { d = del[l] - add[l]; if (d > 0) n += d }
     print n + bin * 1000000
   }')
+# A failed count blocks: never fail open on an unreadable diff.
+[[ "$lost" =~ ^[0-9]+$ ]] || lost=1000000
 
 if (( lost > 5 )); then
   {

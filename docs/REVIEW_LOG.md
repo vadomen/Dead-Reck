@@ -531,3 +531,34 @@ Tests: Core not run: no Core change (lite).
 ### Run 57 summary
 
 2 rounds; 2 fixed (R57.1-1, R57.1-2), 0 rejected, 0 deferred.
+
+## Run 58 (lite): append-only guard; mutations Core-only by default (f70899f..51c488f plus the round-2 fix), started 2026-10-18
+
+Commits: 19ef7df `.claude/hooks/append-only.sh` (PreToolUse, Bash) blocks a commit that loses more than 5 lines from `docs/REVIEW_LOG.md` / `docs/archive/**`; override only through `APPEND_ONLY_OVERRIDE=1` in the environment Claude Code starts with, a command naming it is refused (so commit messages naming it go through `-F <file>`); mutation scope: Core logic by default, an App mutation only for a reviewer-named App finding (reviewer.md check 13, the four engineer files, review-loop skill), ios-ui lists `logic -> test` instead. 73278d6 WORKFLOW hooks line. Lite at the user's request although the range touches `.claude/hooks/` and `.claude/settings.json`.
+
+### Round 1
+
+Reviewer: one fresh reviewer (sonnet), lite, checks 10 and 11; about 20 payloads piped to the hook in a throwaway worktree. Mutation-scope texts consistent.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R58.1-1 | MAJOR | `append-only.sh`: `git add ... && git commit` in one command is not guarded: the hook runs before the command, so the index is still empty (30-line truncation passed). | CONFIRMED, FIXED | 51c488f: working tree vs HEAD for the guarded paths, staged or not. |
+| R58.1-2 | MINOR | `sh -c "git commit"`, `git -c k="a b" commit`, `git --no-pager commit`, `git commit <path>` are not matched. | FIXED | 51c488f: any command naming `git` and `commit` triggers; a false match blocks only when lines are really lost. |
+| R58.1-3 | MINOR | WORKFLOW.md:314 (move old runs to `docs/archive/REVIEW_LOG-runs-<a>-<b>.md`) is blocked by the guard. | FIXED | 51c488f: only lost lines count (removed and not added back in the guarded files; untracked archive files count as added). |
+| R58.1-4 | MINOR | jq missing: the first Bash call of a session is blocked once, then the hook fails open. | ACCEPTED | jq is a documented requirement; same as the other hooks. |
+
+### Round 2
+
+Reviewer: one fresh reviewer (sonnet), lite: about 15 cases (moves into untracked files with spaces/newlines in names, 2M-line file in ~1.5 s, truncation plus appended blanks, whitespace rewrite, symlink, `git rm`): all as intended.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R58.2-1 | MINOR | Fails open on invalid UTF-8: an untracked non-UTF-8 file under `docs/archive/` makes `sed`/`awk` fail, `lost` is empty and the truncation passes. | FIXED | Round-2 fix commit: `LC_ALL=C` on `sed` and `awk`; a non-numeric count blocks. Fixed in the run, not deferred: it is a fail-open in the guard this range adds. Test: random-bytes file under `docs/archive/` alone → 0; with a 60-line truncation → 2. |
+
+Orchestrator tests after the fix (simulated payloads, throwaway worktree, no commits): truncation blocked in 9 command forms and staged; env override → 0; name in command → 2; 1 line removed, append, BACKLOG row move, runs moved to a new archive file → 0; 10 archive rows rewritten → 2; binary file cases as above.
+
+Tests: Core not run: no Core change (lite).
+
+### Run 58 summary
+
+2 rounds; 4 fixed (R58.1-1, R58.1-2, R58.1-3, R58.2-1), 0 rejected, 0 deferred, 1 accepted (R58.1-4).
