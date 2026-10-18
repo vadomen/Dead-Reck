@@ -675,3 +675,20 @@ Tests at HEAD: App simulator `test` 407 tests in 58 suites passed; Core unchange
 ### Run 63 summary
 
 1 round; 0 findings. R62.2-1 closed.
+
+## Run 64 (lite): BACKLOG_UX sync with UX-1 state (HEAD~1..HEAD on backlog-ux-sync: 1415a81), started 2026-10-18
+
+### Round 1
+
+Reviewer: one fresh reviewer (sonnet, lite: checks 10 and 11 only, no mutations, no tests). Verified the four UX-1 SHAs, "Test drive recording" in SettingsView, FollowSpan cap 1000 m heading-up only, Navigate tap-only sink vs Record writer + tap, `mapControlStyle` white on blue; privacy clean.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R64.1-1 | MINOR | UX-12's premise ("no engine running") does not match the code: with no session a pin is silently ignored; in Navigate `waitingForOBD` the engine still runs and takes the pin; in Record without OBD the pin is recorded. A literal fix could refuse valid ground-truth pins. | FIXED | In this run's ledger commit: UX-12 wording (repro state to confirm, scope of the refusal). |
+| R64.1-2 | MINOR | UX-13 named only "Following"; `mapControlStyle(active:)` is shared with the Heading up / North up control. | FIXED | In this run's ledger commit: both controls in the item and acceptance. |
+
+Tests: none (lite, docs only).
+
+### Run 64 summary
+
+1 round; 2 MINOR findings, both one-line wording fixes done in the ledger commit; 0 deferred, 0 rejected.
