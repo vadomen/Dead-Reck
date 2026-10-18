@@ -54,6 +54,12 @@ final class FakeDeviceMotion: CMDeviceMotion {
     }
 }
 
+/// Latitudes a display callback saw, in order.
+@MainActor
+final class LatitudeLog {
+    var values: [Double] = []
+}
+
 @Suite("Sensor sources")
 @MainActor
 struct SensorSourceTests {
@@ -151,6 +157,106 @@ struct SensorSourceTests {
         #expect(bad.ageS == -0.015625)
         #expect(bad.speed == -1 && bad.speedAccuracy == -1 && bad.course == -1 && bad.courseAccuracy == -1)
         #expect(bad.horizontalAccuracy == -1 && bad.verticalAccuracy == -1)
+    }
+
+    /// R61.1-2: the delegate hops each fix to the main actor in a `Task`. A
+    /// fix queued by one run must not reach the next run's `onReferenceFix`
+    /// (Navigate ended and the recording started before the hop ran), nor
+    /// set `latestReferenceFix` after `stop`. The sink is not affected: every
+    /// fix is in the file. Real CoreLocation may deliver fixes of its own on
+    /// the simulator while the source runs, so fixes are matched by their
+    /// marker latitudes and `latestReferenceFix` is checked only after
+    /// `stop`; `referenceFixDisplay` checks it while running, with no
+    /// CoreLocation.
+    @Test("Reference fix display (R61.1-2): a fix queued by one run never reaches the next run's callback, nor latestReferenceFix after stop; the sink gets every fix")
+    func referenceFixDisplayRun() async throws {
+        let source = ReferenceLocationSource(
+            authorization: FakeLocationAuthorization(.authorizedWhenInUse),
+            lastKnownLocation: FakeLastKnownLocation(nil)
+        )
+        source.holdsBackgroundLocation = false
+        let manager = CLLocationManager()
+        let navigateRun = 11.0, recordRun = 22.0, afterStop = 33.0
+        func deliver(_ latitude: Double) {
+            source.delegate.locationManager(manager, didUpdateLocations: [CLLocation(latitude: latitude, longitude: 30.5)])
+        }
+        /// Lets every `Task` already queued on the main actor run.
+        func drain() async throws { try await Task.sleep(for: .milliseconds(200)) }
+
+        let navigateSeen = LatitudeLog()
+        let recordSeen = LatitudeLog()
+        let (_, events) = try await recordedEvents { clock, sink in
+            source.onReferenceFix = { navigateSeen.values.append($0.latitude) }
+            try source.start(clock: clock, sink: sink)
+            // Queued, not yet shown; then the run ends and the next one
+            // starts with its own callback before the hop runs.
+            deliver(navigateRun)
+            source.stop()
+            source.onReferenceFix = { recordSeen.values.append($0.latitude) }
+            try source.start(clock: clock, sink: sink)
+            try await drain()
+            #expect(!recordSeen.values.contains(navigateRun), "the ended run's fix reached the new run's callback")
+            #expect(!navigateSeen.values.contains(navigateRun), "the ended run's callback was replaced; nothing reaches it either")
+
+            deliver(recordRun)
+            try await drain()
+            #expect(recordSeen.values.contains(recordRun), "the current run's fix is shown")
+
+            // Queued, then stopped: nothing shown afterwards.
+            deliver(afterStop)
+            source.stop()
+            try await drain()
+            #expect(!recordSeen.values.contains(afterStop))
+            #expect(source.latestReferenceFix == nil, "stop cleared it and it stays clear")
+        }
+        let recorded = events.compactMap { event -> Double? in
+            guard case .location(let fix) = event.payload else { return nil }
+            return fix.latitude
+        }
+        #expect(recorded.filter { [navigateRun, recordRun, afterStop].contains($0) } == [navigateRun, recordRun, afterStop],
+                "every fix reached the sink, display or not")
+    }
+
+    /// R61.1-2, the hop alone (no CoreLocation, so `latest` is exact).
+    @Test("ReferenceFixDisplay: only the current run's fixes are shown; an earlier run's queued or late fix is dropped; nothing after end")
+    func referenceFixDisplay() async throws {
+        func fix(_ latitude: Double) -> LocationSample {
+            LocationSample(
+                latitude: latitude, longitude: 30.5, altitude: 0, horizontalAccuracy: 5, verticalAccuracy: 5,
+                speed: 10, speedAccuracy: 1, course: -1, courseAccuracy: -1
+            )
+        }
+        func drain() async throws { try await Task.sleep(for: .milliseconds(100)) }
+        let display = ReferenceFixDisplay()
+        let first = LatitudeLog()
+        let second = LatitudeLog()
+
+        display.onFix = { first.values.append($0.latitude) }
+        let firstHook = display.begin()
+        firstHook(fix(1)) // queued
+        display.end()
+        display.onFix = { second.values.append($0.latitude) }
+        let secondHook = display.begin()
+        try await drain()
+        #expect(first.values.isEmpty && second.values.isEmpty, "the queued fix of the ended run is dropped")
+        #expect(display.latest == nil)
+
+        secondHook(fix(2))
+        try await drain()
+        #expect(second.values == [2])
+        #expect(display.latest == fix(2))
+
+        // A late call of the ended run's hook while the next run is live.
+        firstHook(fix(3))
+        try await drain()
+        #expect(second.values == [2] && first.values.isEmpty)
+        #expect(display.latest == fix(2))
+
+        secondHook(fix(4)) // queued, then the run ends
+        display.end()
+        try await drain()
+        #expect(second.values == [2])
+        #expect(display.latest == nil, "end cleared it and it stays clear")
     }
 
     @Test("Simulated mag (10 Hz) and baro (1 Hz): exact spacing on the session clock, nothing after stop")
