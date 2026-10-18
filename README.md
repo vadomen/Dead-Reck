@@ -1,48 +1,213 @@
-# Dead-Reck
+# FuGPS (Dead-Reck)
 
 ## What it is
 
 In Kyiv, GPS is regularly jammed or spoofed, which makes phone navigation in a
-car unusable. The long-term goal of this project is an iPhone app that keeps
-tracking the car's position without GPS, using dead reckoning: vehicle speed
-from the car's OBD-II port plus heading from the phone's gyroscope, later
-constrained to an offline road map.
+car unusable. FuGPS is an iPhone app that keeps showing the car's position
+without GPS, using dead reckoning: vehicle speed from the car's OBD-II port,
+heading from the phone's gyroscope, a particle filter, and an offline
+OpenStreetMap road network to keep the estimate on the roads. GPS is used
+while it can be trusted; the driver can also correct the position by hand at a
+stop.
 
-This repository is not that navigator yet. Version 1 is a **data logger**
-(app name: DriveLogger). It records synchronized raw sensor data during real
-drives, so the dead-reckoning algorithm can be developed and tuned offline by
-replaying those recordings.
+**Names.** FuGPS is the public name (App Store, website). DriveLogger is the
+working name the code still uses: the Xcode project and schemes, the
+`DriveLoggerCore` package and, for now, the app's display name.
 
-What v1 records:
+The app has two modes:
+
+- **Navigate** (daily use, the default). Starts on its own when the OBD
+  adapter connects and feeds the navigation engine. **It writes nothing**: no
+  recording, no file.
+- **Record** (test drives, in Settings). Records synchronized raw sensor data
+  plus what the navigator showed (the `.nav.jsonl` sidecar), so a drive can be
+  replayed on a Mac and the engine developed and tuned offline.
+
+What a recording contains:
 
 - **OBD-II** via a BLE ELM327-compatible adapter: vehicle speed (PID `0x0D`)
   and engine RPM (PID `0x0C`), with request and response timestamps.
 - **Phone motion** at 100 Hz from Core Motion device motion: user
   acceleration, rotation rate, gravity, attitude; plus magnetometer and
   barometer.
-- **GPS fixes** as ground truth only, when available. GPS is never an input to
-  positioning.
+- **GPS fixes** as recorded; the engine uses them only while they look clean.
+- **Manual fixes** (pins) the driver placed on the map.
 
 All streams are timestamped against a single monotonic clock so they can be
-aligned when replayed.
+aligned when replayed. Capture fidelity comes first: the log is the source of
+truth, and live navigation never changes what is recorded.
 
 ## Status
 
-Experimental. v1 is the logger.
+Experimental. Preparing for TestFlight and the App Store
+([docs/RELEASE_PLAN.md](docs/RELEASE_PLAN.md)): Ukraine only, free,
+Ukrainian and English.
 
-The log format, the ELM327 layer, the Bluetooth link, the sensor sources, the
-recorder and the screens (M3, review pending) exist and are tested; on the
-simulator the app records a fully simulated drive end to end, with a yellow
-"simulated" badge. Nothing has been verified on a phone in a car yet.
+| Part | State |
+|---|---|
+| Logger (M0–M4) | Done. Bench-tested on the iPhone in the test car ([2026-10-07](docs/BENCH_TEST_2026-10-07.md), [2026-10-08](docs/BENCH_TEST_2026-10-08.md): ~16.4 OBD exchanges/s, p50 latency 59 ms) and used on real drives in Kyiv, including GPS-jammed ones. |
+| Navigation engine (N2–N3.3) | Done. Particle filter with OSM road matching; proven on the recorded acceptance drives with `replay_nav`, live and replayed giving the same result. Numbers: [docs/NAVIGATION.md](docs/NAVIGATION.md) ("N3.3: roads live" and later). |
+| Live navigation in the app (N4, UX-1, UX-2…UX-6) | Done in code: Navigate mode, map with the dead-reckoning dot and ellipse, manual fixes, speed-dependent zoom, Settings tab. The device checks in [docs/PLAN.md](docs/PLAN.md) §6 (including 1 h of Navigate: memory, battery, thermal) are still open. |
+| Road packs | 28 packs (all of Ukraine + 27 regions) built and hosted. On the phone today only through the developer path (`scripts/push_packs.sh`); import into the app (N3.4) and in-app download (UX-8) are in progress. |
+| Open | Navigation without OBD (NAV-NOOBD, then maybe UX-7), a "GPS off" switch for spoofing (UX-9), fit the whole ellipse under jamming (UX-10), notice of an interrupted recording (UX-11), dark-mode map controls (UX-13). See [docs/BACKLOG_UX.md](docs/BACKLOG_UX.md) and [docs/BACKLOG.md](docs/BACKLOG.md). |
+
+## How it works
+
+- **Predict** at 10 Hz on the session clock: OBD speed times a per-vehicle
+  scale factor, heading from the gyroscope. 2000 particles, each carrying a
+  heading, a speed scale and a Gaussian position.
+- **Update** with whatever is available: clean GNSS fixes, network fixes,
+  manual fixes (pins) and the road network (map matching against the
+  installed road packs).
+- **Show** the estimate with its 95 % ellipse. When GPS is jammed the ellipse
+  grows honestly until a road, a fix or a pin shrinks it.
+- **Causal and deterministic.** The same recording and seed give the same
+  output, so `replay_nav --as-live --compare` reproduces on a Mac exactly what
+  the phone showed.
+- **Same code everywhere.** The engine lives in `DriveLoggerCore`
+  (Foundation only) and runs unchanged in the app and in `replay_nav`.
+  MapKit is only the base map: no Apple routing or search is used.
+
+Details: [docs/NAVIGATION.md](docs/NAVIGATION.md). Open plans:
+[docs/N3_PLAN.md](docs/N3_PLAN.md), [docs/N4_PLAN.md](docs/N4_PLAN.md).
 
 ## Hardware
 
 - iPhone running iOS 17 or later.
 - Vgate iCar Pro Bluetooth 4.0 (BLE, ELM327-compatible) OBD-II adapter.
-- Test vehicle: VW Touareg (2025).
+- Test vehicle: VW Touareg (2025). The OBD speed scale prior is measured on
+  this car; another car needs its own value.
 - A rigid phone mount. The phone must stay in one fixed orientation (portrait)
-  for the whole drive — the motion data is recorded in the phone's reference
-  frame, and any movement of the phone in the mount corrupts it.
+  for the whole drive — the motion data is in the phone's reference frame,
+  and any movement of the phone in the mount corrupts it.
+- Navigate needs the screen on: with the phone locked the app is suspended
+  and resumes when unlocked (no background location in Navigate). Record keeps
+  recording with the screen locked.
+
+## Screens
+
+Three tabs, portrait only: **Map · Sessions · Settings**. The app opens on Map.
+On the first launch it shows "Before you drive" (rigid mount, fixed
+orientation) once; Settings → "Mount and orientation" shows it again.
+
+- **Map.** The dead-reckoning dot with its 95 % ellipse, the GPS track for
+  reference, Following (re-centres on its own 8 s after you pan) and Heading
+  up / North up. One large speed value with its source, `54 km/h · OBD` or
+  `· GPS`; the chip colour shows GPS quality (green ≤ 15 m, amber ≤ 100 m,
+  grey for network or stale fixes), the only sign of jamming on the map. The
+  zoom follows speed (≈250 m when slow to ≈1500 m at 110+ km/h). A one-line
+  status: "Hold still — calibrating" with a countdown, "OBD lost —
+  reconnecting" with "Stops in m:ss", or "Connect OBD for navigation without
+  GPS" (then only the plain GPS position is shown). A road-pack warning when
+  roads are off, and "© OpenStreetMap contributors" when a pack is in use.
+  **Manual fix:** zoom in to a visible span of 300 m or less and double tap
+  where the car really is; "Fix recorded" with Undo for 3 s. During a test
+  recording the map shows a red dot with the elapsed time; tapping it asks
+  before stopping. A long press on the speed value toggles the navigation
+  stats (ms per step, particles, thermal).
+- **Sessions.** Recordings with date, duration and size. Share exports the
+  recording together with its `.nav.jsonl` sidecar; trash asks first and
+  deletes both. The list refreshes on appear and after a recording ends. The
+  recording in progress can't be shared or deleted.
+- **Settings.**
+  - **Test drive recording**: the former Record screen, unchanged. A big
+    banner (red NOT RECORDING, orange KEEP STILL with a countdown, green
+    RECORDING with elapsed time), the adapter status (scanning, connecting,
+    initialising, or polling with protocol and voltage), OBD speed and GPS
+    speed side by side, OBD Hz, motion Hz and file size. START, MARK and STOP
+    are large buttons pinned to the bottom. MARK opens presets (tunnel,
+    traffic jam, junction, bad road, parking, stop) and a free-text field.
+    Warnings appear as notices: low disk space, a write failure (reason and
+    number of unwritten events), no background location session, unavailable
+    sensors. Before Start, the checklist and the mount and vehicle notes are
+    shown (the notes are remembered). If Start is refused, the reason is
+    shown; with no polling adapter, "Record without OBD" is an explicit
+    per-recording switch. The screen stays awake while recording.
+  - **Console**: scan, pick, connect, disconnect and forget the adapter,
+    Re-initialise, and the raw ELM traffic (TX, RX and status lines, newest at
+    the bottom). A manual field and quick buttons send only the read-only
+    queries (`ATI`, `AT@1`, `ATDP`, `ATDPN`, `ATRV`, mode 01). A rejected
+    command is shown as rejected and never sent. After "link out of sync" a
+    Re-initialise button appears. While a recording runs, Disconnect, Forget
+    and tapping another adapter ask first (dropping the OBD feed, or
+    connecting so the recording gains OBD from then on), and Scan is disabled.
+  - **Mount and orientation**: the first-launch checklist again.
+  - **Road packs**: every pack found, verified or refused (with the reason),
+    size, OSM date, hash prefix, and which packs the engine is using.
+  - **Diagnostics**: thermal state, memory footprint, version, Debug or
+    Release build.
+
+On the simulator the adapter and sensors are simulated and labelled so;
+Bluetooth or a sensor being unavailable is shown as a red or orange state, not
+a crash.
+
+## Using it
+
+### Navigate (daily)
+
+1. Fix the phone in the rigid mount in portrait.
+2. Plug the adapter into the car's OBD-II port and switch on the ignition.
+3. Open the app. On first launch tick the "Before you drive" checklist and
+   allow Bluetooth, Motion & Fitness and Location (While Using).
+4. First time only: Settings → Console → Scan, tap the adapter. It is
+   remembered and reconnects on its own.
+5. Navigation starts when the adapter is polling. If the car is stationary
+   the map shows "Hold still — calibrating" for 5 s: don't touch the phone or
+   move the car. If already moving, it starts straight away.
+6. Drive with the screen on. When GPS is jammed the dot keeps moving on OBD
+   speed, gyro heading and the roads. If it drifts, correct it **at a stop**:
+   zoom in and double tap your real position.
+7. If the adapter drops, the map shows "OBD lost — reconnecting"; after
+   5 min without OBD Navigate stops. Nothing is saved at any point.
+
+### Recording a test drive
+
+1. Mount the phone and plug in the adapter as above. Don't move the phone
+   until the recording is stopped.
+2. Settings → Test drive recording. Tick "rigid mount" and "fixed
+   orientation", optionally fill in the notes, and press START while the car
+   is stationary. The first 5 seconds are a keep-still calibration (orange
+   banner). Navigate stops and the recording starts its own fresh session.
+3. Drive. Press MARK for events (tunnel, traffic jam). Pins placed on the map
+   are written to the recording. Recording continues with the screen locked.
+4. After parking, press STOP (on the map or in Settings). The map returns to
+   Navigate if the adapter is still connected.
+5. Sessions tab: share the recording and its sidecar, or copy them with the
+   Files app (On My iPhone → DriveLogger). For a timing-faithful test drive,
+   build with the `DriveLogger-Release` scheme (Debug is `-Onone`, so the
+   sidecar's `msPerStep` is meaningless there).
+
+## Road packs
+
+A road pack (`*.roadpack`) is a binary, memory-mapped OSM road graph with a
+grid index, used by the engine for map matching. Format:
+[docs/ROAD_PACK.md](docs/ROAD_PACK.md).
+
+- **Set:** `national` (motorways, trunk and primary roads of all of Ukraine,
+  41 MB) plus 27 regional packs named by ISO 3166-2 (`ua-05` … `ua-77`,
+  7–59 MB, most 25–50 MB); 28 packs, about 1 GB in all. A typical install is
+  national plus one region, 60–100 MB.
+- **Built** on the Mac by `tools/roads/build_packs.sh` (osmium +
+  `build_roads`) from the git-ignored `osm/packs.json`.
+- **On the phone today:** `scripts/push_packs.sh` copies `osm/packs/` to the
+  connected iPhone. Never while the app runs (Navigate or Record): packs are
+  memory-mapped, and the script refuses.
+- **Planned:** import via Files or AirDrop (N3.4) and download on first launch
+  by region, chosen by the user, Wi-Fi by default (UX-8).
+- **Without packs** the app works without roads, and the map says so.
+- **Licence:** © OpenStreetMap contributors, [ODbL 1.0](https://opendatacommons.org/licenses/odbl/1-0/).
+  The attribution is on the map whenever a pack is in use.
+- Packs, OSM extracts and `osm/packs.json` are **never committed**: the choice
+  of regions reveals where someone drives.
+
+## Website
+
+`site/` is the app's website on Cloudflare Pages, English in `site/public/`
+and Ukrainian in `site/public/uk/`: landing, support, privacy, map data
+(ODbL), supported vehicles, release notes. Road packs are served from R2
+through a Pages Function at `/packs/*` with a manifest
+(`/packs/manifest.json`); `site/publish_packs.sh` publishes them. Details:
+[docs/RELEASE_PLAN.md](docs/RELEASE_PLAN.md) ("The site").
 
 ## Quick start
 
@@ -63,7 +228,8 @@ cp Config/Local.xcconfig.example Config/Local.xcconfig
 ```
 
 Run on a real iPhone: open `DriveLogger.xcodeproj`, select your connected
-iPhone as the destination, and run the `DriveLogger` scheme. The simulator has
+iPhone as the destination, and run the `DriveLogger` scheme (or `DriveLogger-Release` for a test drive,
+so timings are meaningful). The simulator has
 no Bluetooth LE and no motion sensors; simulator builds use a simulated OBD
 adapter and simulated sensors instead (see "Simulated recording"):
 
@@ -102,12 +268,12 @@ Run from the repository root unless the command starts with `cd Core`.
 
 | Command | What it does |
 |---|---|
-| `cd Core && swift test` | Builds and runs every Core unit test: ELM327 parsing, OBD decoding, the read-only command guard, the clock, and log format compatibility. Takes seconds. |
+| `cd Core && swift test` | Builds and runs every Core unit test: ELM327 parsing, OBD decoding, the read-only command guard, the clock, log format compatibility, the navigation engine, road packs and map matching. Takes seconds. |
 | `cd Core && swift test --filter OBDDecoderTests` | Runs one test suite, matched by its type name. |
 | `cd Core && swift test --filter OBDDecoderTests/decodesEngineSpeed` | Runs one test, matched as `SuiteType/functionName`. `--filter` matches identifiers, not the display names in `@Test("…")`; a display name matches nothing and runs zero tests. |
 | `cd Core && swift build --build-tests` | Compiles Core and its tests without running them. |
 | `cd Core && swift run -c release inspect_log <file.jsonl.gz> [--csv <dir>] [--strict]` | Summarises a recording: header, events per kind, rates, gaps over 50 ms, OBD latency percentiles, adapter exchange outcomes, damage and truncation. `--csv` writes one CSV per event kind; `--strict` stops at the first damaged block or bad line. Exit status 0 = read (warnings printed), 1 = unreadable, 2 = usage. `-c release` is faster on long drives. |
-| `grep -rhoE '^[[:space:]]*import[[:space:]]+[A-Za-z_]+' Core/Sources Core/Tests \| sort -u` | Lists every module Core imports. It must show only `Foundation`, `Testing` and `DriveLoggerCore`. No UIKit, SwiftUI, CoreBluetooth, CoreMotion or CoreLocation. |
+| `grep -rhoE '^[[:space:]]*import[[:space:]]+[A-Za-z_]+' Core/Sources Core/Tests \| sort -u` | Lists every module Core imports. It must show only `Foundation`, `Testing` and `DriveLoggerCore`. No UIKit, SwiftUI, CoreBluetooth, CoreMotion, CoreLocation or MapKit. |
 
 ### iOS app
 
@@ -143,6 +309,25 @@ has `simulated: true`.
 | `gunzip -c Drive_<stamp>.jsonl.gz \| jq -c 'select(.kind=="obd")'` | Prints only the OBD rows. Swap in any kind: `motion`, `location`, `elm`, `stats`, … |
 
 Every field is described in [docs/LOG_FORMAT.md](docs/LOG_FORMAT.md).
+
+### Navigation replay (Mac)
+
+| Command | What it does |
+|---|---|
+| `cd Core && swift run -c release replay_nav <file.jsonl.gz>... --truth ../logs/truth.json --out ../logs/out` | Replays recordings through the engine and writes metrics and GeoJSON against the truth file. All flags (`--gps`, `--roads`, `--seed`, `--set`, `--fix-offset`, …): [docs/NAVIGATION.md](docs/NAVIGATION.md) "replay_nav". |
+| `cd Core && swift run -c release replay_nav <file.jsonl.gz> --as-live --compare <file.nav.jsonl>` | Replays exactly as the phone ran it (file order, the header's seed, default config) and checks the result against the drive's sidecar. |
+| `cd Core && swift test -c release --filter NavigationRoadPerfTests` | Timing asserts; they run only in release. |
+
+Recordings, replay output and the truth file live in the git-ignored `logs/`:
+they hold real positions.
+
+### Road packs and site
+
+| Command | What it does |
+|---|---|
+| `tools/roads/build_packs.sh [osm/packs.json] [--only <pack>]` | Builds the packs listed in `osm/packs.json` from an OSM extract (osmium + `build_roads`). Mac only. |
+| `scripts/push_packs.sh [--dry-run] [--force] [--device <id>]` | Copies `osm/packs/*.roadpack` to the connected iPhone. Refuses while the app runs. |
+| `site/publish_packs.sh [--dry-run] [--prune]` | Uploads packs to R2 and publishes the manifest; `--prune` deletes superseded pack keys afterwards. |
 
 ## ELM327 commands
 
@@ -256,8 +441,8 @@ easier to verify.
 | Permission | Asked | Used for |
 |---|---|---|
 | Bluetooth | at first launch (the Bluetooth link is created at launch so iOS can restore it) | the OBD-II adapter. Background mode `bluetooth-central` keeps the link alive with the screen locked; CoreBluetooth state restoration lets iOS relaunch the app for it. |
-| Motion & Fitness | at the first recording, when the barometer starts | the altimeter (pressure, relative altitude). Accelerometer, gyroscope, magnetometer and device motion need no permission. |
-| Location (While Using) | at the first recording | the reference GPS track. Background mode `location` plus a live location session (`CLBackgroundActivitySession`) keep recording with the screen locked; the blue location indicator shows while recording. "Always" is not needed. |
+| Motion & Fitness | when navigation or a recording first starts the barometer | the altimeter (pressure, relative altitude). Accelerometer, gyroscope, magnetometer and device motion need no permission. |
+| Location (While Using) | at first launch (the map shows the GPS position) | GPS fixes for the engine, used only while clean, and the reference track. Navigate uses location only while the app is in the foreground. In Record, background mode `location` plus a live location session (`CLBackgroundActivitySession`) keep recording with the screen locked; the blue location indicator shows while recording. "Always" is not needed. |
 
 A permission that is refused does not stop the recording: the missing stream
 is written as an `error` row at the start of the file and everything else is
@@ -284,80 +469,53 @@ While a recording runs the app:
 Recordings are named `Drive_<yyyyMMdd-HHmmss>.jsonl.gz`, in the app's
 `Documents/logs` folder; an existing file is never overwritten.
 
-## Screens
-
-Three tabs, portrait only.
-
-- **Record.** A big banner (red NOT RECORDING, orange KEEP STILL with a
-  countdown, green RECORDING with elapsed time), the adapter status
-  (scanning, connecting, initialising, or polling with protocol and
-  voltage), OBD speed and GPS speed side by side (GPS is a reference, never
-  an input), OBD Hz, motion Hz and file size. START, MARK and STOP are large
-  buttons pinned to the bottom. MARK opens presets (tunnel, traffic jam,
-  junction, bad road, parking, stop) and a free-text field. Warnings appear
-  as notices: low disk space, a write failure (reason and number of unwritten
-  events), no background location session, unavailable sensors. Before
-  Start, the checklist and the mount and vehicle notes are shown (the notes
-  are remembered). If Start is refused, the reason is shown; with no polling
-  adapter, "Record without OBD" is an explicit per-recording switch. The
-  screen stays awake while recording (the recorder turns the idle timer off).
-- **Sessions.** Recordings with date, duration and size. Share icon exports
-  through the share sheet; trash asks for confirmation. The list refreshes on
-  appear and after a recording ends. The recording in progress can't be
-  shared or deleted.
-- **Console.** Scan, pick, connect, disconnect and forget the adapter,
-  Re-initialise, and the raw ELM traffic (TX, RX and status lines, newest at
-  the bottom). A manual field and quick buttons send only the read-only
-  queries (`ATI`, `AT@1`, `ATDP`, `ATDPN`, `ATRV`, mode 01). A rejected command
-  is shown as rejected and never sent. After "link out of sync" a
-  Re-initialise button appears. While a recording runs, Disconnect, Forget and
-  tapping another adapter ask first (dropping the OBD feed, or connecting so the
-  recording gains OBD from then on), and Scan is disabled.
-
-On the simulator the adapter and sensors are simulated and labelled so;
-Bluetooth or a sensor being unavailable is shown as a red or orange state, not
-a crash.
-
-## Recording a drive
-
-1. Fix the phone in the rigid mount in portrait. Don't move it until the
-   recording is stopped.
-2. Plug the adapter into the car's OBD-II port and switch on the ignition.
-3. Open DriveLogger. On first launch, allow Bluetooth, Motion & Fitness and
-   Location (While Using) access.
-4. Console tab: Scan, tap the adapter (first time only; it is remembered).
-   Wait for "Polling OBD" on the Record tab.
-5. Record tab: tick "rigid mount" and "fixed orientation", optionally fill in
-   the notes, and press START while the car is stationary. The first 5
-   seconds are a keep-still calibration (orange banner): don't touch the
-   phone and don't move the car.
-6. Drive. Press MARK for events (tunnel, traffic jam). Recording continues
-   with the screen locked.
-7. After parking, press STOP.
-8. Sessions tab: share the file, or copy it with the Files app
-   (On My iPhone → DriveLogger).
-
 ## Log format
 
-Logs are JSON Lines, one header line followed by one event per line, with a
-versioned format. See [docs/LOG_FORMAT.md](docs/LOG_FORMAT.md).
+Recordings are JSON Lines, one header line followed by one event per line,
+with a versioned format; every version ever written stays readable. See
+[docs/LOG_FORMAT.md](docs/LOG_FORMAT.md). The navigation sidecar
+`Drive_<stamp>.nav.jsonl` sits next to its recording and is versioned on its
+own: [docs/NAV_SIDECAR.md](docs/NAV_SIDECAR.md).
+
+## Docs
+
+| Doc | What's in it |
+|---|---|
+| [CLAUDE.md](CLAUDE.md) | Layout, invariants, conventions, commands. Wins on any conflict. |
+| [WORKFLOW.md](WORKFLOW.md) | How the work is split between agents, hooks, review loop. |
+| [docs/PLAN.md](docs/PLAN.md) | Milestones, decisions, device checklist (§6). |
+| [docs/NAVIGATION.md](docs/NAVIGATION.md) | Engine model, config, `replay_nav`, adoption rule, acceptance drives and results. |
+| [docs/N3_PLAN.md](docs/N3_PLAN.md), [docs/N4_PLAN.md](docs/N4_PLAN.md) | Open plans: roads, live navigation. |
+| [docs/LOG_FORMAT.md](docs/LOG_FORMAT.md), [docs/NAV_SIDECAR.md](docs/NAV_SIDECAR.md), [docs/ROAD_PACK.md](docs/ROAD_PACK.md) | File formats. |
+| [docs/BACKLOG.md](docs/BACKLOG.md), [docs/BACKLOG_UX.md](docs/BACKLOG_UX.md) | Open review findings; product changes. |
+| [docs/RELEASE_PLAN.md](docs/RELEASE_PLAN.md) | App Store preparation, the site. |
+| [docs/REVIEW_LOG.md](docs/REVIEW_LOG.md) | Review ledger (current runs). |
+| `docs/archive/` | History; moved, never rewritten. |
 
 ## Roadmap
 
-1. **v1 — logger.** Record synchronized OBD-II, motion and GPS data on real
-   drives.
-2. **Replay and analysis tooling.** Load recordings offline, replay them, and
-   compare dead-reckoned tracks against GPS ground truth.
-3. **MVP dead-reckoning navigator.** Position tracking without GPS, constrained
-   to an offline road map.
+1. **Logger** — done.
+2. **Replay and the engine** (`replay_nav`, particle filter) — done.
+3. **Roads** (packs, map matching, live attach) — done through N3.3; N3.4,
+   packs inside the app, in progress.
+4. **Live navigation in the app** (N4, Navigate mode) — done in code; device
+   checks open.
+5. **Next:** in-app pack download (UX-8), navigation without OBD
+   (NAV-NOOBD → UX-7), a switch for spoofed GNSS (UX-9), then TestFlight and
+   the App Store as FuGPS.
 
 ## Privacy
 
-A recording contains the route driven and the times it was driven. Logs stay
-on the phone until you copy them off. Never commit them to this repository;
-`.gitignore` excludes `*.jsonl`, `*.jsonl.gz` and `logs/`.
+- Navigate writes nothing to disk, and no location leaves the phone.
+- A recording and its sidecar contain the route driven and the times it was
+  driven. They stay on the phone until you copy them off. Never commit them;
+  `.gitignore` excludes `*.jsonl`, `*.jsonl.gz` and `logs/`.
+- `osm/` (extracts, packs, `packs.json`) is git-ignored for the same reason.
+- When pack downloads ship, the server will see which region pack was
+  downloaded (a region, not a position).
 
 ## Safety
 
-Don't touch the phone while driving. Start and stop recordings only while the
-car is parked.
+Don't touch the phone while driving. Pin, start and stop only while the car
+is stopped. The position is an estimate: the ellipse shows how far off it may
+be.
