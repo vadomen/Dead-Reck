@@ -38,6 +38,7 @@ final class AppServices {
         session = RecordingSession(
             link: link,
             sources: sensors.sources,
+            displayLocation: sensors.displayLocation,
             store: store,
             sensorConfiguration: sensors.configuration,
             notes: notes.compactMap { $0 }.joined(separator: " ").nilIfEmpty

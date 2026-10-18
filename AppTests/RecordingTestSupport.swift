@@ -148,7 +148,7 @@ final class FakeLocationSource: FakeBackgroundSource, LocationAuthorizationRepor
 /// Nothing is written for it: only `live.referenceFix` sees it. Keeps the
 /// recording's clock so `fix` can stamp `receivedT` on it.
 @MainActor
-final class FakeReferenceFixSource: FakeSource, LiveReferenceFixReporting {
+class FakeReferenceFixSource: FakeSource, LiveReferenceFixReporting {
     var latestReferenceFix: LocationSample?
     var onReferenceFix: (@MainActor (LocationSample) -> Void)?
     private(set) var clock: SessionClock?

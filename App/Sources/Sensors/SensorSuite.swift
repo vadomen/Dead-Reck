@@ -15,6 +15,10 @@ struct SensorSuite {
     let configuration: SensorConfigRecord
     /// Header `notes` saying what is simulated; nil for real sensors.
     let note: String?
+    /// The map-only position feed for while no run owns location (R61.1-4):
+    /// not one of `sources`, never started by a run, never given a clock or
+    /// a sink. nil: the map shows no plain GPS position.
+    var displayLocation: (any DisplayLocationProviding)?
 
     nonisolated static let deviceMotionHz = 100.0
     nonisolated static let imuHz = 100.0
@@ -39,7 +43,8 @@ struct SensorSuite {
                 ReferenceLocationSource(),
             ],
             configuration: configuration,
-            note: nil
+            note: nil,
+            displayLocation: DisplayLocationSource()
         )
     }
 
@@ -55,7 +60,8 @@ struct SensorSuite {
                 SimulatedLocationSource(),
             ],
             configuration: configuration,
-            note: simulatedNote
+            note: simulatedNote,
+            displayLocation: SimulatedDisplayLocationSource()
         )
     }
 

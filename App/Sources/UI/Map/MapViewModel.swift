@@ -112,6 +112,24 @@ final class MapViewModel {
         track.append(fix)
     }
 
+    /// The plain GPS position while no run is live (R61.1-4,
+    /// `RecordingSession.displayFix`): the dot, the accuracy circle, the
+    /// speed fallback and the bearing, but **no track** and no run change,
+    /// so a finished recording's track stays as it was. Ignored when the
+    /// scene is not active or there is no fix. The fix's age comes from its
+    /// own `ageS` (a cached position delivered first looks stale).
+    func ingestDisplay(_ fix: LocationSample?, isActive: Bool) {
+        guard isActive, let fix else { return }
+        if fix != latest {
+            latest = fix
+            bearingSource.ingest(fix)
+            if bearingSource.bearingDegrees != bearing { bearing = bearingSource.bearingDegrees }
+        }
+        lastFixInstant = .now - .seconds(max(0, fix.ageS ?? 0))
+        isReceiving = true
+        refreshSpeed()
+    }
+
     /// OBD speed from the feed (km/h, J1979 integer) with the uptime of its
     /// reply and the uptime now. Stationary only for a fresh 0 (see
     /// `StationaryRule`); nil or stale is unknown, not stationary. Publishes

@@ -136,6 +136,7 @@ final class NavigateRig {
     ///   namespace seed their engines alike. Random by default, so files a
     ///   test looks for by `sessionID` are its own.
     init(store: LogStore, service: NavigationService = NavigationService(), extraSources: [any SensorSource] = [],
+         displayLocation: (any DisplayLocationProviding)? = nil,
          disk: FakeDisk = FakeDisk(RecordingFixtures.roomy), undoWindow: Duration = .milliseconds(150),
          idNamespace: UInt32 = .random(in: 1...UInt32.max)) {
         tee = FeedTee(service: service)
@@ -144,6 +145,7 @@ final class NavigateRig {
         session = RecordingSession(
             link: link,
             sources: [source] + extraSources,
+            displayLocation: displayLocation,
             store: store,
             uptime: uptime,
             diskSpace: disk,

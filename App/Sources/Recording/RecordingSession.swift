@@ -387,6 +387,15 @@ final class RecordingSession {
     /// re-renders only views that read it. nil when no run is live, and from
     /// a run's start until its first fix.
     private(set) var latestFix: LocationSample?
+    /// The plain GPS position while **no run is live** (R61.1-4): from the
+    /// map-only `DisplayLocationProviding` feed, which runs only when the
+    /// app is active, Navigate has no session, no recording is starting or
+    /// running, and location is already allowed. Separate from `latestFix`
+    /// so that stays "the live run's fix": the two are never both non-nil
+    /// (a run's start stops the feed and clears this first). For the Map tab
+    /// only: never written, never an input, no sink, no tap. nil when the
+    /// feed does not run, and from its start until its first fix.
+    private(set) var displayFix: LocationSample?
     /// The file being written, nil when no recording is active.
     private(set) var currentFile: URL?
     /// How the last recording ended through `stop`, for the UI ("Stopped:
@@ -447,6 +456,8 @@ final class RecordingSession {
 
     @ObservationIgnored private let link: any OBDLinkServicing
     @ObservationIgnored private let sources: [any SensorSource]
+    /// The map-only position feed (R61.1-4); see `updateDisplayLocation`.
+    @ObservationIgnored private let displayLocation: (any DisplayLocationProviding)?
     @ObservationIgnored private let store: LogStore
     @ObservationIgnored private let uptime: any UptimeSource
     @ObservationIgnored private let diskSpace: any DiskSpaceProvider
@@ -518,6 +529,7 @@ final class RecordingSession {
     init(
         link: any OBDLinkServicing,
         sources: [any SensorSource],
+        displayLocation: (any DisplayLocationProviding)? = nil,
         store: LogStore,
         uptime: any UptimeSource = SystemUptimeSource(),
         diskSpace: any DiskSpaceProvider = VolumeDiskSpaceProvider(),
@@ -538,6 +550,7 @@ final class RecordingSession {
         precondition(stopFreeBytes < warningFreeBytes, "stopFreeBytes must be below warningFreeBytes")
         self.link = link
         self.sources = sources
+        self.displayLocation = displayLocation
         self.store = store
         self.uptime = uptime
         self.diskSpace = diskSpace
@@ -578,6 +591,8 @@ final class RecordingSession {
             keeper.onAvailabilityChange = { [weak self] in self?.backgroundAvailabilityChanged() }
         }
         refreshBackgroundRisk()
+        displayLocation?.onFix = { [weak self] fix in self?.displayFixArrived(fix) }
+        displayLocation?.onAuthorizationChange = { [weak self] in self?.updateDisplayLocation() }
     }
 
     // MARK: - Start
@@ -627,6 +642,8 @@ final class RecordingSession {
     ) async throws {
         guard !isStarting, recording == nil, ending == nil else { throw RecordingStartBlocker.recordingInProgress }
         isStarting = true
+        // The recording's source owns location from here (R61.1-4).
+        updateDisplayLocation()
         // Cleared on every throw before the recording exists, and as soon as
         // it does (R4.1-2): from then on `recording` blocks a second start,
         // and a stop or failure during calibration must free Start at once,
@@ -881,6 +898,10 @@ final class RecordingSession {
     func handleScenePhase(_ phase: ScenePhase) {
         let previous = lastScenePhase
         lastScenePhase = phase
+        // Only `.active` runs the map-only position feed (R61.1-4):
+        // `.inactive` (control centre, app switcher, a call) stops it too,
+        // and `.background` must (D7). A run's own sources are not touched.
+        updateDisplayLocation()
         switch phase {
         case .background:
             // UX-1: a Navigate fix in its undo window reaches the engine
@@ -1360,6 +1381,37 @@ final class RecordingSession {
         startNavigateIfPossible()
         updateIdleTimer()
         refreshBackgroundRisk()
+        updateDisplayLocation()
+    }
+
+    // MARK: - Map-only position feed (R61.1-4)
+
+    /// The display feed runs exactly when the app is active, no Navigate
+    /// session exists, no recording is starting or running, and the feed
+    /// itself is allowed to (location already granted). Every run's sources
+    /// are stopped before this can start it, and it is stopped before a
+    /// run's sources start: one location consumer at a time. Idempotent;
+    /// called at every transition (scene phase, Record start and end,
+    /// Navigate start and end, authorisation change).
+    private var wantsDisplayLocation: Bool {
+        lastScenePhase == .active && navigate == nil && recording == nil && !isStarting
+    }
+
+    private func updateDisplayLocation() {
+        guard let displayLocation else { return }
+        if wantsDisplayLocation {
+            displayLocation.start()
+        } else {
+            displayLocation.stop()
+            displayFix = nil
+        }
+    }
+
+    /// A fix from the display feed. Dropped unless the feed is still wanted
+    /// (a fix hopped over just as a run took location).
+    private func displayFixArrived(_ fix: LocationSample) {
+        guard wantsDisplayLocation else { return }
+        displayFix = fix
     }
 
     /// Keeps the screen awake while a recording or a Navigate session
@@ -1598,6 +1650,7 @@ final class RecordingSession {
     private func resumeNavigate() {
         startNavigateIfPossible()
         updateIdleTimer()
+        updateDisplayLocation()
     }
 
     /// Starts a Navigate session when Navigate is enabled, none runs, no
@@ -1616,6 +1669,9 @@ final class RecordingSession {
         generation += 1
         let nav = NavigateRun(generation: generation, clock: clock, navigationTap: navigationTap)
         navigate = nav
+        // The session's source owns location from here (R61.1-4): the
+        // display feed is stopped before `startSources` below.
+        updateDisplayLocation()
         // As at Record's Start (M8.1-3): pins take the session's own readings.
         live.obdSpeedKmh = nil
         obdSpeedUptime = nil
@@ -1684,6 +1740,9 @@ final class RecordingSession {
         live.gpsSpeedKmh = nil
         live.referenceFix = nil
         latestFix = nil
+        // Sources are stopped above; if nothing else runs, the display feed
+        // takes over (not while a Record Start is in progress).
+        updateDisplayLocation()
     }
 
     // MARK: - Formatting
