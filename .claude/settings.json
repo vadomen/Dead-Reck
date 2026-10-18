@@ -1,8 +1,5 @@
 {
   "permissions": {
-    "additionalDirectories": [
-      "../dead-reck-mutants"
-    ],
     "allow": [
       "Bash(swift build *)",
       "Bash(swift test *)",
@@ -39,15 +36,13 @@
       "Bash(git branch --merged*)",
       "Bash(git branch -d *)",
       "Bash(git worktree add .claude/worktrees/*)",
-      "Bash(git worktree add --detach ../dead-reck-mutants HEAD)",
       "Bash(git worktree list*)",
       "Bash(git worktree remove .claude/worktrees/*)",
       "Bash(git worktree prune*)",
-      "Bash(git -C ../dead-reck-mutants checkout --detach -f *)",
-      "Bash(git -C ../dead-reck-mutants checkout -f -- .)",
-      "Bash(git -C ../dead-reck-mutants apply --index *)",
-      "Bash(git -C ../dead-reck-mutants diff *)",
-      "Bash(git -C ../dead-reck-mutants status *)"
+      "Bash(git worktree add --detach .claude/worktrees/mut-*)",
+      "Bash(git -C .claude/worktrees/mut-* checkout -f -- .)",
+      "Bash(git -C .claude/worktrees/mut-* diff *)",
+      "Bash(git -C .claude/worktrees/mut-* status *)"
     ],
     "ask": [
       "Bash(scripts/push_packs.sh)",
@@ -85,7 +80,6 @@
       "Bash(git worktree remove -f*)",
       "Bash(git worktree remove * --force*)",
       "Bash(git worktree remove * -f*)",
-      "Bash(git worktree remove ../dead-reck-mutants*)",
       "Bash(rm -rf *)",
       "Bash(rm -fr *)",
       "Bash(rm -r -f *)",
@@ -116,7 +110,8 @@
       "Bash(git switch --force*)",
       "Bash(git switch --discard-changes*)",
       "Bash(git switch * --discard-changes*)",
-      "Bash(git -C ../dead-reck-mutants/*)"
+      "Bash(git -C .claude/worktrees/mut-*..*)",
+      "Bash(git worktree add --detach .claude/worktrees/mut-*..*)"
     ]
   },
   "hooks": {

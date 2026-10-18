@@ -87,13 +87,14 @@ checks. Checks 10 and 11 apply to every diff.
     - The author's list comes first: re-run **one** of its mutations (the one guarding the riskiest logic) and confirm the named test fails. It counts toward the 3. A mutation that survives, or a test that fails for another reason, is a finding.
     - Spend the rest of the budget only on new or changed Core logic the author's list does not cover. With no list, the whole budget is yours.
     - **Run every mutation and bit-identical command from the main tree root**, typed exactly as below: the paths are relative to it, and the allow rules in `.claude/settings.json` match this literal text (no `$var`/`$(…)` forms; they prompt). Find the root with `git rev-parse --path-format=absolute --git-common-dir` (prints `<root>/.git`), then start **every** such call with `cd <root> && ` (its literal absolute path): when your session started in a worktree, the root is outside its project directory and the shell resets the cwd after each call. Never `cd` into the mutants worktree: use `--package-path`, so the shell's cwd stays at the root.
-    - Use the one persistent worktree `../dead-reck-mutants`:
-      - create it once: `git worktree add --detach ../dead-reck-mutants HEAD`;
-      - otherwise move it to HEAD: `git -C ../dead-reck-mutants checkout --detach -f <HEAD sha>`.
-    - Test with a persistent build dir and a filter on the affected suites only:
-      `swift test --package-path ../dead-reck-mutants/Core --scratch-path ~/.cache/dead-reck-mutants-build --filter <Suite>`
-      (`DEVELOPER_DIR` as in ios-build-test).
-    - Undo each mutation before the next (`git -C ../dead-reck-mutants checkout -f -- .`).
+    - Use a throwaway worktree per run, named after the commit you mutate (`<sha>` = `git rev-parse --short HEAD` of the range's HEAD):
+      - create it: `cd <root> && git worktree add --detach .claude/worktrees/mut-<sha> <sha>`. If it already exists, another run is using it: stop and report, don't reuse or remove it;
+      - mutate files under `.claude/worktrees/mut-<sha>/` only, never your own tree or a branch worktree.
+    - Test with the shared build dir and a filter on the affected suites only:
+      `swift test --package-path .claude/worktrees/mut-<sha>/Core --scratch-path ~/.cache/dead-reck-mutants-build --filter <Suite>`
+      (`DEVELOPER_DIR` as in ios-build-test). SwiftPM locks the build dir, so a parallel run waits for it.
+    - Undo each mutation before the next (`git -C .claude/worktrees/mut-<sha> checkout -f -- .`), check it is clean (`git -C .claude/worktrees/mut-<sha> status --short` prints nothing).
+    - When done, undo the last mutation and remove the worktree: `cd <root> && git worktree remove .claude/worktrees/mut-<sha>` (no `--force`: if it refuses, a mutation is still in place; undo it first).
     - A mutation that survives is a missing-test finding.
     - Orchestrator or author claims such as "every mutation fails" or "bit-identical" are checked, not trusted.
 

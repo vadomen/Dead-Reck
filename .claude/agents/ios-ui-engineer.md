@@ -20,14 +20,14 @@ Rules:
 - Add `#Preview`s with fake data for every screen, and make sure the simulator shows clear "Bluetooth / motion unavailable" states without crashing.
 
 ## Before finishing: author-side mutations
-Run 1–3 targeted mutations on the view-model logic you added or changed (state, formatting and decision code under `App/Sources/UI/` that `AppTests` covers; not view layout), using reviewer check 13's procedure (`.claude/agents/reviewer.md`): every call starts `cd <root> && ` from the main tree root, the one worktree `../dead-reck-mutants`, its allowed command forms only, and undo each mutation before the next. App logic has no `swift test`, so the test command is the simulator one, pointed at the worktree:
-`xcodebuild -project ../dead-reck-mutants/DriveLogger.xcodeproj -scheme DriveLogger -destination 'platform=iOS Simulator,id=<UDID>' -derivedDataPath ~/.cache/dead-reck-mutants-dd test -only-testing:DriveLoggerAppTests/<Suite>`.
-Your change is not committed yet, so bring it into the worktree first:
-1. In your working tree: `git add -N . && git diff HEAD --binary --output=<root>/.claude/review-scratch/author-<branch>.patch`.
-2. `cd <root> && git -C ../dead-reck-mutants checkout --detach -f <your HEAD sha>`, then `cd <root> && git -C ../dead-reck-mutants apply --index <root>/.claude/review-scratch/author-<branch>.patch`. Because it is staged, check 13's undo (`checkout -f -- .`) returns to your change, not to HEAD.
+Run 1–3 targeted mutations on the view-model logic you added or changed (state, formatting and decision code under `App/Sources/UI/` that `AppTests` covers; not view layout), using reviewer check 13's procedure (`.claude/agents/reviewer.md`): every call starts `cd <root> && ` from the main tree root, a throwaway worktree `.claude/worktrees/mut-<sha>`, its allowed command forms only, undo each mutation before the next, and remove the worktree when done. App logic has no `swift test`, so the test command is the simulator one, pointed at the worktree:
+`xcodebuild -project .claude/worktrees/mut-<sha>/DriveLogger.xcodeproj -scheme DriveLogger -destination 'platform=iOS Simulator,id=<UDID>' -derivedDataPath ~/.cache/dead-reck-mutants-dd test -only-testing:DriveLoggerAppTests/<Suite>`. Never run two App mutation runs at once: xcodebuild does not lock the derived data dir.
+1. Commit your change on your branch first; mutations run against that commit. `<sha>` is its `git rev-parse --short HEAD`.
+2. `cd <root> && git worktree add --detach .claude/worktrees/mut-<sha> <sha>`. If it already exists, another run is using it: stop and report.
+3. Mutate files under `.claude/worktrees/mut-<sha>/` only, never your own tree.
 
-`../dead-reck-mutants` is shared: the orchestrator runs one mutating agent (engineer or reviewer) at a time. If the worktree is not at the sha you set, or holds a patch you didn't apply, another run is using it: stop and report, don't re-sync over it. When you finish, run `cd <root> && git -C ../dead-reck-mutants checkout --detach -f <your HEAD sha>` so no staged patch is left behind: a later run can't reset over a patch it didn't apply.
+When you finish, undo the last mutation and run `cd <root> && git worktree remove .claude/worktrees/mut-<sha>` (no `--force`).
 
-A mutation that survives means a missing test: add it in your own tree, re-sync, re-run. List the result in your summary, one line each: `mutation -> test that failed`. Views only, no view-model logic: say `mutations: none (no view-model logic changed)`.
+A mutation that survives means a missing test: add it in your own tree, commit, and re-run in a new `mut-<sha>` for the new commit. List the result in your summary, one line each: `mutation -> test that failed`. Views only, no view-model logic: say `mutations: none (no view-model logic changed)`.
 
 Finish with: screens changed, the author mutations (`mutation -> test that failed`), simulator build result (exact command), anything you needed but did not have.

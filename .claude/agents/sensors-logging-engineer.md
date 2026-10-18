@@ -23,12 +23,13 @@ Rules:
 - Real sensors only exist on an iPhone. Provide a simulated sensor source for the simulator and tests, and say clearly what remains unverified on hardware.
 
 ## Before finishing: author-side mutations
-Run 1–3 targeted mutations on the Core logic you added or changed, using exactly reviewer check 13's procedure (`.claude/agents/reviewer.md`): every call starts `cd <root> && ` from the main tree root, the one worktree `../dead-reck-mutants`, `swift test --package-path ../dead-reck-mutants/Core --scratch-path ~/.cache/dead-reck-mutants-build --filter <Suite>`, its allowed command forms only, and undo each mutation before the next. Your change is not committed yet, so bring it into the worktree first:
-1. In your working tree: `git add -N . && git diff HEAD --binary --output=<root>/.claude/review-scratch/author-<branch>.patch`.
-2. `cd <root> && git -C ../dead-reck-mutants checkout --detach -f <your HEAD sha>`, then `cd <root> && git -C ../dead-reck-mutants apply --index <root>/.claude/review-scratch/author-<branch>.patch`. Because it is staged, check 13's undo (`checkout -f -- .`) returns to your change, not to HEAD.
+Run 1–3 targeted mutations on the Core logic you added or changed, using exactly reviewer check 13's procedure (`.claude/agents/reviewer.md`): every call starts `cd <root> && ` from the main tree root, a throwaway worktree `.claude/worktrees/mut-<sha>`, `swift test --package-path .claude/worktrees/mut-<sha>/Core --scratch-path ~/.cache/dead-reck-mutants-build --filter <Suite>`, its allowed command forms only, undo each mutation before the next, and remove the worktree when done.
+1. Commit your change on your branch first; mutations run against that commit. `<sha>` is its `git rev-parse --short HEAD`.
+2. `cd <root> && git worktree add --detach .claude/worktrees/mut-<sha> <sha>`. If it already exists, another run is using it: stop and report.
+3. Mutate files under `.claude/worktrees/mut-<sha>/` only, never your own tree.
 
-`../dead-reck-mutants` is shared: the orchestrator runs one mutating agent (engineer or reviewer) at a time. If the worktree is not at the sha you set, or holds a patch you didn't apply, another run is using it: stop and report, don't re-sync over it. When you finish, run `cd <root> && git -C ../dead-reck-mutants checkout --detach -f <your HEAD sha>` so no staged patch is left behind: a later run can't reset over a patch it didn't apply.
+When you finish, undo the last mutation and run `cd <root> && git worktree remove .claude/worktrees/mut-<sha>` (no `--force`).
 
-A mutation that survives means a missing test: add it in your own tree, re-sync, re-run. List the result in your summary, one line each: `mutation -> test that failed` (e.g. `File.swift:<line> '>=' -> '>' -> SuiteTests/testName`). No Core logic changed: say `mutations: none (no Core logic changed)`.
+A mutation that survives means a missing test: add it in your own tree, commit, and re-run in a new `mut-<sha>` for the new commit. List the result in your summary, one line each: `mutation -> test that failed` (e.g. `File.swift:<line> '>=' -> '>' -> SuiteTests/testName`). No Core logic changed: say `mutations: none (no Core logic changed)`.
 
 Finish every task with: what changed, the author mutations (`mutation -> test that failed`), test results (exact command + pass/fail count), and what must be verified on the device.
