@@ -152,4 +152,47 @@ struct RepositoryInvariantTests {
         #expect(Self.writeViolations(in: transport, path: Self.writerPath).isEmpty)
         #expect(Self.writeViolations(in: "// never call writeValue here", path: "App/Sources/Link/OBDLinkService.swift").isEmpty)
     }
+
+    // MARK: No routing or place search (N3.4 item 7)
+
+    /// Navigation never asks Apple for routes, place search or map items:
+    /// positions stay on the phone and the roads are OSM packs only. The
+    /// four MapKit names are assembled from parts so this file never
+    /// contains them and needs no exclusion.
+    static let mapKitRoutingNames = ["Directions", "LocalSearch", "MapItem", "Route"].map { "MK" + $0 }
+
+    /// The directories scanned: all of Core's Swift (sources, tests, the
+    /// manifest) and the app's navigation layer. `Core/.build` is not
+    /// scanned.
+    static let routingFreePaths = ["Core/Sources", "Core/Tests", "App/Sources/Navigation"]
+
+    /// Why `text` (the file at `path`) mentions a MapKit routing or search
+    /// type, or empty. Comments count too: a mention is a plan to use it.
+    static func routingViolations(in text: String, path: String) -> [String] {
+        mapKitRoutingNames.filter { text.contains($0) }.map { "\(path) mentions \($0)" }
+    }
+
+    @Test("No MapKit routing or place search in Core or App/Sources/Navigation")
+    func noMapKitRouting() throws {
+        var files = try Self.routingFreePaths.flatMap { try Self.swiftFiles(under: $0) }
+        files.append(Self.repositoryRoot.appendingPathComponent("Core/Package.swift"))
+        for path in Self.routingFreePaths {
+            #expect(files.contains { Self.relativePath(of: $0).hasPrefix(path + "/") }, "\(path) not found from \(Self.repositoryRoot.path)")
+        }
+        #expect(files.contains { Self.relativePath(of: $0) == "Core/Tests/DriveLoggerCoreTests/RepositoryInvariantTests.swift" })
+        for file in files {
+            let text = try String(contentsOf: file, encoding: .utf8)
+            for problem in Self.routingViolations(in: text, path: Self.relativePath(of: file)) {
+                Issue.record(Comment(rawValue: problem))
+            }
+        }
+    }
+
+    @Test("The routing check catches each name, in code and in comments", arguments: [0, 1, 2, 3])
+    func routingCheckerCatches(index: Int) {
+        let name = Self.mapKitRoutingNames[index]
+        #expect(!Self.routingViolations(in: "let r = \(name)(request: q)", path: "x.swift").isEmpty)
+        #expect(!Self.routingViolations(in: "// later: \(name)Step", path: "x.swift").isEmpty)
+        #expect(Self.routingViolations(in: "let route = MKPolyline(); let mapItem = 1", path: "x.swift").isEmpty)
+    }
 }

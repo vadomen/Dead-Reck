@@ -275,9 +275,22 @@ public struct LiveNavigationRun: Sendable {
                 droppedInputs: droppedInputs,
                 inputs: inputs,
                 steps: engine.counters.steps,
-                rejectedInputs: engine.counters.inputsRejectedTimeJump
+                rejectedInputs: engine.counters.inputsRejectedTimeJump,
+                onRoadShare: estimate?.onRoadShare
             )
         )
+    }
+
+    /// `snapshot(at:droppedInputs:)` plus the matched edge's shape
+    /// (`NavigationSnapshot.matchedEdgeGeometry`) from the attached network.
+    /// `cache` is the caller's, kept per run: the shape is rebuilt only
+    /// when the matched edge changes. Off the engine's step path: `ingest`
+    /// is unchanged.
+    public func snapshot(at t: MonotonicTimestamp, droppedInputs: Int,
+                         edgeGeometry cache: inout MatchedEdgeGeometry.Cache) -> NavigationSnapshot {
+        var snapshot = snapshot(at: t, droppedInputs: droppedInputs)
+        snapshot.matchedEdgeGeometry = cache.geometry(for: snapshot.estimate?.matchedEdge, in: roads?.network)
+        return snapshot
     }
 
     /// Engine wall time per 10 Hz step. The time of every `ingest` since
@@ -332,10 +345,14 @@ public struct NavigationSnapshot: Hashable, Sendable {
         public var inputs: Int
         public var steps: Int
         public var rejectedInputs: Int
+        /// The estimate's `onRoadShare` (N3.2): nil without roads, before
+        /// the first road update and while the cloud is too wide for roads.
+        public var onRoadShare: Double?
 
         public init(msPerStep: Double = 0, maxMsPerStep: Double = 0, maxIngestMs: Double = 0,
                     effectiveSampleSize: Double? = nil, headingStdDeg: Double? = nil, speedScale: Double? = nil,
-                    droppedInputs: Int = 0, inputs: Int = 0, steps: Int = 0, rejectedInputs: Int = 0) {
+                    droppedInputs: Int = 0, inputs: Int = 0, steps: Int = 0, rejectedInputs: Int = 0,
+                    onRoadShare: Double? = nil) {
             self.msPerStep = msPerStep
             self.maxMsPerStep = maxMsPerStep
             self.maxIngestMs = maxIngestMs
@@ -346,6 +363,7 @@ public struct NavigationSnapshot: Hashable, Sendable {
             self.inputs = inputs
             self.steps = steps
             self.rejectedInputs = rejectedInputs
+            self.onRoadShare = onRoadShare
         }
     }
 
@@ -357,12 +375,19 @@ public struct NavigationSnapshot: Hashable, Sendable {
     /// The full estimate; nil before initialisation or without a run.
     public var estimate: NavigationEstimate?
     public var stats: Stats
+    /// The shape of `estimate.matchedEdge` for the map's debug drawing
+    /// (N3.4 item 6); nil without a matched edge, and from the plain
+    /// `LiveNavigationRun.snapshot(at:droppedInputs:)`. Filled by the
+    /// overload that takes a `MatchedEdgeGeometry.Cache`.
+    public var matchedEdgeGeometry: MatchedEdgeGeometry?
 
-    public init(t: MonotonicTimestamp, sessionID: UUID?, estimate: NavigationEstimate?, stats: Stats) {
+    public init(t: MonotonicTimestamp, sessionID: UUID?, estimate: NavigationEstimate?, stats: Stats,
+                matchedEdgeGeometry: MatchedEdgeGeometry? = nil) {
         self.t = t
         self.sessionID = sessionID
         self.estimate = estimate
         self.stats = stats
+        self.matchedEdgeGeometry = matchedEdgeGeometry
     }
 
     /// No recording is navigating.
