@@ -124,6 +124,7 @@ Also: `NSPrivacyTracking = false`, no tracking domains, `NSPrivacyCollectedDataT
 - [ ] Description, keywords (100 characters), promotional text, uk + en.
 - [ ] Optional: App Preview video (15–30 s).
 - [ ] Review Notes: what the app is, how to test without a car (demo mode), the video link, an explanation of background modes and Bluetooth.
+  - Road maps are OpenStreetMap data files (not code), downloaded after install from the app's own website over HTTPS and verified by SHA-256 and the pack's content hash; the app works without them.
 
 ## Phase 7. Submission and release
 1. Submit for Review with **Manual release** (you publish yourself after approval).
