@@ -46,16 +46,20 @@ struct LiveStatus: Hashable, Sendable {
     /// Latest vehicle speed from the engine ECU (`7E8`), any time the link
     /// polls — before a recording too. nil when the link isn't connected,
     /// and from Start until the recording's first speed reading (M8.1-3: a
-    /// manual fix's `obdSpeedT` must be an `obd` row of its own file).
+    /// manual fix's `obdSpeedT` must be an `obd` row of its own file); the
+    /// same from a Navigate session's start (UX-1), so its pins are staged
+    /// exactly as a recording's.
     var obdSpeedKmh: Double?
-    /// Speed of the latest reference fix, while recording. Reference only,
+    /// Speed of the latest reference fix, while recording or navigating
+    /// (UX-1). Reference only,
     /// never written. From any `LiveReferenceFixReporting` source: the
     /// phone's `ReferenceLocationSource`, or on the simulator Core's
     /// `SimulatedLocationSource` (a constant 50 km/h, M2-S2). nil when not
     /// recording, before the first fix and whenever the fix has no valid
     /// speed.
     var gpsSpeedKmh: Double?
-    /// The latest reference fix, while recording (for the Map tab). Display
+    /// The latest reference fix, while recording or navigating (UX-1; for
+    /// the Map tab and the manual-fix gate). Display
     /// only: never written and never an input. Same source, 1 Hz cadence and
     /// nil rules as `gpsSpeedKmh` — nil when not recording and before the
     /// first fix. Unlike `gpsSpeedKmh` it is the whole fix, kept even when
@@ -322,6 +326,51 @@ struct RecordingNavigationFeed: Sendable {
 /// sample — so no input of the recording precedes the hand-off. The feed's
 /// stream ends when the recording's writer has finished (either end path).
 /// The writer, the rows and the `stats` rows are unchanged by the tap.
+///
+/// **Navigate (UX-1).** Off until `enableNavigate(_:)` (the app enables it
+/// at launch; tests that don't are Record-only and see exactly the session
+/// they always did). Then, whenever the link is `polling` and no recording
+/// is starting, running or ending, a Navigate session runs: one
+/// `SessionClock` on the same `uptime`, a `LogHeader` built by the same
+/// `makeHeader` as a recording's (never written; its `sessionID` seeds the
+/// engine), a `NavigationTap` behind a `LogSink.tapOnly` sink, every source
+/// started by the same `startSources` and link events forwarded and
+/// replayed by the same `handleLinkEvent` / `replayStartupInit` as in a
+/// recording — so the engine's inputs are those of a recording of the same
+/// sensors — and the feed (`output: .navigateOnly`) handed to
+/// `onNavigationFeed` before any input. No file, directory, sidecar, marker
+/// or `stats` row exists for it: `lifecycle` rows go into the tap-only sink
+/// and are discarded there, and none of the Record-only rows (`start`,
+/// thermal, authorisation, background risk, `stats`, …) is even built.
+/// States and transitions: `NavigateState`. Generations come from the same
+/// counter as recordings', so the service never sees two runs with one key.
+///
+/// - Pins work as in a recording (same gate, same undo window); a committed
+///   fix goes into the tap-only sink, so the engine resets on it and nothing
+///   stores it. A fix still in its undo window when the session ends, or
+///   when the app enters the background, is committed then (as Stop and
+///   R14.3-3 do for a recording).
+/// - The link leaving `polling` doesn't stop anything; when it returns the
+///   same session goes on and the new connection's rows arrive live. After
+///   `autoStopAfter` continuously without `polling` the session ends:
+///   timers cancelled, pending fixes committed, sources stopped, sink and
+///   tap finished (so the service's run ends). A later `polling` starts a
+///   fresh session (new clock, generation and `sessionID`).
+/// - Record's Start ends the Navigate session completely, after Start's
+///   own checks pass and before Record's clock exists, then starts the
+///   recording exactly as from idle (its own Start, clock and start-up
+///   replay; the dedup skip is taken afresh). When the recording ends (stop
+///   or write failure) or a Start throws after that, Navigate resumes with a
+///   fresh session if the link is `polling`.
+/// - The screen stays awake while either mode runs; the idle timer is only
+///   set when that changes, so the Navigate → Record → Navigate switch never
+///   turns it off in between.
+/// - No background location (D7): `BackgroundLocationConfigurable` sources
+///   start with `holdsBackgroundLocation` false. Background and foreground
+///   reset nothing and write nothing: the engine keeps its state, and the
+///   time the app is suspended is a gap in every stream like any other.
+///   `backgroundRiskWarning` stays a Record concern.
+/// - `willTerminate` ends the session.
 @MainActor
 @Observable
 final class RecordingSession {
@@ -365,16 +414,21 @@ final class RecordingSession {
     /// (back from Settings), and when a recording starts and ends.
     private(set) var backgroundRiskWarning: String?
     /// Called once per recording with its navigation feed (see the type's
-    /// doc, "Navigation feed"). Runs synchronously on the main actor inside
-    /// `start`, before any row is written: keep it cheap (start a task to
-    /// consume `inputs`, don't consume here). nil: nobody listens, and the
-    /// tap's buffer simply drops the oldest inputs; the log is unaffected.
+    /// doc, "Navigation feed"), and once per Navigate session with its
+    /// `.navigateOnly` feed (UX-1). Runs synchronously on the main actor
+    /// inside `start` (or the Navigate start), before any row is written or
+    /// any input tapped: keep it cheap (start a task to consume `inputs`,
+    /// don't consume here). nil: nobody listens, and the tap's buffer simply
+    /// drops the oldest inputs; the log is unaffected.
     @ObservationIgnored var onNavigationFeed: (@MainActor (RecordingNavigationFeed) -> Void)?
     /// Awaited inside the background task of the flush on `.background` and
     /// on a memory warning, after the log's own flush (R14.1-4): `AppServices`
     /// flushes the navigation sidecar here, which is otherwise flushed only
     /// every 10 s.
     @ObservationIgnored var onFlush: (@Sendable () async -> Void)?
+    /// Navigate mode (UX-1; see the type's doc and `NavigateState`). Always
+    /// `.off` until `enableNavigate(_:)`.
+    private(set) var navigateState: NavigateState = .off
 
     @ObservationIgnored private let link: any OBDLinkServicing
     @ObservationIgnored private let sources: [any SensorSource]
@@ -399,6 +453,19 @@ final class RecordingSession {
     @ObservationIgnored private var nextPendingFixID = 0
 
     @ObservationIgnored private var recording: ActiveRecording?
+    /// The running Navigate session (UX-1); never at the same time as
+    /// `recording`.
+    @ObservationIgnored private var navigate: NavigateRun?
+    /// Non-nil while Navigate is enabled.
+    @ObservationIgnored private var navigateConfiguration: NavigateConfiguration?
+    /// Bumped by `enableNavigate`/`disableNavigate`: a link-state observation
+    /// armed under an older token stops re-arming.
+    @ObservationIgnored private var linkObservationToken = 0
+    /// The last value handed to `setIdleTimerDisabled`.
+    @ObservationIgnored private var idleTimerDisabled = false
+    /// Every header's `sessionID` (a recording's and a Navigate session's).
+    @ObservationIgnored private let makeSessionID: @MainActor () -> UUID
+    /// One counter for recordings and Navigate sessions alike.
     @ObservationIgnored private var generation = 0
     /// The end path in progress (stop or write failure); later callers wait.
     @ObservationIgnored private var ending: Task<Void, Never>?
@@ -430,6 +497,8 @@ final class RecordingSession {
     ///     in the app; injectable for tests.
     ///   - beginBackgroundTask: `UIApplication.beginBackgroundTask` in the
     ///     app (`systemBackgroundTask`); injectable for tests.
+    ///   - makeSessionID: every header's `sessionID`; `UUID()` in the app,
+    ///     fixed in tests that compare engine output across sessions.
     /// - Precondition: `stopFreeBytes < warningFreeBytes`.
     init(
         link: any OBDLinkServicing,
@@ -448,7 +517,8 @@ final class RecordingSession {
         diskRefreshInterval: Duration = .seconds(60),
         manualFixUndoWindow: Duration = .seconds(3),
         setIdleTimerDisabled: @escaping @MainActor (Bool) -> Void = { UIApplication.shared.isIdleTimerDisabled = $0 },
-        beginBackgroundTask: @escaping @MainActor (String) -> @MainActor () -> Void = RecordingSession.systemBackgroundTask
+        beginBackgroundTask: @escaping @MainActor (String) -> @MainActor () -> Void = RecordingSession.systemBackgroundTask,
+        makeSessionID: @escaping @MainActor () -> UUID = { UUID() }
     ) {
         precondition(stopFreeBytes < warningFreeBytes, "stopFreeBytes must be below warningFreeBytes")
         self.link = link
@@ -468,6 +538,7 @@ final class RecordingSession {
         self.setIdleTimerDisabled = setIdleTimerDisabled
         self.beginBackgroundTask = beginBackgroundTask
         self.manualFixUndoWindow = manualFixUndoWindow
+        self.makeSessionID = makeSessionID
 
         // The one subscription, taken now so nothing the link reports after
         // launch is missed (single subscriber; see the type's doc).
@@ -547,7 +618,15 @@ final class RecordingSession {
         // not when the calibration wait returns. Never cleared on behalf of
         // a later `start` that set it again meanwhile.
         var ownsStartingFlag = true
-        defer { if ownsStartingFlag { isStarting = false } }
+        defer {
+            if ownsStartingFlag {
+                isStarting = false
+                // UX-1: a Start that threw after ending Navigate (or while
+                // it ran, which changes nothing) leaves Navigate as it would
+                // be without the attempt.
+                resumeNavigate()
+            }
+        }
 
         // Rule 3, with a fresh reading.
         let reading = await readDiskSpace()
@@ -560,20 +639,13 @@ final class RecordingSession {
         if !allowWithoutOBD, !polling { throw RecordingStartBlocker.obdNotReady }
 
         // From here to the calibration wait nothing suspends.
+        // UX-1: Navigate ends completely (sources stopped, sink and feed
+        // finished) before this recording's clock exists; no hand-over. The
+        // idle timer stays as it is: the recording keeps it off.
+        if let nav = navigate { endNavigate(nav) }
         try store.createDirectory()
         let clock = SessionClock(source: uptime, wallClockStart: Date())
-        let header = LogHeader(
-            clock: clock,
-            app: app,
-            device: device,
-            notes: notes,
-            adapter: polling ? link.adapter : nil,
-            polling: polling ? link.plan.map(PollingRecord.init) : nil,
-            sensors: sensorConfiguration,
-            mount: mount.isEmpty ? nil : mount,
-            vehicle: vehicle.isEmpty ? nil : vehicle,
-            timeZone: TimeZone.current.identifier
-        )
+        let header = makeHeader(clock: clock, polling: polling, mount: mount, vehicle: vehicle)
         let navigationTap = NavigationTap()
         let (writer, url) = try makeWriter(header: header, start: clock.wallClockStart, tap: navigationTap.tap)
 
@@ -590,7 +662,7 @@ final class RecordingSession {
         live = LiveStatus(obdSpeedKmh: nil, obdHz: live.obdHz, availableDiskBytes: nil)
         obdSpeedUptime = nil
         state = .calibrating
-        setIdleTimerDisabled(true)
+        updateIdleTimer()
         onNavigationFeed?(RecordingNavigationFeed(
             generation: rec.generation,
             header: header,
@@ -648,7 +720,8 @@ final class RecordingSession {
     // MARK: - Manual position fix (double tap)
 
     /// Manual fixes tapped and not yet written, in tap order. Observed: the
-    /// map draws them as pending. Empty outside a recording.
+    /// map draws them as pending. Empty outside a recording or Navigate
+    /// session.
     private(set) var pendingManualFixes: [PendingManualFix] = []
 
     /// Ids of fixes that were dropped without being written (write failure,
@@ -664,9 +737,10 @@ final class RecordingSession {
     var currentUptimeSeconds: Double { uptime.uptimeSeconds }
 
     /// The current recording's clock time, to hand to `stageManualFix` as
-    /// `tapT`. nil when no recording is calibrating or recording.
+    /// `tapT`. nil when no recording is calibrating or recording and no
+    /// Navigate session runs (in Navigate: its clock, UX-1 (e)).
     func manualFixTapTime() -> MonotonicTimestamp? {
-        manualFixRecording?.clock.now()
+        manualFixRun?.clock.now()
     }
 
     /// Stages a manual fix taken at `tapT` (from `manualFixTapTime()`, in the
@@ -678,9 +752,14 @@ final class RecordingSession {
     /// a write failure drops it.
     ///
     /// There is no speed limit. Returns nil, and stages nothing, when no
-    /// recording is calibrating or recording, or the coordinate is not a
-    /// finite WGS 84 position. A non-finite or negative `mapSpanM` is
-    /// dropped from the row. The 300 m span rule is the map's.
+    /// recording is calibrating or recording (and no Navigate session runs),
+    /// or the coordinate is not a finite WGS 84 position. A non-finite or
+    /// negative `mapSpanM` is dropped from the row. The 300 m span rule is
+    /// the map's.
+    ///
+    /// In Navigate (UX-1 (e)) the same: staged, undoable for the same
+    /// window, then recorded into the session's tap-only sink — the engine
+    /// resets on it and nothing stores it.
     @discardableResult
     func stageManualFix(
         latitude: Double,
@@ -688,7 +767,7 @@ final class RecordingSession {
         tapT: MonotonicTimestamp,
         mapSpanM: Double?
     ) -> PendingManualFix.ID? {
-        guard let rec = manualFixRecording else { return nil }
+        guard let rec = manualFixRun else { return nil }
         let obdSpeedKmh = live.obdSpeedKmh
         let obdSpeedT = obdSpeedKmh == nil ? nil : obdSpeedUptime.map { rec.clock.timestamp(uptimeSeconds: $0) }
         guard let sample = ManualFixGate.sample(
@@ -719,7 +798,7 @@ final class RecordingSession {
     func cancelPendingManualFix(_ id: PendingManualFix.ID) -> Bool {
         guard let index = pendingManualFixes.firstIndex(where: { $0.id == id }) else { return false }
         pendingManualFixes.remove(at: index)
-        recording?.pendingFixTimers.removeValue(forKey: id)?.cancel()
+        currentRun?.pendingFixTimers.removeValue(forKey: id)?.cancel()
         return true
     }
 
@@ -738,13 +817,13 @@ final class RecordingSession {
         let ids = Set(fixes.map(\.id))
         pendingManualFixes.removeAll { ids.contains($0.id) }
         for fix in fixes {
-            recording?.pendingFixTimers.removeValue(forKey: fix.id)?.cancel()
+            currentRun?.pendingFixTimers.removeValue(forKey: fix.id)?.cancel()
             // Not writable: a fix whose window closes between a write
             // failure's error row and `performFail` (R15.1-3). The recording
             // and generation checks can't fail today — every end path's
             // `finishRecording` drops the ending recording's fixes and cancels
             // their timers before `recording` changes — and stay as guards.
-            guard let rec = recording, rec.generation == fix.generation, rec.isWritable else {
+            guard let rec = currentRun, rec.generation == fix.generation, rec.isWritable else {
                 droppedManualFixIDs.insert(fix.id)
                 continue
             }
@@ -752,8 +831,8 @@ final class RecordingSession {
         }
     }
 
-    /// Nothing more can be written (write failure) or the recording is gone.
-    private func dropPendingManualFixes(_ rec: ActiveRecording) {
+    /// Nothing more can be written (write failure) or the session is gone.
+    private func dropPendingManualFixes(_ rec: some SessionRun) {
         for timer in rec.pendingFixTimers.values { timer.cancel() }
         rec.pendingFixTimers = [:]
         for fix in pendingManualFixes where fix.generation == rec.generation {
@@ -762,11 +841,22 @@ final class RecordingSession {
         pendingManualFixes.removeAll { $0.generation == rec.generation }
     }
 
-    /// The recording a manual fix may be written to: calibrating or
-    /// recording, and its stop row not yet queued.
-    private var manualFixRecording: ActiveRecording? {
-        guard state == .calibrating || state == .recording, let rec = recording, rec.isWritable else { return nil }
-        return rec
+    /// The session a manual fix may be written to: the recording while it
+    /// is calibrating or recording and its stop row is not yet queued; with
+    /// no recording, the Navigate session (UX-1 (e)) while it runs.
+    private var manualFixRun: (any SessionRun)? {
+        if let rec = recording {
+            guard state == .calibrating || state == .recording, rec.isWritable else { return nil }
+            return rec
+        }
+        guard let nav = navigate, nav.isWritable else { return nil }
+        return nav
+    }
+
+    /// The session link rows and pins go to: the recording, else the
+    /// Navigate session. Never both (Start ends Navigate first).
+    private var currentRun: (any SessionRun)? {
+        recording ?? navigate
     }
 
     /// Writes `background`/`foreground` rows while recording; flushes on
@@ -777,6 +867,10 @@ final class RecordingSession {
         lastScenePhase = phase
         switch phase {
         case .background:
+            // UX-1: a Navigate fix in its undo window reaches the engine
+            // before the app is suspended, as a recording's is written.
+            // Nothing else: no row, no flush, nothing reset.
+            if navigate != nil { commitAllPendingManualFixes() }
             guard let rec = recording, rec.isWritable else { return }
             // A fix in its undo window is written now (R14.3-3): iOS may kill
             // the app after this, and the driver saw the fix as recorded.
@@ -790,6 +884,9 @@ final class RecordingSession {
                 Task { await refreshDiskSpace() }
                 // Back from Settings, or from a permission alert.
                 backgroundAvailabilityChanged()
+                // UX-1: the auto-stop deadline may have passed while
+                // suspended; its timer would fire too, this is at once.
+                if let nav = navigate { stopNavigateIfDue(nav) }
             }
             guard previous == .background, let rec = recording, rec.isWritable else { return }
             rec.record(LifecycleSample(.foreground))
@@ -818,6 +915,11 @@ final class RecordingSession {
     /// `stats` row) but without losing the last unflushed seconds. Blocks
     /// the main thread; the writer runs off it.
     func handleWillTerminate() {
+        // UX-1: the app closing ends Navigate (nothing to flush).
+        if let nav = navigate {
+            endNavigate(nav)
+            updateIdleTimer()
+        }
         guard let rec = recording else { return }
         let writer = rec.writer
         let flushed = DispatchSemaphore(value: 0)
@@ -891,6 +993,24 @@ final class RecordingSession {
         return false
     }
 
+    /// The header of a session about to start, a recording's or (UX-1) a
+    /// Navigate session's, which is built the same way and never written.
+    private func makeHeader(clock: SessionClock, polling: Bool, mount: String, vehicle: String) -> LogHeader {
+        LogHeader(
+            sessionID: makeSessionID(),
+            clock: clock,
+            app: app,
+            device: device,
+            notes: notes,
+            adapter: polling ? link.adapter : nil,
+            polling: polling ? link.plan.map(PollingRecord.init) : nil,
+            sensors: sensorConfiguration,
+            mount: mount.isEmpty ? nil : mount,
+            vehicle: vehicle.isEmpty ? nil : vehicle,
+            timeZone: TimeZone.current.identifier
+        )
+    }
+
     /// Creates the file exclusively, moving to the next collision index if a
     /// file of that name appeared since `newFileURL` looked. `tap` goes to the
     /// writer's sink (the recording's `NavigationTap`).
@@ -922,9 +1042,10 @@ final class RecordingSession {
     /// The start-up init, written once per recording, at Start (M4; see the
     /// type's doc and `OBDLinkServicing.lastInitEvents`). Must run in the
     /// same synchronous main-actor step as the `start` row, before anything
-    /// can suspend.
-    private func replayStartupInit(_ rec: ActiveRecording) {
-        // Once per recording, never again while it runs.
+    /// can suspend. A Navigate session (UX-1) replays the same way, once, at
+    /// its own start, so its link rows and dedup skip are a recording's.
+    private func replayStartupInit(_ rec: some SessionRun) {
+        // Once per session, never again while it runs.
         guard !rec.replayedStartupInit else { return }
         rec.replayedStartupInit = true
         let replay = link.lastInitEvents
@@ -1004,11 +1125,18 @@ final class RecordingSession {
         return "No background location session, so the recording may pause while the phone is locked. \(because)"
     }
 
-    private func startSources(_ rec: ActiveRecording) {
+    /// Starts every source on the session's clock and sink, a recording's
+    /// or (UX-1) a Navigate session's: one function, so the two start the
+    /// same sources in the same order. Only `holdsBackgroundLocation` differs
+    /// (D7).
+    private func startSources(_ rec: some SessionRun) {
         for source in sources {
             if case .unavailable(let reason) = source.availability {
                 rec.record(LifecycleSample(.error, detail: "\(source.name) unavailable: \(reason)"))
                 continue
+            }
+            if let configurable = source as? any BackgroundLocationConfigurable {
+                configurable.holdsBackgroundLocation = rec.holdsBackgroundLocation
             }
             do {
                 try source.start(clock: rec.clock, sink: rec.sink)
@@ -1083,11 +1211,17 @@ final class RecordingSession {
     private func updateLive(_ rec: ActiveRecording) async {
         guard recording === rec else { return }
         live.elapsed = max(0, rec.clock.now().seconds)
+        updateLiveReferenceFix()
+        let bytes = await rec.writer.bytesWritten
+        if recording === rec { live.fileBytes = bytes }
+    }
+
+    /// `live.gpsSpeedKmh` and `live.referenceFix` from the sources, once a
+    /// second while a recording or (UX-1) a Navigate session runs.
+    private func updateLiveReferenceFix() {
         let fix = sources.lazy.compactMap { ($0 as? any LiveReferenceFixReporting)?.latestReferenceFix }.first
         live.gpsSpeedKmh = fix.flatMap { $0.speed >= 0 ? $0.speed * 3.6 : nil }
         live.referenceFix = fix
-        let bytes = await rec.writer.bytesWritten
-        if recording === rec { live.fileBytes = bytes }
     }
 
     private func flushInBackgroundTask(_ rec: ActiveRecording, reason: String) {
@@ -1182,7 +1316,8 @@ final class RecordingSession {
 
     /// Called by both end paths after the writer's `finish()`: the sink
     /// accepts nothing more, so the navigation feed ends here, after its
-    /// last input.
+    /// last input. Then (UX-1) back to Navigate if the link still polls,
+    /// before the idle timer is re-evaluated, so it never flickers off.
     private func finishRecording(_ rec: ActiveRecording) {
         rec.navigationTap.finish()
         dropPendingManualFixes(rec)
@@ -1191,8 +1326,18 @@ final class RecordingSession {
         currentFile = nil
         live.gpsSpeedKmh = nil
         live.referenceFix = nil
-        setIdleTimerDisabled(false)
+        startNavigateIfPossible()
+        updateIdleTimer()
         refreshBackgroundRisk()
+    }
+
+    /// Keeps the screen awake while a recording or a Navigate session
+    /// exists. Calls `setIdleTimerDisabled` only when that changes.
+    private func updateIdleTimer() {
+        let wanted = recording != nil || navigate != nil
+        guard wanted != idleTimerDisabled else { return }
+        idleTimerDisabled = wanted
+        setIdleTimerDisabled(wanted)
     }
 
     // MARK: - Internals: writer reports (internal for tests)
@@ -1252,13 +1397,19 @@ final class RecordingSession {
 
     // MARK: - Internals: link and system events
 
+    /// One function for both modes: link rows go to the recording or, with
+    /// none, the Navigate session (UX-1), with the same skip and mapping.
     private func handleLinkEvent(_ event: LinkEvent) {
         consumedLinkEvents += 1
+        let run = currentRun
         // Delivered before Start but handled after it (M4 dedup contract):
         // replayed already, or not part of the recording.
-        let skipped = recording.map { $0.acceptsLinkEvents && $0.linkEventsToSkip > 0 } ?? false
+        let skipped = run.map { $0.acceptsLinkEvents && $0.linkEventsToSkip > 0 } ?? false
         switch event {
         case .session(.reading(let reading)) where reading.measurement.pid == .vehicleSpeed && reading.isFromPrimaryECU:
+            // UX-1 rule (a): the speed at connect, if Navigate is waiting
+            // for it. A skipped reading is still the car's speed.
+            if let nav = navigate, !nav.speedDecided { decideCalibration(nav, speedKmh: reading.measurement.value) }
             // A skipped reading has no `obd` row in this file, so it can't be
             // a manual fix's speed (M8.1-3).
             guard !skipped else { break }
@@ -1273,7 +1424,7 @@ final class RecordingSession {
         default:
             break
         }
-        guard let rec = recording, rec.acceptsLinkEvents else { return }
+        guard let rec = run, rec.acceptsLinkEvents else { return }
         if skipped {
             rec.linkEventsToSkip -= 1
             return
@@ -1317,6 +1468,179 @@ final class RecordingSession {
         return await Task.detached(priority: .utility) {
             try? provider.availableBytes(for: url)
         }.value
+    }
+
+    // MARK: - Navigate (UX-1)
+
+    /// Turns Navigate on (see the type's doc): from now on a Navigate
+    /// session runs whenever the link is `polling` and no recording is
+    /// starting, running or ending — at once, if that is the case now. Call
+    /// after `onNavigationFeed` is set. Calling it again replaces the
+    /// configuration for the next session.
+    func enableNavigate(_ configuration: NavigateConfiguration = NavigateConfiguration()) {
+        navigateConfiguration = configuration
+        linkObservationToken += 1
+        observeLinkState(token: linkObservationToken)
+        startNavigateIfPossible()
+        updateIdleTimer()
+    }
+
+    /// Turns Navigate off and ends a running session. Record is unaffected.
+    func disableNavigate() {
+        navigateConfiguration = nil
+        linkObservationToken += 1
+        if let nav = navigate {
+            endNavigate(nav)
+            updateIdleTimer()
+        }
+    }
+
+    /// The running Navigate session's generation (its feed's), for tests.
+    var navigateGeneration: Int? { navigate?.generation }
+
+    /// Re-evaluates Navigate on every `link.state` change while this
+    /// token's observation is current.
+    private func observeLinkState(token: Int) {
+        withObservationTracking {
+            _ = link.state
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.linkObservationToken == token else { return }
+                self.navigateLinkStateChanged()
+                self.observeLinkState(token: token)
+            }
+        }
+    }
+
+    private func navigateLinkStateChanged() {
+        guard let configuration = navigateConfiguration else { return }
+        if isLinkPolling {
+            guard let nav = navigate else {
+                startNavigateIfPossible()
+                updateIdleTimer()
+                return
+            }
+            if case .waitingForOBD = navigateState {
+                // Reconnected: the same session goes on.
+                nav.autoStopTimer?.cancel()
+                nav.autoStopTimer = nil
+                navigateState = .running
+            }
+        } else if let nav = navigate {
+            switch navigateState {
+            case .calibrating, .running:
+                // The still phase is over: back to `running` on reconnect.
+                nav.calibrationTimer?.cancel()
+                nav.speedDecided = true
+                let since = ContinuousClock.now
+                navigateState = .waitingForOBD(since: since)
+                nav.autoStopTimer = Task { [weak self, weak nav] in
+                    try? await Task.sleep(until: since + configuration.autoStopAfter, clock: .continuous)
+                    guard !Task.isCancelled, let self, let nav else { return }
+                    self.stopNavigateIfDue(nav)
+                }
+            case .waitingForOBD, .off:
+                break
+            }
+        }
+    }
+
+    /// Ends `nav` if it has been without `polling` for `autoStopAfter`.
+    private func stopNavigateIfDue(_ nav: NavigateRun) {
+        guard navigate === nav, case .waitingForOBD(let since) = navigateState,
+              let configuration = navigateConfiguration,
+              since.duration(to: .now) >= configuration.autoStopAfter else { return }
+        endNavigate(nav)
+        updateIdleTimer()
+    }
+
+    /// After a recording ends or a Start throws: a fresh Navigate session if
+    /// the link polls, and the idle timer for whatever now runs.
+    private func resumeNavigate() {
+        startNavigateIfPossible()
+        updateIdleTimer()
+    }
+
+    /// Starts a Navigate session when Navigate is enabled, none runs, no
+    /// recording is starting, running or ending, and the link is `polling`.
+    /// One synchronous main-actor step, like Record's Start: header, feed,
+    /// start-up replay and sources, in Record's order. The caller updates
+    /// the idle timer.
+    private func startNavigateIfPossible() {
+        guard let configuration = navigateConfiguration, navigate == nil, recording == nil, !isStarting,
+              isLinkPolling else { return }
+        // Rule (a): the speed the session had before this start.
+        let speedAtConnect = live.obdSpeedKmh
+        let clock = SessionClock(source: uptime, wallClockStart: Date())
+        let header = makeHeader(clock: clock, polling: true, mount: "", vehicle: "")
+        let navigationTap = NavigationTap()
+        generation += 1
+        let nav = NavigateRun(generation: generation, clock: clock, navigationTap: navigationTap)
+        navigate = nav
+        // As at Record's Start (M8.1-3): pins take the session's own readings.
+        live.obdSpeedKmh = nil
+        obdSpeedUptime = nil
+        live.gpsSpeedKmh = nil
+        live.referenceFix = nil
+        navigateState = .calibrating
+        onNavigationFeed?(RecordingNavigationFeed(
+            generation: nav.generation, header: header, clock: clock, output: .navigateOnly, tap: navigationTap))
+        replayStartupInit(nav)
+        startSources(nav)
+        nav.liveTimer = Task { [weak self, weak nav] in
+            while !Task.isCancelled {
+                guard let self, let nav, self.navigate === nav else { return }
+                self.updateLiveReferenceFix()
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
+        let still = configuration.stillCalibration
+        if still > .zero {
+            nav.calibrationTimer = Task { [weak self, weak nav] in
+                try? await Task.sleep(for: still)
+                guard !Task.isCancelled, let self, let nav else { return }
+                self.endCalibration(nav)
+            }
+            if let speedAtConnect { decideCalibration(nav, speedKmh: speedAtConnect) }
+        } else {
+            endCalibration(nav)
+        }
+    }
+
+    /// Rule (a), once per session: moving at connect skips the still phase.
+    private func decideCalibration(_ nav: NavigateRun, speedKmh: Double) {
+        guard !nav.speedDecided else { return }
+        nav.speedDecided = true
+        if speedKmh > 0 { endCalibration(nav) }
+    }
+
+    private func endCalibration(_ nav: NavigateRun) {
+        nav.speedDecided = true
+        nav.calibrationTimer?.cancel()
+        guard navigate === nav, navigateState == .calibrating else { return }
+        navigateState = .running
+    }
+
+    /// Ends `nav` completely: timers cancelled, a fix still in its undo
+    /// window committed (the driver's mark reaches the engine, as Stop
+    /// writes a recording's), sources stopped, then the sink and the tap
+    /// finished, so the service's run ends after its last input. The caller
+    /// updates the idle timer.
+    private func endNavigate(_ nav: NavigateRun) {
+        guard navigate === nav else { return }
+        nav.cancelTimers()
+        commitAllPendingManualFixes()
+        nav.acceptsLinkEvents = false
+        for source in nav.startedSources { source.stop() }
+        nav.startedSources = []
+        nav.ended = true
+        nav.sink.finish()
+        nav.navigationTap.finish()
+        dropPendingManualFixes(nav)
+        navigate = nil
+        navigateState = .off
+        live.gpsSpeedKmh = nil
+        live.referenceFix = nil
     }
 
     // MARK: - Formatting
@@ -1369,7 +1693,7 @@ final class RecordingSession {
 
 /// One recording in progress: its clock, writer and timers.
 @MainActor
-private final class ActiveRecording {
+private final class ActiveRecording: SessionRun {
     let generation: Int
     /// The recording's one clock.
     let clock: SessionClock
@@ -1377,6 +1701,8 @@ private final class ActiveRecording {
     let url: URL
     /// Feeds navigation input from `writer.sink`; finished with the writer.
     let navigationTap: NavigationTap
+    /// A recording holds background location (unchanged by UX-1, D7a).
+    let holdsBackgroundLocation = true
     var startedSources: [any SensorSource] = []
     /// Link events are written while true.
     var acceptsLinkEvents = true
