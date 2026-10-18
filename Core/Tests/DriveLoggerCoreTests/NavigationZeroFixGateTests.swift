@@ -41,7 +41,10 @@ struct NavigationZeroFixGateTests {
         // every step from the third second on is vetoed.
         #expect(on.counters.zuptVetoedSteps >= 570, "vetoed \(on.counters.zuptVetoedSteps)")
         #expect(on.counters.zuptSteps <= 30, "ZUPT \(on.counters.zuptSteps)")
-        #expect(on.counters.courseUpdates > 50)
+        // OBD says 0, so no fix's course is used (R53.1-2): the heading
+        // comes from the position fixes and the gyro alone.
+        #expect(on.counters.courseUpdates == 0)
+        #expect(on.counters.reseeds == 0)
         for (t, sample) in zip(times, onSamples) {
             let estimate = try #require(sample)
             #expect(!estimate.stationary, "t \(t)")
@@ -59,7 +62,7 @@ struct NavigationZeroFixGateTests {
         #expect(Self.stuckDrive.error(frozen, at: 59) > 300)
     }
 
-    @Test("A vetoed step moves at the newest moving fix's Doppler speed, unscaled, and records it as held, not as a fresh OBD speed")
+    @Test("A vetoed step moves at the newest moving fix's Doppler speed, unscaled, and records OBD's 0 as held, not the Doppler speed")
     func vetoedStepSpeed() throws {
         // A scale prior far from 1, with no spread: a scaled step would run
         // at 1.5 × 13.9 m/s.
@@ -75,7 +78,9 @@ struct NavigationZeroFixGateTests {
         #expect(abs(estimate.speedMps - 13.9) < 1, "speed \(estimate.speedMps)")
         let entry = try #require(engine.motionHistoryEntry(atOrBefore: S.ms(30).nanoseconds))
         #expect(entry.speed == nil, "not a fresh OBD speed: no GNSS speed update against the scale")
-        #expect(entry.held == 13.9)
+        // Held is what OBD says, so fixes taken then keep the OBD-0 course
+        // veto (R53.1-2).
+        #expect(entry.held == 0)
     }
 
     @Test("A real stop: OBD reaches 0 as the car stops, GNSS Doppler lags 1 s: the gate never vetoes, output equals gate off")
@@ -243,13 +248,98 @@ struct NavigationZeroFixGateTests {
         let events = Self.stuckDrive.events(obdSpeed: { t, _ in t < 5 ? 0 : nil }, fix: { t, state, rng in
             clean(t, state, &rng)
         })
-        let (on, onSamples) = S.run(events, config: Self.config(gate: 1), sampleTimes: [59])
+        let (on, onSamples) = S.run(events, config: Self.config(gate: 1), sampleTimes: [10, 30, 59])
         #expect(on.counters.zuptVetoedSteps >= 570)
         #expect(on.counters.staleParkedSteps == 0)
-        #expect(Self.stuckDrive.error(try #require(onSamples[0]), at: 59) < 30)
+        #expect(on.counters.zuptSteps <= 30)
+        for (t, sample) in zip([10.0, 30, 59], onSamples) {
+            let estimate = try #require(sample)
+            #expect(!estimate.stationary, "t \(t)")
+            #expect(Self.stuckDrive.error(estimate, at: t) < 30, "t \(t): error \(Self.stuckDrive.error(estimate, at: t)) m")
+        }
+        // The last reply, stale, is still a 0: courses stay vetoed as for
+        // a stale 0 without the gate (R11.1-4, R53.1-2).
+        #expect(on.counters.courseUpdates == 0, "course updates \(on.counters.courseUpdates)")
+        #expect(on.counters.reseeds == 0)
         let off = S.run(events, config: Self.config(gate: 0)).engine
         #expect(off.counters.staleParkedSteps >= 520, "\(off.counters)")
         #expect(off.counters.zuptVetoedSteps == 0)
+        #expect(off.counters.courseUpdates == 0)
+
+        // A stale moving reply (the link drops at 50 km/h): no zero, nothing
+        // to veto; unknown-speed steps, and the fixes' courses are used.
+        let moving = Self.stuckDrive.events(obdSpeed: { t, _ in t < 5 ? 50 : nil }, fix: { t, state, rng in
+            clean(t, state, &rng)
+        })
+        let stale = S.run(moving, config: Self.config(gate: 1)).engine
+        #expect(stale.counters.zuptVetoedSteps == 0 && stale.counters.zuptSteps == 0)
+        #expect(stale.counters.staleParkedSteps == 0)
+        #expect(stale.counters.staleSpeedSteps >= 520, "\(stale.counters.staleSpeedSteps)")
+        #expect(stale.counters.courseUpdates > 50, "course updates \(stale.counters.courseUpdates)")
+    }
+
+    /// R53.1-2, the ferry: the car stands at heading 30° with fresh OBD
+    /// zeros (10 Hz) while the ferry carries it at 6 m/s towards 120°.
+    static let ferryHeadingDeg = 30.0
+    static let ferryDrive = S(initialHeadingDeg: ferryHeadingDeg, initialSpeed: 10, [
+        .straight(seconds: 20, speed: 10), .ramp(seconds: 4, from: 10, to: 0), .stop(seconds: 60),
+        .ramp(seconds: 4, from: 0, to: 10), .straight(seconds: 30, speed: 10),
+    ])
+
+    /// Clean fixes of the car until it parks (24 s); parked fixes until the
+    /// ferry sails (30 s); then fixes moving with the ferry at 6 m/s,
+    /// course 120°, until GNSS is lost at 80 s, four seconds before the
+    /// car drives off at heading 30°.
+    static func ferryEvents() -> [LogEvent] {
+        let clean = S.cleanFix()
+        let course = ferryHeadingDeg + 90
+        let speed = 6.0
+        return ferryDrive.events(fix: { t, state, rng in
+            guard t < 80 - 1e-9 else { return nil }
+            guard t >= 30 - 1e-9 else { return clean(t, state, &rng) }
+            let d = speed * (t - 30)
+            return S.Fix(east: state.east + d * sin(course * .pi / 180) + 2 * rng.nextGaussian(),
+                         north: state.north + d * cos(course * .pi / 180) + 2 * rng.nextGaussian(),
+                         accuracy: 5, speed: speed, speedAccuracy: 0.3, course: course, courseAccuracy: 2)
+        })
+    }
+
+    @Test("Ferry (R53.1-2): fresh OBD 0 while fixes move across the car's heading: vetoed steps use no course, and DR drives off along the gyro heading")
+    func ferryKeepsCourseVeto() throws {
+        var engine = NavigationEngine(config: Self.config(gate: 1))
+        var boarded: NavigationCounters?
+        var atSea: NavigationCounters?
+        var atLanding: NavigationEstimate?
+        var end: NavigationEstimate?
+        for input in S.inputs(Self.ferryEvents()) {
+            if boarded == nil, input.arrival >= S.ms(30) { boarded = engine.counters }
+            if atLanding == nil, input.arrival >= S.ms(84) {
+                atSea = engine.counters
+                atLanding = engine.estimate(at: S.ms(84))
+            }
+            engine.ingest(input)
+        }
+        end = engine.estimate(at: S.ms(118))
+        let before = try #require(boarded), after = try #require(atSea)
+        // Two moving fixes (30, 31 s) give the evidence: steps from 31.1 s
+        // to 83.0 s (3 s past the last fix) are vetoed.
+        #expect(after.zuptVetoedSteps - before.zuptVetoedSteps >= 500, "vetoed \(after.zuptVetoedSteps)")
+        #expect(after.courseUpdates == before.courseUpdates,
+                "course updates at sea \(after.courseUpdates - before.courseUpdates)")
+        #expect(after.reseeds == before.reseeds, "reseeds at sea \(after.reseeds - before.reseeds)")
+        let landing = try #require(atLanding)
+        #expect(abs(angleDifference(landing.headingDeg, Self.ferryHeadingDeg)) < 10, "heading \(landing.headingDeg)")
+
+        // GNSS lost; OBD reports the drive-off: the dead-reckoned track
+        // runs along the car's heading, 320 m in 34 s.
+        let last = try #require(end)
+        let dEast = last.east - landing.east, dNorth = last.north - landing.north
+        var bearing = atan2(dEast, dNorth) * 180 / .pi
+        if bearing < 0 { bearing += 360 }
+        let length = (dEast * dEast + dNorth * dNorth).squareRoot()
+        #expect(abs(angleDifference(bearing, Self.ferryHeadingDeg)) < 10, "track bearing \(bearing)")
+        #expect(abs(length - 320) < 40, "track length \(length) m")
+        #expect(abs(angleDifference(last.headingDeg, Self.ferryHeadingDeg)) < 10, "heading \(last.headingDeg)")
     }
 
     @Test("A silence of every input while the veto holds: catch-up equals stepping one by one")

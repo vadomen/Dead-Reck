@@ -1860,6 +1860,23 @@ values, so one column each.
   wherever the gate does not fire, which on this car's drives is
   everywhere measured. To verify on the device: see "To verify on the
   device (N4)".
+- **R53.1-2: vetoed steps keep the OBD-0 course veto** (2026-10-18; the gate
+  stays on, the user's decision). A vetoed step recorded the Doppler speed
+  it moved at as the held OBD speed, so a fix taken then passed the course
+  veto: on a ferry, with the car parked across the travel direction, a
+  course reseed set the heading to the ferry's course and DR left the ramp
+  at that angle. Now the step's history holds what OBD says (its 0, fresh
+  or stale) and the motion is unchanged, so course updates and reseeds are
+  vetoed as for an OBD 0 without the gate; heading comes from the gyro (and
+  position fixes). Synthetic ferry (heading 30°, fixes at 6 m/s towards
+  120°): 48 course updates and 1 reseed at sea and a drive-off along 120°
+  before, none and 32.8° after. In the simulator case the fixes' courses
+  are no longer used (88 → 0 course updates), and the estimate stays
+  0.02–0.45 m from the fixes after 10 s (before 0.03–0.39 m). Adoption:
+  default config, seeds 1–5, every acceptance run with and without roads,
+  main before vs after (logs/out-sweep-zupt/, git-ignored): all 100
+  GeoJSON pairs byte-identical, `metrics.md` differs only in ms/step and
+  max ingest ms, 0 vetoed steps; the means equal the table above.
 
 ### N2-3: magnetometer heading prior (2026-10-18)
 
