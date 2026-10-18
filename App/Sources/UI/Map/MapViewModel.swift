@@ -27,6 +27,8 @@ final class MapViewModel {
     private let bearingSource: any MapBearingSource
     /// The recording the track belongs to.
     private(set) var currentFile: URL?
+    /// The run (recording or Navigate session) the track belongs to.
+    private(set) var currentRun: Int?
 
     /// When the latest fix arrived (stamped at ingest, not read from the
     /// recorder), for the stale-fix display.
@@ -55,23 +57,30 @@ final class MapViewModel {
     /// screen) it only feeds the bearing source, for the recording already
     /// shown: a good course from a locked stretch would otherwise be lost and
     /// unlocking at a light would show the pre-lock heading (M10.1-2). Track,
-    /// latest fix and staleness are untouched. A different `file` is a new recording and resets the track; a
-    /// nil fix or nil file (after Stop) keeps what is shown until the next Start.
+    /// latest fix and staleness are untouched. A different `file` or `run`
+    /// (the session's run generation; Navigate has no file) is a new run and
+    /// resets the track; a nil fix, nil file and nil run (after Stop) keeps
+    /// what is shown until the next Start.
     ///
     /// `elapsed` is the recorder's session-clock time now; with it the fix's
     /// age comes from the fix's own time (`receivedT - ageS`), so an old fix
     /// ingested late (scene reactivation) already looks stale. Without it the
     /// fix is treated as arriving now.
-    func ingest(_ fix: LocationSample?, file: URL?, isActive: Bool, elapsed: TimeInterval? = nil) {
+    func ingest(
+        _ fix: LocationSample?, file: URL?, run: Int? = nil, isActive: Bool,
+        elapsed: TimeInterval? = nil
+    ) {
+        let isNewRun = (file != nil && file != currentFile) || (run != nil && run != currentRun)
         guard isActive else {
-            if let fix, let file, file == currentFile {
+            if let fix, file != nil || run != nil, !isNewRun {
                 bearingSource.ingest(fix)
                 if bearingSource.bearingDegrees != bearing { bearing = bearingSource.bearingDegrees }
             }
             return
         }
-        if let file, file != currentFile {
-            currentFile = file
+        if isNewRun {
+            currentFile = file ?? (run != nil ? nil : currentFile)
+            currentRun = run ?? (file != nil ? nil : currentRun)
             track = GPSTrack()
             latest = nil
             lastFixInstant = nil

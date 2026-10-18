@@ -11,8 +11,8 @@ enum RoadsWarning {
 
     /// The line to show, or nil.
     ///
-    /// - Not recording, or roads attached: nil.
-    /// - No verified pack once this recording's own library rescan has
+    /// - No run navigating (a recording or Navigate), or roads attached: nil.
+    /// - No verified pack once this run's own library rescan has
     ///   returned (`libraryScanned`, R34.1-3): `noPacks`, even before the
     ///   first selection attempt has an outcome.
     /// - Otherwise only the latest attempt's outcome speaks: `noPacks`,
@@ -20,10 +20,10 @@ enum RoadsWarning {
     ///   the engine raises a new request, nothing the driver can fix),
     ///   `unfinished` and no attempt yet give nil.
     static func message(
-        recording: Bool, libraryScanned: Bool, verifiedPacks: Int, roadsAttached: Bool,
+        active: Bool, libraryScanned: Bool, verifiedPacks: Int, roadsAttached: Bool,
         lastOutcome: NavSidecar.RoadsSelection.Outcome?
     ) -> String? {
-        guard recording, !roadsAttached else { return nil }
+        guard active, !roadsAttached else { return nil }
         if libraryScanned, verifiedPacks == 0 { return noPacks }
         guard let lastOutcome else { return nil }
         if lastOutcome == .noPacks { return noPacks }
@@ -34,18 +34,18 @@ enum RoadsWarning {
 }
 
 extension RoadsWarning {
-    /// The line for the recording in progress: `message` over the service's
+    /// The line for the run in progress: `message` over the service's
     /// roads status and the library's latest packs (the map polls it). The
-    /// library counts as scanned only once the recording's own rescan has
+    /// library counts as scanned only once the run's own rescan has
     /// returned (`RoadsStatus.libraryScanned`), not when an earlier scan is
     /// finished and idle: at Start the rescan begins in a `.utility` task,
     /// and a poll before it would read the previous scan's packs (R34.1-3).
     static func current(service: NavigationService, library: RoadPackLibrary) async -> String? {
         let roads = await service.roadsStatus()
-        guard roads.recording else { return nil }
+        guard roads.active else { return nil }
         let status = await library.status()
         return message(
-            recording: roads.recording, libraryScanned: roads.libraryScanned,
+            active: roads.active, libraryScanned: roads.libraryScanned,
             verifiedPacks: status.packs.filter(\.verified).count, roadsAttached: roads.inUse,
             lastOutcome: roads.lastOutcome
         )

@@ -62,7 +62,7 @@ struct NavigationServiceRoadsTests {
     /// main-actor work of tests running alongside (R32.2-1).
     func comparison(feed: RecordingNavigationFeed, events: [LogEvent], packs: [URL]) async throws
         -> (SidecarComparison, NavSidecar.Contents) {
-        let sidecarURL = feed.sidecarURL
+        let sidecarURL = try feed.requiredSidecarURL
         let header = feed.header
         return try await Task.detached {
             try Self.compare(sidecarURL: sidecarURL, header: header, events: events, packs: packs)
@@ -103,7 +103,7 @@ struct NavigationServiceRoadsTests {
         // Not blocked on loading: the inputs are consumed whether or not the pack is ready.
         #expect(await waitUntil { await service.roadsStatus().inUse })
         let status = await service.roadsStatus()
-        #expect(status.packNames == ["fixture.roadpack"] && status.recording)
+        #expect(status.packNames == ["fixture.roadpack"] && status.active)
         #expect(status.packHashPrefixes.first?.count == 8 && status.roadSetHashPrefix?.count == 8)
         let late = Self.events(2.5...7)
         for event in late { tap.record(event) }
@@ -227,7 +227,7 @@ struct NavigationServiceRoadsTests {
 
     /// The recording's `roadsSelection` outcomes, in file order.
     func outcomes(_ feed: RecordingNavigationFeed) throws -> [NavSidecar.RoadsSelection.Outcome] {
-        try NavSidecar.read(contentsOf: feed.sidecarURL).roadsSelections.map(\.outcome)
+        try NavSidecar.read(contentsOf: feed.requiredSidecarURL).roadsSelections.map(\.outcome)
     }
 
     @Test("A selected attempt writes roadsSelection, then roads, right after it")
@@ -247,11 +247,11 @@ struct NavigationServiceRoadsTests {
         await task.value
 
         #expect(try outcomes(feed) == [.selected])
-        let contents = try NavSidecar.read(contentsOf: feed.sidecarURL)
+        let contents = try NavSidecar.read(contentsOf: feed.requiredSidecarURL)
         let line = try #require(contents.roadsSelections.first)
         #expect(line.packs == ["fixture.roadpack"] && line.candidates?.first?.covering == true)
         #expect(contents.roads != nil)
-        let text = try String(contentsOf: feed.sidecarURL, encoding: .utf8)
+        let text = try String(contentsOf: feed.requiredSidecarURL, encoding: .utf8)
         let kinds = text.split(separator: "\n").compactMap { $0.contains("\"roadsSelection\"") ? "s" : $0.contains("\"roads\"") ? "r" : nil }
         #expect(kinds.joined() == "sr", "roadsSelection is followed by roads")
     }
@@ -274,7 +274,7 @@ struct NavigationServiceRoadsTests {
 
         let found = try outcomes(feed)
         #expect(found.first == .noneCovering && !found.contains(.selected))
-        #expect(try NavSidecar.read(contentsOf: feed.sidecarURL).roads == nil)
+        #expect(try NavSidecar.read(contentsOf: feed.requiredSidecarURL).roads == nil)
     }
 
     @Test("A refused set writes refused; the same set refused again is not rebuilt and, being a repeat, is counted and written at the end")
@@ -295,7 +295,7 @@ struct NavigationServiceRoadsTests {
         tap.finish()
         await task.value
 
-        let lines = try NavSidecar.read(contentsOf: feed.sidecarURL).roadsSelections
+        let lines = try NavSidecar.read(contentsOf: feed.requiredSidecarURL).roadsSelections
         let refused = lines.filter { $0.outcome != .unfinished }
         #expect(refused.count == 2 && refused.allSatisfy { $0.outcome == .refused })
         #expect(refused.allSatisfy { $0.packs == ["a.roadpack", "b.roadpack"] && $0.reason != nil })
@@ -325,7 +325,7 @@ struct NavigationServiceRoadsTests {
         let first = await service.roadsStatus()
         let refusal = try #require(first.refusal, "the attach refusal reaches Diagnostics")
         #expect(refusal.hasPrefix("narrow.roadpack: ") && refusal.contains("keys: roadSearchRadiusM"))
-        #expect(first.recording && !first.inUse && first.lastOutcome == .refused)
+        #expect(first.active && !first.inUse && first.lastOutcome == .refused)
         #expect(RoadsDiagnosticsText.usage(first) == "none (refused: \(refusal))", "not 'looking for a pack'")
         #expect(await RoadsWarning.current(service: service, library: packs) == RoadsWarning.refused)
         #expect(await service.networksBuilt == 1)
@@ -341,7 +341,7 @@ struct NavigationServiceRoadsTests {
         tap.finish()
         await task.value
 
-        let lines = try NavSidecar.read(contentsOf: feed.sidecarURL).roadsSelections
+        let lines = try NavSidecar.read(contentsOf: feed.requiredSidecarURL).roadsSelections
         let refused = lines.filter { $0.outcome != .unfinished }
         #expect(refused.reduce(0) { $0 + $1.attempts } >= 3)
         #expect(refused.allSatisfy { $0.outcome == .refused && $0.packs == ["narrow.roadpack"] })
@@ -384,7 +384,7 @@ struct NavigationServiceRoadsTests {
         tap.finish()
         await task.value
 
-        let lines = try NavSidecar.read(contentsOf: feed.sidecarURL).roadsSelections
+        let lines = try NavSidecar.read(contentsOf: feed.requiredSidecarURL).roadsSelections
         #expect(lines.map(\.outcome) == [.noPacks, .noPacks], "no unfinished attempt: \(lines)")
         #expect(lines.reduce(0) { $0 + $1.attempts } == 2)
         // The first request at the first fix; the second is the latest
@@ -416,7 +416,7 @@ struct NavigationServiceRoadsTests {
         // The next recording, before its first attempt (no input yet).
         let (next, nextTap) = makeFeed(25, scratch: scratch)
         let nextTask = service.start(next)
-        #expect(await waitUntil { await service.roadsStatus().recording })
+        #expect(await waitUntil { await service.roadsStatus().active })
         #expect(await service.lastAttemptOutcome == .noneCovering, "the service-wide outcome is the previous drive's")
         #expect(await service.roadsStatus().lastOutcome == nil, "this recording has no attempt yet")
         #expect(await waitUntil(5) { await service.roadsStatus().libraryScanned })
@@ -449,7 +449,7 @@ struct NavigationServiceRoadsTests {
         tap.finish()
         await task.value
 
-        let lines = try NavSidecar.read(contentsOf: feed.sidecarURL).roadsSelections
+        let lines = try NavSidecar.read(contentsOf: feed.requiredSidecarURL).roadsSelections
         let finished = try #require(await service.finished.first)
         #expect(lines.reduce(0) { $0 + $1.attempts } == finished.selectionAttempts && finished.selectionAttempts >= 3)
         #expect(lines.count == finished.selectionLines)
@@ -460,7 +460,7 @@ struct NavigationServiceRoadsTests {
         #expect(first.repeats == nil && first.firstT == nil)
         #expect((repeats.repeats ?? 0) >= 2 && repeats.firstT.map { $0 > first.t && $0 < repeats.t } == true)
         // The repeats line was written at the end: after every estimate.
-        let text = try String(contentsOf: feed.sidecarURL, encoding: .utf8).split(separator: "\n")
+        let text = try String(contentsOf: feed.requiredSidecarURL, encoding: .utf8).split(separator: "\n")
         let lastEstimate = try #require(text.lastIndex { $0.contains(#""kind":"estimate""#) })
         let repeatsLine = try #require(text.firstIndex { $0.contains(#""repeats":"#) })
         #expect(repeatsLine > lastEstimate, "flushed at the end, not where the repeats happened")
@@ -484,7 +484,7 @@ struct NavigationServiceRoadsTests {
         })
         let (feed, tap) = makeFeed(20, scratch: scratch)
         let task = service.start(feed)
-        #expect(await waitUntil { await service.roadsStatus().recording })
+        #expect(await waitUntil { await service.roadsStatus().active })
         #expect(!(await service.roadsStatus().libraryScanned))
         let stale = await packs.status()
         #expect(stale.scansCompleted == 1 && !stale.scanning && stale.packs.isEmpty,
@@ -502,7 +502,7 @@ struct NavigationServiceRoadsTests {
         try FileManager.default.removeItem(at: dir.appendingPathComponent("pushed.roadpack"))
         let (next, nextTap) = makeFeed(21, scratch: scratch)
         let nextTask = service.start(next)
-        #expect(await waitUntil { await service.roadsStatus().recording })
+        #expect(await waitUntil { await service.roadsStatus().active })
         #expect(await RoadsWarning.current(service: service, library: packs) == nil, "before its rescan returns")
         #expect(await waitUntil(5) { await service.roadsStatus().libraryScanned })
         #expect(await RoadsWarning.current(service: service, library: packs) == RoadsWarning.noPacks)
@@ -554,6 +554,6 @@ struct NavigationServiceRoadsTests {
         try await Task.sleep(for: .milliseconds(100))
 
         #expect(try outcomes(feed) == [.unfinished])
-        #expect(try NavSidecar.read(contentsOf: feed.sidecarURL).roads == nil)
+        #expect(try NavSidecar.read(contentsOf: feed.requiredSidecarURL).roads == nil)
     }
 }

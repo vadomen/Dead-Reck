@@ -78,7 +78,7 @@ struct NavigationFeedTests {
         #expect(RecordingFixtures.kinds(events, .accelerometer).count > 30)
         #expect(RecordingFixtures.index(of: .stop, in: events) != nil)
         // No NavigationService is wired in this test: nothing writes the sidecar.
-        #expect(!FileManager.default.fileExists(atPath: feed.sidecarURL.path))
+        #expect(!FileManager.default.fileExists(atPath: try feed.requiredSidecarURL.path))
     }
 
     @Test("Each recording gets a fresh feed; a write failure ends the feed too")
@@ -106,7 +106,7 @@ struct NavigationFeedTests {
         try await Task.sleep(for: .milliseconds(200))
         await session.stop()
         let secondInputs = await collector.inputs(of: 1)
-        let (_, events, _) = try RecordingFixtures.read(second.recordingURL)
+        let (_, events, _) = try RecordingFixtures.read(second.requiredRecordingURL)
         #expect(secondInputs == events.compactMap(NavigationInput.init))
         // Nothing from the first recording leaks into the second feed.
         #expect(secondInputs.first.map { $0.timestamp.seconds < 1 } == true)

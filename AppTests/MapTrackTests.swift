@@ -219,6 +219,53 @@ struct MapViewModelTests {
         #expect(age < .seconds(40))
     }
 
+    @Test("Navigate has no file: a new run generation resets the track and pins, the same one does not")
+    func newRunResets() {
+        let model = MapViewModel()
+        model.ingest(fix(t: 0), file: nil, run: 1, isActive: true)
+        model.ingest(fix(t: 5), file: nil, run: 1, isActive: true)
+        model.addManualFix(id: 1, latitude: 0, longitude: 0)
+        #expect(model.track.points.count == 2)
+        #expect(model.manualFixes.count == 1)
+        model.ingest(fix(t: 1), file: nil, run: 2, isActive: true)
+        #expect(model.track.points.count == 1)
+        #expect(model.manualFixes.isEmpty)
+        #expect(model.currentRun == 2 && model.currentFile == nil)
+    }
+
+    @Test("Navigate, Record, Navigate each start a fresh track")
+    func navigateRecordNavigate() {
+        let model = MapViewModel()
+        model.ingest(fix(t: 0), file: nil, run: 1, isActive: true)
+        model.ingest(fix(t: 1), file: nil, run: 1, isActive: true)
+        model.ingest(fix(t: 0), file: fileA, run: 2, isActive: true)
+        #expect(model.track.points.count == 1)
+        #expect(model.currentFile == fileA)
+        model.ingest(fix(t: 5), file: fileA, run: 2, isActive: true)
+        #expect(model.track.points.count == 2)
+        // Stop: Record's file stays on the session until Navigate resumes.
+        model.ingest(fix(t: 0), file: nil, run: 3, isActive: true)
+        #expect(model.track.points.count == 1)
+        #expect(model.currentFile == nil && model.currentRun == 3)
+    }
+
+    @Test("An inactive scene does not reset on a new run")
+    func inactiveNewRun() {
+        let model = MapViewModel()
+        model.ingest(fix(t: 0), file: nil, run: 1, isActive: true)
+        model.ingest(fix(t: 5), file: nil, run: 2, isActive: false)
+        #expect(model.track.points.count == 1)
+        #expect(model.currentRun == 1)
+    }
+
+    @Test("In Navigate the fix ages with the run clock")
+    func navigateFixAges() {
+        let model = MapViewModel()
+        model.ingest(fix(t: 100), file: nil, run: 1, isActive: true, elapsed: 110)
+        let age = ContinuousClock.now - (model.lastFixInstant ?? .now)
+        #expect(age >= .seconds(10) && age < .seconds(20))
+    }
+
     @Test("A new file with no fix yet clears the previous drive")
     func newStartClears() {
         let model = MapViewModel()

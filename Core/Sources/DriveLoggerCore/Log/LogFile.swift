@@ -74,6 +74,16 @@ public enum LogFileName {
 /// never call back into this sink (`NavigationTap.record` is a bounded,
 /// non-blocking enqueue). A nil tap changes nothing: same rows, same order,
 /// same counters.
+///
+/// **Tap-only (UX-1 Navigate).** `tapOnly(_:)` makes a sink with no writer:
+/// it keeps nothing — no queue, so a Navigate drive of any length costs no
+/// memory here — and hands `tap` exactly the events a writer's sink would
+/// tap, in the same order, under the same lock. Every other kind is
+/// discarded on arrival. Until `finish()` nothing counts as `dropped` (a
+/// discarded `stats` or `lifecycle` row is by design, not data loss);
+/// `queueDepth` stays 0. `finish()` behaves as for a writer's sink: every
+/// later event is refused, counted in `dropped` and never tapped. Sources
+/// cannot tell the two forms apart.
 public final class LogSink: Sendable {
     /// The single consumer is the owning `LogFileWriter`.
     let events: AsyncStream<LogEvent>
@@ -93,11 +103,36 @@ public final class LogSink: Sendable {
     /// Guarded by `lock`. Highest `enqueued - consumed` since the last
     /// `takePeakQueueDepth()`.
     private nonisolated(unsafe) var peakDepth = 0
+    /// False for a tap-only sink (`tapOnly(_:)`): nothing is enqueued.
+    /// Immutable after `init`.
+    private let keepsEvents: Bool
 
     init(tap: (@Sendable (LogEvent) -> Void)? = nil) {
         (events, continuation) = AsyncStream.makeStream(of: LogEvent.self, bufferingPolicy: .unbounded)
         self.tap = tap
+        keepsEvents = true
     }
+
+    /// The tap-only form; see the type's doc. `events` is finished at once
+    /// and never receives anything.
+    private init(tapOnly tap: @escaping @Sendable (LogEvent) -> Void) {
+        (events, continuation) = AsyncStream.makeStream(of: LogEvent.self, bufferingPolicy: .unbounded)
+        continuation.finish()
+        self.tap = tap
+        keepsEvents = false
+    }
+
+    /// A sink with no writer behind it (UX-1 Navigate): `tap` sees every
+    /// `motion`, `location`, `obd` and `manualFix` event recorded before
+    /// `finish()`, in record order, and nothing is kept. The tap's rules are
+    /// the type's ("Tap"): it runs under the sink's lock and must never
+    /// block or call back into the sink.
+    public static func tapOnly(_ tap: @escaping @Sendable (LogEvent) -> Void) -> LogSink {
+        LogSink(tapOnly: tap)
+    }
+
+    /// Whether this sink was made by `tapOnly(_:)`: no writer, nothing kept.
+    public var isTapOnly: Bool { !keepsEvents }
 
     /// Whether `tap` sees events of this kind: the navigation inputs
     /// `motion`, `location`, `obd` and `manualFix`, and nothing else.
@@ -117,6 +152,14 @@ public final class LogSink: Sendable {
         defer { lock.unlock() }
         guard !isFinished else {
             droppedCount += 1
+            return
+        }
+        guard keepsEvents else {
+            // Tap-only: the same kinds, at the same point (accepted, under
+            // `lock`), with nothing enqueued.
+            if let tap, Self.isTapped(event.payload) {
+                tap(event)
+            }
             return
         }
         switch continuation.yield(event) {
@@ -167,8 +210,13 @@ public final class LogSink: Sendable {
         lock.withLock { consumed += count }
     }
 
-    /// Stops accepting events and ends the stream after what is buffered.
-    func finish() {
+    /// Stops accepting events and ends the stream after what is buffered:
+    /// every later `record` is refused, counted in `dropped` and never
+    /// tapped. Idempotent. A writer's sink is finished by
+    /// `LogFileWriter.finish()`, which then drains and writes what was
+    /// buffered; call this directly only on a tap-only sink (`tapOnly(_:)`),
+    /// which has no writer to do it.
+    public func finish() {
         lock.withLock {
             guard !isFinished else { return }
             isFinished = true

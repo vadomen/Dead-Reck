@@ -8,18 +8,18 @@ struct RoadsWarningTests {
     typealias Outcome = NavSidecar.RoadsSelection.Outcome
 
     private func message(
-        recording: Bool = true, scanned: Bool = true, verified: Int = 1, attached: Bool = false,
+        active: Bool = true, scanned: Bool = true, verified: Int = 1, attached: Bool = false,
         outcome: Outcome? = nil
     ) -> String? {
         RoadsWarning.message(
-            recording: recording, libraryScanned: scanned, verifiedPacks: verified,
+            active: active, libraryScanned: scanned, verifiedPacks: verified,
             roadsAttached: attached, lastOutcome: outcome
         )
     }
 
     @Test func notRecordingShowsNothing() {
-        #expect(message(recording: false, verified: 0, outcome: .noPacks) == nil)
-        #expect(message(recording: false, outcome: .refused) == nil)
+        #expect(message(active: false, verified: 0, outcome: .noPacks) == nil)
+        #expect(message(active: false, outcome: .refused) == nil)
     }
 
     @Test func attachedRoadsShowNothing() {

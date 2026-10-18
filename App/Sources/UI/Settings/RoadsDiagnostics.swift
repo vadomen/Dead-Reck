@@ -5,7 +5,8 @@ import Observation
 enum RoadsDiagnosticsText {
     static let attribution = "© OpenStreetMap contributors"
 
-    /// The attribution is shown whenever a pack is in use by the recording.
+    /// The attribution is shown whenever a pack is in use by the run (a
+    /// recording or Navigate).
     static func attributionVisible(packsInUse: Int) -> Bool { packsInUse > 0 }
 
     static func state(_ pack: RoadPackLibrary.PackStatus) -> String {
@@ -38,7 +39,8 @@ enum RoadsDiagnosticsText {
         return String(format: "%.1f s", seconds)
     }
 
-    /// Which packs the recording uses and since when, else why none.
+    /// Which packs the current (else the last) run uses and since when,
+    /// else why none.
     static func usage(_ roads: NavigationService.RoadsStatus) -> String {
         if roads.inUse {
             let at = roads.activeAtSessionS.map { String(format: " from %.0f s", $0) } ?? ""

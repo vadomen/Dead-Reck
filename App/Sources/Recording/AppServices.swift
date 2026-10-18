@@ -15,8 +15,9 @@ final class AppServices {
     let sensors: SensorSuite
     let store: LogStore
     let session: RecordingSession
-    /// Live dead reckoning for each recording (N4 B): it consumes every
-    /// recording's navigation feed and writes its sidecar.
+    /// Live dead reckoning for each recording (N4 B) and each Navigate
+    /// session (UX-1): it consumes every feed and writes a recording's
+    /// sidecar (none for Navigate).
     let navigation: NavigationService
     /// The road packs (developer bridge: Documents/RoadPacks), verified once each.
     let roadPacks: RoadPackLibrary
@@ -51,6 +52,9 @@ final class AppServices {
         session.onNavigationFeed = { feed in navigation.start(feed) }
         // The sidecar is flushed with the log on background (R14.1-4).
         session.onFlush = { await navigation.flush() }
+        // UX-1: Navigate runs whenever the link polls and Record doesn't.
+        // After the feed hook is set, so the first session's feed is seen.
+        session.enableNavigate()
     }
 }
 

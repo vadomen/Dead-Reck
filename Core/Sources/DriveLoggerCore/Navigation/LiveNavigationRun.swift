@@ -349,11 +349,12 @@ public struct NavigationSnapshot: Hashable, Sendable {
         }
     }
 
-    /// The time the snapshot is for (the recording's session clock).
+    /// The time the snapshot is for (the run's session clock).
     public var t: MonotonicTimestamp
-    /// The recording this belongs to; nil when no recording is navigating.
+    /// The run (a recording, or an app Navigate run that writes nothing)
+    /// this belongs to; nil when no run is navigating.
     public var sessionID: UUID?
-    /// The full estimate; nil before initialisation or without a recording.
+    /// The full estimate; nil before initialisation or without a run.
     public var estimate: NavigationEstimate?
     public var stats: Stats
 

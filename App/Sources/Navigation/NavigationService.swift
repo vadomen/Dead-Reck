@@ -1,40 +1,51 @@
 import DriveLoggerCore
 import Foundation
 
-/// Live dead reckoning for the recording in progress (N4 B).
+/// Live dead reckoning for the run in progress: a recording (N4 B) or a
+/// Navigate run, which writes nothing (UX-1).
 ///
-/// One actor for the app's lifetime, off the main thread. For every
-/// recording, `RecordingSession.onNavigationFeed` hands it a
-/// `RecordingNavigationFeed` (`AppServices` wires `start(_:)` there); the
-/// service then:
+/// One actor for the app's lifetime, off the main thread. For every run,
+/// `RecordingSession.onNavigationFeed` hands it a `RecordingNavigationFeed`
+/// (`AppServices` wires `start(_:)` there); the service then:
 /// - builds a **fresh** `LiveNavigationRun` (a new `NavigationEngine` with
-///   the default config and the seed derived from the recording's header,
-///   `NavigationSeed`), so a relaunch mid-drive is a new recording with a
-///   new engine (R11.2-3 in practice);
-/// - consumes the feed's inputs in file order and ingests each; a manual
-///   fix is the engine's own position reset;
-/// - writes the sidecar `feed.sidecarURL` (`NavSidecar`, docs/NAV_SIDECAR.md):
-///   the header at once, then estimates, pins and road lines, buffered and
-///   flushed every `flushInterval` (10 s) on the actor and on `flush()`
-///   (the app going to the background, R14.1-4), and, when the
-///   feed's stream ends (stop or write failure), the closing
-///   `roadsSelection` lines (`LiveNavigationRun.closingLines`), flushed and
-///   closed;
+///   the default config and the seed derived from the run's header,
+///   `NavigationSeed`), so a relaunch mid-drive is a new run with a new
+///   engine (R11.2-3 in practice);
+/// - consumes the feed's inputs in tap order (a recording's file order) and
+///   ingests each; a manual fix is the engine's own position reset;
+/// - for a recording (`feed.output` `.recording`), writes the sidecar
+///   `feed.sidecarURL` (`NavSidecar`, docs/NAV_SIDECAR.md): the header at
+///   once, then estimates, pins and road lines, buffered and flushed every
+///   `flushInterval` (10 s) on the actor and on `flush()` (the app going to
+///   the background, R14.1-4), and, when the feed's stream ends (stop or
+///   write failure), the closing `roadsSelection` lines
+///   (`LiveNavigationRun.closingLines`), flushed and closed;
+/// - for a Navigate run (`.navigateOnly`), does all of the above with no
+///   writer: the same lines are produced and dropped, no file or directory
+///   is created, `flush()` has nothing to do for it, and having no sidecar
+///   is not a failure (`Finished.sidecarFailure` stays nil). One code path
+///   with an optional writer, so the engine cannot be fed differently in
+///   the two modes;
+/// - selects and attaches road packs (N3.3) the same way in both: the
+///   library rescan at the start, selection, mid-run attach. Only the
+///   `roadPacks` row (`feed.recordRoadPacks`) has nowhere to go in Navigate;
 /// - answers `snapshot(at:)` for the map and the debug overlay.
 ///
-/// The per-recording loop is Core's `LiveNavigationRun`, the same code
-/// `replay_nav --as-live --compare` runs over the recording on a Mac.
+/// The per-run loop is Core's `LiveNavigationRun`, the same code
+/// `replay_nav --as-live --compare` runs over a recording on a Mac.
 ///
-/// If a new recording starts while the previous feed is still draining
-/// (stop, then Start at once), both runs proceed, each into its own
-/// sidecar; snapshots follow the newest.
+/// If a new run starts while the previous feed is still draining (stop,
+/// then Start at once; Navigate stopped for Record), both runs proceed,
+/// each into its own sidecar if it has one; snapshots follow the newest.
 actor NavigationService {
-    /// What the service did with one recording, kept for diagnostics and
-    /// tests once its feed has ended.
+    /// What the service did with one run, kept for diagnostics and tests
+    /// once its feed has ended.
     struct Finished: Sendable, Hashable {
         let generation: Int
         let sessionID: UUID
-        let sidecarURL: URL
+        /// nil: a Navigate run, no sidecar (its bytes, lines lost and
+        /// failure are 0, 0 and nil).
+        let sidecarURL: URL?
         let inputs: Int
         let estimates: Int
         let droppedInputs: Int
@@ -55,13 +66,13 @@ actor NavigationService {
         var selectionLines = 0
     }
 
-    /// Selection state of one recording's roads (N3.3 item 5).
+    /// Selection state of one run's roads (N3.3 item 5).
     private struct RoadsState {
         /// Bumped per selection started; a result with another token is stale.
         var token = 0
         var inFlight: Task<Void, Never>?
         /// The request `inFlight` is selecting for; the `unfinished`
-        /// `roadsSelection` line at the end of the recording names it.
+        /// `roadsSelection` line at the end of the run names it.
         var inFlightRequest: RoadSelectionRequest?
         /// The latest request that arrived while one was in flight.
         var pending: RoadSelectionRequest?
@@ -69,17 +80,18 @@ actor NavigationService {
         var refusal: String?
         /// Covering sets (file names, in candidate order) already refused.
         var knownRefusals: [RoadPackSelection.Refusal] = []
-        /// How the latest finished attempt of this recording ended.
+        /// How the latest finished attempt of this run ended.
         var lastOutcome: NavSidecar.RoadsSelection.Outcome?
-        /// This recording's own library rescan (started in `begin`) has
-        /// returned (R34.1-3).
+        /// This run's own library rescan (started in `begin`) has returned
+        /// (R34.1-3). Set with or without a sidecar.
         var libraryScanned = false
     }
 
-    /// What Diagnostics shows about roads in the recording.
+    /// What Diagnostics and the map's roads warning show about roads in the
+    /// current run, a recording or a Navigate run alike.
     struct RoadsStatus: Sendable, Hashable {
-        /// A recording is navigating (else this is the last finished one).
-        var recording = false
+        /// A run is navigating (else this is the last finished one, or none).
+        var active = false
         var packNames: [String] = []
         var packHashPrefixes: [String] = []
         var roadSetHashPrefix: String?
@@ -88,13 +100,13 @@ actor NavigationService {
         var refusal: String?
         var selectionPending = false
         var onRoadShare: Double?
-        /// How the latest selection attempt of this recording ended; nil
-        /// before the first (the map's roads warning reads it).
+        /// How the latest selection attempt of this run ended; nil before
+        /// the first (the map's roads warning reads it).
         var lastOutcome: NavSidecar.RoadsSelection.Outcome?
-        /// The library rescan this recording started has returned, so the
-        /// library's packs are as of this recording, not an earlier scan
+        /// The library rescan this run started has returned, so the
+        /// library's packs are as of this run, not an earlier scan
         /// (R34.1-3: the map's "no road packs" line waits for it). False
-        /// without a library and for a finished recording.
+        /// without a library and for a finished run.
         var libraryScanned = false
 
         var inUse: Bool { !packNames.isEmpty }
@@ -104,35 +116,36 @@ actor NavigationService {
     private struct Run {
         let feed: RecordingNavigationFeed
         var live: LiveNavigationRun
+        /// nil: no sidecar (Navigate) or it failed to open (`openFailure`).
         let writer: NavSidecarWriter?
         let openFailure: String?
         var lastFlush: ContinuousClock.Instant
     }
 
     let flushInterval: Duration
-    /// Where road packs come from; nil: no roads (every recording is the
+    /// Where road packs come from; nil: no roads (every run is the
     /// no-roads run).
     private let library: RoadPackLibrary?
     private var runs: [Int: Run] = [:]
     private var roadStates: [Int: RoadsState] = [:]
-    /// The newest recording's generation; snapshots follow it.
+    /// The newest run's generation; snapshots follow it.
     private var current: Int?
-    /// Engines built so far (one per recording).
+    /// Engines built so far (one per run).
     private(set) var runsStarted = 0
     private(set) var finished: [Finished] = []
-    /// Selection attempts finished so far, all recordings (the
+    /// Selection attempts finished so far, all runs (the
     /// `unfinished` ones too), and the latest one's outcome: lets tests wait
     /// for an attempt, which with repeats folded may write no line.
     /// Bounded: a count, not a list.
     private(set) var selectionAttempts = 0
     private(set) var lastAttemptOutcome: NavSidecar.RoadsSelection.Outcome?
     /// Selection attempts that came back with a built network (`selected`,
-    /// attached or refused by the run), all recordings: a set refused once
+    /// attached or refused by the run), all runs: a set refused once
     /// is remembered (`RoadsState.knownRefusals`) and not built again. A
     /// count for tests (R33.1-3); no behaviour reads it.
     private(set) var networksBuilt = 0
 
-    /// How a recording's start rescans the library: `rescan()`. Tests
+    /// How a run's start rescans the library: `rescan()`. Tests
     /// inject a slow one (R34.1-3).
     typealias LibraryRescan = @Sendable (RoadPackLibrary) async -> [RoadPackLibrary.PackStatus]
     private let libraryRescan: LibraryRescan
@@ -151,7 +164,7 @@ actor NavigationService {
         Task(priority: .userInitiated) { await self.consume(feed) }
     }
 
-    /// Runs one recording's navigation until its feed ends.
+    /// Runs one run's navigation until its feed ends.
     func consume(_ feed: RecordingNavigationFeed) async {
         begin(feed)
         for await input in feed.inputs {
@@ -173,12 +186,15 @@ actor NavigationService {
     private func begin(_ feed: RecordingNavigationFeed) {
         let live = LiveNavigationRun(header: feed.header, appBuild: feed.header.app.build,
                                      buildConfiguration: Self.buildConfiguration)
+        // Navigate: no writer, no file; everything below runs the same.
         var writer: NavSidecarWriter?
         var openFailure: String?
-        do {
-            writer = try NavSidecarWriter(url: feed.sidecarURL)
-        } catch {
-            openFailure = String(describing: error)
+        if let sidecarURL = feed.sidecarURL {
+            do {
+                writer = try NavSidecarWriter(url: sidecarURL)
+            } catch {
+                openFailure = String(describing: error)
+            }
         }
         for line in live.openingLines { writer?.append(line) }
         writer?.flush()
@@ -188,8 +204,9 @@ actor NavigationService {
         runsStarted += 1
         roadStates[feed.generation] = RoadsState()
         // Rescan the packs (cache hits are cheap); never awaited here. Its
-        // result goes into the recording once, as the `roadPacks` row, and
-        // only then does the library count as scanned for this recording.
+        // result goes into the recording once, as the `roadPacks` row (a
+        // no-op in Navigate), and only then does the library count as
+        // scanned for this run.
         if let library {
             let report = feed.recordRoadPacks, rescan = libraryRescan, generation = feed.generation
             Task(priority: .utility) { [self] in
@@ -221,7 +238,8 @@ actor NavigationService {
         if let request { requestRoads(request, generation: generation) }
     }
 
-    /// Flushes every running recording's sidecar now (R14.1-4). `AppServices`
+    /// Flushes every running recording's sidecar now (R14.1-4); a Navigate
+    /// run has none, so nothing happens for it. `AppServices`
     /// calls it from the recording's own flush on `.background` and on a
     /// memory warning, inside that flush's background task: otherwise a
     /// kill in the background would lose up to `flushInterval` of lines the
@@ -269,7 +287,7 @@ actor NavigationService {
     /// Back on the actor, between two inputs: attach, or note why not, and
     /// record the attempt (`LiveNavigationRun.finishSelection`: its
     /// `roadsSelection` line unless it repeats the last one written, then
-    /// `roads` after a successful attach). A result for an ended recording
+    /// `roads` after a successful attach). A result for an ended run
     /// or a superseded selection is dropped. The request pending behind
     /// this one is not an attempt.
     private func selectionFinished(_ attempt: RoadSelectionAttempt, generation: Int, token: Int) {
@@ -303,11 +321,11 @@ actor NavigationService {
         roadStates[generation] = state
     }
 
-    /// Roads in the newest recording (else the last finished one).
+    /// Roads in the newest run (else the last finished one).
     func roadsStatus() -> RoadsStatus {
         if let generation = current, let run = runs[generation] {
             let state = roadStates[generation]
-            var status = RoadsStatus(recording: true, refusal: state?.refusal,
+            var status = RoadsStatus(active: true, refusal: state?.refusal,
                                      selectionPending: run.live.roads == nil && run.live.selectionRequest != nil,
                                      lastOutcome: state?.lastOutcome, libraryScanned: state?.libraryScanned ?? false)
             if let roads = run.live.roads {
@@ -320,7 +338,7 @@ actor NavigationService {
             return status
         }
         guard let last = finished.last else { return .none }
-        return RoadsStatus(recording: false, packNames: last.roadPackNames, packHashPrefixes: last.roadPackHashPrefixes,
+        return RoadsStatus(active: false, packNames: last.roadPackNames, packHashPrefixes: last.roadPackHashPrefixes,
                            roadSetHashPrefix: last.roadSetHashPrefix, activeAtSessionS: last.roadsActiveAtS,
                            refusal: last.roadsRefusal)
     }
@@ -363,25 +381,25 @@ actor NavigationService {
 
     // MARK: Reading
 
-    /// The newest recording's estimate at `t` (on that recording's session
-    /// clock, `clock`) and the run's statistics. `.idle` when no recording
-    /// is navigating. Cost: one pass over the particles.
+    /// The newest run's estimate at `t` (on that run's session clock,
+    /// `clock`) and the run's statistics. `.idle` when no run is
+    /// navigating. Cost: one pass over the particles.
     func snapshot(at t: MonotonicTimestamp) -> NavigationSnapshot {
         guard let generation = current, let run = runs[generation] else { return .idle(at: t) }
         return run.live.snapshot(at: t, droppedInputs: run.feed.droppedInputs)
     }
 
-    /// `snapshot(at: clock.now())` on the newest recording's clock.
+    /// `snapshot(at: clock.now())` on the newest run's clock.
     func snapshot() -> NavigationSnapshot {
         guard let clock else { return .idle(at: .zero) }
         return snapshot(at: clock.now())
     }
 
-    /// The session clock of the recording snapshots follow; nil when none.
+    /// The session clock of the run snapshots follow; nil when none.
     var clock: SessionClock? {
         current.flatMap { runs[$0]?.feed.clock }
     }
 
-    /// The generation (`RecordingSession` recording) snapshots follow.
+    /// The generation (`RecordingNavigationFeed.generation`) snapshots follow.
     var currentGeneration: Int? { current }
 }

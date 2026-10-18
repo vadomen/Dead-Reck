@@ -1009,8 +1009,9 @@ update in a recording:
   the same lines.
 - **Diagnostics** (Settings): a Road packs section lists each pack
   (verified, or the refusal reason; size, OSM date, hash prefix, and
-  "cached" or "verified in x s"). Below it: "Recording uses" (the pack
-  names and the session time roads became active; else none, a refusal
+  "cached" or "verified in x s"). Below it: "Roads in use" (the pack
+  names and the session time roads became active, for a recording or a
+  Navigate run; else none, a refusal
   reason, or "looking for a pack"), the on-road share, and "© OpenStreetMap
   contributors" while a pack is in use. The Memory row is the app's
   `phys_footprint`, for D1.
