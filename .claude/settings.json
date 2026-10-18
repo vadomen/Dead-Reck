@@ -111,6 +111,7 @@
       "Bash(git switch --discard-changes*)",
       "Bash(git switch * --discard-changes*)",
       "Bash(git -C .claude/worktrees/mut-*..*)",
+      "Bash(git -C .claude/worktrees/mut-* -C *)",
       "Bash(git worktree add --detach .claude/worktrees/mut-*..*)"
     ]
   },
