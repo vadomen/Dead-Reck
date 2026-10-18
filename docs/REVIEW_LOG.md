@@ -467,6 +467,20 @@ Tests: 976 passed, 36 known issues.
 
 2 rounds; 1 fixed (R53.1-1), 0 rejected, 1 MINOR deferred (R53.1-2).
 
+## Run 54: backlog sweep nav batch 5 (7b1f833..18b662c, branch sweep-nav5), started 2026-10-18
+
+Commits: 18b662c live-run, sidecar and service tests (R32.4-5, R32.4-6, R32.4-7, R32.4-8, R33.1-3, R34.1-4); `NavigationService.networksBuilt`, a count for tests only.
+
+### Round 1
+
+Reviewer: one fresh reviewer (opus), checks 9, 10 and 13 by reading: each author-expected kill traced through the code; the R32.4-8 test is deterministic (scan held at a gate, input processing does not wait on it). Result: 0 BLOCKER / 0 MAJOR / 0 MINOR. Sample mutations (orchestrator, throwaway worktree): `newSelectionRequest = nil` deleted in `LiveNavigationRun.ingest` → (a3) fails; `knownRefusals.append` deleted → `networksBuilt == 1` fails; `lastOutcome` from the service instead of the recording → the R34.1-4 test fails. All killed.
+
+Tests: `cd Core && swift test` 991 passed, 36 known issues (after merge); release timing suites passed; App suites NavigationServiceRoadsTests and RoadPackLibraryTests 19 passed (simulator).
+
+### Run 54 summary
+
+1 round; 0 fixed, 0 rejected, 0 deferred; 6 backlog rows closed.
+
 ## Run 55 (lite): N2-3 magnetometer heading prior, result only (7b1f833..7d67794, branch sweep-n23doc), started 2026-10-18
 
 Commits: 7d67794 NAVIGATION.md "N2-3: magnetometer heading prior": measured, fails the adoption rule on 4 of 18 gated cells; experiment code kept on the unmerged branch `exp-mag` (10f84ee), not on main (user rule: no engine merge unless it passes).
