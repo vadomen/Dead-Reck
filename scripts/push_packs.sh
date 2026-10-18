@@ -44,11 +44,15 @@ A dry run reports what these guards found and exits 0.
 A pack is skipped when its size + sha256 equal what was last pushed to this
 device (stamp file osm/.push_packs_stamps.tsv, git-ignored) AND the phone
 still has it: installed in the app's store (<name>-<contentHash>.roadpack,
-same size; the content hash is read from the pack header) or still waiting in
-the inbox (same name and size). If the phone's Documents cannot be listed,
-the stamp alone decides (a pack deleted on the phone is then not re-pushed;
-use --force). Pushing a pack the app already has is harmless: the app finds
-the same file in its store and only empties the inbox.
+same size, and not marked for removal; the content hash is read from the pack
+header) or still waiting in the inbox (same name and size). A store file the
+app marked for removal ("Remove" while Navigate or Record ran; it is deleted
+at the next launch) does not count, and if the marks
+(RoadPackStoreState.json in the store) cannot be read, no store file counts.
+If the phone's Documents cannot be listed, the stamp alone decides (a pack
+deleted or removed on the phone is then not re-pushed; use --force).
+Pushing a pack the app already has is harmless: the app finds the same file
+in its store and only empties the inbox (and clears a removal mark on it).
 USAGE
 }
 
@@ -292,6 +296,41 @@ for f in json.load(sys.stdin)["result"].get("files", []):
   fi
 fi
 
+# Store files marked for removal ("Remove" while Navigate or Record ran): they
+# are still on disk but the next launch deletes them, so they do not count as
+# installed (R65.1-4). The marks live in <store>/RoadPackStoreState.json,
+# {"markedForRemoval":[<file name>...],"version":1}; the app deletes the file
+# when no mark is left, so no state file = no marks. If it is listed but cannot
+# be read, no store file counts as installed (copy rather than skip on a guess).
+state_file_name="RoadPackStoreState.json"
+marked_names=""
+store_marks_ok=1
+if printf '%s\n' "$store_listing" | awk -F'\t' -v p="$state_file_name" '$1==p {f=1} END {exit !f}'; then
+  store_marks_ok=0
+  if xcrun devicectl device copy from --device "$device_id" \
+       --domain-type appDataContainer --domain-identifier "$bundle_id" \
+       --source "$store_dir/$state_file_name" --destination "$tmp_dir/$state_file_name" \
+       --quiet > /dev/null 2>&1; then
+    if marked_names="$(/usr/bin/python3 -I -c '
+import json, sys
+with open(sys.argv[1]) as f:
+    marks = json.load(f)["markedForRemoval"]
+if not isinstance(marks, list) or not all(isinstance(m, str) for m in marks):
+    sys.exit(1)
+print("\n".join(marks))
+' "$tmp_dir/$state_file_name" 2>/dev/null)"; then
+      store_marks_ok=1
+    fi
+  fi
+  if [ $store_marks_ok -eq 0 ]; then
+    marked_names=""
+    echo "note: could not read the app's removal marks ($store_dir/$state_file_name); no store file counts as installed." >&2
+  elif [ -n "$marked_names" ]; then
+    echo "Store files marked for removal (deleted at the app's next launch; not counted as installed):"
+    printf '%s\n' "$marked_names" | sed 's/^/  /'
+  fi
+fi
+
 # The store file name the app gives a pack file: <name>-<contentHash>.roadpack,
 # <name> = the file name without .roadpack (or without -<16 hex>.roadpack),
 # the content hash = header bytes 16..23, little-endian, as 16 hex digits
@@ -348,6 +387,12 @@ for src in "${packs[@]}"; do
   [ -n "$stored" ] || echo "warning: $name: the app will refuse this file name (a-z, 0-9, _ and -; no leading or trailing -)." >&2
   stored_size=""
   [ -n "$stored" ] && stored_size="$(printf '%s\n' "$store_listing" | awk -F'\t' -v p="$stored" '$1==p {print $2}' | head -n 1)"
+  # A marked store file, or any store file when the marks cannot be read, is not installed.
+  if [ -n "$stored_size" ]; then
+    if [ $store_marks_ok -eq 0 ] || printf '%s\n' "$marked_names" | grep -xF -- "$stored" > /dev/null; then
+      stored_size=""
+    fi
+  fi
 
   unchanged=0
   if [ $force -eq 0 ] && [ "$stamp" = "$size	$sha" ]; then
