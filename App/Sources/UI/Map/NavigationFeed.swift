@@ -24,10 +24,15 @@ final class NavigationFeed {
 
     private(set) var display: NavDisplay?
     private(set) var stats: NavStatsDisplay?
+    /// The matched OSM edge's shape for the roads debug drawing; empty
+    /// without roads. Rewritten only when the matched edge changes (the
+    /// service rebuilds the geometry on a change only), not per poll.
+    private(set) var matchedEdge: [GeoPoint] = []
 
     @ObservationIgnored private(set) var latest: NavDisplay?
     @ObservationIgnored private let source: Source?
     @ObservationIgnored private var gate = NavWriteGate()
+    @ObservationIgnored private var edgeKey: EdgeKey?
     @ObservationIgnored private var lastStatsWrite: ContinuousClock.Instant?
 
     init(source: @escaping Source) {
@@ -36,8 +41,9 @@ final class NavigationFeed {
 
     /// Previews and tests: fixed values, no service behind them unless a
     /// `source` is given (a test of the first poll after seeded values).
-    init(display: NavDisplay?, stats: NavStatsDisplay? = nil, source: Source? = nil) {
+    init(display: NavDisplay?, stats: NavStatsDisplay? = nil, matchedEdge: [GeoPoint] = [], source: Source? = nil) {
         self.source = source
+        self.matchedEdge = matchedEdge
         self.display = display
         self.latest = display
         self.stats = stats
@@ -69,9 +75,24 @@ final class NavigationFeed {
         let next = NavDisplay(snapshot)
         latest = next
         writeStats(snapshot, at: now)
+        writeEdge(snapshot)
         guard gate.admit(next, at: now) else { return false }
         display = next
         return true
+    }
+
+    private struct EdgeKey: Equatable {
+        var edge: MatchedRoadEdge
+        var roadSetHash: UInt64
+    }
+
+    private func writeEdge(_ snapshot: NavigationSnapshot) {
+        let key = snapshot.matchedEdgeGeometry.map { EdgeKey(edge: $0.edge, roadSetHash: $0.roadSetHash) }
+        guard key != edgeKey else { return }
+        edgeKey = key
+        matchedEdge = snapshot.matchedEdgeGeometry?.points.map {
+            GeoPoint(latitude: $0.latitude, longitude: $0.longitude)
+        } ?? []
     }
 
     private func writeStats(_ snapshot: NavigationSnapshot, at now: ContinuousClock.Instant) {

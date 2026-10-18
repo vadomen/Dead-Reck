@@ -63,6 +63,8 @@ struct NavStatsDisplay: Hashable, Sendable {
     var headingStdDeg: Double?
     var speedScale: Double?
     var droppedInputs: Int
+    /// Share of particles on a road (N3.2); nil without roads.
+    var onRoadShare: Double?
 
     init(_ stats: NavigationSnapshot.Stats) {
         msPerStep = stats.msPerStep
@@ -71,11 +73,12 @@ struct NavStatsDisplay: Hashable, Sendable {
         headingStdDeg = stats.headingStdDeg
         speedScale = stats.speedScale
         droppedInputs = stats.droppedInputs
+        onRoadShare = stats.onRoadShare
     }
 
     init(
         msPerStep: Double, maxMsPerStep: Double, effectiveSampleSize: Double?,
-        headingStdDeg: Double?, speedScale: Double?, droppedInputs: Int
+        headingStdDeg: Double?, speedScale: Double?, droppedInputs: Int, onRoadShare: Double? = nil
     ) {
         self.msPerStep = msPerStep
         self.maxMsPerStep = maxMsPerStep
@@ -83,6 +86,7 @@ struct NavStatsDisplay: Hashable, Sendable {
         self.headingStdDeg = headingStdDeg
         self.speedScale = speedScale
         self.droppedInputs = droppedInputs
+        self.onRoadShare = onRoadShare
     }
 
     /// One compact line.

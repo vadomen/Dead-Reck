@@ -15,6 +15,7 @@ enum AppTab: Int, Hashable, CaseIterable {
 enum SettingsRoute: Hashable, CaseIterable {
     case recording
     case console
+    case maps
 }
 
 /// Where the app is: the selected tab and the Settings stack. Pure, so the

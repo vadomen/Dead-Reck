@@ -33,6 +33,12 @@ enum RoadsDiagnosticsText {
         return parts.joined(separator: " · ")
     }
 
+    /// Developer row for one pack: "cached" or "verified in 1.2 s".
+    static func verifyLine(_ pack: RoadPackLibrary.PackStatus) -> String {
+        if pack.cacheHit { return "cached" }
+        return pack.verifySeconds.map { "verified in " + duration($0) } ?? "not verified"
+    }
+
     /// Below 1 s whole milliseconds ("42 ms"), else seconds with one decimal ("1.2 s").
     /// A value that would round up to 1000 ms shows as "1.0 s".
     static func duration(_ seconds: TimeInterval) -> String {
