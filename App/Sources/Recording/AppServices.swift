@@ -1,5 +1,6 @@
 import DriveLoggerCore
 import Foundation
+import Observation
 import UIKit
 
 /// The services that live for the whole app run, created once at launch.
@@ -23,6 +24,12 @@ final class AppServices {
     /// from the developer inbox Documents/RoadPacks at launch), verified
     /// once each.
     let roadPacks: RoadPackLibrary
+    /// The road pack list (cached, fetched when Settings → Maps opens) and
+    /// the downloads (UX-8). Record pauses downloads: see `RecordActiveObserver`.
+    let manifest: PackManifestService
+    let downloader: PackDownloader
+    private let network = PackNetworkMonitor()
+    private var recordObserver: RecordActiveObserver?
 
     init(
         link: any OBDLinkServicing = OBDLinkFactory.makeDefault(),
@@ -64,6 +71,17 @@ final class AppServices {
             await roadPacks.setRunActivity(runActivity)
             await roadPacks.rescan()
         }
+        let manifest = PackManifestService.makeDefault()
+        self.manifest = manifest
+        let downloader = PackDownloader(
+            directory: RoadPackStore.defaultDirectory(), library: roadPacks,
+            cellularAllowed: UserDefaults.standard.bool(forKey: MapsSettings.cellularKey), runActive: runActivity)
+        self.downloader = downloader
+        Task(priority: .utility) { await manifest.loadCache() }
+        network.start { connection in Task { await downloader.setConnection(connection) } }
+        recordObserver = RecordActiveObserver(session: session) { active in
+            Task { await downloader.setRecordActive(active) }
+        }
         // Synchronous inside `start`, before any row: only start the task.
         session.onNavigationFeed = { feed in navigation.start(feed) }
         // The sidecar is flushed with the log on background (R14.1-4).
@@ -71,6 +89,38 @@ final class AppServices {
         // UX-1: Navigate runs whenever the link polls and Record doesn't.
         // After the feed hook is set, so the first session's feed is seen.
         session.enableNavigate()
+    }
+}
+
+/// Tells the downloader whether Record is active (calibrating, recording or
+/// stopping): downloads pause while it is (UX-8). Navigate does not pause
+/// them. A first version, observing `RecordingSession.state`.
+@MainActor
+final class RecordActiveObserver {
+    private let session: RecordingSession
+    private let onChange: @MainActor (Bool) -> Void
+
+    nonisolated static func isActive(_ state: RecordingState) -> Bool {
+        switch state {
+        case .calibrating, .recording, .stopping: true
+        case .idle, .failed: false
+        }
+    }
+
+    init(session: RecordingSession, onChange: @escaping @MainActor (Bool) -> Void) {
+        self.session = session
+        self.onChange = onChange
+        observe()
+    }
+
+    private func observe() {
+        let session = session
+        let active = withObservationTracking {
+            Self.isActive(session.state)
+        } onChange: { [weak self] in
+            Task { @MainActor in self?.observe() }
+        }
+        onChange(active)
     }
 }
 
