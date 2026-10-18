@@ -50,9 +50,14 @@ enum MapSpeedRule {
     /// `ManualFixGate.maxOBDAgeS` and the engine).
     static let maxOBDAgeS: Double = 2
     /// Oldest GPS fix, seconds, whose speed counts and whose accuracy colours
-    /// the chip. Longer than OBD (user decision R24.1-1): the map feed relays
-    /// a fix about once a second, so 2 s would drop GPS on a single late fix.
-    static let maxGPSAgeS: Double = 3
+    /// the chip: 2 s, the same as OBD (the UX-5 decision). The map gets each
+    /// fix on arrival (`RecordingSession.latestFix`, R24.1-1): on a 1 Hz
+    /// stream a fix is about 1.0–1.2 s old when the next one replaces it.
+    /// Measured on the fix timing of five recorded drives with valid-speed
+    /// fixes (~105 min): 3 stale moments of at most 0.01 s at 2 s, apart
+    /// from real gaps in the stream. It was 3 s while the map took fixes
+    /// from the 1 s live tick.
+    static let maxGPSAgeS: Double = 2
 
     /// OBD if its vehicle-speed reply is at most `maxOBDAgeS` old, else GPS if
     /// the fix has a speed (`speed >= 0`) and is at most `maxGPSAgeS` old, else

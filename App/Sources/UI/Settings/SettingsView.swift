@@ -1,17 +1,18 @@
 import SwiftUI
 
-/// The Settings tab: Recording, Console and diagnostics. The pushed screens
+/// The Settings tab: Test drive recording, Console and diagnostics. The pushed screens
 /// are injected so previews can use fake ones.
 struct SettingsScreen<Recording: View, Console: View>: View {
     @Binding var path: [SettingsRoute]
     var info: AppInfo = .read()
     var roads: RoadsDiagnosticsModel
+    var onShowChecklist: () -> Void = {}
     @ViewBuilder var recording: () -> Recording
     @ViewBuilder var console: () -> Console
     @State private var thermal = ProcessInfo.processInfo.thermalState
 
     var body: some View {
-        SettingsContent(path: $path, info: info, thermal: thermal, roads: roads.value, recording: recording, console: console)
+        SettingsContent(path: $path, info: info, thermal: thermal, roads: roads.value, onShowChecklist: onShowChecklist, recording: recording, console: console)
             .onReceive(NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)) { _ in
                 thermal = ProcessInfo.processInfo.thermalState
             }
@@ -26,6 +27,7 @@ struct SettingsContent<Recording: View, Console: View>: View {
     let info: AppInfo
     let thermal: ProcessInfo.ThermalState
     var roads = RoadsDiagnostics()
+    var onShowChecklist: () -> Void = {}
     @ViewBuilder var recording: () -> Recording
     @ViewBuilder var console: () -> Console
 
@@ -34,8 +36,14 @@ struct SettingsContent<Recording: View, Console: View>: View {
             List {
                 Section {
                     NavigationLink(value: SettingsRoute.recording) {
-                        Label("Recording", systemImage: "record.circle")
+                        Label("Test drive recording", systemImage: "record.circle")
                             .font(.title3)
+                            .frame(minHeight: 44)
+                    }
+                    Button(action: onShowChecklist) {
+                        Label("Mount and orientation", systemImage: "iphone.gen3")
+                            .font(.title3)
+                            .foregroundStyle(Color.primary)
                             .frame(minHeight: 44)
                     }
                     NavigationLink(value: SettingsRoute.console) {
@@ -83,7 +91,7 @@ struct SettingsContent<Recording: View, Console: View>: View {
                 switch route {
                 case .recording:
                     recording()
-                        .navigationTitle("Recording")
+                        .navigationTitle("Test drive recording")
                         .navigationBarTitleDisplayMode(.inline)
                 case .console:
                     // Sets its own title.

@@ -4,6 +4,12 @@ import Testing
 @testable import DriveLoggerCore
 
 /// Drains a sink the way the writer would, for tests that use a bare sink.
+/// Blocks the calling thread (a synchronous call, so an async test can hold
+/// its actor without suspending).
+func blockThread(seconds: Double) {
+    Thread.sleep(forTimeInterval: seconds)
+}
+
 func drain(_ sink: LogSink) async -> [LogEvent] {
     sink.finish()
     var events: [LogEvent] = []
@@ -239,6 +245,50 @@ struct SimulatedLocationSourceTests {
         // Updates queued before stop never land after it.
         try await Task.sleep(for: .milliseconds(60))
         #expect(source.latestReferenceFix == nil)
+    }
+
+    @Test("onReferenceFix gets each displayed fix as it is shown, never after stop")
+    func displayCallback() async throws {
+        let sink = LogSink()
+        let source = SimulatedLocationSource(interval: .milliseconds(20))
+        var received: [LocationSample] = []
+        source.onReferenceFix = { received.append($0) }
+        try source.start(clock: SessionClock(), sink: sink)
+        try await Task.sleep(for: .milliseconds(150))
+        let last = try #require(received.last)
+        #expect(last == source.latestReferenceFix)
+        source.stop()
+        let count = received.count
+        #expect(count > 1)
+        // Display only: every fix the callback saw is a recorded row, and
+        // no row was added for it.
+        let events = await drain(sink)
+        #expect(events.allSatisfy { $0.payload.kind == "location" })
+        let recorded = events.compactMap { event -> LocationSample? in
+            if case .location(let fix) = event.payload { fix } else { nil }
+        }
+        #expect(received.allSatisfy(recorded.contains))
+        // Updates queued before stop never reach the callback after it.
+        try await Task.sleep(for: .milliseconds(60))
+        #expect(received.count == count)
+    }
+
+    @Test("onReferenceFix: a fix of a stopped run, queued before stop, never reaches it")
+    func displayCallbackStaleRun() async throws {
+        let sink = LogSink()
+        let source = SimulatedLocationSource(interval: .milliseconds(20))
+        var received: [LocationSample] = []
+        source.onReferenceFix = { received.append($0) }
+        try source.start(clock: SessionClock(), sink: sink)
+        // Hold the main actor: fixes reach the sink on the ticker's queue and
+        // their display updates queue up behind this test.
+        blockThread(seconds: 0.1)
+        source.stop()
+        #expect(received.isEmpty)
+        try await Task.sleep(for: .milliseconds(80))
+        let recorded = await drain(sink).filter { $0.payload.kind == "location" }
+        #expect(recorded.count >= 2, "display updates were queued before stop")
+        #expect(received.isEmpty, "none of them reached the callback")
     }
 
     @Test("Default is 1 Hz")

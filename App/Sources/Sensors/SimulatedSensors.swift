@@ -153,7 +153,7 @@ final class SimulatedSampleTicker: Sendable {
 /// The simulator's GPS speed on the dashboard (M2-S2): Core's simulated
 /// source publishes each fix it records as `latestReferenceFix`, so
 /// `RecordingSession.live.gpsSpeedKmh` reads it like the phone's
-/// `ReferenceLocationSource`. Display only — the fix is a copy of a row
-/// already handed to the sink; nothing extra is written and nothing recorded
-/// changes.
+/// `ReferenceLocationSource`, and calls `onReferenceFix` with each one for
+/// the map. Display only — the fix is a copy of a row already handed to the
+/// sink; nothing extra is written and nothing recorded changes.
 extension SimulatedLocationSource: LiveReferenceFixReporting {}

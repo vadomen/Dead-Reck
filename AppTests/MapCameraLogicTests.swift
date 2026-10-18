@@ -232,7 +232,7 @@ struct MapViewModelHeadingTests {
         var gate = HeadingWriteGate()
         _ = gate.admit(200, at: t(0))
         var pending = true
-        HeadingReset.newRecording(smoother: &smoother, gate: &gate, publishPending: &pending)
+        HeadingReset.newRun(smoother: &smoother, gate: &gate, publishPending: &pending)
         #expect(smoother.heading == nil)
         #expect(!pending)
         let admitted = gate.admit(200, at: t(0.01))

@@ -19,28 +19,15 @@ struct AppNavigationTests {
         #expect(AppNavigation().tab == .map)
     }
 
-    @Test("Start on the map routes to Settings, Recording; it starts nothing")
-    func startRoutes() {
-        var nav = AppNavigation()
-        #expect(nav.settingsPath.isEmpty)
-        nav.openRecordingSettings()
-        #expect(nav.tab == .settings)
-        #expect(nav.settingsPath == [.recording])
-        // Again from another place: still one Recording on the stack.
-        nav.tab = .map
-        nav.openRecordingSettings()
-        #expect(nav.settingsPath == [.recording])
-    }
-
     @Test("Console is a Settings row, two taps from any tab")
     func consoleRoute() {
         #expect(SettingsRoute.allCases == [.recording, .console])
     }
 
-    @Test("Indicator while calibrating, recording or stopping; Start otherwise")
+    @Test("Indicator while calibrating, recording or stopping; nothing otherwise (Start is in Settings)")
     func controlState() {
-        #expect(MapRecordingControl.make(state: .idle, elapsed: 0) == .start)
-        #expect(MapRecordingControl.make(state: .failed(reason: "disk full", unwrittenEvents: 0), elapsed: 5) == .start)
+        #expect(MapRecordingControl.make(state: .idle, elapsed: 0) == .none)
+        #expect(MapRecordingControl.make(state: .failed(reason: "disk full", unwrittenEvents: 0), elapsed: 5) == .none)
         #expect(MapRecordingControl.make(state: .calibrating, elapsed: 3) == .indicator(elapsed: "0:03"))
         #expect(MapRecordingControl.make(state: .recording, elapsed: 754) == .indicator(elapsed: "12:34"))
         #expect(MapRecordingControl.make(state: .stopping, elapsed: 61) == .indicator(elapsed: "1:01"))

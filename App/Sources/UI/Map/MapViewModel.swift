@@ -2,9 +2,9 @@ import DriveLoggerCore
 import Foundation
 import Observation
 
-/// State of the Map tab. Consumes the recorder's own reference fix
-/// (`RecordingSession.live.referenceFix`); it owns no location manager and
-/// writes nothing.
+/// State of the Map tab. Consumes the recorder's own reference fix as it
+/// arrives (`RecordingSession.latestFix`, R24.1-1); it owns no location
+/// manager and writes nothing.
 @MainActor
 @Observable
 final class MapViewModel {
@@ -29,6 +29,9 @@ final class MapViewModel {
     private(set) var currentFile: URL?
     /// The run (recording or Navigate session) the track belongs to.
     private(set) var currentRun: Int?
+
+    /// Identifies the run the track belongs to, for the map's heading reset.
+    var runKey: MapRunKey { MapRunKey(file: currentFile, run: currentRun) }
 
     /// When the latest fix arrived (stamped at ingest, not read from the
     /// recorder), for the stale-fix display.

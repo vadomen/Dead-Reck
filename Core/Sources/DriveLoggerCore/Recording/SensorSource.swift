@@ -104,6 +104,12 @@ public final class SimulatedLocationSource: SensorSource {
     /// before the first fix and after `stop()`. Updated asynchronously on
     /// the main actor, so it may lag the sink by a main-actor turn.
     public private(set) var latestReferenceFix: LocationSample?
+    /// Called on the main actor with each fix as `latestReferenceFix` takes
+    /// it (the app's map gets fixes on arrival instead of polling). Display
+    /// only, like `latestReferenceFix`: it sees a copy of a row already
+    /// handed to the sink and changes nothing recorded. Never called for a
+    /// fix of an earlier run, nor after `stop()`.
+    public var onReferenceFix: (@MainActor (LocationSample) -> Void)?
     private var ticker: SimulatedTicker?
     /// Bumped by every `start` and `stop`, so a display update queued by an
     /// earlier run never lands after `stop()` cleared the fix.
@@ -147,5 +153,6 @@ public final class SimulatedLocationSource: SensorSource {
     private func show(_ fix: LocationSample, run: Int) {
         guard run == displayRun else { return }
         latestReferenceFix = fix
+        onReferenceFix?(fix)
     }
 }

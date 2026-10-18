@@ -1,10 +1,11 @@
 import SwiftUI
 
-/// What the map shows for recording: Start while idle, or a red dot and the
-/// elapsed time while a recording is calibrating or running. Pure.
+/// What the map shows for recording: nothing while idle (Start lives in
+/// Settings, "Test drive recording"), or a red dot and the elapsed time while
+/// a recording is calibrating or running. Pure.
 enum MapRecordingControl: Equatable {
-    /// Not recording: a Start button that opens Settings, Recording.
-    case start
+    /// Not recording: no control on the map.
+    case none
     /// Recording (or calibrating): red dot, `m:ss`. Tapping asks to stop.
     case indicator(elapsed: String)
 
@@ -14,7 +15,7 @@ enum MapRecordingControl: Equatable {
         case .calibrating, .recording, .stopping:
             .indicator(elapsed: DisplayFormat.elapsed(elapsed))
         case .idle, .failed:
-            .start
+            .none
         }
     }
 }
@@ -32,11 +33,10 @@ struct StopConfirmation: Equatable {
     mutating func cancel() { isPending = false }
 }
 
-/// Start button or recording indicator, bottom left of the map. Its own view:
+/// Recording indicator (nothing while idle), bottom left of the map. Its own view:
 /// it alone reads the 16 Hz `session.live`, so the map is not re-rendered.
 struct MapRecordingButton: View {
     let session: RecordingSession
-    var onStart: () -> Void
     /// Runs when "Stop recording" is chosen in the dialog.
     var onStop: @MainActor () async -> Void
     @State private var stop = StopConfirmation()
@@ -60,16 +60,8 @@ struct MapRecordingButton: View {
     @ViewBuilder
     private func content(_ control: MapRecordingControl) -> some View {
         switch control {
-        case .start:
-            Button(action: onStart) {
-                Label("Start", systemImage: "record.circle")
-                    .font(.headline)
-                    .foregroundStyle(Color.primary)
-                    .padding(.horizontal, 18)
-                    .frame(minHeight: 56)
-                    .background(.regularMaterial, in: Capsule())
-                    .overlay(Capsule().strokeBorder(Color.primary.opacity(0.25), lineWidth: 1))
-            }
+        case .none:
+            EmptyView()
         case .indicator(let elapsed):
             MapRecordingIndicatorLabel(elapsed: elapsed) { stop.request() }
         }

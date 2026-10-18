@@ -13,6 +13,7 @@ struct RootView: View {
     private let session: RecordingSession
     private let services: AppServices
     @State private var nav: AppNavigation
+    @State private var firstLaunch: FirstLaunchModel
 
     init(services: AppServices) {
         _recording = State(initialValue: RecordingViewModel(services: services))
@@ -29,6 +30,12 @@ struct RootView: View {
             await RoadsWarning.current(service: service, library: library)
         }))
         var initial = AppNavigation()
+        var forceFirstLaunch = false
+        #if DEBUG
+        // `-uiFirstLaunch 1` shows the first-launch checklist (screenshots).
+        forceFirstLaunch = UserDefaults.standard.bool(forKey: "uiFirstLaunch")
+        #endif
+        _firstLaunch = State(initialValue: FirstLaunchModel(forced: forceFirstLaunch))
         #if DEBUG
         // `-uiTab N` opens a tab at launch (simulator screenshots), N in tab order:
         // 0 = Map (default), 1 = Sessions, 2 = Settings.
@@ -45,14 +52,13 @@ struct RootView: View {
                     services.sensors.sources.lazy
                         .compactMap { $0 as? any CachedLocationProviding }.first?.cachedLocation
                 },
-                onStart: { nav.openRecordingSettings() },
                 onOpenDiagnostics: { nav.tab = .settings; nav.settingsPath = [] },
                 roadsWarning: roadsWarning
             )
         } sessions: {
             SessionsScreen(model: sessions)
         } settings: {
-            SettingsScreen(path: $nav.settingsPath, roads: roads) {
+            SettingsScreen(path: $nav.settingsPath, roads: roads, onShowChecklist: { firstLaunch.showAgain() }) {
                 RecordingScreen(model: recording)
             } console: {
                 ConsoleScreen(model: console)
@@ -62,5 +68,10 @@ struct RootView: View {
         // feed is its own view so only it observes the 16 Hz `live` status.
         .background(MapFeed(session: session, model: map))
         .task { await roadsWarning.run() }
+        .fullScreenCover(isPresented: $firstLaunch.isPresented) {
+            FirstLaunchChecklistView(
+                checklist: $firstLaunch.checklist, canContinue: firstLaunch.canContinue,
+                onContinue: { firstLaunch.confirm() })
+        }
     }
 }

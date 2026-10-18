@@ -604,3 +604,34 @@ Tests at 89ba551: `cd Core && swift test` 997 tests in 129 suites passed (36 kno
 ### Run 60 summary
 
 1 round; 0 BLOCKER/MAJOR; 1 MINOR fixed in the run (R60.1-1), 0 deferred, 0 rejected; R59.1-2 closed.
+
+## Run 61: UX-1 part 2, Navigate UI, R24.1-1 fix on arrival (main..ux1-navigate-ui: a66d3fc, eb737ca, 48416da, 1d12c3c), started 2026-10-18
+
+Commits: a66d3fc map status line for `navigateState` (`NavigateStatus`, MapNavigateStatus.swift: calibrating "Hold still — calibrating" + 5 s countdown, running nothing, waitingForOBD "OBD lost — reconnecting" + "Stops in m:ss", off without a recording "Connect OBD for navigation without GPS" and no DR dot/ellipse), map Start removed (`MapRecordingControl.none`), Settings "Test drive recording" and "Mount and orientation", first-launch checklist (`FirstLaunchStore`, `firstLaunch.checklistConfirmed`), heading reset per run (`MapRunKey`, `HeadingReset.newRun`), `RecordingSession.navigateStartedAt`/`navigateTimings`. eb737ca PLAN §6 UX-1 part 2 checks. 48416da R24.1-1: `RecordingSession.latestFix` fed by `onReferenceFix` on arrival (App `ReferenceLocationSource`, Core `SimulatedLocationSource`), MapFeed reads it, `MapSpeedRule.maxGPSAgeS` 3 → 2 s (replayed fix timing on clean-long, clean, drive-7, drive-8, drive-10: 3 blinks ≤ 0.01 s in ~105 min at 2 s on arrival). 1d12c3c DEBUG-only `-navigateConnect`/`-navigateDisconnectAt` (DebugNavigate.swift) for simulator screenshots.
+
+### Round 1
+
+Reviewer: one fresh reviewer (opus). Mutation: author's `SensorSource.swift show()` callback above the run guard re-run, killed by `displayCallbackStaleRun`. No engine input path touched, no bit-identical replay.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R61.1-1 | MAJOR | `MapView.swift:79`: `.needsOBD` passed `navigation: nil` into GPSMapView, whose `runLoop` runs in `.task(id: isLive)` with the view copy from its start; opening the map before OBD polls (the normal case) left the loop without the feed, so after OBD connected no DR dot/ellipse appeared, follow and heading-up ignored the estimate until a tab switch or lock. | FIXED | 33f73de: the feed is always passed; `showsEstimate` gates drawing and every use of the estimate; the task is keyed on `MapLoopKey(isLive, showsEstimate)`. Test `loopKeyFollowsShowsEstimate` (cannot fail on the old code: the key type is new; the task capture itself is not unit-testable); simulator screenshot 04 retaken from a launch before OBD: the DR dot and ellipse appear without a tab switch. |
+| R61.1-2 | MINOR | `ReferenceLocationSource.swift:142-146`: the queued main-actor display Task read `onReferenceFix` when it ran, with no run check, so a Navigate fix queued before Start reached the recording's callback (`latestFix` with an age against the wrong clock, looking fresh); `latestReferenceFix` could also be set after `stop()` cleared it. | FIXED | 66f7ed5: `ReferenceFixDisplay` run counter, as `SimulatedLocationSource.show`. Fixed in the run, not deferred: a defect in this range's own new code (as R60.1-1). Tests `referenceFixDisplayRun` (failed on the old code, 3 issues) and `referenceFixDisplay`. Sink path unchanged. |
+| R61.1-3 | MINOR | `docs/PLAN.md` UX-1 part 2 item 5 said the screen does not dim while the "Connect OBD" line shows (`updateIdleTimer` keeps it on only while a session exists); part 1 item 4 said the countdown reaches 0:00 (auto-stop fires at the deadline). | FIXED | dd30ba6: wording matches the code. |
+| R61.1-4 | MINOR | Decision (d) says the map shows the plain GPS position without OBD, but with Navigate off and no earlier run no location source runs: the map shows no position dot, the cached location only frames the camera. | DEFERRED | User decision: run the location source for display only while off, or amend (d). BACKLOG row R61.1-4. |
+
+Tests at 1d12c3c: `cd Core && swift test` 999 tests in 129 suites passed (36 known issues); App simulator `test` 397 tests in 57 suites passed. At 66f7ed5: App 400 tests in 57 suites passed; Core unchanged since 1d12c3c.
+
+### Round 2
+
+Reviewer: one fresh reviewer (opus). Whole range, focus on 33f73de and 66f7ed5. Mutation: author's `SimulatedLocationSource.show` callback removed, killed by `displayCallback`. No engine input path touched. No BLOCKER or MAJOR.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R61.2-1 | MINOR | `docs/PLAN.md:255-257`: the UX-3 device checks still described the removed map Start button ("Start opens Settings, Recording", "the indicator turns back into Start") and the old row name "Recording", contradicting UX-1 part 2 item 3. | FIXED | In this ledger commit: UX-3 items 2–4 reworded (row "Test drive recording", no Start, the indicator disappears after Stop). A one-line docs fix to stale wording this range caused. |
+
+Tests at 66f7ed5 (unchanged by round 2, docs only): `cd Core && swift test` 999 tests passed (36 known issues); App simulator `test` 400 tests in 57 suites passed.
+
+### Run 61 summary
+
+2 rounds; 1 MAJOR fixed (R61.1-1); 3 MINOR fixed (R61.1-2, R61.1-3, R61.2-1), 1 deferred (R61.1-4, user decision on (d)), 0 rejected; T61-1 (pre-existing flaky Core test) logged.
