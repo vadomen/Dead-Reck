@@ -203,7 +203,6 @@ struct MapsContent: View {
 
 // MARK: - Previews (synthetic names)
 
-#if DEBUG
 extension RoadPackLibrary.PackStatus {
     static func preview(
         _ name: String, bytes: Int64 = 48_000_000, osm: Int64 = 1_760_000_000, hash: String = "a1b2c3d4",
@@ -219,7 +218,6 @@ extension RoadPackLibrary.PackStatus {
         return pack
     }
 }
-#endif
 
 #Preview("Maps, empty") {
     NavigationStack { MapsContent(packs: [], storeBytes: 0).navigationTitle("Maps") }

@@ -692,3 +692,20 @@ Tests: none (lite, docs only).
 ### Run 64 summary
 
 1 round; 2 MINOR findings, both one-line wording fixes done in the ledger commit; 0 deferred, 0 rejected.
+
+## Run 65: N3.4 pack storage, install path, Settings → Maps (main..n34-pack-storage: d41f69f, 061b7af, 323efbc, 3429efe, 49b81c3), started 2026-10-18
+
+### Round 1
+
+Reviewers: three parallel opus reviewers (A: Core + docs, B: App storage/library/push_packs.sh, C: App UI). Author mutations 5/5 killed; reviewer A re-checked 1 + 2 own, all killed.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R65.1-1 | MAJOR | `App/Sources/UI/Settings/MapsView.swift:206` / `SettingsView.swift:120`: `PackStatus.preview` is defined under `#if DEBUG` but used by an unguarded global and by `#Preview` blocks, so the Release configuration (DriveLogger-Release scheme, Archive) does not compile. | CONFIRMED | Fix: un-guard the preview helper (ios-ui-engineer, round 1 commit). Regression check: Release-configuration build. |
+| R65.1-2 | MINOR | `MapsView.swift:160`: Maps shows the empty state ("No road maps installed") until the first scan, which runs launch maintenance (inbox copy + verify), so right after a push or the first launch after this update the screen says no maps while they install. | DEFERRED | Fix: pass `scansCompleted`/`scanning`, show "Looking for maps" until the first scan finishes. Backlog, UX-8 (prompt 25). |
+| R65.1-3 | MINOR | `MapsView.swift:151`: the notice's OK button is ~34 pt tall, below 44 pt. | DEFERRED | Fix: `.frame(minHeight: 44)` or `.controlSize(.large)`. Backlog, UX-8 (prompt 25). |
+| R65.1-4 | MINOR | `scripts/push_packs.sh:352-354`: skip-if-unchanged counts a store file marked for removal as installed (never reads `RoadPackStoreState.json`), so pushing to restore a pack after Remove-while-navigating prints "skipped (unchanged)" and the next launch deletes it. | DEFERRED | Fix: read the state file via devicectl and ignore marked names, or document in `--help` that `--force` is needed after a Remove until relaunch. Backlog, N3.4 / tooling. |
+
+Tests before review: Core 1016 tests in 132 suites passed (36 known issues); release `NavigationRoadPerfTests|NavigationB0Tests` 9 tests in 2 suites passed; AppTests 436 tests in 65 suites passed.
+
+Round 1 outcome: R65.1-1 fixed (preview helper no longer DEBUG-only); Release and Debug simulator builds succeed; Core unchanged since the pre-review run.
