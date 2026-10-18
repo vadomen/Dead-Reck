@@ -411,4 +411,9 @@ actor NavigationService {
 
     /// The generation (`RecordingNavigationFeed.generation`) snapshots follow.
     var currentGeneration: Int? { current }
+
+    /// A run is being consumed (from its feed's start until the feed has
+    /// drained): it may have road packs mapped. `RoadPackLibrary.remove`
+    /// asks this before deleting a pack file.
+    var hasActiveRun: Bool { !runs.isEmpty }
 }

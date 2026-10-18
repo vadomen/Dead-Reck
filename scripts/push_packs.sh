@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Copy osm/packs/*.roadpack into the app's Documents/RoadPacks/ on the connected
-# iPhone (CoreDevice file service, `xcrun devicectl device copy to`).
+# Copy osm/packs/*.roadpack into the app's developer inbox Documents/RoadPacks/
+# on the connected iPhone (CoreDevice file service, `xcrun devicectl device copy
+# to`). The app installs them into its private store at its next launch.
 # Run `scripts/push_packs.sh --help` for usage.
 set -euo pipefail
 
@@ -13,28 +14,41 @@ container on the connected iPhone. The bundle ID comes from
 Config/Local.xcconfig (PRODUCT_BUNDLE_IDENTIFIER), the app's name from
 project.yml.
 
+Documents/RoadPacks/ is only an inbox. At its next launch, before any
+Navigate or Record session, the app verifies each pack there, installs it
+into its private store as Library/Application Support/RoadPacks/
+<name>-<contentHash>.roadpack (<name> is the file name without .roadpack)
+and deletes it from the inbox. A pack the app refuses stays in the inbox;
+Settings > Diagnostics says why. Packs are never used from Documents.
+
 Close the app first: swipe it away in the app switcher, push, then launch it.
-The app memory-maps packs from Documents/RoadPacks while it navigates or
-records (Navigate or Record), and devicectl overwrites a pack in place, which
-can crash it (SIGBUS). The script refuses when:
+The app reads the inbox only at launch, so a pack pushed while it runs waits
+for the next launch anyway, and devicectl writes the file in place, so a push
+that overlaps a launch can hand the app a half-written pack (refused, kept,
+retried at the following launch). The script refuses when:
   - the app process is running on the phone (an app left suspended in the
-    app switcher still has its packs mapped), or the phone's process list
-    cannot be read;
+    app switcher is still running), or the phone's process list cannot be
+    read;
   - a file under Documents/logs changed in the last 30 s (a recording).
 A dry run reports what these guards found and exits 0.
 
   --dry-run         show copied / skipped per pack and what the guards found,
                     copy nothing
-  --force           copy even if the app is running (Navigate or Record), its
-                    process list cannot be read, or a recording looks to be in
-                    progress
+  --force           copy every pack, even unchanged ones, and even if the app
+                    is running, its process list cannot be read, or a
+                    recording looks to be in progress
   --device <id>     CoreDevice identifier, UDID or name, when more than one
                     iPhone is connected
   -h, --help        this text
 
 A pack is skipped when its size + sha256 equal what was last pushed to this
-device (stamp file osm/.push_packs_stamps.tsv, git-ignored) AND the phone's
-listing shows the file with the same size.
+device (stamp file osm/.push_packs_stamps.tsv, git-ignored) AND the phone
+still has it: installed in the app's store (<name>-<contentHash>.roadpack,
+same size; the content hash is read from the pack header) or still waiting in
+the inbox (same name and size). If the phone's Documents cannot be listed,
+the stamp alone decides (a pack deleted on the phone is then not re-pushed;
+use --force). Pushing a pack the app already has is harmless: the app finds
+the same file in its store and only empties the inbox.
 USAGE
 }
 
@@ -138,6 +152,7 @@ packs_dir="$repo_root/osm/packs"
 xcconfig="$repo_root/Config/Local.xcconfig"
 stamp_file="$repo_root/osm/.push_packs_stamps.tsv"
 remote_dir="Documents/RoadPacks"
+store_dir="Library/Application Support/RoadPacks"
 recording_window_s=30
 
 # Toolchain: CommandLineTools cannot run devicectl.
@@ -195,14 +210,18 @@ set -e
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
-# Two guards stop a copy into packs the app may have memory-mapped (devicectl
-# overwrites in place; there is no temp-name-and-rename, so a mapped pack can
-# SIGBUS the app). Both are checked once, before the first copy: launching the
-# app while the script copies is not detected.
+# Two guards keep pushes and the running app apart. The app maps packs only
+# from its private store, never from the inbox, so a push cannot SIGBUS it;
+# but it reads the inbox only at launch (a push while it runs waits for the
+# next launch), and devicectl writes in place (no temp-name-and-rename), so a
+# push overlapping a launch can hand the installer a half-written file (it is
+# refused and retried at the following launch). Both guards are checked once,
+# before the first copy: launching the app while the script copies is not
+# detected.
 #
-# Guard 1: the app process is running. Navigate (UX-1) maps packs whenever the
-# app runs and OBD polls, without writing any log, so guard 2 cannot see it. A
-# suspended app still has its packs mapped, hence "swipe it away". The process
+# Guard 1: the app process is running. Navigate (UX-1) runs whenever the app
+# runs and OBD polls, without writing any log, so guard 2 cannot see it. A
+# suspended app is still running, hence "swipe it away". The process
 # is matched by its executable path, .../<app_executable>, so another app with
 # the same name would also block (fails safe). Fail closed: if the process list
 # cannot be read (phone locked, older devicectl, JSON shape changed), refuse.
@@ -218,7 +237,7 @@ case $proc_rc in
   1)
     echo "Guard 1 (app process): the app is running on the phone (pid, executable):" >&2
     sed 's/^/  /' "$tmp_dir/app_pids" >&2
-    refuse "the app is running (Navigate or Record maps the packs)" \
+    refuse "the app is running (it installs pushed packs only at its next launch)" \
       "Swipe it away in the app switcher, then re-run; or re-run with --force." ;;
   *)
     reason="unexpected JSON (no or empty result.runningProcesses)"
@@ -252,6 +271,48 @@ if [ $listing_ok -eq 0 ]; then
   echo "         Falling back to the local stamp file alone; a pack deleted on the phone will NOT be re-pushed." >&2
 fi
 
+# Phone listing of the app's pack store: "fileName<TAB>size". The directory
+# exists once the app with the store has launched; if it cannot be listed but
+# Documents could, the store counts as empty (a pack is pushed again, which
+# the app handles as already installed).
+store_listing=""
+if [ $listing_ok -eq 1 ]; then
+  if store_json="$(xcrun devicectl device info files --device "$device_id" \
+        --domain-type appDataContainer --domain-identifier "$bundle_id" \
+        --subdirectory "$store_dir" --quiet --json-output - 2>/dev/null)"; then
+    store_listing="$(printf '%s' "$store_json" | /usr/bin/python3 -I -c '
+import json, sys
+for f in json.load(sys.stdin)["result"].get("files", []):
+    if f["resources"].get("isDirectory"):
+        continue
+    print("%s\t%d" % (f["relativePath"].split("/")[-1], f["metadata"]["size"]))
+')" || store_listing=""
+  else
+    echo "note: could not list the app's pack store ($store_dir); treating it as empty." >&2
+  fi
+fi
+
+# The store file name the app gives a pack file: <name>-<contentHash>.roadpack,
+# <name> = the file name without .roadpack (or without -<16 hex>.roadpack),
+# the content hash = header bytes 16..23, little-endian, as 16 hex digits
+# (docs/ROAD_PACK.md "Header"). Empty when the app would refuse the name.
+store_name() {
+  /usr/bin/python3 -I -c '
+import re, sys
+path, file = sys.argv[1], sys.argv[2]
+stem = file[:-len(".roadpack")]
+m = re.fullmatch(r"(.+)-[0-9a-f]{16}", stem)
+name = m.group(1) if m else stem
+if not (1 <= len(name) <= 64 and re.fullmatch(r"[a-z0-9_-]+", name)) or name[0] == "-" or name[-1] == "-":
+    sys.exit(0)
+with open(path, "rb") as f:
+    head = f.read(24)
+if len(head) < 24:
+    sys.exit(0)
+print("%s-%016x.roadpack" % (name, int.from_bytes(head[16:24], "little")))
+' "$1" "$2"
+}
+
 # Guard 2: a recording in progress. Heuristic: a file under Documents/logs
 # changed in the last 30 s (recording_window_s; log write times may lag, clock
 # skew is ignored). A recording implies guard 1 too; this one is kept as a
@@ -282,11 +343,15 @@ for src in "${packs[@]}"; do
   size="$(stat -f %z "$src")"
   sha="$(shasum -a 256 "$src" | awk '{print $1}')"
   stamp="$(awk -F'\t' -v d="$device_id" -v n="$name" '$1==d && $2==n {print $3 "\t" $4}' "$stamp_file" | tail -n 1)"
-  remote_size="$(printf '%s\n' "$listing" | awk -F'\t' -v p="RoadPacks/$name" '$1==p {print $2}' | head -n 1)"
+  inbox_size="$(printf '%s\n' "$listing" | awk -F'\t' -v p="RoadPacks/$name" '$1==p {print $2}' | head -n 1)"
+  stored="$(store_name "$src" "$name")"
+  [ -n "$stored" ] || echo "warning: $name: the app will refuse this file name (a-z, 0-9, _ and -; no leading or trailing -)." >&2
+  stored_size=""
+  [ -n "$stored" ] && stored_size="$(printf '%s\n' "$store_listing" | awk -F'\t' -v p="$stored" '$1==p {print $2}' | head -n 1)"
 
   unchanged=0
-  if [ "$stamp" = "$size	$sha" ]; then
-    if [ $listing_ok -eq 0 ] || [ "$remote_size" = "$size" ]; then unchanged=1; fi
+  if [ $force -eq 0 ] && [ "$stamp" = "$size	$sha" ]; then
+    if [ $listing_ok -eq 0 ] || [ "$stored_size" = "$size" ] || [ "$inbox_size" = "$size" ]; then unchanged=1; fi
   fi
 
   if [ $unchanged -eq 1 ]; then
@@ -326,6 +391,6 @@ if [ $blocked -eq 1 ]; then
   echo "Dry run: a real run would refuse (see above); close the app or use --force."
 fi
 if [ $dry_run -eq 0 ] && [ $copied -gt 0 ]; then
-  echo "Next: open the app, Settings > Diagnostics, and check the packs show Verified."
+  echo "Next: launch the app (it installs the packs from the inbox at launch), then check Settings > Diagnostics shows them Verified and no inbox refusal."
 fi
 [ $failed -eq 0 ] || exit 1

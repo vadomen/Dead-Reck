@@ -17,12 +17,14 @@ import Foundation
 /// **One active file per name.** With several files of one name, the newest
 /// is active (`activeSet`). The others are superseded.
 ///
-/// **Deletion happens only at launch** (`launchCleanup`), before any
-/// Navigate or Record session has mapped a pack. Callers never delete a
-/// pack file at any other time: "Remove" during a session only marks the
-/// files (`filesToMark(removingName:in:)`), a marked file is never active
-/// again, and the next launch deletes it. A superseded file stays on disk
-/// until then for the same reason: the running session may have it mapped.
+/// **Deletion happens only while no session can have a pack mapped:** at
+/// launch (`launchCleanup`), before any Navigate or Record session has
+/// mapped one, and for "Remove" when no Navigate or Record run is active
+/// (the app deletes that name's files at once). "Remove" during a session
+/// only marks the files (`filesToMark(removingName:in:)`), a marked file is
+/// never active again, and the next launch deletes it. A superseded file
+/// stays on disk until the next launch: the running session may have it
+/// mapped.
 ///
 /// Data: © OpenStreetMap contributors, ODbL 1.0.
 public enum RoadPackStoreRules {
@@ -232,7 +234,8 @@ public enum RoadPackStoreRules {
     }
 
     /// **Launch only, before any session maps a pack** — the one place a
-    /// pack file is ever deleted. Deletes superseded and marked files and
+    /// superseded or marked pack file is deleted ("Remove" with no run
+    /// active deletes that name's files itself). Deletes superseded and marked files and
     /// installer leftovers among `otherFileNames` (the directory's other
     /// entries); any other unknown file is left alone. Calling this while a
     /// Navigate or Record session runs would delete a file it may have

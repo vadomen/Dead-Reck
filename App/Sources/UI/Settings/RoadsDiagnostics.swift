@@ -10,7 +10,9 @@ enum RoadsDiagnosticsText {
     static func attributionVisible(packsInUse: Int) -> Bool { packsInUse > 0 }
 
     static func state(_ pack: RoadPackLibrary.PackStatus) -> String {
-        pack.verified ? "Verified" : "Refused: " + (pack.refusal ?? "not usable")
+        if pack.pendingRemoval { return "Removal pending (after restart)" }
+        if pack.inInbox { return "Not installed: " + (pack.refusal ?? "refused") }
+        return pack.verified ? "Verified" : "Refused: " + (pack.refusal ?? "not usable")
     }
 
     /// "12.3 MB · OSM 2026-10-01 · a1b2c3d4 · cached".
