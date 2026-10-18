@@ -24,7 +24,8 @@ struct DriveLoggerApp: App {
                     services.session.handleMemoryWarning()
                 }
         }
-        .onChange(of: scenePhase) { _, phase in
+        // `initial`: the display location starts at launch when active.
+        .onChange(of: scenePhase, initial: true) { _, phase in
             services.session.handleScenePhase(phase)
         }
     }

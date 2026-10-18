@@ -635,3 +635,29 @@ Tests at 66f7ed5 (unchanged by round 2, docs only): `cd Core && swift test` 999 
 ### Run 61 summary
 
 2 rounds; 1 MAJOR fixed (R61.1-1); 3 MINOR fixed (R61.1-2, R61.1-3, R61.2-1), 1 deferred (R61.1-4, user decision on (d)), 0 rejected; T61-1 (pre-existing flaky Core test) logged.
+
+## Run 62: UX-1 follow-ups 2: GPS position without OBD (R61.1-4), status line, tab bar, T61-1 (a478bbc..ux1-followups-2: 3d0051d, a7d3ae5, 2f58bd0, cf723be), started 2026-10-18
+
+### Round 1
+
+Reviewer: one fresh reviewer (opus). No mutations: the Core change is test-only, and each App hand-over guard was mapped to a `DisplayLocationTests` test by reading.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R62.1-1 | MAJOR | `docs/PLAN.md` §6 UX-1 part 1 item 4 (auto-stop) said the location arrow disappears and no dot shows after auto-stop; with the display feed (R61.1-4) the GPS dot and the arrow stay while the app is open. | FIXED | docs-editor: PLAN §6 item 4 reworded (no DR dot or ellipse, sensors off, GPS dot and arrow stay while the app is open, both go away when backgrounded). |
+
+Tests at HEAD: `cd Core && swift test` 999 tests in 129 suites passed (36 known issues); App simulator `test` 407 tests in 58 suites passed.
+
+### Round 2
+
+Reviewer: one fresh reviewer (opus). No mutations (no Core logic change; no App finding needed one). Checked the map side of the display feed (ingestion, first-fix framing at max(500 m, 3 × accuracy), run start/end while a display fix shows, staleness on inactive/background), the `ViewThatFits` status line with VoiceOver, the tab bar and accent, PLAN §6 / BACKLOG_UX / RELEASE_PLAN wording; R62.1-1 verified fixed.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R62.2-1 | MINOR | `AccentColor.colorset` dark variant (0.40, 0.70, 1.00) leaves white `.borderedProminent` labels at ~2.2:1 contrast in dark mode (was ~10.8:1): fix-toast Undo (`MapView.swift:611`), first-launch Continue, Record's Mark, Console Send / Re-initialise. | DEFERRED | BACKLOG row R62.2-1. |
+
+Tests at HEAD: unchanged since round 1 (docs only): Core 999 tests in 129 suites passed (36 known issues); App 407 tests in 58 suites passed.
+
+### Run 62 summary
+
+2 rounds; 1 MAJOR fixed (R62.1-1, docs); 0 rejected; 1 MINOR deferred (R62.2-1). R61.1-4 and T61-1 closed by the range.

@@ -142,6 +142,10 @@ struct MapFeed: View {
                     isActive: scenePhase == .active, elapsed: runElapsed
                 )
             }
+            // The plain GPS position while no run is live (R61.1-4).
+            .onChange(of: session.displayFix) { _, fix in
+                model.ingestDisplay(fix, isActive: scenePhase == .active)
+            }
             // A new Start resets the track before its first fix arrives.
             .onChange(of: session.currentRunGeneration) { _, run in
                 model.ingest(
@@ -156,6 +160,7 @@ struct MapFeed: View {
                         session.latestFix, file: session.currentFile,
                         run: session.currentRunGeneration, isActive: true, elapsed: runElapsed
                     )
+                    model.ingestDisplay(session.displayFix, isActive: true)
                 }
             }
     }

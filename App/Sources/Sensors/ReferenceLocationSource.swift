@@ -455,8 +455,20 @@ enum ReferenceFix {
     ) -> LogEvent {
         let ageS = receivedWallClock.timeIntervalSince(location.timestamp)
         let t = MonotonicTimestamp(nanoseconds: receivedT.nanoseconds - Int64((ageS * 1_000_000_000).rounded()))
+        return .location(sample(from: location, receivedT: receivedT, receivedWallClock: receivedWallClock), at: t)
+    }
+
+    /// The `LocationSample` of `location`, field for field. `receivedT` nil
+    /// is the map-only display feed (`DisplayLocationSource`), which has no
+    /// session clock and writes nothing.
+    nonisolated static func sample(
+        from location: CLLocation,
+        receivedT: MonotonicTimestamp?,
+        receivedWallClock: Date
+    ) -> LocationSample {
+        let ageS = receivedWallClock.timeIntervalSince(location.timestamp)
         let source = location.sourceInformation
-        let sample = LocationSample(
+        return LocationSample(
             latitude: location.coordinate.latitude,
             longitude: location.coordinate.longitude,
             altitude: location.altitude,
@@ -473,6 +485,5 @@ enum ReferenceFix {
             simulated: source?.isSimulatedBySoftware,
             accessory: source?.isProducedByAccessory
         )
-        return .location(sample, at: t)
     }
 }

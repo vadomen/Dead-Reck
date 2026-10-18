@@ -308,7 +308,14 @@ struct RecordingPipelineTests {
         defer { scratch.remove() }
         let directory = ProcessInfo.processInfo.environment["INSPECT_LOG_SAMPLE_DIR"].map { URL(fileURLWithPath: $0) }
             ?? scratch.url
-        let clock = SessionClock()
+        // Session time is virtual: it moves only when the test advances it,
+        // so the recording spans exactly `span` however late this test is
+        // scheduled. With the system uptime, a main-actor wake-up delayed by
+        // full-suite load stretched the recording past 30 s, and the
+        // analyzer then rightly warned that a v2 recording that long has no
+        // `stats` rows (this pipeline has no stats emitter) (T61-1).
+        let uptime = TestClock(baseUptime: 1_000)
+        let clock = SessionClock(source: uptime)
         let header = LogHeader(clock: clock, app: LogFixtures.app, device: LogFixtures.device, notes: "simulated drive", timeZone: "UTC")
         let url = directory.appendingPathComponent(LogFileName.make(for: clock.wallClockStart, timeZone: TimeZone(identifier: "UTC")!, collisionIndex: Int.random(in: 2...1_000_000)))
         let writer = try LogFileWriter(url: url, header: header, flushInterval: .milliseconds(100), diskSpace: FakeDiskSpace(WriterFixtures.roomy))
@@ -316,9 +323,22 @@ struct RecordingPipelineTests {
         let location = SimulatedLocationSource(interval: .milliseconds(100))
         try motion.start(clock: clock, sink: writer.sink)
         try location.start(clock: clock, sink: writer.sink)
-        try await Task.sleep(for: .milliseconds(600))
+        // 605 ms, off the sample grid: motion samples 0…60 (t = 0…600 ms)
+        // and fixes 0…6 (t = 0…600 ms) are due.
+        let span = Duration.milliseconds(605)
+        let expectedMotion = 61
+        let expectedLocation = 7
+        let expectedEvents = expectedMotion * 3 + expectedLocation   // motion, accel, gyro per instant
+        await uptime.advance(by: span)
+        // The tickers deliver on their own queues; wait (in real time, with a
+        // generous deadline) until every due sample has reached the sink.
+        let deadline = ContinuousClock.now + .seconds(120)
+        while writer.sink.totalEnqueued < expectedEvents, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
         motion.stop()
         location.stop()
+        #expect(writer.sink.totalEnqueued == expectedEvents)
         let summary = await writer.finish()
         #expect(summary.failure == nil)
         #expect(writer.sink.dropped == 0)
@@ -328,6 +348,12 @@ struct RecordingPipelineTests {
         for event in reader { analyzer.observe(event) }
         let result = analyzer.summary(report: reader.report)
         #expect(result.eventCount == summary.eventCount)
+        #expect(result.eventCount == expectedEvents)
+        #expect(result.kinds.first { $0.kind == "motion" }?.count == expectedMotion)
+        #expect(result.kinds.first { $0.kind == "location" }?.count == expectedLocation)
+        // The recording spans exactly the virtual time advanced.
+        #expect(result.firstT == .zero)
+        #expect(result.lastT == MonotonicTimestamp(nanoseconds: 600_000_000))
         #expect(result.kinds.first { $0.kind == "motion" }?.gapsOver50ms == 0)
         #expect(result.kinds.first { $0.kind == "motion" }?.outOfOrder == 0)
         #expect(result.kinds.first { $0.kind == "location" }.map { $0.count >= 1 } == true)

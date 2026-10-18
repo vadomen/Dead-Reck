@@ -114,13 +114,25 @@ struct NavigateStatusLabel: View {
 
     var body: some View {
         if let text = status.text {
-            HStack(spacing: 10) {
-                Image(systemName: status.systemImage)
-                Text(text).font(.headline).lineLimit(2).minimumScaleFactor(0.8)
-                Spacer(minLength: 0)
-                if let detail = status.detail {
-                    Text(detail).font(.title3.weight(.bold).monospacedDigit())
+            // One line at the default Dynamic Type; when it no longer fits
+            // (large sizes), the countdown drops under the text instead of
+            // squeezing it.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    icon
+                    Text(text).font(.headline).lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                    Spacer(minLength: 0)
+                    detailView(font: .headline.weight(.bold).monospacedDigit())
                 }
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 10) {
+                        icon
+                        Text(text).font(.headline).lineLimit(2)
+                        Spacer(minLength: 0)
+                    }
+                    detailView(font: .title3.weight(.bold).monospacedDigit())
+                }
+                .padding(.vertical, 8)
             }
             .foregroundStyle(Color.primary)
             .padding(.horizontal, 16)
@@ -128,6 +140,15 @@ struct NavigateStatusLabel: View {
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
             .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(status.tone.color, lineWidth: 2))
             .accessibilityElement(children: .combine)
+        }
+    }
+
+    private var icon: some View { Image(systemName: status.systemImage) }
+
+    @ViewBuilder
+    private func detailView(font: Font) -> some View {
+        if let detail = status.detail {
+            Text(detail).font(font)
         }
     }
 }
@@ -142,4 +163,10 @@ struct NavigateStatusLabel: View {
 
 #Preview("Connect OBD") {
     NavigateStatusLabel(status: .needsOBD).padding()
+}
+
+#Preview("OBD lost, large type") {
+    NavigateStatusLabel(status: .waitingForOBD(secondsLeft: 272))
+        .padding()
+        .dynamicTypeSize(.accessibility2)
 }
