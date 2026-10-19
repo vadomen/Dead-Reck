@@ -44,6 +44,8 @@ extension View {
 /// nominal, the recording row while recording.
 struct MapHUDCard<Extra: View, Recording: View>: View {
     var state: MapHUDState
+    /// The recording row is shown: it is 44 pt tall and ends the card (no bottom padding).
+    var hasRecording = false
     var onSpeedLongPress: () -> Void = {}
     /// Next to "km/h": the calibrating-heading icon.
     @ViewBuilder var extra: () -> Extra
@@ -83,7 +85,8 @@ struct MapHUDCard<Extra: View, Recording: View>: View {
             recording()
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 8)
+        .padding(.top, 6)
+        .padding(.bottom, hasRecording ? 0 : 8)
         .fixedSize(horizontal: true, vertical: false)
         .hudSurface(RoundedRectangle(cornerRadius: 18))
     }

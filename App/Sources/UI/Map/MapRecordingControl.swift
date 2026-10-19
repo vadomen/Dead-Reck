@@ -86,11 +86,9 @@ struct MapRecordingIndicatorLabel: View {
                 Image(systemName: "stop.fill").font(.system(size: 14))
             }
             .foregroundStyle(HUDColors.text)
+            // A real 44 pt frame inside the layout; the card has no bottom padding under it.
             .frame(minHeight: MapLayout.minTapTarget)
             .contentShape(Rectangle())
-            // The 44 pt row overlaps the card's bottom padding (and spacing): the card stays
-            // short (more road ahead) and the tap target stays 44 pt.
-            .padding(.bottom, -10)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Recording, \(elapsed). Double tap to stop.")

@@ -546,6 +546,7 @@ struct GPSMapView: View {
     private var hudCard: some View {
         MapHUDCard(
             state: hudState,
+            hasRecording: recordingControl != nil,
             onSpeedLongPress: { showNavStats.toggle() },
             extra: {
                 if let estimate { NavCalibratingIcon(feed: estimate) }
