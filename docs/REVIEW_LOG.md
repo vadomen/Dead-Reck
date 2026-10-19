@@ -780,3 +780,23 @@ Tests at c80d91e: AppTests 522 tests in 81 suites passed; simulator build succee
 ### Run 67 summary
 
 2 rounds; 2 MAJOR fixed (R67.1-1 from the user, R67.1-2), 0 rejected, 5 MINOR deferred (R67.1-3..7).
+
+## Run 68: UX-14/31/32/33/34 map HUD layout E, Settings hub, OBD adapter, About (main..ux32-map-settings: b566b81..269ed34), started 2026-10-19
+
+### Round 1
+
+Reviewers: two parallel opus reviewers (A: map HUD — App/Sources/UI/Map/*, MapHUDTests; B: RootView/AppNavigation, Settings/About/OBD adapter, Console, Link, Sessions, project, README/site/docs). No mutations (Core untouched; App logic covered by the authors' logic -> test lists; no finding needed an App mutation).
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R68.1-1 | MAJOR | `App/Sources/UI/Map/MapView.swift:817-825` (`cameraCenter`) with `MapNavigation.swift:358-362` (`FollowZoom.distance`/`FollowSpan`): the heading-up ellipse fit still assumed a centred car; with the car at 2/3 height (`CarPlacement`) only a third of the visible height is behind it, so a 300 m semi-major lost its rear third off-screen (undoes the UX-6 "ellipse fit wins in heading-up" rule in the jammed case). | CONFIRMED | Fix (b5a061a): `FollowSpan.span(carFromTop:)` scales the ellipse requirement by 0.5 / (1 − carFromTop) (×1.5 at 2/3) after the 1000 m cap, then max with the driver's zoom; `FollowZoom.distance` passes `CarPlacement.carFromTop` in heading-up; north-up unchanged. Regression test `CarPlacementTests.ellipseFitBehindCar` (fails 3× on 269ed34); `followZoomDriverGesture` updated 880 → 1320 m. |
+| R68.1-2 | MINOR | `App/Sources/UI/Map/MapView.swift:549`, `MapHUDViews.swift:89`: `hasRecording: recordingControl != nil` is always true (`MapScreen` always passes a non-nil `AnyView(MapRecordingButton…)`, empty while idle), so the card has 0 pt bottom padding in every non-recording session; a "Thermal fair" row sits on the card's bottom edge. | DEFERRED | Fix: derive from `session.state` (calibrating/recording/stopping) or pass nil while idle. Backlog. |
+| R68.1-3 | MINOR | `MapView.swift:604` with `CarPlacement.carFromTop`: the at-a-stop offer card (~210 pt, x 12…295 on SE) covers the car arrow at 2/3 height in heading-up while shown (stationary only; `PackOfferRule` hides it in motion). | DEFERRED | Fix: centre the car (offset 0) while the offer is shown, or accept and record the decision. Backlog; raised to the user. |
+| R68.1-4 | MINOR | `App/Sources/UI/Console/ConsoleViewModel.swift:218`: `adapterName` = `link.adapter?.name ?? link.rememberedAdapterName`, but `OBDLinkService.adapter` is never cleared on disconnect/forget/retarget; after forgetting A and tapping B, Settings → OBD adapter says "Connecting to A" / "A not found" until B initialises (forever if it never does). `AdapterSettingsTests.name` asserts this order. | DEFERRED | Fix: use `link.adapter?.name` only when its identifier equals `rememberedAdapterID`, else `rememberedAdapterName`; add a mismatched-record test. Backlog. |
+| R68.1-5 | MINOR | `README.md:156`: "Diagnostics … in Release after 7 taps on Version" — Version moved to Settings → About; `README.md:52` "Open" still lists "dark-mode map controls (UX-13)", superseded by UX-32. | DEFERRED | Fix: "7 taps on Version in Settings → About"; drop UX-13 from Open. Backlog. |
+
+Reviewer A dismissed: GPS-quality chip colour removal (the accuracy circle still carries the band colour), rail active state without colour, recording-row hit area (fixed 269ed34), OSM line vs Apple's marks (no overlap by code; device check), camera offset reaches nothing downstream. Reviewer B dismissed: Mount-and-orientation 0.5 s cover hand-off, `mapIsLive` gating, `BLEAvailability.Reason` byte-identical strings, no user text sends users to Console, Sessions ShareLink in a cover, 15 s timer, guard sharing, README/site accuracy.
+
+Tests before review (269ed34): Core 1066 tests in 136 suites passed (36 known issues; Core untouched in the range); AppTests 567 tests in 87 suites passed.
+
+Round 1 outcome: R68.1-1 fixed (b5a061a); AppTests 568 tests in 87 suites passed.
