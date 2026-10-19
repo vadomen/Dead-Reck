@@ -8,7 +8,7 @@ enum SettingsRow: Hashable {
 }
 
 /// Which main-section rows show, in order (UX-14): Test drive recording,
-/// Sessions, Maps, OBD adapter (hidden until UX-34), Mount and orientation,
+/// Sessions, Maps, OBD adapter (UX-34), Mount and orientation,
 /// Console (developer screen: Release shows it only behind the Diagnostics gate).
 enum SettingsRows {
     static func main(showsConsole: Bool, adapterAvailable: Bool = SettingsRoute.adapterRowAvailable) -> [SettingsRow] {
@@ -35,7 +35,7 @@ struct SettingsScreen<Recording: View, Console: View, Sessions: View, Adapter: V
     @ViewBuilder var recording: () -> Recording
     @ViewBuilder var console: () -> Console
     @ViewBuilder var sessions: () -> Sessions
-    /// UX-34 fills this; the row stays hidden until then.
+    /// Settings → OBD adapter (UX-34).
     @ViewBuilder var adapter: () -> Adapter
     @State private var thermal = ProcessInfo.processInfo.thermalState
 

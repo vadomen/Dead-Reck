@@ -26,7 +26,8 @@ enum HUDGPS: Hashable, Sendable {
     var isFailed: Bool { self != .ok }
 }
 
-/// OBD indicator state.
+/// OBD indicator state: the link's, not the speed's. Which speed is shown
+/// (and so which indicator is emphasised) stays the UX-5 rule's decision.
 enum HUDOBD: Hashable, Sendable {
     case connected
     case lost
@@ -35,11 +36,18 @@ enum HUDOBD: Hashable, Sendable {
 
     var isFailed: Bool { self == .lost }
 
-    /// OBD counts as connected while a vehicle-speed reply is fresh (the UX-5
-    /// rule's source). The session has no link-state accessor the UI may read,
-    /// so "connected" means "its speed is arriving".
-    static func from(speed: MapSpeedReadout) -> HUDOBD {
-        speed.source == .obd ? .connected : .lost
+    /// Connected while the adapter is initialised and talking to the car
+    /// (`ready`, `polling`; the ELM session's `retrying` is still `polling`),
+    /// whether or not a speed reply is fresh: a silent engine on a live link
+    /// reads "OBD". Everything else is "OBD lost": scanning, connecting,
+    /// initialising, reconnecting, failed, Bluetooth off — and also before
+    /// any adapter has connected (kept to the two spec labels: the
+    /// indicator answers "is OBD feeding the app now?", and the answer is no).
+    static func from(link: OBDLinkState?) -> HUDOBD {
+        switch link {
+        case .ready?, .polling?: .connected
+        default: .lost
+        }
     }
 }
 
@@ -266,6 +274,9 @@ struct HUDFakes: Equatable, Sendable {
         }
         return out
     }
+
+    /// The OBD indicator: lost with `obdLost`, else connected.
+    var obd: HUDOBD { obdLost ? .lost : .connected }
 
     /// The speed shown: 27 km/h from OBD, or from GPS when OBD is "lost".
     var speed: MapSpeedReadout {

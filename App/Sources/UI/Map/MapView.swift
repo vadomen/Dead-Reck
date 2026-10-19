@@ -57,6 +57,10 @@ struct MapScreen: View {
     var roadsWarning: RoadsWarningModel?
     /// The at-a-stop offer (UX-8); nil in previews.
     var offers: PackOfferMonitor?
+    /// Read for the HUD's OBD indicator only (`HUDOBD.from(link:)`); nil in
+    /// previews. Only `state` is read, so the map re-renders on link state
+    /// changes, not on poll traffic.
+    var link: (any OBDLinkServicing)?
     @Environment(\.scenePhase) private var scenePhase
     @State private var thermal = ProcessInfo.processInfo.thermalState
 
@@ -75,6 +79,7 @@ struct MapScreen: View {
             isReceiving: fake.isActive ? !fake.gpsLost : model.isReceiving,
             thermal: fake.thermal ? .fair : thermal,
             speed: fake.isActive ? fake.speed : model.speed,
+            obd: fake.isActive ? fake.obd : HUDOBD.from(link: link?.state),
             isLive: isSelected && scenePhase == .active,
             follow: $model.follow,
             headingUp: $headingUp,
@@ -246,6 +251,8 @@ struct GPSMapView: View {
     var thermal: ProcessInfo.ThermalState
     /// The one speed shown in the info block and where it comes from.
     var speed: MapSpeedReadout = .none
+    /// The HUD's OBD indicator, from the link state.
+    var obd: HUDOBD = .lost
     /// Selected tab and active scene. When false no `Map` exists and the
     /// camera is not touched.
     var isLive: Bool
@@ -326,6 +333,7 @@ struct GPSMapView: View {
     init(
         track: GPSTrack, latest: LocationSample?, lastFixInstant: ContinuousClock.Instant?,
         isReceiving: Bool, thermal: ProcessInfo.ThermalState, speed: MapSpeedReadout = .none,
+        obd: HUDOBD = .lost,
         isLive: Bool,
         follow: Binding<FollowController>, headingUp: Binding<Bool> = .constant(false),
         bearing: Double? = nil, isStationary: Bool = false, manualFixes: [ConfirmedFix] = [],
@@ -351,6 +359,7 @@ struct GPSMapView: View {
         self.isReceiving = isReceiving
         self.thermal = thermal
         self.speed = speed
+        self.obd = obd
         self.isLive = isLive
         self._follow = follow
         self._headingUp = headingUp
@@ -529,7 +538,7 @@ struct GPSMapView: View {
 
     private var hudState: MapHUDState {
         MapHUDState.make(
-            speed: speed, gps: MapHUDState.gpsState(stale: stale), obd: HUDOBD.from(speed: speed),
+            speed: speed, gps: MapHUDState.gpsState(stale: stale), obd: obd,
             thermal: thermal)
     }
 

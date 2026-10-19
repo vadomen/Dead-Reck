@@ -5,15 +5,13 @@ enum SettingsRoute: Hashable, CaseIterable {
     case recording
     case sessions
     case maps
-    /// UX-34: filled by a later phase. Its row stays hidden until
-    /// `SettingsRoute.adapterRowAvailable` is flipped.
+    /// UX-34: pair, connect and forget the OBD adapter (`AdapterSettingsScreen`).
     case adapter
     case console
     case about
 
-    /// The "OBD adapter" row is not shown until UX-34 builds its screen; the
-    /// route exists so `-uiScreen adapter` and the layout are ready.
-    static let adapterRowAvailable = false
+    /// The "OBD adapter" row shows (UX-34 built its screen).
+    static let adapterRowAvailable = true
 }
 
 /// Where the app is: the map is always underneath, Settings is a full-screen

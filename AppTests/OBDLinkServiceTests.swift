@@ -612,6 +612,55 @@ struct OBDLinkServiceTests {
         #expect(defaults.string(forKey: OBDLinkService.rememberedAdapterKey) == nil)
     }
 
+    @Test("The paired adapter's name is kept with its id (UX-34): from the scan, then the connection; a relaunch reads it; forget() clears it")
+    func rememberedName() async throws {
+        let central = FakeBLECentral(scripts: [LinkTestSupport.touareg()])
+        let defaults = LinkTestSupport.defaults()
+        let link = LinkTestSupport.service(central, defaults: defaults)
+        #expect(link.rememberedAdapterName == nil)
+        link.startScan()
+        #expect(await eventually { !link.discovered.isEmpty })
+        link.connect(to: FakeBLECentral.adapterID)
+        #expect(link.rememberedAdapterName == "IOS-Vlink", "known from the scan row at once")
+        #expect(await eventually { link.state.isPolling })
+        #expect(defaults.string(forKey: OBDLinkService.rememberedAdapterNameKey) == "IOS-Vlink")
+        link.disconnect()
+        #expect(link.rememberedAdapterName == "IOS-Vlink", "disconnect keeps the pairing")
+
+        let relaunched = LinkTestSupport.service(FakeBLECentral(scripts: [LinkTestSupport.touareg()], poweredOn: false), defaults: defaults)
+        #expect(relaunched.rememberedAdapterName == "IOS-Vlink")
+
+        link.forget()
+        #expect(link.rememberedAdapterName == nil)
+        #expect(defaults.string(forKey: OBDLinkService.rememberedAdapterNameKey) == nil)
+    }
+
+    @Test("Connecting without a scan row learns the name when the link is ready; a different adapter drops the old name")
+    func rememberedNameFromConnection() async throws {
+        let defaults = LinkTestSupport.defaults()
+        defaults.set(UUID().uuidString, forKey: OBDLinkService.rememberedAdapterKey)
+        defaults.set("Old adapter", forKey: OBDLinkService.rememberedAdapterNameKey)
+        let central = FakeBLECentral(scripts: [LinkTestSupport.touareg()], poweredOn: false)
+        let link = LinkTestSupport.service(central, defaults: defaults)
+        #expect(link.rememberedAdapterName == "Old adapter")
+        link.connect(to: FakeBLECentral.adapterID)
+        #expect(link.rememberedAdapterName == nil, "no scan row for the new adapter: the old name is not carried over")
+        central.send(.availability(.poweredOn, uptime: FakeBLECentral.now))
+        #expect(await eventually { link.state.isPolling })
+        #expect(link.rememberedAdapterName == "IOS-Vlink")
+        #expect(defaults.string(forKey: OBDLinkService.rememberedAdapterNameKey) == "IOS-Vlink")
+        link.disconnect()
+    }
+
+    @Test("A name stored without an id is ignored")
+    func orphanName() {
+        let defaults = LinkTestSupport.defaults()
+        defaults.set("Old adapter", forKey: OBDLinkService.rememberedAdapterNameKey)
+        let link = LinkTestSupport.service(FakeBLECentral(scripts: [LinkTestSupport.touareg()], poweredOn: false), defaults: defaults)
+        #expect(link.rememberedAdapterID == nil)
+        #expect(link.rememberedAdapterName == nil)
+    }
+
     @Test("A remembered adapter is reconnected automatically once Bluetooth is on")
     func rememberedAutoConnect() async throws {
         let defaults = LinkTestSupport.defaults()

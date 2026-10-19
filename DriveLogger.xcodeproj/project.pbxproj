@@ -25,6 +25,7 @@
 		25DB6730376216ACCED36E70 /* PackTransfer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22A2CA69CDA2A571F37D1F1F /* PackTransfer.swift */; };
 		280FFA7B9D83AB2E555CAE7C /* FirstLaunchAndTestDriveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BB1485F07DF5CC618778091 /* FirstLaunchAndTestDriveTests.swift */; };
 		2A9BF7106741830C942C8E9E /* FirstLaunchMapsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC98513BB0C9D09F650C0359 /* FirstLaunchMapsTests.swift */; };
+		2DA624986D362ED391D8BBB0 /* AdapterSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F461AEE1B1F6AB37A3ED7CC /* AdapterSettingsView.swift */; };
 		2F1269035331B798C267E34E /* SensorSourceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DCCAAFA3667C0100BDF5237 /* SensorSourceTests.swift */; };
 		33A00E975C5880A134985B95 /* MapsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65430334BF0FA2E17573334F /* MapsTests.swift */; };
 		3694EB7DA52ABEFA3E9F4C58 /* DriveLoggerCore in Frameworks */ = {isa = PBXBuildFile; productRef = A3ADC0CF90EB1C47CE68194B /* DriveLoggerCore */; };
@@ -84,6 +85,7 @@
 		A06E44736D7EFB72A1FC3F8E /* MapHUD.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B9648439EA16B65DC7DEF30 /* MapHUD.swift */; };
 		A3454D74A222F4E38D629D46 /* RecordingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5C0DEF85C7492AD06A4497D /* RecordingView.swift */; };
 		A8DBF8EFF2EB225A0BBCBE4D /* DisplayLocationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCD521716BBEBF31BBC559E1 /* DisplayLocationTests.swift */; };
+		AB89ABEAA9A3289554F2B8FD /* AdapterSettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8B0E05E271CFC99BBB1B38B /* AdapterSettingsTests.swift */; };
 		ABF23677C8A5547DF21AB88A /* OBDLinkServicing.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE394D78D64D4538558929AB /* OBDLinkServicing.swift */; };
 		AC1F6DB9BC1BECA3832E81C2 /* RoadPackStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD8A50D9034882DBCAA412CB /* RoadPackStoreTests.swift */; };
 		ADC8477C8B33D677EB96F368 /* MapRoadsOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1497C98056A5F6CD77D87D63 /* MapRoadsOverlay.swift */; };
@@ -108,6 +110,7 @@
 		DB397B3DFC6D0ECD860B9ED0 /* SessionsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51E41306C0E8CC802CFDBB09 /* SessionsViewModel.swift */; };
 		DBC9B1BAA14AA200B75DE0C6 /* PackOfferMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F068175099510D43715DCE3 /* PackOfferMonitor.swift */; };
 		DCC26E03EEEEC0680898D0DE /* RoadPackLibraryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05B11049AF172AA337D91426 /* RoadPackLibraryTests.swift */; };
+		E2810A54A5CEBA11016EA1C3 /* AdapterSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93DE5F24930CC6CE64909294 /* AdapterSettings.swift */; };
 		E2D706B12EA35B46C0814BC5 /* MapSpeedTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81484511F34B0A4E437C7239 /* MapSpeedTests.swift */; };
 		E319CC20528184BBCE50D26C /* PackManifestService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 273B14D930503EA43074F905 /* PackManifestService.swift */; };
 		E3A034DD4E4F285512F443AD /* NavigationServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C06C7BF25C0632C6C10B1222 /* NavigationServiceTests.swift */; };
@@ -177,6 +180,7 @@
 		4C4CF307DE91129CF97E7DAB /* FirstLaunchMaps.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FirstLaunchMaps.swift; sourceTree = "<group>"; };
 		4D8E9CE2BABC8A226F6FC03A /* PreDriveChecklist.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreDriveChecklist.swift; sourceTree = "<group>"; };
 		4DF88D705418C3CDC31A11FE /* GPSTrack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GPSTrack.swift; sourceTree = "<group>"; };
+		4F461AEE1B1F6AB37A3ED7CC /* AdapterSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdapterSettingsView.swift; sourceTree = "<group>"; };
 		50DD7E63551468B4F1B00A04 /* DebugFakes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugFakes.swift; sourceTree = "<group>"; };
 		51E41306C0E8CC802CFDBB09 /* SessionsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsViewModel.swift; sourceTree = "<group>"; };
 		53A5A2CA16E92EC7B59DF9B2 /* Tone.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tone.swift; sourceTree = "<group>"; };
@@ -204,6 +208,7 @@
 		86A02542CBEAAABFB5818C05 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		90AC7FA4AD498307B3C7D5C3 /* AppInfoTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppInfoTests.swift; sourceTree = "<group>"; };
 		91D3719D9A3A53C5D01BA7E8 /* CachedLocation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CachedLocation.swift; sourceTree = "<group>"; };
+		93DE5F24930CC6CE64909294 /* AdapterSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdapterSettings.swift; sourceTree = "<group>"; };
 		982E965A8FFF8D4E784FD5CE /* ReferenceLocationSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReferenceLocationSource.swift; sourceTree = "<group>"; };
 		9A9893CF2D416659752FED07 /* FirstLaunchChecklist.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FirstLaunchChecklist.swift; sourceTree = "<group>"; };
 		9AD177F87E3035993E62C165 /* RoadPackLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoadPackLibrary.swift; sourceTree = "<group>"; };
@@ -242,6 +247,7 @@
 		E5B25FA2C706670738AB0C42 /* RecordingSessionNavigateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingSessionNavigateTests.swift; sourceTree = "<group>"; };
 		E673B5E664BA56EBFD878D08 /* UIPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIPresentationTests.swift; sourceTree = "<group>"; };
 		E6FC5A0B513688F9143F40EC /* MemoryFootprint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryFootprint.swift; sourceTree = "<group>"; };
+		E8B0E05E271CFC99BBB1B38B /* AdapterSettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdapterSettingsTests.swift; sourceTree = "<group>"; };
 		E8C885A8DFC8441B8E214685 /* RoadsWarningTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoadsWarningTests.swift; sourceTree = "<group>"; };
 		EB34BE123D31801692F944B4 /* BLETransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BLETransport.swift; sourceTree = "<group>"; };
 		EC98513BB0C9D09F650C0359 /* FirstLaunchMapsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FirstLaunchMapsTests.swift; sourceTree = "<group>"; };
@@ -283,6 +289,7 @@
 		11FEED041AB49418ABD33FAE /* AppTests */ = {
 			isa = PBXGroup;
 			children = (
+				E8B0E05E271CFC99BBB1B38B /* AdapterSettingsTests.swift */,
 				90AC7FA4AD498307B3C7D5C3 /* AppInfoTests.swift */,
 				3AE6CA7AB92C3C3EF8393920 /* AppNavigationTests.swift */,
 				18315FE7C7FFF70B0B2850DD /* BLECentralTests.swift */,
@@ -526,6 +533,8 @@
 			isa = PBXGroup;
 			children = (
 				D04F30EF56DAFDCC161F28D9 /* AboutView.swift */,
+				93DE5F24930CC6CE64909294 /* AdapterSettings.swift */,
+				4F461AEE1B1F6AB37A3ED7CC /* AdapterSettingsView.swift */,
 				AE42CD1A4F400CC1B8396393 /* DeveloperGate.swift */,
 				818DD019604FE1043C22CDB1 /* MapsView.swift */,
 				369422FC35F7985CA58DE03E /* RoadsDiagnostics.swift */,
@@ -650,6 +659,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AB89ABEAA9A3289554F2B8FD /* AdapterSettingsTests.swift in Sources */,
 				6A100EA473833AB5B83E6974 /* AppInfoTests.swift in Sources */,
 				41471897531591CB1EB8A66D /* AppNavigationTests.swift in Sources */,
 				80920D5FFE9F6525692A73C6 /* BLECentralTests.swift in Sources */,
@@ -698,6 +708,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				945EA9016917C805402AE4A4 /* AboutView.swift in Sources */,
+				E2810A54A5CEBA11016EA1C3 /* AdapterSettings.swift in Sources */,
+				2DA624986D362ED391D8BBB0 /* AdapterSettingsView.swift in Sources */,
 				12828BB3574A085AEC880462 /* AdapterStatus.swift in Sources */,
 				4E301479F940B6C5F374BAC0 /* AppInfo.swift in Sources */,
 				7B72DE5EFB1971A2CD7D302A /* AppNavigation.swift in Sources */,

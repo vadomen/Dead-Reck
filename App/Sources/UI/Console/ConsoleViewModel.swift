@@ -154,6 +154,13 @@ extension ConsoleText {
             confirm: "Drop OBD", cancel: "Keep connection", confirmIsDestructive: true)
     }
 
+    /// The Forget confirmation's message, in Console and in Settings → OBD adapter.
+    static func forgetMessage(isRecording: Bool) -> String {
+        isRecording
+            ? "The app will stop reconnecting to it. \(recordingWarning)"
+            : "The app will stop reconnecting to it. You can pick it again from a scan."
+    }
+
     /// Scan only finds an adapter: not while one is held, not while recording.
     /// `.failed` counts as free (R5.2-3): it is where an unusable adapter
     /// ("pick another adapter") leaves the user, so Scan must work there.
@@ -162,6 +169,18 @@ extension ConsoleText {
         if case .failed = link { return !recording }
         return !recording && !holdsAdapter(link)
     }
+}
+
+/// The adapter actions a screen may offer. Built only by
+/// `ConsoleViewModel.linkActions`, so Console and Settings → OBD adapter
+/// share one set of guards (recording-time confirmations, scan gating).
+struct LinkActions {
+    var scan: () -> Void
+    var stopScan: () -> Void
+    var connect: (UUID) -> Void
+    var disconnect: () -> Void
+    var forget: () -> Void
+    var confirmLinkChange: (LinkChange) -> Void
 }
 
 @MainActor
@@ -195,6 +214,8 @@ final class ConsoleViewModel {
     }
 
     var state: OBDLinkState { link.state }
+    /// The connected adapter's name, else the remembered one's (UX-34).
+    var adapterName: String? { link.adapter?.name ?? link.rememberedAdapterName }
     var status: AdapterStatus { AdapterStatus(link.state) }
     var discovered: [DiscoveredAdapter] { link.discovered }
     var remembered: UUID? { link.rememberedAdapterID }
@@ -245,6 +266,22 @@ final class ConsoleViewModel {
     func cancelPendingChange() { pendingChange = nil }
 
     func forget() { link.forget() }
+
+    /// Settings → OBD adapter's Connect: the remembered adapter, through
+    /// `connect(_:)` and so through its guard (the targeted adapter never
+    /// asks). Nothing remembered: nothing to do.
+    func connectRemembered() {
+        guard let id = link.rememberedAdapterID else { return }
+        connect(id)
+    }
+
+    /// The link actions, as both Console and Settings → OBD adapter wire
+    /// them: every one goes through this model's guards.
+    var linkActions: LinkActions {
+        LinkActions(
+            scan: scan, stopScan: stopScan, connect: connect, disconnect: disconnect, forget: forget,
+            confirmLinkChange: confirm)
+    }
     func reinitialise() { Task { await link.reinitialise() } }
 
     func send(_ command: String? = nil) {

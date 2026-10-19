@@ -21,16 +21,7 @@ struct ConsoleScreen: View {
             isForgetConfirmationPresented: $model.isForgetConfirmationPresented,
             isLinkChangeConfirmationPresented: $model.isLinkChangeConfirmationPresented,
             pendingLinkChange: model.pendingChange,
-            actions: .init(
-                scan: model.scan,
-                stopScan: model.stopScan,
-                connect: model.connect,
-                disconnect: model.disconnect,
-                forget: model.forget,
-                confirmLinkChange: model.confirm,
-                reinitialise: model.reinitialise,
-                send: { model.send($0) }
-            )
+            actions: .make(model)
         )
     }
 }
@@ -45,6 +36,16 @@ struct ConsoleActions {
     var reinitialise: () -> Void = {}
     /// nil sends the text field's content.
     var send: (String?) -> Void = { _ in }
+
+    /// The model's actions; the link ones are `ConsoleViewModel.linkActions`,
+    /// which Settings → OBD adapter uses too (UX-34).
+    @MainActor static func make(_ model: ConsoleViewModel) -> ConsoleActions {
+        let link = model.linkActions
+        return ConsoleActions(
+            scan: link.scan, stopScan: link.stopScan, connect: link.connect, disconnect: link.disconnect,
+            forget: link.forget, confirmLinkChange: link.confirmLinkChange,
+            reinitialise: model.reinitialise, send: { model.send($0) })
+    }
 }
 
 struct ConsoleContent: View {
@@ -67,12 +68,6 @@ struct ConsoleContent: View {
     var pendingLinkChange: LinkChange?
     var actions = ConsoleActions()
 
-    private var linkDialog: ConsoleText.LinkChangeDialog {
-        var name: String?
-        if case .connect(let id) = pendingLinkChange { name = discovered.first { $0.id == id }?.name }
-        return ConsoleText.linkChangeDialog(for: pendingLinkChange, link: state, adapterName: name)
-    }
-
     /// Pushed inside Settings' navigation stack (UX-4), which owns the title bar.
     var body: some View {
         VStack(spacing: 0) {
@@ -84,22 +79,11 @@ struct ConsoleContent: View {
         }
         .navigationTitle("Console")
         .navigationBarTitleDisplayMode(.inline)
-        .confirmationDialog("Forget this adapter?", isPresented: $isForgetConfirmationPresented, titleVisibility: .visible) {
-            Button("Forget adapter", role: .destructive, action: actions.forget)
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(isRecording
-                ? "The app will stop reconnecting to it. \(ConsoleText.recordingWarning)"
-                : "The app will stop reconnecting to it. You can pick it again from a scan.")
-        }
-        .confirmationDialog(linkDialog.title, isPresented: $isLinkChangeConfirmationPresented, titleVisibility: .visible, presenting: pendingLinkChange) { change in
-            Button(linkDialog.confirm, role: linkDialog.confirmIsDestructive ? .destructive : nil) {
-                actions.confirmLinkChange(change)
-            }
-            Button(linkDialog.cancel, role: .cancel) {}
-        } message: { _ in
-            Text(linkDialog.message)
-        }
+        .modifier(LinkConfirmations(
+            state: state, discovered: discovered, isRecording: isRecording,
+            isForgetPresented: $isForgetConfirmationPresented,
+            isLinkChangePresented: $isLinkChangeConfirmationPresented,
+            pending: pendingLinkChange, onForget: actions.forget, onConfirm: actions.confirmLinkChange))
     }
 
     // MARK: Adapter controls
@@ -119,7 +103,7 @@ struct ConsoleContent: View {
                         .disabled(!canScan)
                 }
                 Button("Disconnect", action: actions.disconnect)
-                    .disabled(!isConnectedish)
+                    .disabled(!ConsoleText.holdsAdapter(state))
                 Button("Forget", role: .destructive) { isForgetConfirmationPresented = true }
                     .disabled(remembered == nil)
                 Spacer(minLength: 0)
@@ -148,13 +132,6 @@ struct ConsoleContent: View {
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
-    }
-
-    private var isConnectedish: Bool {
-        switch state {
-        case .idle, .scanning, .unavailable: false
-        default: true
-        }
     }
 
     // MARK: Manual command
@@ -187,6 +164,44 @@ struct ConsoleContent: View {
             }
         }
         .padding()
+    }
+}
+
+/// The Forget and link-change confirmations, shared by Console and Settings →
+/// OBD adapter (UX-34) so both ask the same thing in the same words.
+struct LinkConfirmations: ViewModifier {
+    let state: OBDLinkState
+    let discovered: [DiscoveredAdapter]
+    let isRecording: Bool
+    @Binding var isForgetPresented: Bool
+    @Binding var isLinkChangePresented: Bool
+    /// What the dialog confirms, captured when it is presented.
+    var pending: LinkChange?
+    var onForget: () -> Void
+    var onConfirm: (LinkChange) -> Void
+
+    private var linkDialog: ConsoleText.LinkChangeDialog {
+        var name: String?
+        if case .connect(let id) = pending { name = discovered.first { $0.id == id }?.name }
+        return ConsoleText.linkChangeDialog(for: pending, link: state, adapterName: name)
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .confirmationDialog("Forget this adapter?", isPresented: $isForgetPresented, titleVisibility: .visible) {
+                Button("Forget adapter", role: .destructive, action: onForget)
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(ConsoleText.forgetMessage(isRecording: isRecording))
+            }
+            .confirmationDialog(linkDialog.title, isPresented: $isLinkChangePresented, titleVisibility: .visible, presenting: pending) { change in
+                Button(linkDialog.confirm, role: linkDialog.confirmIsDestructive ? .destructive : nil) {
+                    onConfirm(change)
+                }
+                Button(linkDialog.cancel, role: .cancel) {}
+            } message: { _ in
+                Text(linkDialog.message)
+            }
     }
 }
 

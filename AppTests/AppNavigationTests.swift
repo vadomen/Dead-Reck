@@ -50,7 +50,7 @@ struct AppNavigationTests {
         #expect(SettingsRoute.allCases == [.recording, .sessions, .maps, .adapter, .console, .about])
     }
 
-    @Test("Main rows: recording, sessions, maps, mount, then Console; the OBD adapter row only once UX-34 flips the flag")
+    @Test("Main rows: recording, sessions, maps, OBD adapter (UX-34), mount, then Console")
     func mainRows() {
         #expect(SettingsRows.main(showsConsole: true, adapterAvailable: false) == [
             .route(.recording), .route(.sessions), .route(.maps), .mountAndOrientation, .route(.console),
@@ -59,7 +59,10 @@ struct AppNavigationTests {
             .route(.recording), .route(.sessions), .route(.maps), .route(.adapter), .mountAndOrientation, .route(.console),
         ])
         #expect(!SettingsRows.main(showsConsole: false, adapterAvailable: true).contains(.route(.console)))
-        #expect(!SettingsRoute.adapterRowAvailable, "UX-34 flips this when its screen exists")
+        #expect(SettingsRoute.adapterRowAvailable, "UX-34: the screen exists, so the row shows")
+        #expect(SettingsRows.main(showsConsole: false) == [
+            .route(.recording), .route(.sessions), .route(.maps), .route(.adapter), .mountAndOrientation,
+        ], "Release without the Diagnostics gate: the adapter row, no Console")
     }
 
     @Test("Console follows the Diagnostics gate in Release: hidden until the 7 taps, always in DEBUG")

@@ -120,7 +120,8 @@ struct RootView: View {
             onOpenMaps: { nav.openSettings(.maps) },
             onOpenSettings: { nav.openSettings() },
             roadsWarning: roadsWarning,
-            offers: services.packOffers
+            offers: services.packOffers,
+            link: services.link
         )
         .fullScreenCover(isPresented: $nav.isSettingsPresented) {
             SettingsScreen(
@@ -141,8 +142,17 @@ struct RootView: View {
             } sessions: {
                 SessionsScreen(model: sessions)
             } adapter: {
-                // UX-34 fills this; the row is hidden until then.
-                EmptyView()
+                // UX-34: the Console's model, so the same guards apply.
+                #if DEBUG
+                // `-uiFakeAdapter connected|notfound|searching|bluetoothOff` (screenshots).
+                if let fake = AdapterFake.parse(UserDefaults.standard.string(forKey: "uiFakeAdapter")) {
+                    AdapterSettingsContent.fake(fake)
+                } else {
+                    AdapterSettingsScreen(model: console)
+                }
+                #else
+                AdapterSettingsScreen(model: console)
+                #endif
             }
         }
         // Ingest at the root so the track keeps filling while Settings is open. The
