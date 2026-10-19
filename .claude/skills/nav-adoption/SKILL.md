@@ -10,12 +10,13 @@ The rule is defined in docs/NAVIGATION.md "Adoption rule for engine changes" and
 ## Inputs
 - `logs/ACCEPTANCE.md` (private): alias → recording path and acceptance flags, packs, truth file. Never quote a path from it in a tracked file, finding or commit: use the alias.
 - `logs/truth.json`: written by the user, never edited by an agent.
-- Baseline: the latest decision table in NAVIGATION.md for the current `main` (e.g. "N3.2 decision", "N3.3: roads live"). If the baseline isn't in a table, run the same matrix on `main` in a throwaway worktree `.claude/worktrees/mut-<sha>` first (remove it after).
+- Baseline: the current default's seeds 1–5 means. As of 2026-10-19 (default = N3.2 decision config + `zuptFixGate`, which left every gated value unchanged): with roads, the "N3.2 decision" table; without roads, the N3.2 column of the "N3.3: roads live" no-roads table; drive-9 from the same tables. The N2-3 section is a worked example of this exact comparison (18 gated cells). The baseline already includes a FAIL the user accepted (drive-7 consistency 96.3 %): compare against it, not against N3.0. If the default changed since, use the newest adoption table, or run the matrix on `main` in a throwaway worktree `.claude/worktrees/mut-<sha>` (remove it after).
 
 ## Matrix
 - Runs: every alias in the "Acceptance runs" table — clean-long, clean, manual, jammed-A, jammed-B, drive-7, drive-8, drive-9 (1), drive-9 (2). manual-3 runs but is reported only. Count them before you start; a missing run is a FAIL, not a skip.
 - Seeds 1–5 each (`--seed N`). Means are over exactly 5 seeds.
-- Roads: each run without and with the default packs (`--roads` × 2, from `logs/ACCEPTANCE.md`). drive-9's criterion is gated with roads only; consistency gates in both legs.
+- Roads: each run without and with the default packs (`--roads` × 2, from `logs/ACCEPTANCE.md`): 9 runs × 2 legs = **18 gated cells**. drive-9's absolute criterion (≤ 2.5 %) is gated with roads only; its allowance (≤ 0.1 pp) and consistency gate in both legs.
+- Arrival order (the default), not `--as-live`: as-live is one seed per drive and checks criteria only.
 - Release build, one `--out` directory per leg: `logs/adopt-<sha>/{noroads,roads}`. `metrics.json` merges rows across invocations.
 
 ```bash
@@ -31,10 +32,10 @@ Use a script to loop the matrix (≈ 100 replays); run it in the background with
 | manual | error at truth point 1, m | ≤ 200 m | same as above |
 | jammed-A, jammed-B | end error, % of distance | ≤ 2.5 % | worse by ≤ 0.1 pp |
 | drive-7, drive-8 | `maxErrorByKind.cleanFix.maxPercent` (not "max %", which includes pins) | ≤ 2.5 % (drive-8: fixes up to truth `scoreUntilT`) | worse by ≤ 0.1 pp |
-| drive-9 (1), (2) | error at the truth point, % | ≤ 2.5 %, with roads only | worse by ≤ 0.1 pp |
+| drive-9 (1), (2) | error at the truth point, % | ≤ 2.5 %, with roads only | worse by ≤ 0.1 pp, both legs |
 | all | `consistencyWithTruthSigma` (not `consistency`) | — | mean must not drop |
 
-Reported, not gated: manual-3, manual's convergence distance, engine-only `consistency`, ms/step.
+Reported, not gated: manual-3, manual's convergence distance (N3.2/N3.3 also quote "≤ 2 km" for it; the adoption rule says reported: flag a value over 2 km, don't fail on it), engine-only `consistency`, ms/step.
 
 Pitfalls the rule has already been broken by: wrong metric key; a mean over 4 seeds; a drive left out; the no-roads leg of drive-9 gated; a criterion checked on the mean instead of on every seed.
 
