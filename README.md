@@ -48,7 +48,7 @@ Ukrainian and English.
 | Logger (M0–M4) | Done. Bench-tested on the iPhone in the test car ([2026-10-07](docs/BENCH_TEST_2026-10-07.md), [2026-10-08](docs/BENCH_TEST_2026-10-08.md): ~16.4 OBD exchanges/s, p50 latency 59 ms) and used on real drives in Kyiv, including GPS-jammed ones. |
 | Navigation engine (N2–N3.3) | Done. Particle filter with OSM road matching; proven on the recorded acceptance drives with `replay_nav`, live and replayed giving the same result. Numbers: [docs/NAVIGATION.md](docs/NAVIGATION.md) ("N3.3: roads live" and later). |
 | Live navigation in the app (N4, UX-1, UX-2…UX-6) | Done in code: Navigate mode, map with the dead-reckoning dot and ellipse, manual fixes, speed-dependent zoom, Settings tab. The device checks in [docs/PLAN.md](docs/PLAN.md) §6 (including 1 h of Navigate: memory, battery, thermal) are still open. |
-| Road packs | 28 packs (all of Ukraine + 27 regions) built and hosted. On the phone today only through the developer path (`scripts/push_packs.sh`); import into the app (N3.4) and in-app download (UX-8) are in progress. |
+| Road packs (N3.4, UX-8) | Done in code: 28 packs (all of Ukraine + 27 regions) hosted; the app downloads them by region (first launch, Settings → Maps, an offer at a stop when you drive out of coverage) into its private store. Device checks in PLAN §6 are open. |
 | Open | Navigation without OBD (NAV-NOOBD, then maybe UX-7), a "GPS off" switch for spoofing (UX-9), fit the whole ellipse under jamming (UX-10), notice of an interrupted recording (UX-11), dark-mode map controls (UX-13). See [docs/BACKLOG_UX.md](docs/BACKLOG_UX.md) and [docs/BACKLOG.md](docs/BACKLOG.md). |
 
 ## How it works
@@ -88,7 +88,9 @@ Details: [docs/NAVIGATION.md](docs/NAVIGATION.md). Open plans:
 
 Three tabs, portrait only: **Map · Sessions · Settings**. The app opens on Map.
 On the first launch it shows "Before you drive" (rigid mount, fixed
-orientation) once; Settings → "Mount and orientation" shows it again.
+orientation) and then "Road maps" (pick which packs to download, see
+[Road packs](#road-packs)), each once; Settings → "Mount and orientation"
+shows the checklist again.
 
 - **Map.** The dead-reckoning dot with its 95 % ellipse, the GPS track for
   reference, Following (re-centres on its own 8 s after you pan) and Heading
@@ -103,7 +105,9 @@ orientation) once; Settings → "Mount and orientation" shows it again.
   **Manual fix:** zoom in to a visible span of 300 m or less and double tap
   where the car really is; "Fix recorded" with Undo for 3 s. During a test
   recording the map shows a red dot with the elapsed time; tapping it asks
-  before stopping. A long press on the speed value toggles the navigation
+  before stopping. When you have driven out of every installed region pack,
+  a card at the next stop offers that region's pack (Download / Not now /
+  Never for this region); never in motion. A long press on the speed value toggles the navigation
   stats (ms per step, particles, thermal).
 - **Sessions.** Recordings with date, duration and size. Share exports the
   recording together with its `.nav.jsonl` sidecar; trash asks first and
@@ -132,10 +136,14 @@ orientation) once; Settings → "Mount and orientation" shows it again.
     and tapping another adapter ask first (dropping the OBD feed, or
     connecting so the recording gains OBD from then on), and Scan is disabled.
   - **Mount and orientation**: the first-launch checklist again.
-  - **Road packs**: every pack found, verified or refused (with the reason),
-    size, OSM date, hash prefix, and which packs the engine is using.
-  - **Diagnostics**: thermal state, memory footprint, version, Debug or
-    Release build.
+  - **Maps**: every pack in the server's list, one row each (title, size,
+    OSM date, state) with Download / Cancel / Update; Remove by swipe;
+    "Use cellular data" (off by default); "Not offered on the road" with
+    Reset. Packs not in the list appear under "Other".
+  - **Diagnostics** and **About**: thermal state, version. Developer rows
+    (build, memory, roads: packs found, verified or refused with the reason,
+    packs in use) are always shown in DEBUG; in Release after 7 taps on
+    Version (7 more hide them).
 
 On the simulator the adapter and sensors are simulated and labelled so;
 Bluetooth or a sensor being unavailable is shown as a red or orange state, not
@@ -147,8 +155,10 @@ a crash.
 
 1. Fix the phone in the rigid mount in portrait.
 2. Plug the adapter into the car's OBD-II port and switch on the ignition.
-3. Open the app. On first launch tick the "Before you drive" checklist and
-   allow Bluetooth, Motion & Fitness and Location (While Using).
+3. Open the app. On first launch tick the "Before you drive" checklist,
+   choose the road maps to download (all-Ukraine is preselected, your region
+   too if location is allowed), and allow Bluetooth, Motion & Fitness and
+   Location (While Using).
 4. First time only: Settings → Console → Scan, tap the adapter. It is
    remembered and reconnects on its own.
 5. Navigation starts when the adapter is polling. If the car is stationary
@@ -183,22 +193,70 @@ A road pack (`*.roadpack`) is a binary, memory-mapped OSM road graph with a
 grid index, used by the engine for map matching. Format:
 [docs/ROAD_PACK.md](docs/ROAD_PACK.md).
 
-- **Set:** `national` (motorways, trunk and primary roads of all of Ukraine,
-  41 MB) plus 27 regional packs named by ISO 3166-2 (`ua-05` … `ua-77`,
-  7–59 MB, most 25–50 MB); 28 packs, about 1 GB in all. A typical install is
-  national plus one region, 60–100 MB.
-- **Built** on the Mac by `tools/roads/build_packs.sh` (osmium +
-  `build_roads`) from the git-ignored `osm/packs.json`.
-- **On the phone today:** `scripts/push_packs.sh` copies `osm/packs/` to the
-  connected iPhone. Never while the app runs (Navigate or Record): packs are
-  memory-mapped, and the script refuses.
-- **Planned:** import via Files or AirDrop (N3.4) and download on first launch
-  by region, chosen by the user, Wi-Fi by default (UX-8).
-- **Without packs** the app works without roads, and the map says so.
-- **Licence:** © OpenStreetMap contributors, [ODbL 1.0](https://opendatacommons.org/licenses/odbl/1-0/).
-  The attribution is on the map whenever a pack is in use.
-- Packs, OSM extracts and `osm/packs.json` are **never committed**: the choice
-  of regions reveals where someone drives.
+**The set.** `national` (motorways, trunk and primary roads of all of
+Ukraine, 41 MB) plus 27 regional packs named by ISO 3166-2 (`ua-05` …
+`ua-77`, 7–59 MB, most 25–50 MB); 28 packs, about 1 GB in all. A typical
+install is national plus one region, 60–100 MB. Border roads are in both
+neighbouring packs and load together without duplicates.
+
+**From OSM to the server** (Mac):
+
+1. `tools/roads/build_packs.sh` builds the packs listed in the git-ignored
+   `osm/packs.json` into `osm/packs/` (osmium + `build_roads`).
+2. `site/publish_packs.sh` uploads them to the R2 bucket under immutable keys
+   `packs/v1/<name>-<contentHash>.roadpack` and then publishes
+   `https://fugps.pages.dev/packs/manifest.json` (schema 2: per pack name,
+   kind, uk/en title, bbox, url, size, sha256, contentHash, format version,
+   OSM timestamp). `--dry-run` first; `--prune` deletes superseded pack keys
+   after the new manifest is up (each full rebuild adds ~1 GB to R2).
+
+**From the server to the phone** (the user's path):
+
+- **First launch**, after the checklist: the "Road maps" step. National is
+  always preselected. If location is allowed, a coarse one-shot fix
+  (≤ 5 km, within 10 s) preselects the region whose bbox contains it and
+  lists regions within ~20 km as "Nearby", not preselected. Nothing
+  downloads until the user confirms; "Download maps later" is always there.
+  The fix is never stored or sent.
+- **Settings → Maps**: add, remove and update any pack at any time.
+- **On the road**: when the estimate is confident and has been outside every
+  installed region pack for 30 s, its region is remembered and offered at the
+  next stop (speed 0 for ≥ 3 s), never in motion. Shown again at later stops
+  until answered, at most 3 times per region per drive. "Not now" lasts the
+  drive; "Never for this region" lasts until reset in Settings → Maps.
+- **Download rules**: Wi-Fi only unless "Use cellular data" is on; one
+  download at a time, the rest queued; resumable (HTTP Range); paused while
+  Record runs (Navigate doesn't pause them). The manifest is refreshed when
+  Maps opens and the cached copy is older than 24 h, or on pull to refresh;
+  the last good one is kept for offline use.
+- **Checks and install**: sha256 against the manifest, then the pack's own
+  content hash, then install into
+  `Application Support/RoadPacks/<name>-<contentHash>.roadpack` (excluded
+  from backup, one active pack per name). A file that fails a check is
+  deleted.
+- **Updates**: when the manifest's contentHash differs from the installed
+  pack's, Maps shows "Update available"; nothing updates without a tap. The
+  new file is installed alongside and used from the next Navigate or Record
+  start: a pack a running session has memory-mapped is never overwritten.
+  Removed packs are deleted at the next launch.
+
+**Developer path.** `scripts/push_packs.sh` copies `osm/packs/*.roadpack`
+into the app's inbox `Documents/RoadPacks/` on the connected iPhone. At its
+next launch, before any session, the app verifies each pack, installs it into
+the same private store and deletes it from the inbox; a refused pack stays
+there and Diagnostics says why. Packs are never used from `Documents`. Close
+the app first (swipe it away): the script refuses while the app process runs
+or a recording looks in progress, unless `--force`. There is no import via
+Files or AirDrop.
+
+**Without packs** the app works without roads, and the map says so.
+
+**Licence:** © OpenStreetMap contributors,
+[ODbL 1.0](https://opendatacommons.org/licenses/odbl/1-0/). The attribution
+is on the map whenever a pack is in use, and in Settings → Maps.
+
+Packs, OSM extracts and `osm/packs.json` are **never committed**: the choice
+of regions reveals where someone drives.
 
 ## Website
 
@@ -326,8 +384,8 @@ they hold real positions.
 | Command | What it does |
 |---|---|
 | `tools/roads/build_packs.sh [osm/packs.json] [--only <pack>]` | Builds the packs listed in `osm/packs.json` from an OSM extract (osmium + `build_roads`). Mac only. |
-| `scripts/push_packs.sh [--dry-run] [--force] [--device <id>]` | Copies `osm/packs/*.roadpack` to the connected iPhone. Refuses while the app runs. |
-| `site/publish_packs.sh [--dry-run] [--prune]` | Uploads packs to R2 and publishes the manifest; `--prune` deletes superseded pack keys afterwards. |
+| `scripts/push_packs.sh [--dry-run] [--force] [--device <id>]` | Developer path: copies `osm/packs/*.roadpack` into the app's inbox `Documents/RoadPacks/` on the connected iPhone; the app installs them at its next launch. Refuses while the app runs or a recording is in progress. |
+| `site/publish_packs.sh [--dry-run] [--prune]` | Uploads packs to R2 and then publishes the manifest the app downloads from; `--prune` deletes superseded pack keys afterwards. |
 
 ## ELM327 commands
 
@@ -496,23 +554,25 @@ own: [docs/NAV_SIDECAR.md](docs/NAV_SIDECAR.md).
 
 1. **Logger** — done.
 2. **Replay and the engine** (`replay_nav`, particle filter) — done.
-3. **Roads** (packs, map matching, live attach) — done through N3.3; N3.4,
-   packs inside the app, in progress.
+3. **Roads** (packs, map matching, live attach, packs in the app and
+   downloaded by region: N3.0–N3.4, UX-8) — done in code; device checks
+   open.
 4. **Live navigation in the app** (N4, Navigate mode) — done in code; device
    checks open.
-5. **Next:** in-app pack download (UX-8), navigation without OBD
+5. **Next:** Ukrainian localization (UX-15), navigation without OBD
    (NAV-NOOBD → UX-7), a switch for spoofed GNSS (UX-9), then TestFlight and
    the App Store as FuGPS.
 
 ## Privacy
 
-- Navigate writes nothing to disk, and no location leaves the phone.
+- Navigate writes nothing to disk, and no location leaves the phone (the
+  first-launch region suggestion is computed on the phone and not stored).
 - A recording and its sidecar contain the route driven and the times it was
   driven. They stay on the phone until you copy them off. Never commit them;
   `.gitignore` excludes `*.jsonl`, `*.jsonl.gz` and `logs/`.
 - `osm/` (extracts, packs, `packs.json`) is git-ignored for the same reason.
-- When pack downloads ship, the server will see which region pack was
-  downloaded (a region, not a position).
+- The pack server sees which region packs are downloaded (a region, not a
+  position) and the IP address. The privacy pages (EN and UK) say so.
 
 ## Safety
 
