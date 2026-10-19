@@ -26,7 +26,6 @@
 		280FFA7B9D83AB2E555CAE7C /* FirstLaunchAndTestDriveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BB1485F07DF5CC618778091 /* FirstLaunchAndTestDriveTests.swift */; };
 		2A9BF7106741830C942C8E9E /* FirstLaunchMapsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC98513BB0C9D09F650C0359 /* FirstLaunchMapsTests.swift */; };
 		2F1269035331B798C267E34E /* SensorSourceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DCCAAFA3667C0100BDF5237 /* SensorSourceTests.swift */; };
-		334ABA2ADB6B7D4D855335DB /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9B85968A88D580969C514E6 /* MainTabView.swift */; };
 		33A00E975C5880A134985B95 /* MapsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65430334BF0FA2E17573334F /* MapsTests.swift */; };
 		3694EB7DA52ABEFA3E9F4C58 /* DriveLoggerCore in Frameworks */ = {isa = PBXBuildFile; productRef = A3ADC0CF90EB1C47CE68194B /* DriveLoggerCore */; };
 		393A3F2A13CD36052F5A83A5 /* SensorSuite.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEFF9BD9CEEC81754C8361C5 /* SensorSuite.swift */; };
@@ -73,6 +72,7 @@
 		877A22BD2347363272765DC5 /* MotionSources.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3E3CAE3C8FF82BB7ADEA4E5 /* MotionSources.swift */; };
 		89EB1F3B0F2B6E6020F824D1 /* NavigationServiceNavigateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B39D06A2ABBC27C741D74CCB /* NavigationServiceNavigateTests.swift */; };
 		8B0089338F96B96E3F665026 /* ConsoleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9265F3575667230ECE67A93 /* ConsoleView.swift */; };
+		945EA9016917C805402AE4A4 /* AboutView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D04F30EF56DAFDCC161F28D9 /* AboutView.swift */; };
 		9703F9AAE2A112783A148671 /* DriveLoggerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38660F590E620FC9E95617BC /* DriveLoggerApp.swift */; };
 		978340FB408CAA88EEC5B0A2 /* NavigationFeed.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CEF883B97D59B155B858636 /* NavigationFeed.swift */; };
 		97A4F0F34EB88DF1A78508EA /* MapBearing.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0D5DA754403F93233D134A3 /* MapBearing.swift */; };
@@ -223,10 +223,10 @@
 		C6066E5826F4262CB1D02A92 /* MapFraming.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapFraming.swift; sourceTree = "<group>"; };
 		C6A7B2B4C3A009CAC7FAB6CD /* AppServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppServices.swift; sourceTree = "<group>"; };
 		C940A0982D6C1029FF16340A /* MapNavigation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapNavigation.swift; sourceTree = "<group>"; };
-		C9B85968A88D580969C514E6 /* MainTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabView.swift; sourceTree = "<group>"; };
 		CB5D7BA09F739DCCE3A5970C /* DisplayLocationSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayLocationSource.swift; sourceTree = "<group>"; };
 		CDF21332A165EE4A986319E5 /* MapFollow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapFollow.swift; sourceTree = "<group>"; };
 		CE394D78D64D4538558929AB /* OBDLinkServicing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OBDLinkServicing.swift; sourceTree = "<group>"; };
+		D04F30EF56DAFDCC161F28D9 /* AboutView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AboutView.swift; sourceTree = "<group>"; };
 		D08EDE5EF7A99060E8DF0564 /* MapAutoZoomTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapAutoZoomTests.swift; sourceTree = "<group>"; };
 		D5C0DEF85C7492AD06A4497D /* RecordingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingView.swift; sourceTree = "<group>"; };
 		D9265F3575667230ECE67A93 /* ConsoleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConsoleView.swift; sourceTree = "<group>"; };
@@ -393,7 +393,6 @@
 				4715005DA69EE119AAD0B588 /* Sessions */,
 				E6CC9943AEFCEC9AEC7CACEA /* Settings */,
 				87757690C66C9AA81F92B3FB /* Support */,
-				C9B85968A88D580969C514E6 /* MainTabView.swift */,
 			);
 			path = UI;
 			sourceTree = "<group>";
@@ -517,6 +516,7 @@
 		E6CC9943AEFCEC9AEC7CACEA /* Settings */ = {
 			isa = PBXGroup;
 			children = (
+				D04F30EF56DAFDCC161F28D9 /* AboutView.swift */,
 				AE42CD1A4F400CC1B8396393 /* DeveloperGate.swift */,
 				818DD019604FE1043C22CDB1 /* MapsView.swift */,
 				369422FC35F7985CA58DE03E /* RoadsDiagnostics.swift */,
@@ -687,6 +687,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				945EA9016917C805402AE4A4 /* AboutView.swift in Sources */,
 				12828BB3574A085AEC880462 /* AdapterStatus.swift in Sources */,
 				4E301479F940B6C5F374BAC0 /* AppInfo.swift in Sources */,
 				7B72DE5EFB1971A2CD7D302A /* AppNavigation.swift in Sources */,
@@ -711,7 +712,6 @@
 				3D3B63CFFF7CF663AF5AE10E /* GATTDetection.swift in Sources */,
 				14819D41731633582485ECFE /* GPSTrack.swift in Sources */,
 				1C31445913116014F08A1FAC /* LogStore.swift in Sources */,
-				334ABA2ADB6B7D4D855335DB /* MainTabView.swift in Sources */,
 				D66297CE8FEBA4E20C370A97 /* MapAutoZoom.swift in Sources */,
 				97A4F0F34EB88DF1A78508EA /* MapBearing.swift in Sources */,
 				B86735F96661347B9A8555D9 /* MapCameraLogic.swift in Sources */,

@@ -5,23 +5,87 @@ import Testing
 
 @Suite("App navigation and map recording control")
 struct AppNavigationTests {
-    @Test("-uiTab maps in tab order; out of range opens Map")
-    func uiTab() {
-        #expect(AppTab(launchValue: 0) == .map)
-        #expect(AppTab(launchValue: 1) == .sessions)
-        #expect(AppTab(launchValue: 2) == .settings)
-        // Console is no longer a tab (UX-4): its old value opens Map.
-        #expect(AppTab(launchValue: 3) == .map)
-        #expect(AppTab.allCases.count == 3)
-        #expect(AppTab(launchValue: -1) == .map)
-        #expect(AppTab(launchValue: 9) == .map)
-        // The key missing from UserDefaults reads as 0.
-        #expect(AppNavigation().tab == .map)
+    @Test("-uiScreen: each value opens Settings at its screen; map and unknown values open the map")
+    func uiScreen() {
+        #expect(AppNavigation.launch(screen: nil) == AppNavigation())
+        #expect(AppNavigation.launch(screen: "map") == AppNavigation())
+        #expect(AppNavigation.launch(screen: "bogus") == AppNavigation())
+        #expect(AppNavigation.launch(screen: "") == AppNavigation())
+        #expect(AppNavigation.launch(screen: "settings") == AppNavigation(isSettingsPresented: true, settingsPath: []))
+        let routes: [(String, SettingsRoute)] = [
+            ("sessions", .sessions), ("maps", .maps), ("console", .console),
+            ("recording", .recording), ("adapter", .adapter), ("about", .about),
+        ]
+        for (value, route) in routes {
+            #expect(AppNavigation.launch(screen: value) == AppNavigation(isSettingsPresented: true, settingsPath: [route]))
+        }
+        // Every launch value is covered above (map + settings + the six routes).
+        #expect(AppNavigation.LaunchScreen.allCases.count == 8)
     }
 
-    @Test("Console and Maps are Settings rows, two taps from any tab")
-    func consoleRoute() {
-        #expect(SettingsRoute.allCases == [.recording, .console, .maps])
+    @Test("-uiMaps and the -uiFake* family open Settings -> Maps; an explicit -uiScreen wins")
+    func mapsShortcut() {
+        #expect(AppNavigation.launch(screen: nil, mapsShortcut: true) == AppNavigation(isSettingsPresented: true, settingsPath: [.maps]))
+        #expect(AppNavigation.launch(screen: nil, mapsShortcut: false) == AppNavigation())
+        #expect(AppNavigation.launch(screen: "about", mapsShortcut: true).settingsPath == [.about])
+        #expect(AppNavigation.launch(screen: "map", mapsShortcut: true) == AppNavigation())
+    }
+
+    @Test("Gear opens Settings at the root, the roads warning opens Maps, Done returns to the map with a clean stack")
+    func openAndClose() {
+        var nav = AppNavigation()
+        #expect(nav.mapIsLive)
+        nav.openSettings()
+        #expect(nav.isSettingsPresented && nav.settingsPath.isEmpty)
+        #expect(!nav.mapIsLive)
+        nav.settingsPath = [.sessions]
+        nav.closeSettings()
+        #expect(!nav.isSettingsPresented && nav.settingsPath.isEmpty && nav.mapIsLive)
+        nav.openSettings(.maps)
+        #expect(nav.isSettingsPresented && nav.settingsPath == [.maps])
+    }
+
+    @Test("Settings routes: Sessions and About are rows, Console and Maps stay")
+    func routes() {
+        #expect(SettingsRoute.allCases == [.recording, .sessions, .maps, .adapter, .console, .about])
+    }
+
+    @Test("Main rows: recording, sessions, maps, mount, then Console; the OBD adapter row only once UX-34 flips the flag")
+    func mainRows() {
+        #expect(SettingsRows.main(showsConsole: true, adapterAvailable: false) == [
+            .route(.recording), .route(.sessions), .route(.maps), .mountAndOrientation, .route(.console),
+        ])
+        #expect(SettingsRows.main(showsConsole: true, adapterAvailable: true) == [
+            .route(.recording), .route(.sessions), .route(.maps), .route(.adapter), .mountAndOrientation, .route(.console),
+        ])
+        #expect(!SettingsRows.main(showsConsole: false, adapterAvailable: true).contains(.route(.console)))
+        #expect(!SettingsRoute.adapterRowAvailable, "UX-34 flips this when its screen exists")
+    }
+
+    @Test("Console follows the Diagnostics gate in Release: hidden until the 7 taps, always in DEBUG")
+    @MainActor func consoleGate() {
+        let suite = UserDefaults(suiteName: "AppNavigationTests.consoleGate")!
+        suite.removePersistentDomain(forName: "AppNavigationTests.consoleGate")
+        let release = DeveloperGate(isDebug: false, defaults: suite)
+        #expect(!SettingsRows.main(showsConsole: release.showsDiagnostics).contains(.route(.console)))
+        let t0 = Date(timeIntervalSince1970: 1_000)
+        for i in 0..<7 { release.tapVersion(at: t0.addingTimeInterval(Double(i) * 0.2)) }
+        #expect(SettingsRows.main(showsConsole: release.showsDiagnostics).contains(.route(.console)))
+        let debug = DeveloperGate(isDebug: true, defaults: suite)
+        #expect(SettingsRows.main(showsConsole: debug.showsDiagnostics).contains(.route(.console)))
+    }
+
+    @Test("About links point at the site's own pages (EN) and the OSM licence pages")
+    func aboutLinks() {
+        #expect(AboutContent.privacyURL.absoluteString == "https://fugps.pages.dev/privacy")
+        #expect(AboutContent.supportURL.absoluteString == "https://fugps.pages.dev/support")
+        #expect(AboutContent.dataURL.absoluteString == "https://fugps.pages.dev/data")
+        #expect(AboutContent.osmCopyrightURL.absoluteString == "https://www.openstreetmap.org/copyright")
+        #expect(AboutContent.odblURL.host == "opendatacommons.org")
+        // Same host as the pack manifest the app downloads from.
+        #expect(PackManifestService.manifestURL.host == AboutContent.privacyURL.host)
+        #expect(AboutContent.osmCredit.contains("OpenStreetMap contributors") && AboutContent.osmCredit.contains("ODbL"))
+        #expect(AboutContent.attention == "Keep your eyes on the road; set up the app before you drive.")
     }
 
     @Test("Indicator while calibrating, recording or stopping; nothing otherwise (Start is in Settings)")

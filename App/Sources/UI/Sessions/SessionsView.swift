@@ -1,5 +1,6 @@
 import SwiftUI
 
+/// Pushed from Settings (UX-14): it has no navigation stack of its own.
 struct SessionsScreen: View {
     @Bindable var model: SessionsViewModel
 
@@ -29,35 +30,34 @@ struct SessionsContent: View {
     var onRefresh: () async -> Void = {}
 
     var body: some View {
-        NavigationStack {
-            List {
-                if let errorMessage {
-                    Text(errorMessage).foregroundStyle(.red)
-                }
-                ForEach(files) { file in
-                    SessionRow(file: file, isActive: file.url == activeFile) {
-                        pendingDelete = file
-                    }
+        List {
+            if let errorMessage {
+                Text(errorMessage).foregroundStyle(.red)
+            }
+            ForEach(files) { file in
+                SessionRow(file: file, isActive: file.url == activeFile) {
+                    pendingDelete = file
                 }
             }
-            .overlay {
-                if files.isEmpty {
-                    ContentUnavailableView("No recordings yet", systemImage: "tray", description: Text("Recordings appear here after you stop."))
-                }
+        }
+        .overlay {
+            if files.isEmpty {
+                ContentUnavailableView("No recordings yet", systemImage: "tray", description: Text("Recordings appear here after you stop."))
             }
-            .refreshable { await onRefresh() }
-            .navigationTitle("Sessions")
-            .confirmationDialog(
-                pendingDelete.map(SessionsText.confirmationTitle(for:)) ?? "Delete recording?",
-                isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
-                titleVisibility: .visible,
-                presenting: pendingDelete
-            ) { file in
-                Button("Delete", role: .destructive) { onDelete(file) }
-                Button("Cancel", role: .cancel) { pendingDelete = nil }
-            } message: { file in
-                Text("\(file.name) (\(DisplayFormat.bytes(file.sizeBytes))) will be permanently deleted. This cannot be undone.")
-            }
+        }
+        .refreshable { await onRefresh() }
+        .navigationTitle("Sessions")
+        .navigationBarTitleDisplayMode(.inline)
+        .confirmationDialog(
+            pendingDelete.map(SessionsText.confirmationTitle(for:)) ?? "Delete recording?",
+            isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
+            titleVisibility: .visible,
+            presenting: pendingDelete
+        ) { file in
+            Button("Delete", role: .destructive) { onDelete(file) }
+            Button("Cancel", role: .cancel) { pendingDelete = nil }
+        } message: { file in
+            Text("\(file.name) (\(DisplayFormat.bytes(file.sizeBytes))) will be permanently deleted. This cannot be undone.")
         }
     }
 }
@@ -114,7 +114,7 @@ private struct SessionsPreviewHost: View {
     @State var pending: RecordingFile?
 
     var body: some View {
-        SessionsContent(files: files, activeFile: activeFile, pendingDelete: $pending)
+        NavigationStack { SessionsContent(files: files, activeFile: activeFile, pendingDelete: $pending) }
     }
 }
 

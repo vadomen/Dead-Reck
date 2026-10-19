@@ -44,11 +44,16 @@ struct MapScreen: View {
     @AppStorage("debug.navStats") private var showNavStats = false
     let session: RecordingSession
     let navigation: NavigationFeed
+    /// False while Settings covers the map (`AppNavigation.mapIsLive`): no
+    /// MapKit view, camera loop or offer card then. Navigate/Record and the
+    /// root-level track feed keep running; the map re-frames on return.
     var isSelected: Bool
-    /// Read once when the tab opens with no fix; the system's last position.
+    /// Read once when the map opens with no fix; the system's last position.
     var cachedLocation: @MainActor () -> CachedLocation?
     /// The roads warning was tapped: the app opens Settings → Maps.
     var onOpenMaps: () -> Void = {}
+    /// The gear was tapped (UX-14): the app opens Settings full screen.
+    var onOpenSettings: () -> Void = {}
     var roadsWarning: RoadsWarningModel?
     /// The at-a-stop offer (UX-8); nil in previews.
     var offers: PackOfferMonitor?
@@ -83,6 +88,7 @@ struct MapScreen: View {
             showNavStats: $showNavStats,
             roadsWarning: roadsWarning?.message,
             onRoadsWarningTap: onOpenMaps,
+            onOpenSettings: onOpenSettings,
             roadsAttribution: roadsWarning?.attribution ?? false,
             offerCard: offers.map { AnyView(PackOfferCard(monitor: $0)) },
             recordingControl: AnyView(MapRecordingButton(
@@ -253,6 +259,9 @@ struct GPSMapView: View {
     /// One line when roads are off for a fixable reason (`RoadsWarning`).
     var roadsWarning: String?
     var onRoadsWarningTap: () -> Void
+    /// The Settings gear. TEMPORARY placement bottom right (UX-14); UX-32
+    /// moves it into the right rail.
+    var onOpenSettings: () -> Void = {}
     /// A road pack is attached to the run (`MapAttribution.visible`): the
     /// OSM credit is shown.
     var roadsAttribution = false
@@ -317,6 +326,7 @@ struct GPSMapView: View {
         showNavStats: Binding<Bool> = .constant(false),
         roadsWarning: String? = nil,
         onRoadsWarningTap: @escaping () -> Void = {},
+        onOpenSettings: @escaping () -> Void = {},
         roadsAttribution: Bool = false,
         offerCard: AnyView? = nil,
         recordingControl: AnyView? = nil,
@@ -343,6 +353,7 @@ struct GPSMapView: View {
         self._showNavStats = showNavStats
         self.roadsWarning = roadsWarning
         self.onRoadsWarningTap = onRoadsWarningTap
+        self.onOpenSettings = onOpenSettings
         self.roadsAttribution = roadsAttribution
         self.offerCard = offerCard
         self.recordingControl = recordingControl
@@ -890,6 +901,7 @@ struct GPSMapView: View {
                 Spacer(minLength: 0)
                 headingButton
                 followButton
+                settingsButton
             }
         }
         .padding(16)
@@ -918,6 +930,20 @@ struct GPSMapView: View {
         }
     }
 
+    /// TEMPORARY (UX-14): UX-32 puts the gear at the bottom of the right rail.
+    private var settingsButton: some View {
+        Button(action: onOpenSettings) {
+            Image(systemName: "gearshape.fill")
+                .font(.title2)
+                .foregroundStyle(Color.primary)
+                .frame(width: 56, height: 56)
+                .background(.regularMaterial, in: Circle())
+                .overlay(Circle().strokeBorder(Color.primary.opacity(0.25), lineWidth: 1))
+                .shadow(color: .black.opacity(0.3), radius: 4, y: 2)
+        }
+        .accessibilityLabel("Settings")
+    }
+
     private var followButton: some View {
         Button {
             let was = follow.isFollowing
@@ -940,8 +966,10 @@ private extension View {
     func mapControlStyle(active: Bool) -> some View {
         self
             .font(.headline)
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
             .foregroundStyle(active ? Color.white : Color.primary)
-            .padding(.horizontal, 18)
+            .padding(.horizontal, 14)
             .frame(minHeight: 56)
             .background {
                 if active {
