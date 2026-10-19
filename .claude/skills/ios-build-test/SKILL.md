@@ -23,6 +23,13 @@ If `xcode-select -p` points at CommandLineTools, prefix commands with
    (match by `id=`, not `name=`; `generic/platform=iOS Simulator` builds but cannot run tests).
 6. Compile the test target without running it: same command with `-destination 'generic/platform=iOS Simulator' build-for-testing`.
 
+## Long runs (xcodebuild test/build)
+- Bound every wait at 30 min. Foreground: `timeout 1800 xcodebuild …`. Or run it in the background redirected to a log and wait with `timeout 1800 tail --pid=<PID> -f /dev/null` or a bounded loop (`for i in $(seq 360); do kill -0 <PID> 2>/dev/null || break; sleep 5; done`).
+- Stock macOS has no `timeout` and BSD `tail` has no `--pid`: use `gtimeout` (coreutils) if installed, else `perl -e 'alarm shift; exec @ARGV' 1800 xcodebuild …` (exit 142 = timed out), and the bounded loop instead of `tail --pid`.
+- Never an unbounded `until grep … log; do sleep …; done`: if xcodebuild crashes, the string never appears and the wait never ends.
+- Judge the result by xcodebuild's exit code (`echo $?`, or `wait <PID>`), not by grepping the log for `TEST SUCCEEDED`. Use the log only to find `error:` lines and test counts.
+- If a run crashes, hangs or times out: report that (command, exit code, last log lines) and stop waiting. Don't relaunch in a loop.
+
 ## Reading failures
 - Search the output for `error:` first; fix the first error, rebuild - later errors are often consequences.
 - Swift 6 concurrency errors: fix the isolation (actor, `@MainActor`, `Sendable` value types) instead of adding `@unchecked Sendable` or `nonisolated(unsafe)`. If you truly must, add a comment with the reason.
