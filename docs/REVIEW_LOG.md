@@ -810,3 +810,21 @@ Tests at b5a061a: AppTests 568 tests in 87 suites passed; Core unchanged (1066 t
 ### Run 68 summary
 
 2 rounds; 1 MAJOR fixed (R68.1-1), 0 rejected, 4 MINOR deferred (R68.1-2..5).
+
+## Run 69: UX-17 maps network cause and fix, UX-16 Maps top section, R67.1-3..7, HEAD Range on the pack server (main..ux17-maps-network: 4e45714..16f36c3), started 2026-10-20
+
+### Round 1
+
+Reviewer: one opus reviewer (range ~1050 changed lines). Focus: the downloader state machine (switch-on restart, network stop, cancel, refusal, 404 retry, Record pause), the cellular-setting observer's order and initial delivery, line vs rows, the Diagnostics gate and polling, the site HEAD branch. Mutations: 1 (re-check of the author's "R67.1-4 line removed": killed by `PackOfferRuleTests/regionChange`, `stopSoonAfterRegionChange`), worktree mut-16f36c3 removed.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R69.1-1 | MINOR | `site/public/privacy.html:37`, `site/public/uk/privacy.html:37`: the pages list when the maps list is fetched but not the forced refresh R67.1-7 adds (`AppServices.swift:88-93`, a 404 to a pack → `manifest.refresh(force: true)`), so after a prune inside the 24 h window the list is fetched again at once. | FIXED | One sentence EN + UK in the ledger commit (site copy, the user deploys next; same handling as a lite-run wording MINOR). |
+
+Reviewer assessment (not a finding): at 4e45714 the switch could only be toggled with Maps mounted and first launch wrote both values, so the divergence the fix removes is unlikely to explain the device report by itself; the PLAN §6 device checks with the new Diagnostics rows are the real gate for UX-17. The range does fix the proven gaps (session built with the switch off, refusal shown as "Failed", no metered Wi-Fi state).
+
+Tests before review (16f36c3): Core 1069 tests in 136 suites passed (36 known issues); AppTests exit 0 (584 tests in 88 suites per the author's run).
+
+### Run 69 summary
+
+1 round; 0 BLOCKER/MAJOR, 1 MINOR fixed (R69.1-1), 0 rejected, 0 deferred.
