@@ -800,3 +800,13 @@ Reviewer A dismissed: GPS-quality chip colour removal (the accuracy circle still
 Tests before review (269ed34): Core 1066 tests in 136 suites passed (36 known issues; Core untouched in the range); AppTests 567 tests in 87 suites passed.
 
 Round 1 outcome: R68.1-1 fixed (b5a061a); AppTests 568 tests in 87 suites passed.
+
+### Round 2
+
+Reviewer: one fresh opus reviewer on the round-1 fix (b5a061a) plus a sweep of the whole range (fit vs `MapAutoZoom`, the driver's pinch override, `recentWrites`/`autoWantsWrite` gesture detection, `frame()` vs the follow path; HUD, Settings, adapter, Console guards, link, docs/site, privacy grep). No mutations (Core untouched; the fix checked by arithmetic: without the rear factor ≈ 0.68 × semi-major behind the car, with it ≈ 1.01 ×). No new findings; the heading-up `frame()` span has no rear factor but is rewritten through the fixed follow path on the next loop tick (not a finding).
+
+Tests at b5a061a: AppTests 568 tests in 87 suites passed; Core unchanged (1066 tests in 136 suites passed, 36 known issues).
+
+### Run 68 summary
+
+2 rounds; 1 MAJOR fixed (R68.1-1), 0 rejected, 4 MINOR deferred (R68.1-2..5).
