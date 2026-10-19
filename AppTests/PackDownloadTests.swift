@@ -940,3 +940,56 @@ struct RecordActiveSignalTests {
         rig.session.disableNavigate()
     }
 }
+
+@Suite("Pack hashing memory (R66.1-3)", .serialized)
+struct PackHashMemoryTests {
+    /// Samples `phys_footprint` from a thread until stopped.
+    final class Poller: @unchecked Sendable {
+        private let lock = NSLock()
+        private var peak: UInt64 = 0
+        private var stop = false
+
+        func start() {
+            let thread = Thread { [self] in
+                while true {
+                    if let now = MemoryFootprint.currentBytes() { lock.withLock { peak = max(peak, now) } }
+                    if lock.withLock({ stop }) { return }
+                    Thread.sleep(forTimeInterval: 0.002)
+                }
+            }
+            thread.start()
+        }
+
+        func finish() -> UInt64 {
+            lock.withLock { stop = true }
+            Thread.sleep(forTimeInterval: 0.02)
+            return lock.withLock { peak }
+        }
+    }
+
+    @Test("Hashing a 128 MB file does not hold its chunks: footprint growth stays far below the file size")
+    func footprint() async throws {
+        let directory = try RoadPackFixture.directory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("big.bin")
+        let chunk = Data(count: 1 << 20)
+        let chunks = 128
+        FileManager.default.createFile(atPath: file.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: file)
+        for _ in 0..<chunks { try handle.write(contentsOf: chunk) }
+        try handle.close()
+        var expected = SHA256()
+        for _ in 0..<chunks { expected.update(data: chunk) }
+        let expectedHex = expected.finalize().map { String(format: "%02x", $0) }.joined()
+
+        try await Task.sleep(for: .milliseconds(100))
+        let baseline = try #require(MemoryFootprint.currentBytes())
+        let poller = Poller()
+        poller.start()
+        let hex = try await Task.detached(priority: .utility) { try PackDownloader.sha256(of: file) }.value
+        let peak = poller.finish()
+        #expect(hex == expectedHex)
+        let growth = peak > baseline ? peak - baseline : 0
+        #expect(growth < 48 << 20, "footprint grew \(growth >> 20) MB while hashing \(chunks) MB")
+    }
+}

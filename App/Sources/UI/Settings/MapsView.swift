@@ -108,10 +108,18 @@ enum MapsText {
         }
     }
 
-    /// The note at the top when the latest refresh of the list failed; nil
-    /// when it did not.
-    static func listNote(_ refresh: PackManifestService.Refresh, hasManifest: Bool) -> String? {
-        guard case .failed(let offline) = refresh else { return nil }
+    /// The note at the top: "Offline" whenever the path monitor reports no
+    /// connection (whatever the age of the cached list: a fresh cache means
+    /// no fetch, so no failure either), else the latest failed refresh; nil
+    /// when neither.
+    static func listNote(_ refresh: PackManifestService.Refresh, connection: PackDownloadRules.Connection = .unmetered,
+                         hasManifest: Bool) -> String? {
+        var offline = connection == .none
+        if case .failed(let failedOffline) = refresh {
+            offline = offline || failedOffline
+        } else if !offline {
+            return nil
+        }
         let kept = hasManifest ? " Showing the saved list." : ""
         return (offline ? "Offline." : "Couldn't update the list.") + kept
     }
@@ -304,7 +312,7 @@ final class MapsModel {
         rebuild()
     }
 
-    var listNote: String? { MapsText.listNote(listRefresh, hasManifest: manifest != nil) }
+    var listNote: String? { MapsText.listNote(listRefresh, connection: downloads.connection, hasManifest: manifest != nil) }
 
     private func rebuild() {
         let next = MapsText.rows(manifest: manifest, installed: status.installedPacks, downloads: downloads,

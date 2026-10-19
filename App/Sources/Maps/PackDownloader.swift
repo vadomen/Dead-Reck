@@ -60,6 +60,9 @@ actor PackDownloader {
         /// Packs installed as an update while a Navigate or Record run was
         /// active: used from the next session start.
         var updatedForNextStart: Set<String> = []
+        /// The path monitor's latest connection (Settings → Maps shows
+        /// "Offline" from it, whatever the age of the cached list).
+        var connection: PackDownloadRules.Connection = .unmetered
     }
 
     private enum Stop { case pause, cancel, network }
@@ -131,7 +134,7 @@ actor PackDownloader {
            let transfer = running.transfer {
             current[running.job.pack.name] = .downloading(received: transfer.receivedBytes, total: total)
         }
-        return Snapshot(states: current, updatedForNextStart: updatedForNextStart)
+        return Snapshot(states: current, updatedForNextStart: updatedForNextStart, connection: connection)
     }
 
     var isIdle: Bool { running == nil && queue.isEmpty }
@@ -415,8 +418,15 @@ actor PackDownloader {
         var hasher = SHA256()
         while true {
             if Task.isCancelled { return nil }
-            guard let chunk = try handle.read(upToCount: 1 << 20), !chunk.isEmpty else { break }
-            hasher.update(data: chunk)
+            // `read` returns autoreleased data and this runs in one detached
+            // job whose pool never drains: without the pool every chunk
+            // stays alive until the hash ends (a 300 MB file peaked at 307 MB).
+            let more: Bool = try autoreleasepool {
+                guard let chunk = try handle.read(upToCount: 1 << 20), !chunk.isEmpty else { return false }
+                hasher.update(data: chunk)
+                return true
+            }
+            if !more { break }
         }
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }

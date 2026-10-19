@@ -719,3 +719,24 @@ Tests at f5ea05f: AppTests 436 tests in 65 suites passed; Debug and Release simu
 ### Run 65 summary
 
 2 rounds; 1 MAJOR fixed (R65.1-1), 0 rejected, 3 MINOR deferred (R65.1-2, R65.1-3, R65.1-4).
+
+## Run 66: UX-8 download, manifest, Settings → Maps, Diagnostics gate (main..ux8-download: f3fe2bd..b2999c2), started 2026-10-19
+
+### Round 1
+
+Reviewers: three parallel opus reviewers (A: Core + scripts/push_packs.sh, B: App downloader/manifest/network/installer/record-active relay, C: App UI + docs/site). Author mutations 3/3 killed; reviewer A re-checked 1 + 2 own (opaqueTag `W/` strip, stalePartials name-only), all killed. B and C: no App mutations (none needed).
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R66.1-1 | MAJOR | `site/public/privacy.html:37`: a leftover editing-tool fragment (`<parameter name="replace_all">false`) was committed into the Map downloads section (7982374); deployed, the public privacy policy would show a stray "false" and an unclosed unknown element. | CONFIRMED | Fix: line deleted (docs-editor); both privacy pages grepped for other leftovers, none. Same commit adds R66.1-4's sentence. |
+| R66.1-2 | MAJOR | `App/Sources/UI/Settings/MapsView.swift:113,307` / `PackManifestService.swift:90`: the "Offline" note appears only after a failed fetch, and a fetch happens only when the cache is ≥ 24 h old or on pull to refresh, so airplane mode with a fresh cache shows no note (brief item 4, PLAN §6 UX-8 check 4). | CONFIRMED | Fix: `MapsText.listNote` also takes the path monitor's connection (`.none` → "Offline. Showing the saved list."), fed through the downloader snapshot (ios-ui-engineer). Regression tests: `MapsRowsTests/offlineFromConnection`, `modelOffline`. |
+| R66.1-3 | MAJOR | `App/Sources/Maps/PackDownloader.swift:412-420`: `sha256(of:)` reads 1 MB chunks with `FileHandle.read(upToCount:)` (autoreleased) inside one detached job whose pool never drains, so the whole file stays in memory until the hash ends (reviewer measured a 300 MB file peaking at 307 MB; 8 MB with a pool); up to 150 MB per pack, also during Navigate. | CONFIRMED | Fix: each read in `autoreleasepool` (ios-ui-engineer). Regression test `PackHashMemoryTests/footprint` (128 MB file, footprint growth < 48 MB): verified by the orchestrator to fail without the fix (grew 125 MB) and pass with it. |
+| R66.1-4 | MINOR | `site/public/privacy.html:38`, `site/public/uk/privacy.html:37`: the pages describe network use only as Wi-Fi-only map downloads, but the ~16 KB manifest is fetched on any network when Maps opens (`PackManifestService.swift:11`). | FIXED | Fixed with R66.1-1 (same paragraph of a public policy page, before deploy): one sentence in EN and UK. |
+| R66.1-5 | MINOR | `docs/PLAN.md:288` and the BACKLOG_UX UX-8 row: "Updated · used from the next start" is shown only when the update installs while a Navigate or Record run is active (`PackDownloader.swift:404`); otherwise the row shows "Installed". | DEFERRED | Fix: say "while Navigate or Record runs". Backlog, UX-8 (prompt 26). |
+| R66.1-6 | MINOR | `Core/.../PackDownloadRules.swift:123-125`: every 5xx to a ranged request → `restartWithoutRange`, which deletes the partial; since `plan` never asks past the size and URLs are immutable, a transient 502/503 on resume throws away e.g. 100 MB of a 120 MB pack. | DEFERRED | Fix: `.fail` and keep the partial for a 5xx to a ranged request (keep the restart for 416 / Content-Range mismatch); update `restartStatuses`. Backlog, UX-8 (prompt 26). |
+| R66.1-7 | MINOR | `App/Sources/Maps/PackManifestService.swift:106,115-121`: applying a fresh manifest that gives the pack being downloaded a new contentHash deletes its partial as stale; the transfer writes into the unlinked file and fails "incomplete download" at the end (nothing wrong installed); a queued job keeps the outdated pack. | DEFERRED | Fix: skip partials of running/queued jobs in deleteStalePartials, or cancel and requeue those jobs with the new pack. Backlog, UX-8 (prompt 26). |
+| R66.1-8 | MINOR | `App/Sources/Recording/AppServices.swift:81`: each path change reaches the downloader via its own `Task`, so cellular→Wi-Fi in quick succession can arrive reversed and leave rows "Waiting for Wi-Fi" on Wi-Fi until the next path change (never downloads over cellular: the session's `allowsCellularAccess` follows the toggle). | DEFERRED | Fix: an ordered relay like `RecordActivityRelay`. Backlog, UX-8 (prompt 26). |
+
+Tests before review: Core 1040 tests in 134 suites passed (36 known issues); release `NavigationRoadPerfTests|NavigationB0Tests` 9 tests in 2 suites passed; AppTests 478 tests in 72 suites passed; Debug and Release simulator builds succeed.
+
+Round 1 outcome: R66.1-1..4 fixed; AppTests 481 tests in 73 suites passed; Release simulator build succeeds; Core unchanged since the pre-review run.

@@ -324,6 +324,32 @@ struct MapsRowsTests {
         #expect(MapsText.actionLabel(.cancel, title: "Zulu") == "Cancel download of Zulu")
     }
 
+    @Test("Offline note follows the connection even with a fresh cache (R66.1-2)")
+    func offlineFromConnection() {
+        // A fresh cache means no fetch and so no failed refresh: the note must still show.
+        #expect(MapsText.listNote(.idle, connection: .none, hasManifest: true) == "Offline. Showing the saved list.")
+        #expect(MapsText.listNote(.ok, connection: .none, hasManifest: true) == "Offline. Showing the saved list.")
+        #expect(MapsText.listNote(.ok, connection: .none, hasManifest: false) == "Offline.")
+        #expect(MapsText.listNote(.ok, connection: .unmetered, hasManifest: true) == nil)
+        #expect(MapsText.listNote(.idle, connection: .cellularOrExpensive, hasManifest: true) == nil)
+        // A failed fetch on a live connection still says the update failed; offline wins when both hold.
+        #expect(MapsText.listNote(.failed(offline: false), connection: .unmetered, hasManifest: true)
+                == "Couldn't update the list. Showing the saved list.")
+        #expect(MapsText.listNote(.failed(offline: false), connection: .none, hasManifest: true)
+                == "Offline. Showing the saved list.")
+    }
+
+    @MainActor
+    @Test("The Maps model takes the connection from the downloader snapshot")
+    func modelOffline() {
+        let status = RoadPackLibrary.Status(packs: [], scansCompleted: 1, storeBytes: 0)
+        let offline = MapsModel(status: status, manifest: Self.manifest,
+                                downloads: .init(connection: .none), refresh: .ok)
+        #expect(offline.listNote == "Offline. Showing the saved list.")
+        let online = MapsModel(status: status, manifest: Self.manifest, downloads: .init(), refresh: .ok)
+        #expect(online.listNote == nil)
+    }
+
     @Test("Remove confirmation names the pack by its title")
     func confirmation() {
         let row = Self.rows(installed: [.preview("region-a", bytes: 48_000_000, hash: "a1b2c3d4")]).listed
