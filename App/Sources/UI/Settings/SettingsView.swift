@@ -41,7 +41,9 @@ struct SettingsScreen<Recording: View, Console: View, Sessions: View, Adapter: V
 
     var body: some View {
         SettingsContent(path: $path, info: info, thermal: thermal, roads: roads.value,
-                        showsDeveloper: gate.showsDiagnostics, versionNote: gate.toast,
+                        showsDeveloper: gate.showsDiagnostics,
+                        network: NetworkDiagnosticsText.rows(maps.downloads, setting: maps.cellularSetting),
+                        versionNote: gate.toast,
                         onVersionTap: { gate.tapVersion() }, onShowChecklist: onShowChecklist, onDone: onDone,
                         recording: recording, console: console, maps: { MapsScreen(model: maps, offers: offers) },
                         sessions: sessions, adapter: adapter)
@@ -55,6 +57,14 @@ struct SettingsScreen<Recording: View, Console: View, Sessions: View, Adapter: V
             }
             .onAppear { thermal = ProcessInfo.processInfo.thermalState }
             .task { await roads.run() }
+            .task(id: gate.showsDiagnostics) {
+                // The path and downloads rows (UX-17) are developer-only.
+                guard gate.showsDiagnostics else { return }
+                while !Task.isCancelled {
+                    await maps.refreshDownloads()
+                    try? await Task.sleep(for: .seconds(1))
+                }
+            }
     }
 }
 
@@ -67,6 +77,8 @@ struct SettingsContent<Recording: View, Console: View, Maps: View, Sessions: Vie
     /// The developer rows (Build, Memory, Roads): always in DEBUG, in
     /// Release after 7 taps on Version (`DeveloperGate`).
     var showsDeveloper = true
+    /// "Map downloads network" rows (UX-17), shown with the developer rows.
+    var network: [NetworkDiagnosticsText.Row] = []
     /// "Developer diagnostics shown/hidden", under Version for a moment.
     var versionNote: String?
     var onVersionTap: () -> Void = {}
@@ -103,6 +115,19 @@ struct SettingsContent<Recording: View, Console: View, Maps: View, Sessions: Vie
             }
             if RoadsDiagnosticsText.attributionVisible(packsInUse: roads.roads.packNames.count) {
                 Text(RoadsDiagnosticsText.attribution).font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var networkSection: some View {
+        Section("Map downloads network") {
+            ForEach(network) { row in
+                LabeledContent(row.label) {
+                    Text(row.value)
+                        .font(.footnote)
+                        .foregroundStyle(row.isProblem ? Tone.bad.color : Color.secondary)
+                        .multilineTextAlignment(.trailing)
+                }
             }
         }
     }
@@ -148,6 +173,7 @@ struct SettingsContent<Recording: View, Console: View, Maps: View, Sessions: Vie
                     }
                 }
                 if showsDeveloper { roadsSection }
+                if showsDeveloper, !network.isEmpty { networkSection }
             }
             .navigationTitle("Settings")
             .toolbar {
@@ -225,7 +251,12 @@ private var previewInbox: RoadPackLibrary.PackStatus {
             library: .init(packs: [previewPack, previewInbox], scansCompleted: 1),
             roads: .init(active: true, packNames: ["region-a"], packHashPrefixes: ["a1b2c3d4"],
                          roadSetHashPrefix: "0f0f0f0f", activeAtSessionS: 12, onRoadShare: 0.93),
-            footprintBytes: 210_000_000)
+            footprintBytes: 210_000_000),
+        network: NetworkDiagnosticsText.rows(
+            PackDownloader.Snapshot(states: ["region-a": .waitingMeteredWiFi, "region-b": .failed("404")],
+                                    connection: .meteredWiFi, cellularAllowed: false,
+                                    path: PackPath(satisfied: true, usesWiFi: true, expensive: true)),
+            setting: true)
     ) { Text("Recording") } console: { Text("Console") } maps: { Text("Maps") } sessions: { Text("Sessions") } adapter: { Text("OBD adapter") }
 }
 

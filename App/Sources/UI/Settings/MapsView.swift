@@ -18,6 +18,8 @@ struct MapsRow: Identifiable, Hashable, Sendable {
         case notInstalled
         case queued
         case waitingForWiFi
+        /// Toggle off on a Personal Hotspot or Low Data Mode Wi-Fi (UX-17).
+        case waitingMeteredWiFi
         case offline
         case downloading(percent: Int)
         case pausedForRecording
@@ -65,6 +67,38 @@ enum MapsText {
     static let checking = "Checking maps…"
     static let cellularToggle = "Use cellular data"
     static let cellularFooter = "Maps download over Wi-Fi only unless this is on."
+
+    /// The one-line network state at the top of Settings → Maps (UX-16).
+    struct NetworkLine: Hashable, Sendable {
+        var text: String
+        var tone: Tone
+        var symbol: String
+    }
+
+    /// From the downloader's snapshot, the same connection and the same
+    /// "Use cellular data" the rows' states come from, so the line and the
+    /// rows never disagree. Record pausing downloads is the rows' own state.
+    static func networkLine(connection: PackDownloadRules.Connection, cellularAllowed: Bool) -> NetworkLine {
+        switch connection {
+        case .none:
+            NetworkLine(text: "Offline", tone: .caution, symbol: "wifi.slash")
+        case .unmetered:
+            NetworkLine(text: "On Wi-Fi", tone: .good, symbol: "wifi")
+        case .cellular:
+            cellularAllowed
+                ? NetworkLine(text: "On cellular", tone: .good, symbol: "antenna.radiowaves.left.and.right")
+                : NetworkLine(text: "On cellular — maps wait for Wi-Fi", tone: .caution,
+                              symbol: "antenna.radiowaves.left.and.right")
+        case .meteredWiFi:
+            cellularAllowed
+                ? NetworkLine(text: "On metered Wi-Fi", tone: .good, symbol: "wifi")
+                : NetworkLine(text: "On metered Wi-Fi — maps wait for unmetered Wi-Fi", tone: .caution, symbol: "wifi")
+        }
+    }
+
+    static func networkLine(_ snapshot: PackDownloader.Snapshot) -> NetworkLine {
+        networkLine(connection: snapshot.connection, cellularAllowed: snapshot.cellularAllowed)
+    }
     static let otherSection = "Other"
     static let neverSection = "Not offered on the road"
     static let neverFooter = "You chose Never for these regions. Reset to be offered a map again at a stop."
@@ -148,6 +182,7 @@ enum MapsText {
         case .notInstalled: "Not installed"
         case .queued: "Queued"
         case .waitingForWiFi: "Waiting for Wi-Fi"
+        case .waitingMeteredWiFi: "Waiting — this Wi-Fi is metered"
         case .offline: "Waiting for network"
         case .downloading(let percent): "Downloading \(percent) %"
         case .pausedForRecording: "Paused (recording)"
@@ -164,7 +199,7 @@ enum MapsText {
         switch status {
         case .installed, .updatedNextStart: .good
         case .failed: .bad
-        case .updateAvailable, .waitingForWiFi, .offline, .pausedForRecording, .removalPending: .caution
+        case .updateAvailable, .waitingForWiFi, .waitingMeteredWiFi, .offline, .pausedForRecording, .removalPending: .caution
         case .notInstalled, .queued, .downloading, .verifying: .neutral
         }
     }
@@ -204,6 +239,7 @@ enum MapsText {
             switch download {
             case .queued: return .queued
             case .waitingForWiFi: return .waitingForWiFi
+            case .waitingMeteredWiFi: return .waitingMeteredWiFi
             case .offline: return .offline
             case .pausedForRecording: return .pausedForRecording
             case .downloading(let received, let total): return .downloading(percent: percent(received: received, total: total))
@@ -227,7 +263,7 @@ enum MapsText {
     static func action(status: MapsRow.Status, hasPack: Bool, hasInstalled: Bool, downloadFailed: Bool)
         -> MapsRow.Action? {
         switch status {
-        case .queued, .waitingForWiFi, .offline, .downloading, .pausedForRecording: .cancel
+        case .queued, .waitingForWiFi, .waitingMeteredWiFi, .offline, .downloading, .pausedForRecording: .cancel
         case .notInstalled: hasPack ? .download : nil
         case .updateAvailable: hasPack ? .update : nil
         case .failed: downloadFailed && hasPack ? (hasInstalled ? .update : .download) : nil
@@ -304,9 +340,16 @@ final class MapsModel {
     @ObservationIgnored private let manifestService: PackManifestService?
     @ObservationIgnored private let downloader: PackDownloader?
     @ObservationIgnored private let preferredLanguages: @Sendable () -> [String]
+    @ObservationIgnored private let defaults: UserDefaults
+    /// The "Use cellular data" UserDefault as last read (Diagnostics shows it
+    /// next to the downloader's own value).
+    private(set) var cellularSetting = false
 
     init(library: RoadPackLibrary, manifest: PackManifestService? = nil, downloader: PackDownloader? = nil,
+         defaults: UserDefaults = .standard,
          preferredLanguages: @escaping @Sendable () -> [String] = { Locale.preferredLanguages }) {
+        self.defaults = defaults
+        cellularSetting = defaults.bool(forKey: MapsSettings.cellularKey)
         self.library = library
         manifestService = manifest
         self.downloader = downloader
@@ -325,6 +368,7 @@ final class MapsModel {
         library = nil
         manifestService = nil
         downloader = nil
+        defaults = .standard
         self.preferredLanguages = preferredLanguages
         rebuild()
     }
@@ -337,8 +381,21 @@ final class MapsModel {
         if next != rows { rows = next }
     }
 
+    /// The downloads and the setting only (cheap): Diagnostics polls it
+    /// while Settings is open; Settings → Maps polls `refreshAll`.
+    func refreshDownloads() async {
+        let setting = defaults.bool(forKey: MapsSettings.cellularKey)
+        if setting != cellularSetting { cellularSetting = setting }
+        if let downloader {
+            let snapshot = await downloader.snapshot()
+            if snapshot != downloads { downloads = snapshot }
+        }
+    }
+
     func refreshAll() async {
         guard let library else { return }
+        let setting = defaults.bool(forKey: MapsSettings.cellularKey)
+        if setting != cellularSetting { cellularSetting = setting }
         let nextStatus = await library.status()
         if nextStatus != status { status = nextStatus }
         if let manifestService {
@@ -389,10 +446,6 @@ final class MapsModel {
         await refreshAll()
     }
 
-    func setCellularAllowed(_ allowed: Bool) async {
-        await downloader?.setCellularAllowed(allowed)
-    }
-
     func remove(_ pack: RoadPackLibrary.PackStatus, title: String? = nil) async {
         guard let library, MapsText.canRemove(pack), let name = pack.packName else { return }
         let outcome = await library.remove(name: name)
@@ -414,7 +467,7 @@ struct MapsScreen: View {
     var body: some View {
         MapsContent(
             rows: model.rows, scansCompleted: model.status.scansCompleted, storeBytes: model.status.storeBytes,
-            notice: model.notice, listNote: model.listNote, hasManifest: model.manifest != nil,
+            networkLine: MapsText.networkLine(model.downloads), notice: model.notice, listNote: model.listNote, hasManifest: model.manifest != nil,
             attribution: MapsText.attribution(manifest: model.manifest), cellularAllowed: $cellularAllowed,
             neverRows: MapsText.neverRows(names: offers?.neverNames ?? [], manifest: model.manifest,
                                           preferredLanguages: Locale.preferredLanguages),
@@ -438,7 +491,6 @@ struct MapsScreen: View {
         } message: { row in
             Text(MapsText.confirmationMessage(row))
         }
-        .onChange(of: cellularAllowed) { _, allowed in Task { await model.setCellularAllowed(allowed) } }
         .task { await model.run() }
     }
 }
@@ -448,6 +500,8 @@ struct MapsContent: View {
     let rows: MapsRows
     var scansCompleted = 1
     let storeBytes: Int64?
+    /// The network state above the switch (UX-16); nil hides the line.
+    var networkLine: MapsText.NetworkLine?
     var notice: String?
     var listNote: String?
     var hasManifest = false
@@ -462,6 +516,7 @@ struct MapsContent: View {
 
     var body: some View {
         List {
+            cellularSection
             if scansCompleted == 0 {
                 Section {
                     HStack(spacing: 12) {
@@ -473,12 +528,26 @@ struct MapsContent: View {
             } else {
                 content
             }
-            Section {
-                Toggle(MapsText.cellularToggle, isOn: $cellularAllowed).frame(minHeight: 44)
-            } footer: {
-                Text(MapsText.cellularFooter)
-            }
             if !neverRows.isEmpty { neverSection }
+        }
+    }
+
+    /// First section (UX-16): the network state and the switch that explains
+    /// every "Waiting" row below, visible without scrolling.
+    private var cellularSection: some View {
+        Section {
+            if let networkLine {
+                Label {
+                    Text(networkLine.text).font(.body.weight(.semibold))
+                } icon: {
+                    Image(systemName: networkLine.symbol)
+                }
+                .foregroundStyle(networkLine.tone.color)
+                .accessibilityIdentifier("maps.networkLine")
+            }
+            Toggle(MapsText.cellularToggle, isOn: $cellularAllowed).frame(minHeight: 44)
+        } footer: {
+            Text(MapsText.cellularFooter)
         }
     }
 
@@ -704,11 +773,30 @@ extension PackManifest {
         status: MapsPreviewData.status, manifest: MapsPreviewData.manifest, downloads: MapsPreviewData.downloads,
         refresh: .failed(offline: true), preferredLanguages: { ["en"] })
     NavigationStack {
-        MapsContent(rows: model.rows, storeBytes: 216_000_000, notice: "region-a: " + MapsText.restartNote,
+        MapsContent(rows: model.rows, storeBytes: 216_000_000,
+                    networkLine: MapsText.networkLine(model.downloads), notice: "region-a: " + MapsText.restartNote,
                     listNote: model.listNote, hasManifest: true, cellularAllowed: .constant(false))
             .navigationTitle("Maps")
     }
 }
+
+/// The top section for each connection (UX-16): rows and line from one snapshot.
+@MainActor private func networkPreview(_ connection: PackDownloadRules.Connection, cellular: Bool) -> some View {
+    let downloads = MapsPreviewData.downloads(connection: connection, cellularAllowed: cellular)
+    let model = MapsModel(status: MapsPreviewData.status, manifest: MapsPreviewData.manifest, downloads: downloads,
+                          refresh: .ok, preferredLanguages: { ["en"] })
+    return NavigationStack {
+        MapsContent(rows: model.rows, storeBytes: 216_000_000, networkLine: MapsText.networkLine(downloads),
+                    hasManifest: true, cellularAllowed: .constant(cellular))
+            .navigationTitle("Maps").navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+#Preview("Maps, on Wi-Fi") { networkPreview(.unmetered, cellular: false) }
+#Preview("Maps, on cellular, off") { networkPreview(.cellular, cellular: false) }
+#Preview("Maps, on cellular, on") { networkPreview(.cellular, cellular: true) }
+#Preview("Maps, metered Wi-Fi, off") { networkPreview(.meteredWiFi, cellular: false) }
+#Preview("Maps, offline") { networkPreview(.none, cellular: false) }
 
 /// Synthetic values for the "every state" preview (also used by the DEBUG
 /// launch arguments, `DebugFakes`).
@@ -733,11 +821,26 @@ enum MapsPreviewData {
             scansCompleted: 1, storeBytes: 216_000_000)
     }
 
-    static var downloads: PackDownloader.Snapshot {
-        PackDownloader.Snapshot(states: [
-            "region-c": .downloading(received: 14_700_000, total: 35_000_000),
+    /// Downloads as the downloader would show them on `connection` with the
+    /// switch `cellularAllowed`: the running and the queued pack both take
+    /// the policy's waiting state, so the rows and the network line agree.
+    static func downloads(connection: PackDownloadRules.Connection = .unmetered, cellularAllowed: Bool = false)
+        -> PackDownloader.Snapshot {
+        var snapshot = PackDownloader.Snapshot(connection: connection, cellularAllowed: cellularAllowed)
+        let waiting: PackDownloader.State? = switch snapshot.policy {
+        case .allowed: nil
+        case .waitingForWiFi: .waitingForWiFi
+        case .waitingMeteredWiFi: .waitingMeteredWiFi
+        case .offline: .offline
+        case .pausedForRecording: .pausedForRecording
+        }
+        snapshot.states = [
+            "region-c": waiting ?? .downloading(received: 14_700_000, total: 35_000_000),
             "region-d": .failed("checksum mismatch"),
-            "region-e": .waitingForWiFi,
-        ])
+            "region-e": waiting ?? .queued,
+        ]
+        return snapshot
     }
+
+    static var downloads: PackDownloader.Snapshot { downloads() }
 }

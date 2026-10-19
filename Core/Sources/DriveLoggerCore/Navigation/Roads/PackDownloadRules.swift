@@ -250,21 +250,39 @@ public enum PackDownloadRules {
 
     // MARK: Network policy
 
-    /// The connection as the app's path monitor reports it.
+    /// The connection as the app's path monitor reports it (UX-17: cellular
+    /// and a metered Wi-Fi are told apart, so the app can say which one it
+    /// is waiting on).
     public enum Connection: Hashable, Sendable {
+        /// No usable path.
         case none
         /// Wi-Fi or wired, not marked expensive or constrained.
         case unmetered
-        /// Cellular, or any path marked expensive or constrained
-        /// (a personal hotspot, Low Data Mode).
-        case cellularOrExpensive
+        /// The path uses the cellular interface, whatever its expensive and
+        /// constrained flags.
+        case cellular
+        /// Not cellular, but marked expensive (Personal Hotspot) or
+        /// constrained (Low Data Mode).
+        case meteredWiFi
+    }
+
+    /// The `Connection` of a path monitor's report: unsatisfied → `.none`;
+    /// else the cellular interface → `.cellular` (it wins over the flags);
+    /// else expensive or constrained → `.meteredWiFi`; else `.unmetered`.
+    public static func connection(satisfied: Bool, cellular: Bool, expensive: Bool, constrained: Bool) -> Connection {
+        guard satisfied else { return .none }
+        if cellular { return .cellular }
+        return expensive || constrained ? .meteredWiFi : .unmetered
     }
 
     /// Whether downloads may run now.
     public enum NetworkState: Hashable, Sendable {
         case allowed
-        /// Cellular and the user has not allowed it.
+        /// Cellular and the user has not allowed cellular data.
         case waitingForWiFi
+        /// A metered Wi-Fi (Personal Hotspot, Low Data Mode) and the user has
+        /// not allowed cellular data: waiting for an unmetered network.
+        case waitingMeteredWiFi
         /// A Record session runs: downloads pause so nothing competes with
         /// capture (Navigate does not pause them).
         case pausedForRecording
@@ -272,13 +290,17 @@ public enum PackDownloadRules {
     }
 
     /// The download state: Record first (it pauses downloads whatever the
-    /// network), then no network, then cellular without permission.
+    /// network), then no network, then a metered connection without
+    /// permission. `cellularAllowed` (the "Use cellular data" toggle) allows
+    /// both metered kinds, cellular and metered Wi-Fi; an unmetered
+    /// connection is always allowed.
     public static func networkState(connection: Connection, cellularAllowed: Bool, recordActive: Bool) -> NetworkState {
         if recordActive { return .pausedForRecording }
         switch connection {
         case .none: return .offline
-        case .cellularOrExpensive: return cellularAllowed ? .allowed : .waitingForWiFi
         case .unmetered: return .allowed
+        case .cellular: return cellularAllowed ? .allowed : .waitingForWiFi
+        case .meteredWiFi: return cellularAllowed ? .allowed : .waitingMeteredWiFi
         }
     }
 }

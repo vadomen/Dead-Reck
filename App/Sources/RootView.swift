@@ -39,7 +39,10 @@ struct RootView: View {
         // `-uiFakeOffline 1`: the same with the "Offline" note.
         let fakeOffline = UserDefaults.standard.bool(forKey: "uiFakeOffline")
         if UserDefaults.standard.bool(forKey: "uiFakeDownloads") || fakeOffline {
-            mapsModel = DebugFakes.downloadsModel(offline: fakeOffline)
+            // With `-uiFakeConnection`, the rows and the state line follow it (and the toggle's launch value).
+            mapsModel = DebugFakes.downloadsModel(
+                offline: fakeOffline, connection: DebugFakes.connection(UserDefaults.standard.string(forKey: "uiFakeConnection")) ?? .unmetered,
+                cellularAllowed: UserDefaults.standard.bool(forKey: MapsSettings.cellularKey))
         }
         if UserDefaults.standard.bool(forKey: "uiFakeMapsShort") { mapsModel = DebugFakes.shortMapsModel }
         #endif
@@ -95,12 +98,13 @@ struct RootView: View {
                 services: services, manifest: DebugFakes.firstLaunchManifest(mode: mode, downloader: services.downloader),
                 forced: forceMaps)
         }
-        // `-uiFakeConnection none|cellular`: hold the downloader's connection
-        // (the simulator is online), for first-launch button wording shots.
-        if let value = UserDefaults.standard.string(forKey: "uiFakeConnection") {
+        // `-uiFakeConnection none|cellular|metered|wifi`: hold the downloader's
+        // connection (the simulator is online), for the Settings → Maps line
+        // and first-launch button wording shots. Held for the whole run: the
+        // real monitor's reports are overridden every half second.
+        if let fake = DebugFakes.connection(UserDefaults.standard.string(forKey: "uiFakeConnection")) {
             let downloader = services.downloader
-            let fake: PackDownloadRules.Connection = value == "cellular" ? .cellularOrExpensive : .none
-            Task { for _ in 0..<60 { await downloader.setConnection(fake); try? await Task.sleep(for: .milliseconds(500)) } }
+            Task { while !Task.isCancelled { await downloader.setPath(PackPath(connection: fake)); try? await Task.sleep(for: .milliseconds(500)) } }
         }
         #endif
         _firstMaps = State(initialValue: mapsStep)

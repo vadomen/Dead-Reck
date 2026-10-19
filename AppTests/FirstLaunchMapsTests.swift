@@ -379,7 +379,7 @@ struct FirstLaunchMapsModelTests {
 
     @Test("Cellular without permission: 'will wait for Wi-Fi'; Use cellular sets the Maps switch and makes it ready")
     func cellularWording() async throws {
-        let env = try F.Env(connection: .cellularOrExpensive)
+        let env = try F.Env(connection: .cellular)
         defer { env.remove() }
         let model = env.model { nil }
         await model.refreshNetwork()

@@ -19,6 +19,8 @@ final class PackStub: @unchecked Sendable {
         var body = Data()
         /// Send the body and never finish (until the request is cancelled).
         var hold = false
+        /// Fail the request with this error instead of answering.
+        var failure: URLError?
     }
 
     private static let lock = NSLock()
@@ -71,6 +73,10 @@ final class PackStubProtocol: URLProtocol, @unchecked Sendable {
             return
         }
         let reply = stub.reply(to: request)
+        if let failure = reply.failure {
+            client?.urlProtocol(self, didFailWithError: failure)
+            return
+        }
         let response = HTTPURLResponse(url: url, statusCode: reply.status, httpVersion: "HTTP/1.1",
                                        headerFields: reply.headers)!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
@@ -487,7 +493,7 @@ struct PackDownloaderTests {
         defer { env.dirs.remove() }
         let stub = PackStub { _, _ in env.full() }
         let pack = env.pack(stub)
-        let downloader = env.downloader(connection: .cellularOrExpensive, cellular: false)
+        let downloader = env.downloader(connection: .cellular, cellular: false)
         await downloader.start(pack)
         #expect(await downloader.snapshot().states["region-a"] == .waitingForWiFi)
         try await Task.sleep(for: .milliseconds(100))
@@ -676,14 +682,22 @@ struct PackManifestServiceTests {
 
 @Suite("Pack network and Record signal")
 struct PackNetworkTests {
-    @Test("Path to connection: none, unmetered, cellular/expensive/constrained")
+    @Test("Path to connection: none, unmetered, cellular, metered Wi-Fi; the raw flags are kept")
     func connection() {
-        #expect(PackNetwork.connection(satisfied: false, expensive: false, constrained: false, cellular: false) == .none)
-        #expect(PackNetwork.connection(satisfied: true, expensive: false, constrained: false, cellular: false) == .unmetered)
-        #expect(PackNetwork.connection(satisfied: true, expensive: true, constrained: false, cellular: false) == .cellularOrExpensive)
-        #expect(PackNetwork.connection(satisfied: true, expensive: false, constrained: true, cellular: false) == .cellularOrExpensive)
-        #expect(PackNetwork.connection(satisfied: true, expensive: false, constrained: false, cellular: true) == .cellularOrExpensive)
-        #expect(PackNetwork.connection(satisfied: false, expensive: true, constrained: true, cellular: true) == .none)
+        func conn(_ path: PackPath) -> PackDownloadRules.Connection { path.connection }
+        #expect(conn(PackPath(satisfied: false, usesWiFi: true, expensive: true)) == .none)
+        #expect(conn(PackPath(satisfied: true, usesWiFi: true)) == .unmetered)
+        #expect(conn(PackPath(satisfied: true, usesWired: true)) == .unmetered)
+        #expect(conn(PackPath(satisfied: true, usesWiFi: true, expensive: true)) == .meteredWiFi)
+        #expect(conn(PackPath(satisfied: true, usesWiFi: true, constrained: true)) == .meteredWiFi)
+        #expect(conn(PackPath(satisfied: true, usesCellular: true)) == .cellular)
+        #expect(conn(PackPath(satisfied: true, usesWiFi: true, usesCellular: true)) == .cellular,
+                "a path that also uses the cellular interface is cellular, whatever Wi-Fi says")
+        for c: PackDownloadRules.Connection in [.none, .unmetered, .cellular, .meteredWiFi] {
+            #expect(PackPath(connection: c).connection == c)
+        }
+        #expect(PackPath(satisfied: true, usesWiFi: true, usesCellular: true).interfaces == "Wi-Fi + cellular")
+        #expect(PackPath(satisfied: false).interfaces == "none")
     }
 
     @Test("SHA-256 of a cancelled task is nil, not a digest")

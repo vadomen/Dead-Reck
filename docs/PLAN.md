@@ -321,6 +321,15 @@ Replay only the current connection's init (M6.1-1) and remembered poll plan and 
 10. **Offer card at a stop:** the road-pack offer card (bottom-left zone) does not cover the car marker at a stop in heading-up.
 11. **Console in Release:** hidden until 7 taps on Version in About (proposed default, awaiting the user's decision).
 
+### Added by UX-17 / UX-16 maps network (prompt 28) — not verified on a device
+1. **Queued pack starts on Wi-Fi:** within a few seconds, with "Use cellular data" on and with it off.
+2. **On cellular, switch on:** a queued pack starts within a few seconds.
+3. **Switch turned on afterwards:** queue a pack on cellular with the switch off (it waits), turn the switch on: the pack starts right after.
+4. **Personal Hotspot and Low Data Mode Wi-Fi:** switch off: the row says "Waiting — this Wi-Fi is metered" and the Maps line says "On metered Wi-Fi — maps wait for unmetered Wi-Fi"; switch on: the pack downloads.
+5. **Diagnostics "Map downloads network"** (developer gate): no MISMATCH between the switch and the downloader; the path is what the phone really reports (note whether Wi-Fi and cellular both appear in the interfaces).
+6. **Maps top line:** the network line agrees with the rows below it.
+7. **Toggle visible without scrolling:** "Use cellular data" is on the first screen of Settings → Maps on the smallest supported iPhone.
+
 ### Added by the backlog triage sweep (2026-10-17) — not verified on a device
 1. **ELM write-offs and clone banners (bench):** count the write-off notes and the `ATZ banner without 'ELM'` notes over a bench session, and decide whether to model `STOPPED` in the mock (a real ELM327 aborts a pending command on any received byte). (M1-E3)
 2. **Vgate write stalls:** check whether the Vgate write characteristic is `withoutResponse`-only, and whether write stalls past the 1 s readiness limit of `BLETransport` happen (they log a `timeout` first and cost a needless `ATZ` re-init). (R3.2-1)

@@ -4,6 +4,9 @@
 // Supports Range (resumable downloads) and If-None-Match / If-Match.
 // A range starting at or beyond the size gets 416 with `Content-Range: bytes */<size>`
 // (R2 throws on it, which used to surface as a 500).
+// HEAD with one parseable `bytes=` range answers like the GET would, without a body:
+// 206 with Content-Range/Content-Length of the range, or 416. HEAD without Range, or with
+// a Range parseRange does not take (several ranges, other units), answers 200 as before.
 // Only /packs/* runs this Function; every other path stays a free static asset.
 
 const KEY_RE = /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/;
@@ -24,7 +27,20 @@ export async function onRequest({ request, env, params }) {
   if (request.method === "HEAD") {
     const head = await env.PACKS.head(key);
     if (!head) return new Response(null, { status: 404 });
-    return new Response(null, { status: 200, headers: baseHeaders(head) });
+    const headers = baseHeaders(head);
+    const range = parseRange(request.headers.get("range"));
+    if (range) {
+      if (!satisfiable(range, head.size)) {
+        headers.set("content-range", `bytes */${head.size}`);
+        headers.set("content-length", "0");
+        return new Response(null, { status: 416, headers });
+      }
+      const { offset, length } = resolveRange(toR2Range(range, head.size), head.size);
+      headers.set("content-range", `bytes ${offset}-${offset + length - 1}/${head.size}`);
+      headers.set("content-length", String(length));
+      return new Response(null, { status: 206, headers });
+    }
+    return new Response(null, { status: 200, headers });
   }
 
   // If-Range is ignored on purpose: pack keys are immutable (name + content hash), so a
@@ -79,6 +95,14 @@ function resolveRange(range, size) {
   const offset = range.offset ?? 0;
   const length = range.length ?? size - offset;
   return { offset, length };
+}
+
+// A satisfiable parseRange result as R2's range object ({offset, length} or {suffix}),
+// for resolveRange. An end past the size is clamped to the last byte, as R2 does.
+function toR2Range(range, size) {
+  if ("suffix" in range) return { suffix: range.suffix };
+  const last = range.end === undefined ? size - 1 : Math.min(range.end, size - 1);
+  return { offset: range.start, length: last - range.start + 1 };
 }
 
 // One `bytes=` range ("a-", "a-b" or "-n"); anything else (several ranges, other units)
