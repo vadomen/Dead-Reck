@@ -285,7 +285,7 @@ Replay only the current connection's init (M6.1-1) and remembered poll plan and 
 2. **Remove while navigating:** with Navigate running, Remove a pack in Settings → Maps: the row shows "Removal pending (after restart)" and the pack no longer counts as installed; swipe the app away and relaunch: the pack is gone. Remove with no recording or Navigate run deletes at once.
 
 ### Added by UX-8 download (prompt 25) — not verified on a device
-1. **Real download on Wi-Fi:** Settings → Maps, tap Download on a region: it downloads, installs ("Updated · used from the next start" only for updates), and the pack is used at the next session start.
+1. **Real download on Wi-Fi:** Settings → Maps, tap Download on a region: it downloads, installs ("Updated · used from the next start" is shown when an update installs while a Navigate or Record run is active, otherwise the row shows "Installed"), and the pack is used at the next session start.
 2. **Cellular blocked:** on cellular only, the row says "Waiting for Wi-Fi" and nothing downloads; switch "Use cellular data" on and it starts.
 3. **Kill mid-download:** start a download, kill the app, relaunch, tap Download again: it resumes from the partial (a Range request, not from zero).
 4. **Airplane mode:** Maps shows the cached list with the "Offline" note.
@@ -293,6 +293,20 @@ Replay only the current connection's init (M6.1-1) and remembered poll plan and 
 6. **Record pauses, Navigate does not:** a download pauses while Record runs and resumes after Stop; Navigate does not pause it.
 7. **Diagnostics in Release:** in a Release build the developer rows are hidden until 7 taps on Version in About; 7 more taps hide them again.
 8. **`push_packs.sh` after Remove-while-navigating (R65.1-4):** the pack is copied, not "skipped (unchanged)". Also check whether `devicectl device copy from` can read the store state file.
+
+### Added by UX-8 first launch and the at-a-stop offer (prompt 26) — not verified on a device
+1. **First launch with a fix:** the permission line ("Allow location to suggest your region's map. It stays on the phone."), then the system prompt; the region is preselected and its neighbours listed under "Nearby"; nothing downloads before the tap.
+2. **Permission denied, or no fix in 10 s:** national only is preselected, and the list is editable.
+3. **Stale fix:** the coarse fix ignores a stale cached fix (the first fix iOS delivers is often cached).
+4. **Recording not disturbed:** the second CLLocationManager (coarse fix) does not change the recording's fix rate.
+5. **Airplane mode on first launch:** only "Download maps later" is offered, and the app works without maps.
+6. **On cellular:** the button says "on Wi-Fi" and waits for Wi-Fi; "Use cellular data" sets the Settings → Maps toggle.
+7. **Leaving installed coverage while driving:** nothing shows in motion; one offer at the next real stop (OBD speed 0 for 3 s); the card hides on drive-off; no second offer for that region in the same drive.
+8. **"Never for this region":** persisted across launches; Reset in Settings → Maps → "Not offered on the road" brings the offer back on a later drive.
+9. **Cost of the 1 Hz offer loop** while recording in the background (CPU, thermal, battery).
+10. **Real 5xx:** an interrupted download after a real 5xx resumes (the partial is kept).
+11. **Wi-Fi ↔ cellular handoff:** the rows and the Offline note show the correct state afterwards.
+12. **After the site is deployed:** 416 for an unsatisfiable range on `/packs/v1/*` (curl checks in the prompt 26 report).
 
 ### Added by the backlog triage sweep (2026-10-17) — not verified on a device
 1. **ELM write-offs and clone banners (bench):** count the write-off notes and the `ATZ banner without 'ELM'` notes over a bench session, and decide whether to model `STOPPED` in the mock (a real ELM327 aborts a pending command on any received byte). (M1-E3)
