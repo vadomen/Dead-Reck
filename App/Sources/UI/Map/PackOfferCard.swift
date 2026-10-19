@@ -74,6 +74,8 @@ struct PackOfferCardView: View {
         }
         .padding(12)
         .hudSurface(RoundedRectangle(cornerRadius: 16))
+        // R67.1-5: the card must not grow over the speed readout at AX3+.
+        .dynamicTypeSize(...DynamicTypeSize.accessibility2)
         .accessibilityElement(children: .contain)
     }
 }
@@ -86,4 +88,9 @@ struct PackOfferCardView: View {
 #Preview("Offer card, dark") {
     PackOfferCardView(offer: .init(name: "zz-01", title: "Region A", sizeBytes: 35_000_000))
         .padding(40).background(Color(.systemGray4)).preferredColorScheme(.dark)
+}
+
+#Preview("Offer card, largest allowed type") {
+    PackOfferCardView(offer: .init(name: "zz-01", title: "Region A", sizeBytes: 35_000_000))
+        .padding(40).background(Color(.systemGray4)).environment(\.dynamicTypeSize, .accessibility5)
 }
