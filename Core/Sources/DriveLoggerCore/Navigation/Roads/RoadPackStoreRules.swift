@@ -137,6 +137,94 @@ public enum RoadPackStoreRules {
         fileName.hasPrefix(temporaryPrefix) && fileName.hasSuffix(".tmp")
     }
 
+    // MARK: Partial downloads
+
+    /// The prefix of a download in progress in the store directory (UX-8).
+    /// Hidden and never a valid store file name, like `temporaryPrefix`.
+    public static let downloadPrefix = ".download-"
+    /// The extension of a partial download's bytes.
+    public static let partialExtension = "part"
+    /// The extension of a partial download's metadata sidecar
+    /// (`PackDownloadRules.PartialMetadata`).
+    public static let partialMetadataExtension = "json"
+
+    /// `.download-<name>-<contentHash>.part`: the bytes received so far of
+    /// the pack that installs as `fileName(name:contentHash:)`. Unlike an
+    /// installer temporary, it is NOT deleted at launch: a download resumes
+    /// after the app is killed. Deleted when the pack is installed, when the
+    /// manifest no longer lists it (`stalePartials`) or when the user
+    /// cancels. nil when the name or the hash is not valid.
+    public static func partialFileName(name: String, contentHash: String) -> String? {
+        downloadFileName(name: name, contentHash: contentHash, extension: partialExtension)
+    }
+
+    /// `.download-<name>-<contentHash>.json`: the partial's metadata
+    /// sidecar (URL, ETag, expected size, SHA-256). Lives and dies with the
+    /// partial. nil when the name or the hash is not valid.
+    public static func partialMetadataFileName(name: String, contentHash: String) -> String? {
+        downloadFileName(name: name, contentHash: contentHash, extension: partialMetadataExtension)
+    }
+
+    private static func downloadFileName(name: String, contentHash: String, extension ext: String) -> String? {
+        guard isValidName(name), isValidContentHash(contentHash) else { return nil }
+        return "\(downloadPrefix)\(name)-\(contentHash).\(ext)"
+    }
+
+    /// A partial download file's name, parsed.
+    public struct DownloadFileName: Hashable, Sendable {
+        public enum Kind: Hashable, Sendable {
+            /// The bytes (`.part`).
+            case partial
+            /// The sidecar (`.json`).
+            case metadata
+        }
+
+        public var kind: Kind
+        /// The pack it is a download of.
+        public var pack: StoredFileName
+
+        public init(kind: Kind, pack: StoredFileName) {
+            self.kind = kind
+            self.pack = pack
+        }
+    }
+
+    /// The kind, name and content hash of a partial or metadata file name,
+    /// split on the LAST `-`; nil for anything `partialFileName` or
+    /// `partialMetadataFileName` would not produce.
+    public static func parseDownloadFileName(_ fileName: String) -> DownloadFileName? {
+        guard fileName.hasPrefix(downloadPrefix) else { return nil }
+        let kind: DownloadFileName.Kind
+        let suffix: String
+        if fileName.hasSuffix(".\(partialExtension)") {
+            kind = .partial; suffix = ".\(partialExtension)"
+        } else if fileName.hasSuffix(".\(partialMetadataExtension)") {
+            kind = .metadata; suffix = ".\(partialMetadataExtension)"
+        } else {
+            return nil
+        }
+        guard fileName.count > downloadPrefix.count + suffix.count else { return nil }
+        let stem = fileName.dropFirst(downloadPrefix.count).dropLast(suffix.count)
+        guard let dash = stem.lastIndex(of: "-") else { return nil }
+        let name = String(stem[..<dash])
+        let hash = String(stem[stem.index(after: dash)...])
+        guard isValidName(name), isValidContentHash(hash) else { return nil }
+        return DownloadFileName(kind: kind, pack: StoredFileName(name: name, contentHash: hash))
+    }
+
+    /// The partial and metadata files among `fileNames` whose pack (name
+    /// and content hash) `manifest` does not list: a build the server has
+    /// replaced or withdrawn, which can never complete. The app deletes
+    /// them when it applies a freshly fetched manifest (not at launch: the
+    /// manifest it has may be old). Sorted.
+    public static func stalePartials(fileNames: [String], manifest: PackManifest) -> [String] {
+        let listed = Set(manifest.packs.map { StoredFileName(name: $0.name, contentHash: $0.contentHash) })
+        return fileNames.filter { file in
+            guard let parsed = parseDownloadFileName(file) else { return false }
+            return !listed.contains(parsed.pack)
+        }.sorted()
+    }
+
     // MARK: The active set
 
     /// One installed pack file, as the app knows it.
@@ -237,7 +325,11 @@ public enum RoadPackStoreRules {
     /// superseded or marked pack file is deleted ("Remove" with no run
     /// active deletes that name's files itself). Deletes superseded and marked files and
     /// installer leftovers among `otherFileNames` (the directory's other
-    /// entries); any other unknown file is left alone. Calling this while a
+    /// entries); any other unknown file is left alone. Partial downloads and
+    /// their metadata (`partialFileName`, `partialMetadataFileName`) are
+    /// never deleted here, so a download survives the app being killed;
+    /// they are never `InstalledFile`s (not `.roadpack` names) and so never
+    /// active. Stale ones go with `stalePartials`. Calling this while a
     /// Navigate or Record session runs would delete a file it may have
     /// mapped: callers must not.
     public static func launchCleanup(_ files: [InstalledFile], otherFileNames: [String] = []) -> LaunchCleanup {

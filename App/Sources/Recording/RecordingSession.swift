@@ -411,6 +411,20 @@ final class RecordingSession {
     var allowsRecordingWithoutOBD = false
     /// A `start` call is between its checks and creating the file.
     private(set) var isStarting = false
+    /// Record is active (UX-8: road-pack downloads pause while it is): from
+    /// the first line of `start`, before its first suspension and so before
+    /// any clock, file, writer or source exists, until the recording's end
+    /// path has returned — the writer's `finish()` done and the state `idle`
+    /// or `failed`. A `start` that throws clears it when it throws. Exactly
+    /// `isStarting || recording != nil || ending != nil`; never set by
+    /// Navigate. Changes are also handed to `onRecordActiveChange`.
+    private(set) var isRecordActive = false
+    /// Called synchronously on the main actor with every change of
+    /// `isRecordActive`, in order, at the moment it changes (nothing is
+    /// coalesced). Set it once, before any `start` (`AppServices`, at
+    /// launch); it is not called with the current value when set. Keep it
+    /// cheap: it runs inside `start` and the end path.
+    @ObservationIgnored var onRecordActiveChange: (@MainActor (Bool) -> Void)?
     /// Why the app may be suspended while the phone is locked, so the
     /// recording may pause; nil when nothing is known to be wrong (R4.1-5).
     /// For the dashboard to warn on, before Start and during a recording.
@@ -642,6 +656,9 @@ final class RecordingSession {
     ) async throws {
         guard !isStarting, recording == nil, ending == nil else { throw RecordingStartBlocker.recordingInProgress }
         isStarting = true
+        // UX-8: downloads pause before the first suspension, so before the
+        // clock, file, writer and sources below exist.
+        updateRecordActive()
         // The recording's source owns location from here (R61.1-4).
         updateDisplayLocation()
         // Cleared on every throw before the recording exists, and as soon as
@@ -653,6 +670,7 @@ final class RecordingSession {
         defer {
             if ownsStartingFlag {
                 isStarting = false
+                updateRecordActive()
                 // UX-1: a Start that threw after ending Navigate (or while
                 // it ran, which changes nothing) leaves Navigate as it would
                 // be without the attempt.
@@ -686,6 +704,7 @@ final class RecordingSession {
         recording = rec
         isStarting = false
         ownsStartingFlag = false
+        updateRecordActive()   // stays true: `recording` now holds it
         currentFile = url
         lastStopReason = nil
         // No speed carried over from before Start (M8.1-3): a manual fix's
@@ -1301,6 +1320,15 @@ final class RecordingSession {
 
     // MARK: - Internals: ending
 
+    /// Re-derives `isRecordActive` after `isStarting`, `recording` or
+    /// `ending` changed, and reports a change to `onRecordActiveChange`.
+    private func updateRecordActive() {
+        let active = isStarting || recording != nil || ending != nil
+        guard active != isRecordActive else { return }
+        isRecordActive = active
+        onRecordActiveChange?(active)
+    }
+
     /// Runs `body` as the one end path; concurrent callers wait for it.
     private func end(_ rec: ActiveRecording, _ body: @escaping @MainActor (RecordingSession) async -> Void) async {
         if let ending {
@@ -1309,8 +1337,11 @@ final class RecordingSession {
         }
         let task = Task { await body(self) }
         ending = task
+        updateRecordActive()
         await task.value
         ending = nil
+        // UX-8: Record ends here, after the writer's `finish()`.
+        updateRecordActive()
         Task { await refreshDiskSpace() }
     }
 
@@ -1378,6 +1409,7 @@ final class RecordingSession {
         dropPendingManualFixes(rec)
         guard recording === rec else { return }
         recording = nil
+        updateRecordActive()   // stays true while `ending` runs
         currentFile = nil
         live.gpsSpeedKmh = nil
         live.referenceFix = nil

@@ -284,6 +284,16 @@ Replay only the current connection's init (M6.1-1) and remembered poll plan and 
 1. **Inbox migration:** swipe the app away, push the packs with `scripts/push_packs.sh`, launch: they appear in Settings → Maps, `Documents/RoadPacks/` is empty afterwards, and a second push of the same packs is skipped by `push_packs.sh`. A pack file name with upper-case letters is refused by the inbox (it stays there and is reported in Diagnostics; rename it to lower case).
 2. **Remove while navigating:** with Navigate running, Remove a pack in Settings → Maps: the row shows "Removal pending (after restart)" and the pack no longer counts as installed; swipe the app away and relaunch: the pack is gone. Remove with no recording or Navigate run deletes at once.
 
+### Added by UX-8 download (prompt 25) — not verified on a device
+1. **Real download on Wi-Fi:** Settings → Maps, tap Download on a region: it downloads, installs ("Updated · used from the next start" only for updates), and the pack is used at the next session start.
+2. **Cellular blocked:** on cellular only, the row says "Waiting for Wi-Fi" and nothing downloads; switch "Use cellular data" on and it starts.
+3. **Kill mid-download:** start a download, kill the app, relaunch, tap Download again: it resumes from the partial (a Range request, not from zero).
+4. **Airplane mode:** Maps shows the cached list with the "Offline" note.
+5. **Update:** when the manifest changes a pack's contentHash, the row shows "Update available"; nothing downloads without a tap; the new file is used from the next session start.
+6. **Record pauses, Navigate does not:** a download pauses while Record runs and resumes after Stop; Navigate does not pause it.
+7. **Diagnostics in Release:** in a Release build the developer rows are hidden until 7 taps on Version in About; 7 more taps hide them again.
+8. **`push_packs.sh` after Remove-while-navigating (R65.1-4):** the pack is copied, not "skipped (unchanged)". Also check whether `devicectl device copy from` can read the store state file.
+
 ### Added by the backlog triage sweep (2026-10-17) — not verified on a device
 1. **ELM write-offs and clone banners (bench):** count the write-off notes and the `ATZ banner without 'ELM'` notes over a bench session, and decide whether to model `STOPPED` in the mock (a real ELM327 aborts a pending command on any received byte). (M1-E3)
 2. **Vgate write stalls:** check whether the Vgate write characteristic is `withoutResponse`-only, and whether write stalls past the 1 s readiness limit of `BLETransport` happen (they log a `timeout` first and cost a needless `ATZ` re-init). (R3.2-1)

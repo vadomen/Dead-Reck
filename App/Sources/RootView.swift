@@ -11,6 +11,7 @@ struct RootView: View {
     @State private var roads: RoadsDiagnosticsModel
     @State private var roadsWarning: RoadsWarningModel
     @State private var maps: MapsModel
+    @State private var gate: DeveloperGate
     private let session: RecordingSession
     private let services: AppServices
     @State private var nav: AppNavigation
@@ -27,13 +28,31 @@ struct RootView: View {
         _console = State(initialValue: ConsoleViewModel(services: services))
         _roads = State(initialValue: RoadsDiagnosticsModel(library: services.roadPacks, service: service))
         let library = services.roadPacks
-        var mapsModel = MapsModel(library: library)
+        var mapsModel = MapsModel(library: library, manifest: services.manifest, downloader: services.downloader)
         #if DEBUG
         // `-uiFakeMaps 1`: two synthetic installed packs and one pending removal
         // (simulator screenshots; the simulator has no packs).
         if UserDefaults.standard.bool(forKey: "uiFakeMaps") { mapsModel = MapsModel(status: DebugFakes.mapsStatus) }
+        // `-uiFakeDownloads 1`: a synthetic manifest with a row in each state;
+        // `-uiFakeOffline 1`: the same with the "Offline" note.
+        let fakeOffline = UserDefaults.standard.bool(forKey: "uiFakeOffline")
+        if UserDefaults.standard.bool(forKey: "uiFakeDownloads") || fakeOffline {
+            mapsModel = DebugFakes.downloadsModel(offline: fakeOffline)
+        }
         #endif
         _maps = State(initialValue: mapsModel)
+        var developerGate = DeveloperGate()
+        #if DEBUG
+        // `-uiReleaseGate 1`: behave like Release with the diagnostics locked;
+        // `-uiReleaseGate 2`: like Release after the 7 taps (screenshots).
+        let releaseGate = UserDefaults.standard.integer(forKey: "uiReleaseGate")
+        if releaseGate > 0 {
+            let suite = UserDefaults(suiteName: "uiReleaseGate") ?? .standard
+            suite.set(releaseGate == 2, forKey: DeveloperGate.defaultsKey)
+            developerGate = DeveloperGate(isDebug: false, defaults: suite)
+        }
+        #endif
+        _gate = State(initialValue: developerGate)
         var warningModel = RoadsWarningModel(source: {
             await RoadsWarning.current(service: service, library: library)
         }, attributionSource: {
@@ -56,7 +75,8 @@ struct RootView: View {
         // 0 = Map (default), 1 = Sessions, 2 = Settings.
         initial.tab = AppTab(launchValue: UserDefaults.standard.integer(forKey: "uiTab"))
         // `-uiMaps 1` opens Settings → Maps.
-        if UserDefaults.standard.bool(forKey: "uiMaps") { initial.tab = .settings; initial.settingsPath = [.maps] }
+        if UserDefaults.standard.bool(forKey: "uiMaps") || UserDefaults.standard.bool(forKey: "uiFakeDownloads")
+            || UserDefaults.standard.bool(forKey: "uiFakeOffline") { initial.tab = .settings; initial.settingsPath = [.maps] }
         #endif
         _nav = State(initialValue: initial)
     }
@@ -75,7 +95,7 @@ struct RootView: View {
         } sessions: {
             SessionsScreen(model: sessions)
         } settings: {
-            SettingsScreen(path: $nav.settingsPath, roads: roads, maps: maps, onShowChecklist: { firstLaunch.showAgain() }) {
+            SettingsScreen(path: $nav.settingsPath, roads: roads, maps: maps, gate: gate, onShowChecklist: { firstLaunch.showAgain() }) {
                 RecordingScreen(model: recording)
             } console: {
                 ConsoleScreen(model: console)

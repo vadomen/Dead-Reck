@@ -7,14 +7,22 @@ struct SettingsScreen<Recording: View, Console: View>: View {
     var info: AppInfo = .read()
     var roads: RoadsDiagnosticsModel
     var maps: MapsModel
+    var gate: DeveloperGate
     var onShowChecklist: () -> Void = {}
     @ViewBuilder var recording: () -> Recording
     @ViewBuilder var console: () -> Console
     @State private var thermal = ProcessInfo.processInfo.thermalState
 
     var body: some View {
-        SettingsContent(path: $path, info: info, thermal: thermal, roads: roads.value, onShowChecklist: onShowChecklist,
+        SettingsContent(path: $path, info: info, thermal: thermal, roads: roads.value,
+                        showsDeveloper: gate.showsDiagnostics, versionNote: gate.toast,
+                        onVersionTap: { gate.tapVersion() }, onShowChecklist: onShowChecklist,
                         recording: recording, console: console, maps: { MapsScreen(model: maps) })
+            .task(id: gate.toast) {
+                guard gate.toast != nil else { return }
+                try? await Task.sleep(for: .seconds(3))
+                gate.dismissToast()
+            }
             .onReceive(NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)) { _ in
                 thermal = ProcessInfo.processInfo.thermalState
             }
@@ -29,6 +37,12 @@ struct SettingsContent<Recording: View, Console: View, Maps: View>: View {
     let info: AppInfo
     let thermal: ProcessInfo.ThermalState
     var roads = RoadsDiagnostics()
+    /// The developer rows (Build, Memory, Roads): always in DEBUG, in
+    /// Release after 7 taps on Version (`DeveloperGate`).
+    var showsDeveloper = true
+    /// "Developer diagnostics shown/hidden", under Version for a moment.
+    var versionNote: String?
+    var onVersionTap: () -> Void = {}
     var onShowChecklist: () -> Void = {}
     @ViewBuilder var recording: () -> Recording
     @ViewBuilder var console: () -> Console
@@ -36,6 +50,32 @@ struct SettingsContent<Recording: View, Console: View, Maps: View>: View {
     /// Shows the matched road, the on-road share and the engine numbers on
     /// the map; the map's long-press on the speed number sets it too.
     @AppStorage("debug.navStats") private var showNavStats = false
+
+    private var roadsSection: some View {
+        Section("Roads") {
+            Toggle("Navigation debug on map", isOn: $showNavStats)
+            ForEach(roads.library.installedPacks) { pack in
+                LabeledContent(pack.displayName, value: RoadsDiagnosticsText.verifyLine(pack))
+            }
+            ForEach(roads.library.inboxRefusals) { pack in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(pack.name).font(.body)
+                    Text(RoadsDiagnosticsText.state(pack))
+                        .fontWeight(.semibold)
+                        .foregroundStyle(Tone.bad.color)
+                    Text(RoadsDiagnosticsText.detail(pack))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            LabeledContent("Roads in use", value: RoadsDiagnosticsText.usage(roads.roads))
+            if roads.roads.inUse {
+                LabeledContent("On road", value: RoadsDiagnosticsText.onRoadShare(roads.roads.onRoadShare))
+            }
+            if RoadsDiagnosticsText.attributionVisible(packsInUse: roads.roads.packNames.count) {
+                Text(RoadsDiagnosticsText.attribution).font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+    }
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -69,33 +109,22 @@ struct SettingsContent<Recording: View, Console: View, Maps: View>: View {
                             .foregroundStyle(ThermalText.tone(thermal).color)
                             .fontWeight(.semibold)
                     }
+                    if showsDeveloper {
+                        LabeledContent("Build", value: AppInfo.configuration)
+                        LabeledContent("Memory", value: MemoryFootprint.format(roads.footprintBytes))
+                    }
+                }
+                Section {
                     LabeledContent("Version", value: info.displayVersion)
-                    LabeledContent("Build", value: AppInfo.configuration)
-                    LabeledContent("Memory", value: MemoryFootprint.format(roads.footprintBytes))
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                        .onTapGesture(perform: onVersionTap)
+                } header: {
+                    Text("About")
+                } footer: {
+                    if let versionNote { Text(versionNote) }
                 }
-                Section("Roads") {
-                    Toggle("Navigation debug on map", isOn: $showNavStats)
-                    ForEach(roads.library.installedPacks) { pack in
-                        LabeledContent(pack.displayName, value: RoadsDiagnosticsText.verifyLine(pack))
-                    }
-                    ForEach(roads.library.inboxRefusals) { pack in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(pack.name).font(.body)
-                            Text(RoadsDiagnosticsText.state(pack))
-                                .fontWeight(.semibold)
-                                .foregroundStyle(Tone.bad.color)
-                            Text(RoadsDiagnosticsText.detail(pack))
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                    LabeledContent("Roads in use", value: RoadsDiagnosticsText.usage(roads.roads))
-                    if roads.roads.inUse {
-                        LabeledContent("On road", value: RoadsDiagnosticsText.onRoadShare(roads.roads.onRoadShare))
-                    }
-                    if RoadsDiagnosticsText.attributionVisible(packsInUse: roads.roads.packNames.count) {
-                        Text(RoadsDiagnosticsText.attribution).font(.footnote).foregroundStyle(.secondary)
-                    }
-                }
+                if showsDeveloper { roadsSection }
             }
             .navigationTitle("Settings")
             .navigationDestination(for: SettingsRoute.self) { route in
@@ -142,5 +171,12 @@ private var previewInbox: RoadPackLibrary.PackStatus {
     SettingsContent(
         path: .constant([]), info: AppInfo(name: "DriveLogger", version: "0.1.0", build: "1"),
         thermal: .serious
+    ) { Text("Recording") } console: { Text("Console") } maps: { Text("Maps") }
+}
+
+#Preview("Settings, Release (diagnostics hidden)") {
+    SettingsContent(
+        path: .constant([]), info: AppInfo(name: "DriveLogger", version: "0.1.0", build: "1"),
+        thermal: .nominal, showsDeveloper: false, versionNote: "Developer diagnostics hidden"
     ) { Text("Recording") } console: { Text("Console") } maps: { Text("Maps") }
 }

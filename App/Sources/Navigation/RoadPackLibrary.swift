@@ -388,11 +388,13 @@ actor RoadPackLibrary {
     /// keeps the verification for the next scan (a cache hit). Never
     /// overwrites a stored file; never deletes one. A rescan follows and
     /// has finished when this returns. Waits for the first scan.
-    func install(from source: URL, name: String) async -> RoadPackInstaller.Outcome {
+    /// `expectedContentHash` (the manifest's) is checked against the verified
+    /// header before the rename; nil (the inbox path) accepts any.
+    func install(from source: URL, name: String, expectedContentHash: String? = nil) async -> RoadPackInstaller.Outcome {
         guard let store else { return .refused("no road pack store") }
         await firstScanFinished()
         let installer = store.installer
-        let outcome = await Task.detached(priority: .utility) { installer.install(from: source, name: name) }.value
+        let outcome = await Task.detached(priority: .utility) { installer.install(from: source, name: name, expectedContentHash: expectedContentHash) }.value
         if let pack = outcome.installed {
             if let entry = pack.cacheEntry { pendingCacheEntries.append(entry) }
             try? store.unmark(pack.fileName)

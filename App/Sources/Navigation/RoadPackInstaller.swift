@@ -19,7 +19,10 @@ import Foundation
 ///    `RoadPack(contentsOf:verify: true)`): a truncated, corrupt or
 ///    foreign-format file is refused with the reason and the copy deleted.
 ///    The source is only read by the copy: never mapped, never modified;
-/// 4. names the file by the verified header's content hash
+/// 4. with `expectedContentHash` (a finished download, UX-8), refuses a pack
+///    whose verified header hash differs, before the rename and also for a
+///    name that already exists (the copy is deleted; nothing is stored);
+/// 5. names the file by the verified header's content hash
 ///    (`RoadPackStoreRules.fileName(name:contentHash:)`) and renames the copy
 ///    to it with `renamex_np(RENAME_EXCL)`: atomic, in one directory, and
 ///    refused by the kernel if the name exists. An existing file of that
@@ -82,7 +85,10 @@ struct RoadPackInstaller: Sendable {
         }
     }
 
-    func install(from source: URL, name: String) -> Outcome {
+    /// - Parameter expectedContentHash: 16 lowercase hex digits the verified
+    ///   header must carry (the manifest's `contentHash`); nil (the inbox
+    ///   path) accepts any.
+    func install(from source: URL, name: String, expectedContentHash: String? = nil) -> Outcome {
         guard RoadPackStoreRules.isValidName(name) else {
             return .refused("invalid pack name (1–\(RoadPackStoreRules.maxNameLength) of a–z, 0–9, _ and -)")
         }
@@ -131,6 +137,9 @@ struct RoadPackInstaller: Sendable {
         guard let hash = verification.contentHash,
               let fileName = RoadPackStoreRules.fileName(name: name, contentHash: hash) else {
             return refuse("no valid content hash")
+        }
+        if let expected = expectedContentHash, hash != expected {
+            return refuse("content hash \(hash) does not match the manifest (\(expected))")
         }
         let final = storeDirectory.appendingPathComponent(fileName)
         if renamex_np(temp.path, final.path, UInt32(RENAME_EXCL)) != 0 {

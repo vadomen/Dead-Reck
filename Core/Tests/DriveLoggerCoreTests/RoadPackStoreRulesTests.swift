@@ -169,6 +169,75 @@ struct RoadPackStoreRulesTests {
         #expect(Set(plan.delete).isDisjoint(with: plan.active.map(\.fileName)))
     }
 
+    // MARK: Partial downloads (UX-8)
+
+    @Test("Partial download names: .download-<name>-<hash>.part/.json, parsed back; never store or temporary files")
+    func partialNames() throws {
+        let part = try #require(R.partialFileName(name: "region-a", contentHash: Self.hashA))
+        let meta = try #require(R.partialMetadataFileName(name: "region-a", contentHash: Self.hashA))
+        #expect(part == ".download-region-a-0123456789abcdef.part")
+        #expect(meta == ".download-region-a-0123456789abcdef.json")
+        let stored = R.StoredFileName(name: "region-a", contentHash: Self.hashA)
+        #expect(R.parseDownloadFileName(part) == .init(kind: .partial, pack: stored))
+        #expect(R.parseDownloadFileName(meta) == .init(kind: .metadata, pack: stored))
+        let nested = try #require(R.parseDownloadFileName(".download-a-fedcba9876543210-0123456789abcdef.part"))
+        #expect(nested.pack == .init(name: "a-fedcba9876543210", contentHash: Self.hashA))
+        #expect(R.partialFileName(name: "Region-a", contentHash: Self.hashA) == nil)
+        #expect(R.partialMetadataFileName(name: "region-a", contentHash: "0123") == nil)
+        for file in [".download-region-a.part", ".download-region-a-0123456789ABCDEF.part",
+                     ".download-region-a-0123456789abcdef.tmp", "download-region-a-0123456789abcdef.part",
+                     ".download-.part", ".download--0123456789abcdef.json", ".download-region-a-0123456789abcdef.roadpack",
+                     "region-a-0123456789abcdef.roadpack", R.temporaryFileName(token: "abc")] {
+            #expect(R.parseDownloadFileName(file) == nil, "\(file)")
+        }
+        for file in [part, meta] {
+            #expect(R.parseFileName(file) == nil)
+            #expect(F(fileName: file, osmTimestamp: 1, installTime: 1) == nil)
+            #expect(R.inboxName(fromFileName: file) == nil)
+            #expect(!R.isTemporaryFileName(file))
+        }
+    }
+
+    @Test("launchCleanup keeps partial downloads and their metadata (they survive an app kill) and never activates them")
+    func launchKeepsPartials() throws {
+        let a = Self.file("region-a", Self.hashA, osm: 100, installed: 1)
+        let part = try #require(R.partialFileName(name: "region-a", contentHash: Self.hashB))
+        let meta = try #require(R.partialMetadataFileName(name: "region-a", contentHash: Self.hashB))
+        let orphan = try #require(R.partialFileName(name: "zz-01", contentHash: Self.hashC))
+        let temp = R.temporaryFileName(token: "abc")
+        let plan = R.launchCleanup([a], otherFileNames: [part, meta, orphan, temp])
+        #expect(plan.delete == [temp])
+        #expect(plan.active == [a])
+        #expect(!plan.active.map(\.fileName).contains(part))
+        // Listing them as InstalledFiles is impossible: the initialiser refuses them.
+        let candidates = [part, meta, orphan].compactMap { F(fileName: $0, osmTimestamp: 1, installTime: 1) }
+        #expect(candidates.isEmpty)
+    }
+
+    @Test("stalePartials: partial and metadata files whose (name, contentHash) the manifest does not list")
+    func stalePartials() throws {
+        let url = URL(string: "https://packs.example.test/packs/manifest.json")!
+        func pack(_ name: String, _ hash: String) -> PackManifest.Pack {
+            PackManifest.Pack(name: name, kind: .region, titleUK: "", titleEN: "Region", bbox: .init(west: 10, south: 20, east: 11, north: 21),
+                              url: url, size: 1, sha256: String(repeating: "0", count: 64), contentHash: hash,
+                              formatVersion: 1, osmDate: nil, osmTimestamp: 0)
+        }
+        let manifest = PackManifest(manifestURL: url, generated: "", license: "", licenseURL: "", attribution: "",
+                                    packs: [pack("region-a", Self.hashB), pack("national", Self.hashA)])
+        let current = try #require(R.partialFileName(name: "region-a", contentHash: Self.hashB))
+        let currentMeta = try #require(R.partialMetadataFileName(name: "region-a", contentHash: Self.hashB))
+        let oldBuild = try #require(R.partialFileName(name: "region-a", contentHash: Self.hashA))
+        let oldMeta = try #require(R.partialMetadataFileName(name: "region-a", contentHash: Self.hashA))
+        let withdrawn = try #require(R.partialMetadataFileName(name: "zz-01", contentHash: Self.hashA))
+        let national = try #require(R.partialFileName(name: "national", contentHash: Self.hashA))
+        let files = [current, currentMeta, oldBuild, oldMeta, withdrawn, national,
+                     "region-a-0123456789abcdef.roadpack", R.temporaryFileName(token: "x"), "notes.txt"]
+        #expect(R.stalePartials(fileNames: files, manifest: manifest) == [oldMeta, oldBuild, withdrawn].sorted())
+        #expect(R.stalePartials(fileNames: [current, national], manifest: manifest).isEmpty)
+        let empty = PackManifest(manifestURL: url, generated: "", license: "", licenseURL: "", attribution: "", packs: [])
+        #expect(R.stalePartials(fileNames: files, manifest: empty) == [current, currentMeta, oldBuild, oldMeta, withdrawn, national].sorted())
+    }
+
     @Test("InstalledFile from a store file name; nil for anything else")
     func installedFromFileName() throws {
         let f = try #require(F(fileName: "region-a-0123456789abcdef.roadpack", osmTimestamp: 7, installTime: 8))

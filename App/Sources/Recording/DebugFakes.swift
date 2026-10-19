@@ -13,5 +13,14 @@ enum DebugFakes {
             ],
             scansCompleted: 1, storeBytes: 216_000_000)
     }
+
+    /// `-uiFakeDownloads 1` / `-uiFakeOffline 1`: a synthetic manifest with a
+    /// row in each state (installed, update available, downloading 42 %,
+    /// failed, waiting for Wi-Fi, one pack not in the manifest).
+    @MainActor
+    static func downloadsModel(offline: Bool) -> MapsModel {
+        MapsModel(status: MapsPreviewData.status, manifest: MapsPreviewData.manifest,
+                  downloads: MapsPreviewData.downloads, refresh: offline ? .failed(offline: true) : .ok)
+    }
 }
 #endif
