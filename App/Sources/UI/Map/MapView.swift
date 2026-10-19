@@ -44,14 +44,23 @@ struct MapScreen: View {
     @AppStorage("debug.navStats") private var showNavStats = false
     let session: RecordingSession
     let navigation: NavigationFeed
+    /// False while Settings covers the map (`AppNavigation.mapIsLive`): no
+    /// MapKit view, camera loop or offer card then. Navigate/Record and the
+    /// root-level track feed keep running; the map re-frames on return.
     var isSelected: Bool
-    /// Read once when the tab opens with no fix; the system's last position.
+    /// Read once when the map opens with no fix; the system's last position.
     var cachedLocation: @MainActor () -> CachedLocation?
     /// The roads warning was tapped: the app opens Settings → Maps.
     var onOpenMaps: () -> Void = {}
+    /// The gear was tapped (UX-14): the app opens Settings full screen.
+    var onOpenSettings: () -> Void = {}
     var roadsWarning: RoadsWarningModel?
     /// The at-a-stop offer (UX-8); nil in previews.
     var offers: PackOfferMonitor?
+    /// Read for the HUD's OBD indicator only (`HUDOBD.from(link:)`); nil in
+    /// previews. Only `state` is read, so the map re-renders on link state
+    /// changes, not on poll traffic.
+    var link: (any OBDLinkServicing)?
     @Environment(\.scenePhase) private var scenePhase
     @State private var thermal = ProcessInfo.processInfo.thermalState
 
@@ -61,13 +70,16 @@ struct MapScreen: View {
         let status = NavigateStatus.make(
             navigate: session.navigateState, recording: session.state, startedAt: session.navigateStartedAt,
             timings: session.navigateTimings ?? NavigateConfiguration(), now: .now)
+        // DEBUG `-uiFakeHUD …`: synthetic HUD inputs (screenshots).
+        let fake = Self.fakes
         GPSMapView(
             track: model.track,
             latest: model.latest,
             lastFixInstant: model.lastFixInstant,
-            isReceiving: model.isReceiving,
-            thermal: thermal,
-            speed: model.speed,
+            isReceiving: fake.isActive ? !fake.gpsLost : model.isReceiving,
+            thermal: fake.thermal ? .fair : thermal,
+            speed: fake.isActive ? fake.speed : model.speed,
+            obd: fake.isActive ? fake.obd : HUDOBD.from(link: link?.state),
             isLive: isSelected && scenePhase == .active,
             follow: $model.follow,
             headingUp: $headingUp,
@@ -78,16 +90,21 @@ struct MapScreen: View {
             manual: marking,
             run: model.runKey,
             cachedLocation: cachedLocation,
-            navigation: navigation,
+            navigation: fake.debugStrip ? NavigationFeed(display: nil, stats: MapPreviewData.navStats) : navigation,
             showsEstimate: status.showsEstimate,
-            showNavStats: $showNavStats,
+            showNavStats: fake.debugStrip ? .constant(true) : $showNavStats,
             roadsWarning: roadsWarning?.message,
             onRoadsWarningTap: onOpenMaps,
+            onOpenSettings: onOpenSettings,
             roadsAttribution: roadsWarning?.attribution ?? false,
             offerCard: offers.map { AnyView(PackOfferCard(monitor: $0)) },
-            recordingControl: AnyView(MapRecordingButton(
-                session: session, offers: offers, onStop: { [session] in await session.stop() })),
-            statusLine: AnyView(MapNavigateStatusLine(session: session))
+            recordingControl: fake.recording
+                ? AnyView(MapRecordingIndicatorLabel(elapsed: "12:34"))
+                : AnyView(MapRecordingButton(
+                    session: session, offers: offers, onStop: { [session] in await session.stop() })),
+            statusLine: fake.isActive
+                ? (fake.banner ? AnyView(NavigateStatusLabel(status: .waitingForOBD(secondsLeft: 272))) : nil)
+                : (status.text == nil ? nil : AnyView(MapNavigateStatusLine(session: session)))
         )
         .onReceive(NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)) { _ in
             thermal = ProcessInfo.processInfo.thermalState
@@ -101,6 +118,14 @@ struct MapScreen: View {
 }
 
 extension MapScreen {
+    fileprivate static var fakes: HUDFakes {
+        #if DEBUG
+        return HUDFakes.parse(UserDefaults.standard.string(forKey: "uiFakeHUD"))
+        #else
+        return HUDFakes()
+        #endif
+    }
+
     /// Closures only: nothing here reads `session.live` while `body` runs.
     fileprivate var marking: ManualFixMarking {
         ManualFixMarking(
@@ -226,6 +251,8 @@ struct GPSMapView: View {
     var thermal: ProcessInfo.ThermalState
     /// The one speed shown in the info block and where it comes from.
     var speed: MapSpeedReadout = .none
+    /// The HUD's OBD indicator, from the link state.
+    var obd: HUDOBD = .lost
     /// Selected tab and active scene. When false no `Map` exists and the
     /// camera is not touched.
     var isLive: Bool
@@ -253,16 +280,18 @@ struct GPSMapView: View {
     /// One line when roads are off for a fixable reason (`RoadsWarning`).
     var roadsWarning: String?
     var onRoadsWarningTap: () -> Void
+    /// The gear at the bottom of the right rail (UX-14, UX-32).
+    var onOpenSettings: () -> Void = {}
     /// A road pack is attached to the run (`MapAttribution.visible`): the
     /// OSM credit is shown.
     var roadsAttribution = false
-    /// The at-a-stop road-pack offer (UX-8), above the status line; its own
+    /// The at-a-stop road-pack offer (UX-8), top of the bottom-left zone; its own
     /// view, so this one stays plain values.
     var offerCard: AnyView?
-    /// Start button or recording indicator, left of the map controls. A view
-    /// of its own (it reads the recorder), so this view stays plain values.
+    /// The recording row in the top-left card. A view of its own (it reads
+    /// the recorder's 16 Hz status), so this view stays plain values.
     var recordingControl: AnyView?
-    /// Navigate's status line (UX-1), above the controls.
+    /// Navigate's calibration / OBD-lost banner (UX-1), in the bottom-left zone; nil when it has no text.
     var statusLine: AnyView?
 
     @State private var position: MapCameraPosition = .automatic
@@ -304,6 +333,7 @@ struct GPSMapView: View {
     init(
         track: GPSTrack, latest: LocationSample?, lastFixInstant: ContinuousClock.Instant?,
         isReceiving: Bool, thermal: ProcessInfo.ThermalState, speed: MapSpeedReadout = .none,
+        obd: HUDOBD = .lost,
         isLive: Bool,
         follow: Binding<FollowController>, headingUp: Binding<Bool> = .constant(false),
         bearing: Double? = nil, isStationary: Bool = false, manualFixes: [ConfirmedFix] = [],
@@ -317,6 +347,7 @@ struct GPSMapView: View {
         showNavStats: Binding<Bool> = .constant(false),
         roadsWarning: String? = nil,
         onRoadsWarningTap: @escaping () -> Void = {},
+        onOpenSettings: @escaping () -> Void = {},
         roadsAttribution: Bool = false,
         offerCard: AnyView? = nil,
         recordingControl: AnyView? = nil,
@@ -328,6 +359,7 @@ struct GPSMapView: View {
         self.isReceiving = isReceiving
         self.thermal = thermal
         self.speed = speed
+        self.obd = obd
         self.isLive = isLive
         self._follow = follow
         self._headingUp = headingUp
@@ -343,6 +375,7 @@ struct GPSMapView: View {
         self._showNavStats = showNavStats
         self.roadsWarning = roadsWarning
         self.onRoadsWarningTap = onRoadsWarningTap
+        self.onOpenSettings = onOpenSettings
         self.roadsAttribution = roadsAttribution
         self.offerCard = offerCard
         self.recordingControl = recordingControl
@@ -469,49 +502,112 @@ struct GPSMapView: View {
     private var stale: Bool { isStale || !isReceiving }
 
     private var content: some View {
-        ZStack(alignment: .top) {
+        ZStack {
             if isLive && !Self.hidesTiles {
                 mapBody(stale: stale)
             } else {
-                Color(.secondarySystemBackground).ignoresSafeArea()
+                placeholder
             }
-            overlay(stale: stale)
         }
+        // Top-left card (UX-32): the only thing at the top.
+        .overlay(alignment: .topLeading) { hudCard }
+        // Right rail: North up / Heading up, Following, Settings.
+        .overlay(alignment: .bottomTrailing) { rail }
+        // Bottom-left zone, left of the rail, stacked upward.
+        .overlay(alignment: .bottomLeading) { bottomZone }
+        // UX-33: the OSM credit, one line at the very bottom edge.
         .overlay(alignment: .bottom) {
-            VStack(alignment: .trailing, spacing: 8) {
-                if roadsAttribution {
-                    attributionLabel
-                }
-                // Above the fix toast and the controls: stacked, never overlapping.
-                if let offerCard {
-                    offerCard
-                }
-                if let statusLine {
-                    statusLine
-                }
-                if let roadsWarning {
-                    roadsWarningView(roadsWarning)
-                }
-                if let toast {
-                    toastView(toast)
-                }
-                controls
-            }
+            if roadsAttribution { MapAttributionLine() }
         }
     }
 
-    /// Small credit above the controls, clear of Apple's logo and Legal link
-    /// (bottom corners, below the controls). Material keeps it legible in
-    /// light and dark.
-    private var attributionLabel: some View {
-        Text(MapAttribution.text)
-            .font(.caption2.weight(.medium))
-            .foregroundStyle(.primary)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(.regularMaterial, in: Capsule())
-            .padding(.horizontal, 16)
-            .accessibilityLabel(MapAttribution.text)
+    @ViewBuilder
+    private var placeholder: some View {
+        #if DEBUG
+        if Self.hidesTiles && isLive {
+            SyntheticBasemap(headingUp: headingUp && follow.isFollowing)
+        } else {
+            Color(.secondarySystemBackground).ignoresSafeArea()
+        }
+        #else
+        Color(.secondarySystemBackground).ignoresSafeArea()
+        #endif
+    }
+
+    // MARK: HUD
+
+    private var hudState: MapHUDState {
+        MapHUDState.make(
+            speed: speed, gps: MapHUDState.gpsState(stale: stale), obd: obd,
+            thermal: thermal)
+    }
+
+    /// Speed, GPS and OBD indicators, thermal when not nominal, recording row.
+    private var hudCard: some View {
+        MapHUDCard(
+            state: hudState,
+            hasRecording: recordingControl != nil,
+            onSpeedLongPress: { showNavStats.toggle() },
+            extra: {
+                if let estimate { NavCalibratingIcon(feed: estimate) }
+            },
+            recording: {
+                if let recordingControl { recordingControl }
+            }
+        )
+        .padding(.leading, MapLayout.edgeInset)
+        .padding(.top, 8)
+    }
+
+    private var rail: some View {
+        VStack(spacing: MapLayout.railGap) {
+            HUDRailButton(
+                symbol: headingUp ? "location.north.line.fill" : "n.circle",
+                label: headingUp ? "Heading up" : "North up", active: headingUp
+            ) { headingUp.toggle() }
+            HUDRailButton(
+                symbol: follow.isFollowing ? "location.fill" : "location",
+                label: follow.isFollowing ? "Following" : "Follow", active: follow.isFollowing
+            ) {
+                let was = follow.isFollowing
+                updateFollow { $0.followTapped(at: ContinuousClock.now) }
+                if follow.isFollowing, !was { moveCameraToCar(duration: 0.8) }
+            }
+            HUDRailButton(symbol: "gearshape", label: "Settings", active: false, action: onOpenSettings)
+        }
+        .padding(.trailing, MapLayout.edgeInset)
+        .padding(.bottom, MapLayout.bottomInset())
+    }
+
+    private var bottomItems: [MapBottomItem] {
+        MapBottomZone.items(
+            offer: offerCard != nil, toast: toast != nil, status: statusLine != nil,
+            roadsWarning: roadsWarning != nil, resumeHint: follow.resumeDeadline != nil,
+            debugSetting: showNavStats)
+    }
+
+    private var bottomZone: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(bottomItems, id: \.self) { item in
+                bottomView(item)
+            }
+        }
+        .padding(.leading, MapLayout.edgeInset)
+        .padding(.trailing, MapLayout.railReserved)
+        .padding(.bottom, MapLayout.bottomInset())
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func bottomView(_ item: MapBottomItem) -> some View {
+        switch item {
+        case .offerCard: offerCard
+        case .toast: if let toast { toastView(toast) }
+        case .statusLine: statusLine
+        case .roadsWarning: if let roadsWarning { roadsWarningView(roadsWarning) }
+        case .resumeHint: resumeHint
+        case .debugStrip: MapDebugStrip(lines: DebugStrip.lines(stats: navigation?.stats))
+        }
     }
 
     /// DEBUG `-uiNoMapTiles 1`: a plain background instead of the map, so a
@@ -638,16 +734,15 @@ struct GPSMapView: View {
         Button(action: onRoadsWarningTap) {
             Label(text, systemImage: "road.lanes")
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.primary)
-                .lineLimit(1)
+                .lineLimit(2)
                 .minimumScaleFactor(0.8)
                 .padding(.horizontal, 16)
                 .frame(minHeight: 44)
-                .background(.regularMaterial, in: Capsule())
-                .overlay(Capsule().strokeBorder(Color.orange, lineWidth: 2))
+                .hudSurface(Capsule())
+                .overlay(Capsule().strokeBorder(HUDColors.warn, lineWidth: 2))
         }
         .buttonStyle(.plain)
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityLabel(text)
     }
 
@@ -674,23 +769,24 @@ struct GPSMapView: View {
             .padding(.leading, 16)
             .padding(.trailing, 8)
             .frame(minHeight: 64)
-            .background(.regularMaterial, in: Capsule())
-            .frame(maxWidth: .infinity)
+            .hudSurface(Capsule())
+            .frame(maxWidth: .infinity, alignment: .leading)
         case .alreadyRecorded:
             Label("Already recorded, not undone", systemImage: "exclamationmark.triangle.fill")
                 .font(.headline)
                 .padding(.horizontal, 16)
                 .frame(minHeight: 56)
-                .background(.regularMaterial, in: Capsule())
-                .frame(maxWidth: .infinity)
+                .hudSurface(Capsule())
+                .frame(maxWidth: .infinity, alignment: .leading)
         case .zoomIn:
             Label(PinPrecision.hint, systemImage: "plus.magnifyingglass")
                 .font(.headline)
-                .multilineTextAlignment(.center)
+                .multilineTextAlignment(.leading)
                 .padding(.horizontal, 16)
+                .padding(.vertical, 8)
                 .frame(minHeight: 56)
-                .background(.regularMaterial, in: Capsule())
-                .frame(maxWidth: .infinity)
+                .hudSurface(RoundedRectangle(cornerRadius: 28))
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -705,7 +801,8 @@ struct GPSMapView: View {
             let framed = MapFraming.cameraDistance(spanMeters: span)
             headingState.zoom.frame(distance: framed)
             position = .camera(MapCamera(
-                centerCoordinate: center, distance: framed, heading: targetHeading, pitch: 0
+                centerCoordinate: Self.cameraCenter(car: center, distance: framed, heading: targetHeading, headingUp: true),
+                distance: framed, heading: targetHeading, pitch: 0
             ))
             return
         }
@@ -713,6 +810,17 @@ struct GPSMapView: View {
         position = .region(MKCoordinateRegion(
             center: center, latitudinalMeters: span, longitudinalMeters: span
         ))
+    }
+
+    /// The camera centre that puts the car in the lower third in heading-up
+    /// (`CarPlacement`); the car itself in north-up.
+    private static func cameraCenter(
+        car: CLLocationCoordinate2D, distance: Double, heading: Double, headingUp: Bool
+    ) -> CLLocationCoordinate2D {
+        let ahead = CarPlacement.aheadMetres(cameraDistance: distance, headingUp: headingUp)
+        let c = CarPlacement.cameraCenter(
+            latitude: car.latitude, longitude: car.longitude, headingDegrees: heading, aheadMetres: ahead)
+        return CLLocationCoordinate2D(latitude: c.latitude, longitude: c.longitude)
     }
 
     /// Camera heading for the current mode: 0 north-up, the smoothed bearing heading-up.
@@ -731,7 +839,10 @@ struct GPSMapView: View {
         let heading = targetHeading
         headingState.gate.noteWrite(heading, at: ContinuousClock.now)
         let d = followDistance(estimate?.latest)
-        position = .camera(MapCamera(centerCoordinate: center, distance: d, heading: heading, pitch: 0))
+        position = .camera(MapCamera(
+            centerCoordinate: Self.cameraCenter(car: center, distance: d, heading: heading, headingUp: headingUp),
+            distance: d, heading: heading, pitch: 0
+        ))
     }
 
     /// Heading-up is (re)activating: start from the last good bearing, before
@@ -807,7 +918,10 @@ struct GPSMapView: View {
             ), let center else { continue }
             withAnimation(.linear(duration: 0.25)) {
                 position = .camera(MapCamera(
-                    centerCoordinate: center.coordinate, distance: camera.distance, heading: camera.heading, pitch: 0
+                    centerCoordinate: Self.cameraCenter(
+                        car: center.coordinate, distance: camera.distance, heading: camera.heading,
+                        headingUp: inputs.headingUp),
+                    distance: camera.distance, heading: camera.heading, pitch: 0
                 ))
             }
         }
@@ -833,125 +947,15 @@ struct GPSMapView: View {
         }
     }
 
-    /// Speed and its source only. The long-press on the number is the hidden
-    /// switch for the navigation stats (and thermal) lines.
-    private func overlay(stale: Bool) -> some View {
-        VStack(spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text(speed.valueText)
-                    .font(.system(size: 64, weight: .bold, design: .rounded).monospacedDigit())
-                    .minimumScaleFactor(0.6)
-                    .lineLimit(1)
-                    // Hidden debug switch: long-press toggles the navigation stats lines.
-                    .onLongPressGesture(minimumDuration: 1) { showNavStats.toggle() }
-                Text("km/h")
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                if let chip = speed.sourceText {
-                    Text(chip)
-                        .font(.headline.weight(.bold))
-                        .foregroundStyle(speed.quality.chipText)
-                        .padding(.horizontal, 12)
-                        .frame(minHeight: 32)
-                        .background(speed.quality.chipFill, in: Capsule())
-                }
-                if let estimate {
-                    NavCalibratingIcon(feed: estimate)
-                }
-            }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(speed.summary)
-            if showNavStats {
-                if let estimate {
-                    NavStatsView(feed: estimate)
-                }
-                Text("Thermal: \(ThermalText.label(thermal))")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(ThermalText.tone(thermal).color)
-            }
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
-        .padding(.horizontal, 12)
-        .padding(.top, 8)
-    }
-
-    private var controls: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 12) {
-                if let recordingControl { recordingControl }
-                Spacer(minLength: 0)
-                if follow.resumeDeadline != nil {
-                    resumeHint
-                }
-            }
-            HStack(spacing: 12) {
-                Spacer(minLength: 0)
-                headingButton
-                followButton
-            }
-        }
-        .padding(16)
-    }
-
     /// Ticks at 1 Hz inside its own TimelineView; the Map is not re-rendered.
     private var resumeHint: some View {
         TimelineView(.periodic(from: .now, by: 1)) { _ in
             Text("Re-centre in \(follow.countdownSeconds(now: ContinuousClock.now) ?? 1) s")
                 .font(.subheadline.weight(.semibold).monospacedDigit())
                 .padding(.horizontal, 14)
-                .frame(minHeight: 36)
-                .background(.regularMaterial, in: Capsule())
+                .frame(minHeight: 44)
+                .hudSurface(Capsule())
         }
-    }
-
-    private var headingButton: some View {
-        Button {
-            headingUp.toggle()
-        } label: {
-            Label(
-                headingUp ? "Heading up" : "North up",
-                systemImage: headingUp ? "location.north.line.fill" : "n.circle.fill"
-            )
-            .mapControlStyle(active: headingUp)
-        }
-    }
-
-    private var followButton: some View {
-        Button {
-            let was = follow.isFollowing
-            updateFollow { $0.followTapped(at: ContinuousClock.now) }
-            if follow.isFollowing, !was { moveCameraToCar(duration: 0.8) }
-        } label: {
-            Label(
-                follow.isFollowing ? "Following" : "Follow",
-                systemImage: follow.isFollowing ? "location.fill" : "location"
-            )
-            .mapControlStyle(active: follow.isFollowing)
-        }
-    }
-}
-
-private extension View {
-    /// Map control capsule. The default tint (dark blue on a dark material)
-    /// is unreadable in dark mode, so the colours are explicit: white on solid
-    /// blue when the mode is on, primary text on material when it is off.
-    func mapControlStyle(active: Bool) -> some View {
-        self
-            .font(.headline)
-            .foregroundStyle(active ? Color.white : Color.primary)
-            .padding(.horizontal, 18)
-            .frame(minHeight: 56)
-            .background {
-                if active {
-                    Capsule().fill(Color.blue)
-                } else {
-                    Capsule().fill(.regularMaterial)
-                }
-            }
-            .overlay(Capsule().strokeBorder(Color.primary.opacity(active ? 0 : 0.25), lineWidth: 1))
-            .shadow(color: .black.opacity(0.3), radius: 4, y: 2)
     }
 }
 
@@ -1038,27 +1042,10 @@ private struct NavCalibratingIcon: View {
     var body: some View {
         if NavLayers.calibrating(feed.display) {
             Image(systemName: "scope")
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(.blue)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(HUDColors.accentOnCard)
                 .accessibilityLabel("Calibrating heading")
         }
-    }
-}
-
-/// The optional debug stats line.
-private struct NavStatsView: View {
-    var feed: NavigationFeed
-
-    var body: some View {
-        VStack(spacing: 2) {
-            Text(feed.stats?.line ?? "nav: idle")
-            if let share = RoadDebugOverlay.shareLine(enabled: true, share: feed.stats?.onRoadShare) {
-                Text(share)
-            }
-        }
-        .font(.caption2.monospacedDigit())
-        .foregroundStyle(.secondary)
-        .multilineTextAlignment(.center)
     }
 }
 
@@ -1376,5 +1363,39 @@ extension MapPreviewData {
         lastFixInstant: .now, isReceiving: true, thermal: .nominal, isLive: true,
         follow: .constant(FollowController(following: true)),
         roadsWarning: RoadsWarning.refused
+    )
+}
+
+// MARK: - HUD previews (layout E)
+
+#Preview("HUD: GPS lost, OBD source") {
+    GPSMapView(
+        track: MapPreviewData.track, latest: nil, lastFixInstant: nil, isReceiving: false, thermal: .nominal,
+        speed: MapSpeedReadout(source: .obd, kmh: 54, quality: .unknown), isLive: true,
+        follow: .constant(FollowController(following: true)), headingUp: .constant(true)
+    )
+}
+
+#Preview("HUD: OBD lost, GPS source, banner, thermal") {
+    GPSMapView(
+        track: MapPreviewData.track, latest: MapPreviewData.fix(59, accuracy: 8, gapAfter: 60),
+        lastFixInstant: .now, isReceiving: true, thermal: .serious,
+        speed: MapSpeedReadout(source: .gps, kmh: 54, quality: .good), isLive: true,
+        follow: .constant(FollowController(following: true)), headingUp: .constant(true),
+        statusLine: AnyView(NavigateStatusLabel(status: .waitingForOBD(secondsLeft: 272)))
+    )
+}
+
+#Preview("HUD: debug strip, offer, toast, roads credit, recording") {
+    GPSMapView(
+        track: MapPreviewData.track, latest: MapPreviewData.fix(59, accuracy: 8, gapAfter: 60),
+        lastFixInstant: .now, isReceiving: true, thermal: .nominal,
+        speed: MapSpeedReadout(source: .obd, kmh: 54, quality: .good), isLive: true,
+        follow: .constant(FollowController(following: true)), headingUp: .constant(true),
+        initialToast: MapToast(kind: .zoomIn),
+        navigation: NavigationFeed(display: MapPreviewData.nav(converged: true), stats: MapPreviewData.navStats),
+        showNavStats: .constant(true), roadsAttribution: true,
+        offerCard: AnyView(PackOfferCardView(offer: .init(name: "zz-01", title: "Region A", sizeBytes: 35_000_000))),
+        recordingControl: AnyView(MapRecordingIndicatorLabel(elapsed: "12:34"))
     )
 }

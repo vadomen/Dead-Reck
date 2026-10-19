@@ -343,7 +343,8 @@ struct MapNavigationTests {
         #expect(zoom.chosen == 400)
         #expect(zoom.autoFollowDistance(headingUp: false, semiMajorM: 400) == 400, "north-up never widens")
         let d = zoom.autoFollowDistance(headingUp: true, semiMajorM: 400)
-        #expect(abs(d - MapFraming.cameraDistance(spanMeters: 880)) < 1e-9)
+        // 2.2 x 400 = 880 m, x1.5 so the rear half fits below the car in the lower third (R68.1-1).
+        #expect(abs(d - MapFraming.cameraDistance(spanMeters: 1320)) < 1e-9)
         zoom.cameraReported(distance: 300)            // pinches again, not matching the widened write
         #expect(zoom.chosen == 300)
     }

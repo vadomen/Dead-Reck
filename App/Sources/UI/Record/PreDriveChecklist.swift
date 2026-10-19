@@ -75,7 +75,7 @@ struct StartBlockerNotice: Equatable, Sendable {
                 + "\(DisplayFormat.bytes(required)) needed. Delete old sessions first."
             offersRecordWithoutOBD = false
         case .obdNotReady?:
-            message = "The OBD adapter is not polling. Connect it in Console, "
+            message = "The OBD adapter is not polling. Connect it in Settings → OBD adapter, "
                 + "or choose to record without OBD."
             offersRecordWithoutOBD = true
         }

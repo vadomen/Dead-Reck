@@ -19,6 +19,7 @@ final class FakeLink: OBDLinkServicing {
     var state: OBDLinkState = .polling(protocolNumber: "A6", voltage: 12.4)
     var discovered: [DiscoveredAdapter] = []
     var rememberedAdapterID: UUID?
+    var rememberedAdapterName: String?
     var adapter: AdapterRecord? = AdapterRecord(
         name: "IOS-Vlink",
         identifier: "0BD0B0D0-1111-4222-8333-944455556666",

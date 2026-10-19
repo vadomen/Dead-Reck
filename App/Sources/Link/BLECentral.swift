@@ -8,6 +8,17 @@ enum BLEAvailability: Hashable, Sendable {
     /// Off, unauthorised, unsupported (the simulator), resetting or unknown;
     /// the string says which.
     case unavailable(String)
+
+    /// The `unavailable` strings. They are written into `link` rows as the
+    /// transition's reason, so they are on-disk text: never reword them.
+    /// Settings → OBD adapter maps them to plain words (`AdapterSettingsText`).
+    enum Reason {
+        static let poweredOff = "Bluetooth is off"
+        static let unauthorized = "Bluetooth permission denied"
+        static let unsupported = "Bluetooth LE is not supported on this device"
+        static let resetting = "Bluetooth is resetting"
+        static let unknown = "Bluetooth state unknown"
+    }
 }
 
 /// A connected adapter with its UART pair selected and notifications on.
@@ -442,11 +453,11 @@ extension BLECentral: CBCentralManagerDelegate {
         lock.withLock { if manager == nil { manager = central } }
         let availability: BLEAvailability = switch central.state {
         case .poweredOn: .poweredOn
-        case .poweredOff: .unavailable("Bluetooth is off")
-        case .unauthorized: .unavailable("Bluetooth permission denied")
-        case .unsupported: .unavailable("Bluetooth LE is not supported on this device")
-        case .resetting: .unavailable("Bluetooth is resetting")
-        case .unknown: .unavailable("Bluetooth state unknown")
+        case .poweredOff: .unavailable(BLEAvailability.Reason.poweredOff)
+        case .unauthorized: .unavailable(BLEAvailability.Reason.unauthorized)
+        case .unsupported: .unavailable(BLEAvailability.Reason.unsupported)
+        case .resetting: .unavailable(BLEAvailability.Reason.resetting)
+        case .unknown: .unavailable(BLEAvailability.Reason.unknown)
         @unknown default: .unavailable("Bluetooth state \(central.state.rawValue)")
         }
         if case .unavailable(let reason) = availability {

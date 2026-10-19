@@ -53,6 +53,10 @@ protocol OBDLinkServicing: AnyObject, Observable {
     var discovered: [DiscoveredAdapter] { get }
     /// Adapter remembered from a previous session, reconnected automatically.
     var rememberedAdapterID: UUID? { get }
+    /// The remembered adapter's advertised name (UX-34: Settings shows it
+    /// while nothing is connected). Kept with `rememberedAdapterID`, nil
+    /// when the name was never seen; cleared by `forget()`.
+    var rememberedAdapterName: String? { get }
     /// What the BLE layer and the last successful init know about the adapter
     /// — name, identifier, GATT selection and table, ELM version, protocol,
     /// voltage. Nil until initialised. Goes into the log header.

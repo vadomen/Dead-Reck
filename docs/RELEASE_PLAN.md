@@ -44,7 +44,7 @@ Starting decisions (from the user, 2026-10-16):
 3. **First launch (onboarding)**: what the app is and what it needs (an ELM327 BLE adapter), permissions one at a time and in context, pack selection and download, a one-time phone-mounting checklist (UX-1 (b)).
 4. **"No OBD" scenario** (UX-1 (d)): a plain GPS position with a "Connect OBD" hint. Without it the app is empty for the reviewer (see 2.4, 2.1 App Completeness).
 5. **Demo mode for App Review**: a hidden switch (for example Settings → About → 5 taps) that starts `SimulatedOBDLink` and `SimulatedSensors` on the device in a Release build. This is the most reliable way to show the functionality to someone without a car and an adapter. Check that turning it on does not change Record or the log format. Note: "About → 5 taps" conflicts with the Diagnostics gate (7 taps on Version in About, prompt 25), so demo mode needs a different gesture, to be chosen when demo mode is built.
-6. **Remove the "research" surfaces for an ordinary user**: Console and Record only in Settings → Developer; the SIMULATED badge visible only in demo mode; `DebugAutoRecord` is already under `#if DEBUG`, check the remaining launch arguments (`uiTab`).
+6. **Remove the "research" surfaces for an ordinary user**: Console and Record only in Settings → Developer; the SIMULATED badge visible only in demo mode; `DebugAutoRecord` is already under `#if DEBUG`, check the remaining launch arguments (`uiScreen`, `uiFakeHUD`; `uiTab` was replaced by `uiScreen` in prompt 30).
 7. **Safety disclaimer**: "do not interact with the phone while driving; the position estimate is approximate". Shown at first launch and in About. The uncertainty ellipse is already honest, which is a plus.
 
 ## Phase 2. Compliance with Apple requirements
@@ -62,7 +62,7 @@ The file is not in the repo. The code uses APIs from the "required reason" categ
 
 | API in code | Where | Category / reason (check in Apple's documentation) |
 |---|---|---|
-| `UserDefaults` | App (checklist, OBDLinkService, uiTab) | `NSPrivacyAccessedAPICategoryUserDefaults`, `CA92.1` |
+| `UserDefaults` | App (checklist, OBDLinkService, uiScreen) | `NSPrivacyAccessedAPICategoryUserDefaults`, `CA92.1` |
 | `ProcessInfo.systemUptime` | Core `SessionClock` | `NSPrivacyAccessedAPICategorySystemBootTime`, `35F9.1` |
 | file `.modificationDate` | Core `RoadPackCatalog` | `NSPrivacyAccessedAPICategoryFileTimestamp`, `C617.1` / `3B52.1` |
 | `volumeAvailableCapacity*` | Core `DiskSpace` | `NSPrivacyAccessedAPICategoryDiskSpace`, `E174.1` |

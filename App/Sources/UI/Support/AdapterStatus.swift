@@ -16,7 +16,7 @@ struct AdapterStatus: Hashable, Sendable {
             isPolling = false
         case .idle:
             title = "Adapter not connected"
-            detail = "Pick one in Console"
+            detail = "Pick one in Settings → OBD adapter"
             tone = .bad
             isPolling = false
         case .scanning:

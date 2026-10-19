@@ -1,7 +1,7 @@
 import DriveLoggerCore
 import SwiftUI
 
-/// Composes the tabs from the app's services. Each tab owns a thin view
+/// Composes the map and Settings from the app's services. Each screen owns a thin view
 /// model; the screens themselves take plain values (see `UI/`).
 struct RootView: View {
     @State private var recording: RecordingViewModel
@@ -74,13 +74,14 @@ struct RootView: View {
         #endif
         _firstLaunch = State(initialValue: FirstLaunchModel(forced: forceFirstLaunch))
         #if DEBUG
-        // `-uiTab N` opens a tab at launch (simulator screenshots), N in tab order:
-        // 0 = Map (default), 1 = Sessions, 2 = Settings.
-        initial.tab = AppTab(launchValue: UserDefaults.standard.integer(forKey: "uiTab"))
-        // `-uiMaps 1` opens Settings → Maps.
-        if UserDefaults.standard.bool(forKey: "uiMaps") || UserDefaults.standard.bool(forKey: "uiFakeDownloads")
-            || UserDefaults.standard.bool(forKey: "uiFakeOffline")
-            || UserDefaults.standard.bool(forKey: "uiFakeMapsShort") { initial.tab = .settings; initial.settingsPath = [.maps] }
+        // `-uiScreen map|settings|sessions|maps|console|recording|adapter|about`
+        // opens Map, Settings or a Settings sub-screen at launch (screenshots).
+        // The older `-uiMaps` / `-uiFake*` shortcuts open Settings → Maps.
+        let defaults = UserDefaults.standard
+        initial = AppNavigation.launch(
+            screen: defaults.string(forKey: "uiScreen"),
+            mapsShortcut: defaults.bool(forKey: "uiMaps") || defaults.bool(forKey: "uiFakeDownloads")
+                || defaults.bool(forKey: "uiFakeOffline") || defaults.bool(forKey: "uiFakeMapsShort"))
         #endif
         var forceMaps = false
         #if DEBUG
@@ -107,31 +108,58 @@ struct RootView: View {
     }
 
     var body: some View {
-        MainTabView(selection: $nav.tab) {
-            MapScreen(
-                model: map, session: session, navigation: navigation, isSelected: nav.tab == .map,
-                cachedLocation: { [services] in
-                    services.sensors.sources.lazy
-                        .compactMap { $0 as? any CachedLocationProviding }.first?.cachedLocation
+        // The map is the app (UX-14): full screen, Settings is a cover over it.
+        // MapScreen stays mounted under the cover, so its model, camera mode
+        // and Following state live on.
+        MapScreen(
+            model: map, session: session, navigation: navigation, isSelected: nav.mapIsLive,
+            cachedLocation: { [services] in
+                services.sensors.sources.lazy
+                    .compactMap { $0 as? any CachedLocationProviding }.first?.cachedLocation
+            },
+            onOpenMaps: { nav.openSettings(.maps) },
+            onOpenSettings: { nav.openSettings() },
+            roadsWarning: roadsWarning,
+            offers: services.packOffers,
+            link: services.link
+        )
+        .fullScreenCover(isPresented: $nav.isSettingsPresented) {
+            SettingsScreen(
+                path: $nav.settingsPath, roads: roads, maps: maps, offers: services.packOffers, gate: gate,
+                onShowChecklist: {
+                    // One cover at a time: close Settings, then show the checklist.
+                    nav.closeSettings()
+                    Task {
+                        try? await Task.sleep(for: .milliseconds(500))
+                        firstLaunch.showAgain()
+                    }
                 },
-                onOpenMaps: { nav.tab = .settings; nav.settingsPath = [.maps] },
-                roadsWarning: roadsWarning,
-                offers: services.packOffers
-            )
-        } sessions: {
-            SessionsScreen(model: sessions)
-        } settings: {
-            SettingsScreen(path: $nav.settingsPath, roads: roads, maps: maps, offers: services.packOffers, gate: gate, onShowChecklist: { firstLaunch.showAgain() }) {
+                onDone: { nav.closeSettings() }
+            ) {
                 RecordingScreen(model: recording)
             } console: {
                 ConsoleScreen(model: console)
+            } sessions: {
+                SessionsScreen(model: sessions)
+            } adapter: {
+                // UX-34: the Console's model, so the same guards apply.
+                #if DEBUG
+                // `-uiFakeAdapter connected|notfound|searching|bluetoothOff` (screenshots).
+                if let fake = AdapterFake.parse(UserDefaults.standard.string(forKey: "uiFakeAdapter")) {
+                    AdapterSettingsContent.fake(fake)
+                } else {
+                    AdapterSettingsScreen(model: console)
+                }
+                #else
+                AdapterSettingsScreen(model: console)
+                #endif
             }
         }
-        // Ingest at the root so the track keeps filling on other tabs. The
+        // Ingest at the root so the track keeps filling while Settings is open. The
         // feed is its own view so only it observes the 16 Hz `live` status.
         .background(MapFeed(session: session, model: map))
         .task { await roadsWarning.run() }
-        // UX-8 (2): the at-a-stop offer loop, on any tab.
+        // UX-8 (2): the at-a-stop offer loop, with Settings open too.
         .task {
             let map = map
             await services.packOffers.run(live: services.packOfferInputs(speedKmh: { map.speed.kmh.map(Double.init) }))

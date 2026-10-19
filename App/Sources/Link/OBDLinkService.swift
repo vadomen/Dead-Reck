@@ -84,6 +84,7 @@ struct ReconnectBackoff: Hashable, Sendable {
 class OBDLinkService: OBDLinkServicing {
     static let restoreIdentifier = "DriveLogger.OBDLink"
     static let rememberedAdapterKey = "OBDLink.rememberedAdapterID"
+    static let rememberedAdapterNameKey = "OBDLink.rememberedAdapterName"
     static let consoleLimit = 500
     /// Default bound of `lastInitEvents`.
     static let defaultInitEventLimit = 1_000
@@ -93,6 +94,7 @@ class OBDLinkService: OBDLinkServicing {
     private(set) var state: OBDLinkState = .idle
     private(set) var discovered: [DiscoveredAdapter] = []
     private(set) var rememberedAdapterID: UUID?
+    private(set) var rememberedAdapterName: String?
     private(set) var adapter: AdapterRecord?
     private(set) var plan: PollingPlan?
     private(set) var pollHz: Double = 0
@@ -192,6 +194,10 @@ class OBDLinkService: OBDLinkServicing {
         self.discoveryTimeout = discoveryTimeout
         initCapture = InitCapture(limit: initEventLimit)
         rememberedAdapterID = defaults.string(forKey: Self.rememberedAdapterKey).flatMap(UUID.init(uuidString:))
+        // A name is only meaningful next to its id.
+        if rememberedAdapterID != nil {
+            rememberedAdapterName = defaults.string(forKey: Self.rememberedAdapterNameKey)
+        }
         // Reconnected automatically once Bluetooth is on.
         target = rememberedAdapterID
         let events = self.central.events
@@ -257,6 +263,7 @@ class OBDLinkService: OBDLinkServicing {
         pollPlanEpoch += 1
         rememberedAdapterID = nil
         defaults.removeObject(forKey: Self.rememberedAdapterKey)
+        setRememberedName(nil)
     }
 
     func sendManual(_ command: String) async throws(ELMSessionError) -> ELMExchange {
@@ -341,6 +348,7 @@ class OBDLinkService: OBDLinkServicing {
             bleRecord = AdapterRecord(
                 name: link.name, identifier: link.id.uuidString, gatt: link.selection, gattTable: link.table
             )
+            if link.id == rememberedAdapterID, !link.name.isEmpty { setRememberedName(link.name) }
             startSession(on: link.transport, adapterID: link.id)
         case .unusable(let id, _, let reason, let at):
             guard id == target else { return }
@@ -689,8 +697,25 @@ class OBDLinkService: OBDLinkServicing {
     // MARK: Helpers
 
     private func remember(_ id: UUID) {
+        if let found = discovered.first(where: { $0.id == id }) {
+            setRememberedName(found.name)
+        } else if id != rememberedAdapterID {
+            // A different adapter without a scan row: its name comes with
+            // the connection (`.ready`); the old one's must not stay.
+            setRememberedName(nil)
+        }
         rememberedAdapterID = id
         defaults.set(id.uuidString, forKey: Self.rememberedAdapterKey)
+    }
+
+    private func setRememberedName(_ name: String?) {
+        guard name != rememberedAdapterName else { return }
+        rememberedAdapterName = name
+        if let name {
+            defaults.set(name, forKey: Self.rememberedAdapterNameKey)
+        } else {
+            defaults.removeObject(forKey: Self.rememberedAdapterNameKey)
+        }
     }
 
     private func name(of id: UUID) -> String {

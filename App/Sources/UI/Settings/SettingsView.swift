@@ -1,8 +1,29 @@
 import SwiftUI
 
-/// The Settings tab: Test drive recording, Console and diagnostics. The pushed screens
-/// are injected so previews can use fake ones.
-struct SettingsScreen<Recording: View, Console: View>: View {
+/// A row of Settings' main section.
+enum SettingsRow: Hashable {
+    case route(SettingsRoute)
+    /// Re-opens the first-launch checklist (not a pushed screen).
+    case mountAndOrientation
+}
+
+/// Which main-section rows show, in order (UX-14): Test drive recording,
+/// Sessions, Maps, OBD adapter (UX-34), Mount and orientation,
+/// Console (developer screen: Release shows it only behind the Diagnostics gate).
+enum SettingsRows {
+    static func main(showsConsole: Bool, adapterAvailable: Bool = SettingsRoute.adapterRowAvailable) -> [SettingsRow] {
+        var rows: [SettingsRow] = [.route(.recording), .route(.sessions), .route(.maps)]
+        if adapterAvailable { rows.append(.route(.adapter)) }
+        rows.append(.mountAndOrientation)
+        if showsConsole { rows.append(.route(.console)) }
+        return rows
+    }
+}
+
+/// Settings, presented full screen over the map (UX-14): Test drive recording,
+/// Sessions, Maps, Console and diagnostics. The pushed screens are injected so
+/// previews can use fake ones.
+struct SettingsScreen<Recording: View, Console: View, Sessions: View, Adapter: View>: View {
     @Binding var path: [SettingsRoute]
     var info: AppInfo = .read()
     var roads: RoadsDiagnosticsModel
@@ -10,15 +31,20 @@ struct SettingsScreen<Recording: View, Console: View>: View {
     var offers: PackOfferMonitor?
     var gate: DeveloperGate
     var onShowChecklist: () -> Void = {}
+    var onDone: () -> Void = {}
     @ViewBuilder var recording: () -> Recording
     @ViewBuilder var console: () -> Console
+    @ViewBuilder var sessions: () -> Sessions
+    /// Settings → OBD adapter (UX-34).
+    @ViewBuilder var adapter: () -> Adapter
     @State private var thermal = ProcessInfo.processInfo.thermalState
 
     var body: some View {
         SettingsContent(path: $path, info: info, thermal: thermal, roads: roads.value,
                         showsDeveloper: gate.showsDiagnostics, versionNote: gate.toast,
-                        onVersionTap: { gate.tapVersion() }, onShowChecklist: onShowChecklist,
-                        recording: recording, console: console, maps: { MapsScreen(model: maps, offers: offers) })
+                        onVersionTap: { gate.tapVersion() }, onShowChecklist: onShowChecklist, onDone: onDone,
+                        recording: recording, console: console, maps: { MapsScreen(model: maps, offers: offers) },
+                        sessions: sessions, adapter: adapter)
             .task(id: gate.toast) {
                 guard gate.toast != nil else { return }
                 try? await Task.sleep(for: .seconds(3))
@@ -33,7 +59,7 @@ struct SettingsScreen<Recording: View, Console: View>: View {
 }
 
 /// Plain-values presentation of Settings.
-struct SettingsContent<Recording: View, Console: View, Maps: View>: View {
+struct SettingsContent<Recording: View, Console: View, Maps: View, Sessions: View, Adapter: View>: View {
     @Binding var path: [SettingsRoute]
     let info: AppInfo
     let thermal: ProcessInfo.ThermalState
@@ -45,9 +71,12 @@ struct SettingsContent<Recording: View, Console: View, Maps: View>: View {
     var versionNote: String?
     var onVersionTap: () -> Void = {}
     var onShowChecklist: () -> Void = {}
+    var onDone: () -> Void = {}
     @ViewBuilder var recording: () -> Recording
     @ViewBuilder var console: () -> Console
     @ViewBuilder var maps: () -> Maps
+    @ViewBuilder var sessions: () -> Sessions
+    @ViewBuilder var adapter: () -> Adapter
     /// Shows the matched road, the on-road share and the engine numbers on
     /// the map; the map's long-press on the speed number sets it too.
     @AppStorage("debug.navStats") private var showNavStats = false
@@ -82,26 +111,22 @@ struct SettingsContent<Recording: View, Console: View, Maps: View>: View {
         NavigationStack(path: $path) {
             List {
                 Section {
-                    NavigationLink(value: SettingsRoute.recording) {
-                        Label("Test drive recording", systemImage: "record.circle")
-                            .font(.title3)
-                            .frame(minHeight: 44)
-                    }
-                    Button(action: onShowChecklist) {
-                        Label("Mount and orientation", systemImage: "iphone.gen3")
-                            .font(.title3)
-                            .foregroundStyle(Color.primary)
-                            .frame(minHeight: 44)
-                    }
-                    NavigationLink(value: SettingsRoute.maps) {
-                        Label("Maps", systemImage: "map")
-                            .font(.title3)
-                            .frame(minHeight: 44)
-                    }
-                    NavigationLink(value: SettingsRoute.console) {
-                        Label("Console", systemImage: "terminal")
-                            .font(.title3)
-                            .frame(minHeight: 44)
+                    ForEach(SettingsRows.main(showsConsole: showsDeveloper), id: \.self) { row in
+                        switch row {
+                        case .route(let route):
+                            NavigationLink(value: route) {
+                                Label(route.title, systemImage: route.systemImage)
+                                    .font(.title3)
+                                    .frame(minHeight: 44)
+                            }
+                        case .mountAndOrientation:
+                            Button(action: onShowChecklist) {
+                                Label("Mount and orientation", systemImage: "iphone.gen3")
+                                    .font(.title3)
+                                    .foregroundStyle(Color.primary)
+                                    .frame(minHeight: 44)
+                            }
+                        }
                     }
                 }
                 Section("Diagnostics") {
@@ -116,18 +141,22 @@ struct SettingsContent<Recording: View, Console: View, Maps: View>: View {
                     }
                 }
                 Section {
-                    LabeledContent("Version", value: info.displayVersion)
-                        .frame(minHeight: 44)
-                        .contentShape(Rectangle())
-                        .onTapGesture(perform: onVersionTap)
-                } header: {
-                    Text("About")
-                } footer: {
-                    if let versionNote { Text(versionNote) }
+                    NavigationLink(value: SettingsRoute.about) {
+                        Label(SettingsRoute.about.title, systemImage: SettingsRoute.about.systemImage)
+                            .font(.title3)
+                            .frame(minHeight: 44)
+                    }
                 }
                 if showsDeveloper { roadsSection }
             }
             .navigationTitle("Settings")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done", action: onDone)
+                        .font(.headline)
+                        .frame(minWidth: 44, minHeight: 44)
+                }
+            }
             .navigationDestination(for: SettingsRoute.self) { route in
                 switch route {
                 case .recording:
@@ -141,8 +170,40 @@ struct SettingsContent<Recording: View, Console: View, Maps: View>: View {
                     maps()
                         .navigationTitle("Maps")
                         .navigationBarTitleDisplayMode(.inline)
+                case .sessions:
+                    sessions()
+                case .adapter:
+                    adapter()
+                        .navigationTitle("OBD adapter")
+                        .navigationBarTitleDisplayMode(.inline)
+                case .about:
+                    AboutScreen(info: info, versionNote: versionNote, onVersionTap: onVersionTap)
                 }
             }
+        }
+    }
+}
+
+extension SettingsRoute {
+    var title: String {
+        switch self {
+        case .recording: "Test drive recording"
+        case .sessions: "Sessions"
+        case .maps: "Maps"
+        case .adapter: "OBD adapter"
+        case .console: "Console"
+        case .about: "About"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .recording: "record.circle"
+        case .sessions: "list.bullet"
+        case .maps: "map"
+        case .adapter: "antenna.radiowaves.left.and.right"
+        case .console: "terminal"
+        case .about: "info.circle"
         }
     }
 }
@@ -165,19 +226,19 @@ private var previewInbox: RoadPackLibrary.PackStatus {
             roads: .init(active: true, packNames: ["region-a"], packHashPrefixes: ["a1b2c3d4"],
                          roadSetHashPrefix: "0f0f0f0f", activeAtSessionS: 12, onRoadShare: 0.93),
             footprintBytes: 210_000_000)
-    ) { Text("Recording") } console: { Text("Console") } maps: { Text("Maps") }
+    ) { Text("Recording") } console: { Text("Console") } maps: { Text("Maps") } sessions: { Text("Sessions") } adapter: { Text("OBD adapter") }
 }
 
 #Preview("Settings, serious thermal") {
     SettingsContent(
         path: .constant([]), info: AppInfo(name: "DriveLogger", version: "0.1.0", build: "1"),
         thermal: .serious
-    ) { Text("Recording") } console: { Text("Console") } maps: { Text("Maps") }
+    ) { Text("Recording") } console: { Text("Console") } maps: { Text("Maps") } sessions: { Text("Sessions") } adapter: { Text("OBD adapter") }
 }
 
 #Preview("Settings, Release (diagnostics hidden)") {
     SettingsContent(
         path: .constant([]), info: AppInfo(name: "DriveLogger", version: "0.1.0", build: "1"),
         thermal: .nominal, showsDeveloper: false, versionNote: "Developer diagnostics hidden"
-    ) { Text("Recording") } console: { Text("Console") } maps: { Text("Maps") }
+    ) { Text("Recording") } console: { Text("Console") } maps: { Text("Maps") } sessions: { Text("Sessions") } adapter: { Text("OBD adapter") }
 }

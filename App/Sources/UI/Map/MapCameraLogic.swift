@@ -223,3 +223,43 @@ struct MapLoopKey: Equatable, Sendable {
     var isLive: Bool
     var showsEstimate: Bool
 }
+
+/// Where the car sits on the screen in heading-up (UX-32): in the lower third,
+/// so more of the road ahead is visible. MapKit centres the camera, so the
+/// camera centre is moved ahead of the car along the camera heading; north-up
+/// keeps the car in the middle. Pure.
+enum CarPlacement {
+    /// The car's distance from the top of the map, as a fraction of its height.
+    static let carFromTop = 2.0 / 3.0
+    /// Visible north-south metres per metre of camera distance: the inverse of
+    /// `MapFraming.distancePerSpan` (1/1.87), corrected by 0.922 after measuring
+    /// the car's real screen position on the iPhone SE (3rd gen) simulator, where
+    /// the first version (no correction) landed at 68.1 % of the height, not 66.7 %.
+    static let spanPerDistance = 0.922 / MapFraming.distancePerSpan
+
+    /// How far ahead of the car the camera centre goes, metres.
+    static func aheadMetres(cameraDistance: Double, headingUp: Bool) -> Double {
+        guard headingUp, cameraDistance.isFinite, cameraDistance > 0 else { return 0 }
+        return cameraDistance * spanPerDistance * (carFromTop - 0.5)
+    }
+
+    /// Where the car lands on the screen, as a fraction of the map height from
+    /// the top, for a camera centre `aheadMetres` ahead of it.
+    static func carScreenFraction(aheadMetres: Double, cameraDistance: Double) -> Double {
+        0.5 + aheadMetres / (cameraDistance * spanPerDistance)
+    }
+
+    /// The camera centre: `car` moved `aheadMetres` along `headingDegrees`
+    /// (clockwise from north), by the small-distance flat-earth rule.
+    static func cameraCenter(
+        latitude: Double, longitude: Double, headingDegrees: Double, aheadMetres: Double
+    ) -> (latitude: Double, longitude: Double) {
+        guard aheadMetres != 0 else { return (latitude, longitude) }
+        let metresPerDegree = 111_320.0
+        let rad = headingDegrees * .pi / 180
+        let dLat = aheadMetres * cos(rad) / metresPerDegree
+        let cosLat = max(cos(latitude * .pi / 180), 0.01)
+        let dLon = aheadMetres * sin(rad) / (metresPerDegree * cosLat)
+        return (latitude + dLat, longitude + dLon)
+    }
+}
