@@ -100,7 +100,7 @@ struct PackOfferMonitorTests {
                          config: config, preferredLanguages: { ["en"] })
     }
 
-    @Test("Outside coverage, at a stop: one offer per region per drive; a new drive (after a gap) may offer it again")
+    @Test("Outside coverage, at a stop: offered; once answered, not again in the drive; a new drive (after a gap) may offer it again")
     func perDrive() async {
         let defaults = FirstLaunchFixture.Defaults()
         defer { defaults.remove() }
@@ -118,7 +118,7 @@ struct PackOfferMonitorTests {
         monitor.notNow()
         #expect(monitor.offer == nil)
         monitor.drive(45...60, F.inZZ02, speed: 50)
-        #expect(monitor.drive(61...70, F.inZZ02, speed: 0).allSatisfy { $0 == nil }, "once per drive")
+        #expect(monitor.drive(61...70, F.inZZ02, speed: 0).allSatisfy { $0 == nil }, "answered: not again this drive")
 
         // A tick with no run ends the drive; Navigate → Record without a gap would not.
         monitor.update(now: 71, runActive: false, estimate: F.inZZ02, speedKmh: 0, dialogOpen: false)
@@ -128,7 +128,7 @@ struct PackOfferMonitorTests {
         #expect(monitor.drive(111...115, F.inZZ02, speed: 0).last == "zz-02", "a new drive offers it again")
     }
 
-    @Test("Runs that follow each other without a gap are one drive: the rule and its 'offered' set survive")
+    @Test("Runs that follow each other without a gap are one drive: the rule and its 'answered' set survive")
     func handoff() async {
         let defaults = FirstLaunchFixture.Defaults()
         defer { defaults.remove() }
@@ -236,10 +236,11 @@ struct PackOfferMonitorTests {
         monitor.isMapVisible = false
         try? await Task.sleep(for: .milliseconds(300))
         #expect(box.reads > 0)
-        #expect(monitor.offer == nil && monitor.rule?.offered.isEmpty == true)
+        #expect(monitor.offer == nil && monitor.rule?.shows.isEmpty == true, "a hidden map consumes no show")
         monitor.isMapVisible = true
         #expect(await eventually { monitor.offer?.name == "zz-02" })
         monitor.isDialogOpen = true
         #expect(await eventually { monitor.offer == nil }, "a dialog hides it")
+        #expect(monitor.rule?.shows == ["zz-02": 1] && monitor.rule?.answered.isEmpty == true)
     }
 }

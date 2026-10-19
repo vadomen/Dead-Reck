@@ -16,8 +16,8 @@ public struct InstalledPackCoverage: Hashable, Sendable {
 
 /// The at-a-stop road-pack offer (UX-8 (2), docs/BACKLOG_UX.md; prompt 26):
 /// "You are in <region>, no road map. Download <size>?" — shown only at a
-/// stop, never in motion (the UX safety rule), at most once per region per
-/// drive. A value-type state machine: one instance per Navigate or Record
+/// stop, never in motion (the UX safety rule), until answered or shown
+/// `maxShowsPerRegion` times per region per drive. A value-type state machine: one instance per Navigate or Record
 /// run (a "drive"), fed by `update(_:)` at whatever rate the caller likes
 /// (about 1 Hz is plenty); deterministic, no clock of its own.
 ///
@@ -51,20 +51,26 @@ public struct InstalledPackCoverage: Hashable, Sendable {
 /// means < 1 km/h) continuously for `stopS`. Unknown (nil, negative or
 /// non-finite: iOS's `-1`) or any higher speed resets it.
 ///
-/// **Offer.** At a stop, with a pending region not offered this drive, not
-/// in "Never", not excluded, still a `.region` pack in the manifest, and no
-/// confirmation dialog open: `offer` is that pack. It turns nil as soon as
-/// the stop ends (speed > 0 or unknown), a dialog opens, or the region
+/// **Offer.** At a stop, with a pending region not retired this drive (see
+/// below), not in "Never", not excluded, still a `.region` pack in the
+/// manifest, and no confirmation dialog open: `offer` is that pack. It turns
+/// nil as soon as the stop ends (speed > 0 or unknown), a dialog opens (the
+/// app also passes "dialog open" while the map is hidden), or the region
 /// becomes excluded, "Never" or leaves the manifest.
 ///
-/// **Once per region per drive.** A region counts as offered the moment its
-/// card is shown, so it is never shown again by this instance, even when the
-/// card hid itself because the car moved without an answer: asking again at
-/// every stop of a traffic jam would be the nagging the rule exists to
-/// prevent. A new drive (a new instance) may offer it again, unless the
-/// caller's "Never" set holds it. `answer(_:region:)` hides the card for
-/// any answer and also marks the region offered; persisting "Never" (and
-/// resetting it, Settings) is the caller's: the rule only reads the set.
+/// **Answered, or shown `maxShowsPerRegion` times, per region per drive**
+/// (R67.1-1). Only an answer uses the offer up: `answer(_:region:)` (Download,
+/// Not now, Never) hides the card and retires the region for this instance.
+/// A card that hid without an answer (the car moved, the speed became
+/// unknown, a dialog opened or the map was hidden) is shown again at the
+/// next stop, up to `maxShowsPerRegion` shows; after that the region is
+/// retired unanswered. A show is counted when the card turns on for a
+/// region, once per continuous stop: hidden and shown again within the same
+/// stop (a dialog closed, the map came back) is the same show. A card that
+/// never turned on (dialog open, map hidden all stop) counts nothing. A new
+/// drive (a new instance) starts again from zero, unless the caller's
+/// "Never" set holds the region; persisting "Never" (and resetting it,
+/// Settings) is the caller's: the rule only reads the set.
 ///
 /// Data: © OpenStreetMap contributors, ODbL 1.0.
 public struct PackOfferRule: Hashable, Sendable {
@@ -82,12 +88,18 @@ public struct PackOfferRule: Hashable, Sendable {
         public var maxSemiMajorM: Double
         /// The highest speed that counts as stopped (km/h).
         public var stopSpeedKmh: Double
+        /// Unanswered shows of one region in one drive, each at its own
+        /// stop, before it is retired (R67.1-1). 3: a card missed at a
+        /// short stop comes back, a traffic jam's every stop does not.
+        public var maxShowsPerRegion: Int
 
-        public init(outsideS: Double = 30, stopS: Double = 3, maxSemiMajorM: Double = 1_000, stopSpeedKmh: Double = 0) {
+        public init(outsideS: Double = 30, stopS: Double = 3, maxSemiMajorM: Double = 1_000, stopSpeedKmh: Double = 0,
+                    maxShowsPerRegion: Int = 3) {
             self.outsideS = outsideS
             self.stopS = stopS
             self.maxSemiMajorM = maxSemiMajorM
             self.stopSpeedKmh = stopSpeedKmh
+            self.maxShowsPerRegion = maxShowsPerRegion
         }
 
         public static let `default` = Config()
@@ -155,8 +167,17 @@ public struct PackOfferRule: Hashable, Sendable {
     public private(set) var offer: PackManifest.Pack?
     /// The region remembered while outside coverage (diagnostics).
     public private(set) var pendingRegion: String?
-    /// Regions shown (or answered) in this drive: never shown again.
-    public private(set) var offered: Set<String> = []
+    /// Regions answered in this drive (any answer): never shown again.
+    public private(set) var answered: Set<String> = []
+    /// Shows per region in this drive (one per stop at which its card
+    /// turned on), answered or not.
+    public private(set) var shows: [String: Int] = [:]
+
+    /// Not offered again in this drive: answered, or shown
+    /// `maxShowsPerRegion` times.
+    public func isRetired(_ region: String) -> Bool {
+        answered.contains(region) || shows[region, default: 0] >= config.maxShowsPerRegion
+    }
 
     /// Since when the estimate is outside, and in which region.
     private struct Outside: Hashable, Sendable {
@@ -166,6 +187,8 @@ public struct PackOfferRule: Hashable, Sendable {
 
     private var outside: Outside?
     private var stoppedSince: Double?
+    /// Regions already counted as shown in the current stop.
+    private var shownThisStop: Set<String> = []
     private var lastNow: Double?
 
     public init(config: Config = .default) {
@@ -179,12 +202,14 @@ public struct PackOfferRule: Hashable, Sendable {
         guard now.isFinite else {
             outside = nil
             stoppedSince = nil
+            shownThisStop = []
             offer = nil
             return nil
         }
         if let last = lastNow, now < last {  // not monotonic: start the timers again
             outside = nil
             stoppedSince = nil
+            shownThisStop = []
         }
         lastNow = now
 
@@ -217,6 +242,7 @@ public struct PackOfferRule: Hashable, Sendable {
         } else {
             stoppedSince = nil
         }
+        if stoppedSince == nil { shownThisStop = [] }
         let stopped = stoppedSince.map { now - $0 >= config.stopS } ?? false
 
         // The offer.
@@ -226,10 +252,12 @@ public struct PackOfferRule: Hashable, Sendable {
         }
         if let shown = offer {
             offer = stopped && !input.dialogOpen ? eligible(shown.name) : nil
-        } else if stopped, !input.dialogOpen, let name = pendingRegion, !offered.contains(name),
+        } else if stopped, !input.dialogOpen, let name = pendingRegion, !answered.contains(name),
+                  // Back within the stop it was shown in: the same show.
+                  shownThisStop.contains(name) || shows[name, default: 0] < config.maxShowsPerRegion,
                   let pack = eligible(name) {
             offer = pack
-            offered.insert(name)
+            if shownThisStop.insert(name).inserted { shows[name, default: 0] += 1 }
         }
         return offer
     }
@@ -237,7 +265,7 @@ public struct PackOfferRule: Hashable, Sendable {
     /// The user answered the card for `region` (any answer hides it; the
     /// region is not offered again in this drive).
     public mutating func answer(_ answer: Answer, region: String) {
-        offered.insert(region)
+        answered.insert(region)
         if offer?.name == region { offer = nil }
     }
 }

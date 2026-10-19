@@ -4,8 +4,9 @@ import Testing
 @testable import DriveLoggerCore
 
 /// UX-8 at-a-stop offer (prompt 26): 30 s outside, confident estimates only,
-/// speed 0 for 3 s, never in motion, dialogs, once per region per drive,
-/// Not now / Never, installed and excluded regions. Synthetic names and
+/// speed 0 for 3 s, never in motion, dialogs, until answered or shown 3 times
+/// per region per drive (R67.1-1), Not now / Never, installed and excluded
+/// regions. Synthetic names and
 /// boxes near (0, 0) only.
 @Suite("Pack offer rule (UX-8 at a stop)")
 struct PackOfferRuleTests {
@@ -173,45 +174,132 @@ struct PackOfferRuleTests {
         #expect(d.at(52, Self.inZZ02, speed: 0) == "zz-02")
     }
 
-    @Test("Never in motion: the card hides when the speed is > 0 or unknown, and does not come back this drive")
+    @Test("Never in motion: the card hides when the speed is > 0 or unknown; unanswered, it is back only after a new 3 s stop")
     func hidesInMotion() {
         var d = Drive()
         #expect(d.run(0...30, Self.inZZ02, speed: 0).last == "zz-02")
         #expect(d.at(31, Self.inZZ02, speed: 0) == "zz-02")
         #expect(d.at(32, Self.inZZ02, speed: 3) == nil)
-        #expect(d.run(33...100, Self.inZZ02, speed: 0).allSatisfy { $0 == nil })
+        #expect(d.run(33...35, Self.inZZ02, speed: 0).allSatisfy { $0 == nil })
+        #expect(d.at(36, Self.inZZ02, speed: 0) == "zz-02")
+        #expect(d.rule.shows == ["zz-02": 2] && d.rule.answered.isEmpty)
 
         var u = Drive()
         #expect(u.run(0...30, Self.inZZ02, speed: 0).last == "zz-02")
         #expect(u.at(31, Self.inZZ02, speed: nil) == nil)
-        #expect(u.run(32...60, Self.inZZ02, speed: 0).allSatisfy { $0 == nil })
+        #expect(u.run(32...34, Self.inZZ02, speed: 0).allSatisfy { $0 == nil })
+        #expect(u.at(35, Self.inZZ02, speed: 0) == "zz-02")
+        #expect(u.rule.shows == ["zz-02": 2])
     }
 
-    @Test("A dialog open blocks the offer; one opening over the card hides it")
+    @Test("A dialog open blocks the offer and counts no show; one opening over the card hides it, and it is back in the same stop as the same show")
     func dialogBlocks() {
         var d = Drive()
         #expect(d.run(0...60, Self.inZZ02, speed: 0, dialog: true).allSatisfy { $0 == nil })
-        #expect(d.at(61, Self.inZZ02, speed: 0) == "zz-02")  // not shown yet, so still offered once
+        #expect(d.rule.shows.isEmpty, "never turned on: not a show")
+        #expect(d.at(61, Self.inZZ02, speed: 0) == "zz-02")
         #expect(d.at(62, Self.inZZ02, speed: 0, dialog: true) == nil)
-        #expect(d.run(63...90, Self.inZZ02, speed: 0).allSatisfy { $0 == nil })
+        #expect(d.run(63...90, Self.inZZ02, speed: 0).allSatisfy { $0 == "zz-02" })
+        #expect(d.rule.shows == ["zz-02": 1])
+        // The 3rd show hidden by a dialog comes back within its stop too.
+        var e = Drive()
+        e.run(0...30, Self.inZZ02, speed: 0)
+        for start in [31, 41] {
+            e.at(Double(start), Self.inZZ02, speed: 20)
+            e.run(start + 1...start + 9, Self.inZZ02, speed: 0)
+        }
+        #expect(e.rule.shows == ["zz-02": 3] && e.rule.isRetired("zz-02"))
+        #expect(e.at(51, Self.inZZ02, speed: 0, dialog: true) == nil)
+        #expect(e.at(52, Self.inZZ02, speed: 0) == "zz-02")
+        #expect(e.rule.shows == ["zz-02": 3])
     }
 
-    // MARK: Once per region per drive, answers
+    // MARK: Shows and answers per region per drive
 
-    @Test("Once per region per drive; another region is still offered at a later stop")
-    func oncePerRegion() {
+    @Test("R67.1-1: a card hidden by motion without an answer is shown again at the next stop")
+    func unansweredReshowsAtNextStop() {
         var d = Drive()
-        #expect(d.run(0...30, Self.inZZ02, speed: 0).last == "zz-02")
-        d.run(31...40, Self.inZZ02, speed: 40)
-        #expect(d.run(41...80, Self.inZZ02, speed: 0).allSatisfy { $0 == nil })
-        d.run(81...120, Self.inZZ04, speed: 40)
-        #expect(d.run(121...124, Self.inZZ04, speed: 0).last == "zz-04")
-        d.run(125...200, Self.inZZ02, speed: 40)
+        #expect(d.run(0...30, Self.inZZ02, speed: 0).last == "zz-02")  // show 1
+        d.run(31...40, Self.inZZ02, speed: 20)                            // moved: hidden, no answer
+        #expect(d.run(41...43, Self.inZZ02, speed: 0).allSatisfy { $0 == nil })
+        #expect(d.at(44, Self.inZZ02, speed: 0) == "zz-02")               // show 2, after the 3 s stop
+    }
+
+    /// Moves for 10 s from `t`, then stops 10 s; whether a card was up in the stop.
+    static func moveThenStop(_ d: inout Drive, from t: Int, _ estimate: R.Estimate) -> String? {
+        d.run(t...t + 9, estimate, speed: 30)
+        return d.run(t + 10...t + 19, estimate, speed: 0).compactMap { $0 }.first
+    }
+
+    @Test("Unanswered: shown at 3 stops at most; a 4th stop offers nothing; another region keeps its own count")
+    func maxShowsPerRegion() {
+        var d = Drive()
+        #expect(d.run(0...30, Self.inZZ02, speed: 0).last == "zz-02")           // show 1
+        #expect(Self.moveThenStop(&d, from: 31, Self.inZZ02) == "zz-02")        // show 2
+        #expect(!d.rule.isRetired("zz-02"))
+        #expect(Self.moveThenStop(&d, from: 51, Self.inZZ02) == "zz-02")        // show 3
+        #expect(d.rule.shows == ["zz-02": 3] && d.rule.answered.isEmpty && d.rule.isRetired("zz-02"))
+        #expect(Self.moveThenStop(&d, from: 71, Self.inZZ02) == nil)            // 4th stop
+        #expect(Self.moveThenStop(&d, from: 91, Self.inZZ02) == nil)
+        #expect(d.rule.shows == ["zz-02": 3])
+        // Another region is still offered, from its own zero.
+        d.run(111...150, Self.inZZ04, speed: 40)
+        #expect(d.run(151...154, Self.inZZ04, speed: 0).last == "zz-04")
+        #expect(d.rule.shows == ["zz-02": 3, "zz-04": 1])
+        // And zz-02 stays retired when the car is back in it.
+        d.run(155...200, Self.inZZ02, speed: 40)
         #expect(d.run(201...240, Self.inZZ02, speed: 0).allSatisfy { $0 == nil })
-        #expect(d.rule.offered == ["zz-02", "zz-04"])
-        // A new drive offers it again.
+
+        // The limit is the config's.
+        var one = Drive(rule: R(config: R.Config(maxShowsPerRegion: 1)))
+        #expect(one.run(0...30, Self.inZZ02, speed: 0).last == "zz-02")
+        #expect(Self.moveThenStop(&one, from: 31, Self.inZZ02) == nil)
+        #expect(R.Config.default.maxShowsPerRegion == 3)
+    }
+
+    @Test("One long stop is one show, however long the card is up")
+    func longStopCountsOnce() {
+        var d = Drive()
+        #expect(d.run(0...600, Self.inZZ02, speed: 0).suffix(571).allSatisfy { $0 == "zz-02" })
+        #expect(d.rule.shows == ["zz-02": 1])
+        #expect(Self.moveThenStop(&d, from: 601, Self.inZZ02) == "zz-02")
+        #expect(d.rule.shows == ["zz-02": 2])
+    }
+
+    @Test("A new drive (a new rule) starts the count again")
+    func newDriveResetsCount() {
+        var d = Drive()
+        d.run(0...30, Self.inZZ02, speed: 0)
+        Self.moveThenStop(&d, from: 31, Self.inZZ02)
+        Self.moveThenStop(&d, from: 51, Self.inZZ02)
+        #expect(Self.moveThenStop(&d, from: 71, Self.inZZ02) == nil)
         var next = Drive()
+        #expect(next.rule.shows.isEmpty && next.rule.answered.isEmpty)
         #expect(next.run(0...30, Self.inZZ02, speed: 0).last == "zz-02")
+        #expect(Self.moveThenStop(&next, from: 31, Self.inZZ02) == "zz-02")
+        #expect(Self.moveThenStop(&next, from: 51, Self.inZZ02) == "zz-02")
+        #expect(Self.moveThenStop(&next, from: 71, Self.inZZ02) == nil)
+    }
+
+    @Test("Any answer (Download, Not now, Never), at any show, retires the region for the drive")
+    func answerRetires() {
+        for answer in [R.Answer.download, .notNow, .never] {
+            for atShow in 1...3 {
+                var d = Drive()
+                #expect(d.run(0...30, Self.inZZ02, speed: 0).last == "zz-02")
+                for k in 1..<atShow { #expect(Self.moveThenStop(&d, from: 11 + 20 * k, Self.inZZ02) == "zz-02") }
+                d.rule.answer(answer, region: "zz-02")
+                #expect(d.rule.offer == nil && d.rule.answered == ["zz-02"] && d.rule.isRetired("zz-02"))
+                #expect(d.rule.shows == ["zz-02": atShow])
+                // Same stop, then later stops: never again (the caller's
+                // Never set and Download's exclusion are not even needed).
+                let after = 31 + 20 * atShow
+                #expect(d.run(after...after + 9, Self.inZZ02, speed: 0).allSatisfy { $0 == nil })
+                for k in 0..<4 {
+                    #expect(Self.moveThenStop(&d, from: after + 10 + 20 * k, Self.inZZ02) == nil)
+                }
+            }
+        }
     }
 
     @Test("Not now hides the card for this drive; Download hides it")

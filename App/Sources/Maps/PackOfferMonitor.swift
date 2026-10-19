@@ -31,9 +31,10 @@ struct PackOfferNeverStore {
 /// without a gap are ONE drive: Start ends Navigate while `isStarting`
 /// already holds `hasActiveRun`, and a recording's end starts Navigate in
 /// the same main-actor step, so Navigate → Record → Navigate within a trip
-/// keeps the rule, and a region offered in Navigate is not offered again
-/// once Record starts. Any update that sees no run ends the drive: the next
-/// run gets a fresh rule (a region may be offered again, unless "Never").
+/// keeps the rule: a region answered in Navigate is not offered again once
+/// Record starts, and its unanswered shows (at most 3 per drive) carry over.
+/// Any update that sees no run ends the drive: the next run gets a fresh
+/// rule (a region may be offered again, unless "Never").
 ///
 /// **Inputs it supplies** (refreshed every tick while a run is active;
 /// each is an actor hop and a copy): installed coverages
@@ -79,7 +80,8 @@ final class PackOfferMonitor {
     /// The "Never" names, sorted (Settings → Maps).
     private(set) var neverNames: [String]
     /// The map is on screen and the scene active (the UI sets it): the card
-    /// may only appear, and count as shown, while it is.
+    /// may only appear, and count as shown, while it is (hidden is passed
+    /// to the rule as "dialog open", which never turns a card on).
     var isMapVisible = false
     /// A confirmation dialog is open on the map (the UI sets it).
     var isDialogOpen = false
@@ -178,7 +180,7 @@ final class PackOfferMonitor {
     // MARK: Answers
 
     /// "Download": queued through the downloader (its network policy
-    /// applies); not offered again in this drive.
+    /// applies); answered, so not offered again in this drive.
     func download() async {
         guard let shown = offer, let pack = manifestPacks.first(where: { $0.name == shown.name }) else { return }
         rule?.answer(.download, region: shown.name)

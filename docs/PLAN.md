@@ -301,7 +301,7 @@ Replay only the current connection's init (M6.1-1) and remembered poll plan and 
 4. **Recording not disturbed:** the second CLLocationManager (coarse fix) does not change the recording's fix rate.
 5. **Airplane mode on first launch:** only "Download maps later" is offered, and the app works without maps.
 6. **On cellular:** the button says "on Wi-Fi" and waits for Wi-Fi; "Use cellular data" sets the Settings → Maps toggle.
-7. **Leaving installed coverage while driving:** nothing shows in motion; one offer at the next real stop (OBD speed 0 for 3 s); the card hides on drive-off; no second offer for that region in the same drive.
+7. **Leaving installed coverage while driving:** nothing shows in motion; one offer at the next real stop (OBD speed 0 for 3 s); the card hides on drive-off; if unanswered it is shown again at the next stop, at most 3 times per region per drive; once answered (Download, Not now, Never), not again in that drive.
 8. **"Never for this region":** persisted across launches; Reset in Settings → Maps → "Not offered on the road" brings the offer back on a later drive.
 9. **Cost of the 1 Hz offer loop** while recording in the background (CPU, thermal, battery).
 10. **Real 5xx:** an interrupted download after a real 5xx resumes (the partial is kept).
