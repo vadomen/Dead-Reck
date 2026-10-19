@@ -33,7 +33,7 @@ struct StopConfirmation: Equatable {
     mutating func cancel() { isPending = false }
 }
 
-/// Recording indicator (nothing while idle), bottom left of the map. Its own view:
+/// Recording row (nothing while idle), in the top-left card. Its own view:
 /// it alone reads the 16 Hz `session.live`, so the map is not re-rendered.
 struct MapRecordingButton: View {
     let session: RecordingSession
@@ -71,28 +71,35 @@ struct MapRecordingButton: View {
     }
 }
 
-/// Red dot and elapsed time; a 56 pt tap target.
+/// Red dot, elapsed time and a stop glyph: the recording row of the top-left
+/// card. At least 44 pt tall; the whole row is the tap target.
 struct MapRecordingIndicatorLabel: View {
     let elapsed: String
     var onTap: () -> Void = {}
 
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 10) {
-                Circle().fill(Color.red).frame(width: 16, height: 16)
+            HStack(spacing: 8) {
+                Circle().fill(HUDColors.record).frame(width: 14, height: 14)
                 Text(elapsed).font(.title3.weight(.bold).monospacedDigit())
+                Spacer(minLength: 4)
+                Image(systemName: "stop.fill").font(.system(size: 14))
             }
-            .foregroundStyle(Color.primary)
-            .padding(.horizontal, 18)
-            .frame(minHeight: 56)
-            .background(.regularMaterial, in: Capsule())
-            .overlay(Capsule().strokeBorder(Color.red.opacity(0.6), lineWidth: 2))
+            .foregroundStyle(HUDColors.text)
+            .frame(minHeight: MapLayout.minTapTarget)
+            .contentShape(Rectangle())
+            // The 44 pt row overlaps the card's bottom padding (and spacing): the card stays
+            // short (more road ahead) and the tap target stays 44 pt.
+            .padding(.bottom, -10)
         }
+        .buttonStyle(.plain)
         .accessibilityLabel("Recording, \(elapsed). Double tap to stop.")
     }
 }
 
 #Preview("Recording indicator") {
     MapRecordingIndicatorLabel(elapsed: "12:34")
+        .padding()
+        .hudSurface(RoundedRectangle(cornerRadius: 18))
         .padding()
 }

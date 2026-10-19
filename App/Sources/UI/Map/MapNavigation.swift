@@ -90,13 +90,16 @@ struct NavStatsDisplay: Hashable, Sendable {
     }
 
     /// One compact line.
-    var line: String {
+    var line: String { parts.joined(separator: " · ") }
+
+    /// The line's pieces (the debug strip splits them over two lines).
+    var parts: [String] {
         var parts = [String(format: "%.2f ms/step (max %.1f)", msPerStep, maxMsPerStep)]
         parts.append("ESS " + (effectiveSampleSize.map { String(Int($0.rounded())) } ?? "–"))
         parts.append("hdg σ " + (headingStdDeg.map { String(format: "%.1f°", $0) } ?? "–"))
         parts.append("scale " + (speedScale.map { String(format: "%.3f", $0) } ?? "–"))
         parts.append("dropped \(droppedInputs)")
-        return parts.joined(separator: " · ")
+        return parts
     }
 }
 

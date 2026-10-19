@@ -134,10 +134,9 @@ struct NavigateStatusLabel: View {
                 }
                 .padding(.vertical, 8)
             }
-            .foregroundStyle(Color.primary)
             .padding(.horizontal, 16)
             .frame(minHeight: 56)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+            .hudSurface(RoundedRectangle(cornerRadius: 14))
             .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(status.tone.color, lineWidth: 2))
             .accessibilityElement(children: .combine)
         }

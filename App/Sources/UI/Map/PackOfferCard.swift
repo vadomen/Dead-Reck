@@ -40,7 +40,7 @@ struct PackOfferCard: View {
 }
 
 /// Plain values, for previews. Non-modal: it sits above the map controls and
-/// never covers the speed (top) or the stop control (bottom left).
+/// sits in the bottom-left zone, left of the rail, and never covers the HUD card (top).
 struct PackOfferCardView: View {
     let offer: PackOfferMonitor.Offer
     var onDownload: () -> Void = {}
@@ -48,41 +48,42 @@ struct PackOfferCardView: View {
     var onNever: () -> Void = {}
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             Text(PackOfferText.question(title: offer.title, sizeBytes: offer.sizeBytes))
-                .font(.title3.weight(.semibold))
+                .font(.headline)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 10) {
                 Button(action: onDownload) {
-                    Text(PackOfferText.download).font(.title3.bold()).frame(maxWidth: .infinity, minHeight: 56)
+                    Text(PackOfferText.download).font(.headline.bold()).frame(maxWidth: .infinity, minHeight: 56)
                 }
                 .prominentButton()
                 .accessibilityLabel("Download \(offer.title), \(MapsText.size(offer.sizeBytes))")
                 Button(action: onNotNow) {
-                    Text(PackOfferText.notNow).font(.title3.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 56)
+                    Text(PackOfferText.notNow).font(.headline).frame(maxWidth: .infinity, minHeight: 56)
                 }
                 .buttonStyle(.bordered)
+                .tint(HUDColors.text)
                 .accessibilityLabel("Not now")
             }
             Button(action: onNever) {
                 Text(PackOfferText.never).font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
             }
             .buttonStyle(.bordered)
+                .tint(HUDColors.text)
             .accessibilityLabel("Never offer maps for \(offer.title)")
         }
-        .padding(16)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
-        .padding(.horizontal, 16)
+        .padding(12)
+        .hudSurface(RoundedRectangle(cornerRadius: 16))
         .accessibilityElement(children: .contain)
     }
 }
 
 #Preview("Offer card") {
     PackOfferCardView(offer: .init(name: "zz-01", title: "Region A", sizeBytes: 35_000_000))
-        .padding(.vertical, 40).background(Color(.systemGray4))
+        .padding(40).background(Color(.systemGray4))
 }
 
 #Preview("Offer card, dark") {
     PackOfferCardView(offer: .init(name: "zz-01", title: "Region A", sizeBytes: 35_000_000))
-        .padding(.vertical, 40).background(Color(.systemGray4)).preferredColorScheme(.dark)
+        .padding(40).background(Color(.systemGray4)).preferredColorScheme(.dark)
 }
