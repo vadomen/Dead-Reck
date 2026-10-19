@@ -99,6 +99,32 @@ struct RoadPackLibraryTests {
         #expect(await third.verifications == 1)
     }
 
+    @Test("UX-8: coverages() lists the verified packs' coverage by pack name, once per scan; refused files are not in it")
+    func coverages() async throws {
+        let packs = try RoadPackFixture.directory()
+        defer { try? FileManager.default.removeItem(at: packs) }
+        let good = try RoadPackFixture.data()
+        let stored = try RoadPackFixture.write(good, named: "zz-01-0123456789abcdef.roadpack", in: packs)
+        try RoadPackFixture.write(good.prefix(good.count / 2), named: "zz-02-0123456789abcdef.roadpack", in: packs)
+        try RoadPackFixture.write(try RoadPackFixture.data(latShiftE7: 5_000_000), named: "plain.roadpack", in: packs)
+        let library = RoadPackLibrary(source: RoadPackLibrary.directorySource(packs), cacheURL: nil)
+
+        // The first call waits for the first scan.
+        let first = await library.coverages()
+        #expect(first.map(\.name) == ["plain.roadpack", "zz-01"])
+        let zz01 = try #require(first.last).coverage
+        #expect(zz01.intersects(latitude: 0.001, longitude: 0.002, radiusM: 0))
+        #expect(!zz01.intersects(latitude: 0.3, longitude: 0.3, radiusM: 0))
+        #expect(first.first?.coverage.intersects(latitude: 0.501, longitude: 0.002, radiusM: 0) == true)
+        // Repeated calls start no scan.
+        for _ in 0..<5 { _ = await library.coverages() }
+        #expect(await library.scansStarted == 1)
+        // A rescan updates the list.
+        try FileManager.default.removeItem(at: stored)
+        await library.rescan()
+        #expect(await library.coverages().map(\.name) == ["plain.roadpack"])
+    }
+
     @Test("A rescan sees a file copied in later")
     func rescanSeesNewFile() async throws {
         let packs = try RoadPackFixture.directory()

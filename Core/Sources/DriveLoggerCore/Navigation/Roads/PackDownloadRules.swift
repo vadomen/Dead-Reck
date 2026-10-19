@@ -19,10 +19,14 @@ import Foundation
 ///   manifest size) and by comparing a returned `ETag` with the stored one;
 ///   `If-Range` is still sent, which is right on a compliant server.
 /// - **An unsatisfiable range gets `500`, not `416`.** So no range is ever
-///   requested at or past the expected size (`plan`), and a `5xx` to a
-///   ranged request is read as "the partial is unusable": discard it and
-///   restart without `Range`. The transport allows that restart once per
-///   attempt, so a server that is simply down still ends in a failure.
+///   requested at or past the expected size (`plan`), which leaves a `5xx`
+///   to a ranged request meaning what it says: a server error. It fails the
+///   attempt and KEEPS the partial (R66.1-6): URLs are immutable and `plan`
+///   never asks past the size, so a transient `502`/`503` must not throw
+///   away e.g. 100 MB of a 120 MB pack; the next attempt resumes. Only a
+///   `416` and a `206` that does not continue this file (`Content-Range`
+///   start or total, a changed `ETag`) discard the partial and restart
+///   without `Range`; the transport allows that restart once per attempt.
 ///
 /// Data: © OpenStreetMap contributors, ODbL 1.0.
 public enum PackDownloadRules {
@@ -72,10 +76,12 @@ public enum PackDownloadRules {
         /// `200`, the whole file: truncate the partial, write the body from
         /// byte 0 and store `etag` (nil: clear the stored one).
         case writeFromZero(etag: String?)
-        /// The partial cannot be continued: delete it (and its stored ETag)
-        /// and request again without `Range`. At most once per attempt.
+        /// The partial cannot be continued (`416`, or a `206` that is not
+        /// the rest of this file): delete it (and its stored ETag) and
+        /// request again without `Range`. At most once per attempt.
         case restartWithoutRange(reason: String)
-        /// Give up this attempt; the partial is kept for a later one.
+        /// Give up this attempt; the partial is kept for a later one (a
+        /// `5xx`, ranged or not, is one of these).
         case fail(reason: String)
     }
 
@@ -121,8 +127,9 @@ public enum PackDownloadRules {
         case 404:
             return .fail(reason: "404: the pack is not on the server")
         case 500...599:
-            guard requestedOffset != nil else { return .fail(reason: "server error \(status)") }
-            return .restartWithoutRange(reason: "server error \(status) to a ranged request")
+            // Ranged or not: a server error, the partial is kept (R66.1-6).
+            return .fail(reason: requestedOffset == nil ? "server error \(status)"
+                                                        : "server error \(status) to a ranged request")
         case 400...499:
             return .fail(reason: "client error \(status)")
         default:

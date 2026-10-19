@@ -2,6 +2,8 @@
 //   GET/HEAD /packs/manifest.json          -> R2 key packs/manifest.json
 //   GET/HEAD /packs/v1/<name>-<hash>.roadpack
 // Supports Range (resumable downloads) and If-None-Match / If-Match.
+// A range starting at or beyond the size gets 416 with `Content-Range: bytes */<size>`
+// (R2 throws on it, which used to surface as a 500).
 // Only /packs/* runs this Function; every other path stays a free static asset.
 
 const KEY_RE = /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/;
@@ -23,6 +25,20 @@ export async function onRequest({ request, env, params }) {
     const head = await env.PACKS.head(key);
     if (!head) return new Response(null, { status: 404 });
     return new Response(null, { status: 200, headers: baseHeaders(head) });
+  }
+
+  // If-Range is ignored on purpose: pack keys are immutable (name + content hash), so a
+  // range of a key always refers to the same bytes. The manifest is small and never resumed.
+  const range = parseRange(request.headers.get("range"));
+  if (range) {
+    const head = await env.PACKS.head(key);
+    if (!head) return new Response("Not Found", { status: 404 });
+    if (!satisfiable(range, head.size)) {
+      const headers = baseHeaders(head);
+      headers.set("content-range", `bytes */${head.size}`);
+      headers.set("content-length", "0");
+      return new Response(null, { status: 416, headers });
+    }
   }
 
   const object = await env.PACKS.get(key, { range: request.headers, onlyIf: request.headers });
@@ -63,4 +79,21 @@ function resolveRange(range, size) {
   const offset = range.offset ?? 0;
   const length = range.length ?? size - offset;
   return { offset, length };
+}
+
+// One `bytes=` range ("a-", "a-b" or "-n"); anything else (several ranges, other units)
+// returns null and is left to R2, as before.
+function parseRange(value) {
+  const m = /^\s*bytes\s*=\s*(\d*)\s*-\s*(\d*)\s*$/i.exec(value || "");
+  if (!m || (m[1] === "" && m[2] === "")) return null;
+  if (m[1] === "") return { suffix: Number(m[2]) };
+  return { start: Number(m[1]), end: m[2] === "" ? undefined : Number(m[2]) };
+}
+
+// RFC 9110 §14.1.2: a first-byte position at or past the size, or a zero-length suffix,
+// cannot be satisfied. An end before the start is invalid; R2 refuses it too.
+function satisfiable(range, size) {
+  if ("suffix" in range) return range.suffix > 0 && size > 0;
+  if (range.end !== undefined && range.end < range.start) return false;
+  return range.start < size;
 }

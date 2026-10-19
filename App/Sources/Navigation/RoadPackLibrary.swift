@@ -124,6 +124,8 @@ actor RoadPackLibrary {
     private struct ScanResult: Sendable {
         var packs: [PackStatus]
         var candidates: Candidates
+        /// The candidates' coverages by pack name (`coverages()`).
+        var coverages: [InstalledPackCoverage]
         var cache: RoadPackVerificationCache
         /// Files verified (not cache hits) in this scan.
         var verifications: Int
@@ -313,8 +315,13 @@ actor RoadPackLibrary {
                     packName: file.name, pendingRemoval: true))
             }
         }
+        // The coverage each candidate already carries (`COVR` from the file,
+        // else the verification's bounding box): no pass over the points.
+        let coverages = selection.candidates.map {
+            InstalledPackCoverage(name: RoadPackStoreRules.parseFileName($0.name)?.name ?? $0.name, coverage: $0.coverage)
+        }
         return ScanResult(packs: packs, candidates: Candidates(candidates: selection.candidates, refused: selection.refused),
-                          cache: catalog.cache,
+                          coverages: coverages, cache: catalog.cache,
                           verifications: catalog.entries.filter { !$0.cacheHit && $0.identity != nil }.count,
                           storeBytes: storeBytes, maintenance: report)
     }
@@ -334,6 +341,23 @@ actor RoadPackLibrary {
         if latest == nil && scanTask == nil { startScan() }
         if let task = scanTask { await task.value }
         return latest?.candidates ?? Candidates()
+    }
+
+    /// The verified active packs' coverages, by pack name (the at-a-stop
+    /// offer, UX-8: `PackOfferRule.Input.installed`). Built once per scan
+    /// from the candidates that scan opened anyway (`COVR`, else the cached
+    /// bounding box), so a call is an actor hop and a copy: cheap at 1 Hz.
+    /// Before the first scan it awaits it, starting it if none runs (as
+    /// `candidates()` does: launch maintenance first, no other mapping);
+    /// afterwards it answers at once with the latest finished scan's list,
+    /// never waiting for a rescan in progress. Refused files and packs
+    /// pending removal are not in it.
+    func coverages() async -> [InstalledPackCoverage] {
+        if latest == nil {
+            if scanTask == nil { startScan() }
+            if let task = scanTask { await task.value }
+        }
+        return latest?.coverages ?? []
     }
 
     /// Returns once the first scan (with a store: launch maintenance) has
