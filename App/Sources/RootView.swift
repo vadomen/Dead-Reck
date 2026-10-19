@@ -11,7 +11,7 @@ struct RootView: View {
     @State private var roads: RoadsDiagnosticsModel
     @State private var roadsWarning: RoadsWarningModel
     @State private var maps: MapsModel
-    @State private var gate = DeveloperGate()
+    @State private var gate: DeveloperGate
     private let session: RecordingSession
     private let services: AppServices
     @State private var nav: AppNavigation
@@ -41,6 +41,18 @@ struct RootView: View {
         }
         #endif
         _maps = State(initialValue: mapsModel)
+        var developerGate = DeveloperGate()
+        #if DEBUG
+        // `-uiReleaseGate 1`: behave like Release with the diagnostics locked;
+        // `-uiReleaseGate 2`: like Release after the 7 taps (screenshots).
+        let releaseGate = UserDefaults.standard.integer(forKey: "uiReleaseGate")
+        if releaseGate > 0 {
+            let suite = UserDefaults(suiteName: "uiReleaseGate") ?? .standard
+            suite.set(releaseGate == 2, forKey: DeveloperGate.defaultsKey)
+            developerGate = DeveloperGate(isDebug: false, defaults: suite)
+        }
+        #endif
+        _gate = State(initialValue: developerGate)
         var warningModel = RoadsWarningModel(source: {
             await RoadsWarning.current(service: service, library: library)
         }, attributionSource: {

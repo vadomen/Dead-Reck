@@ -128,7 +128,7 @@ enum MapsText {
         case .pausedForRecording: "Paused (recording)"
         case .verifying: "Verifying"
         case .installed: "Installed"
-        case .updateAvailable: "Update available, applies from the next start"
+        case .updateAvailable: "Update available · from next start"
         case .updatedNextStart: "Updated · used from the next start"
         case .failed(let reason): "Failed: \(reason)"
         case .removalPending: "Removal pending"
@@ -524,9 +524,18 @@ struct MapsContent: View {
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.title).font(.title3.weight(.semibold))
-                (Text(MapsText.detailPrefix(item) + " · ").foregroundStyle(.secondary)
-                    + Text(MapsText.stateText(item.status)).foregroundStyle(MapsText.tone(item.status).color))
+                ViewThatFits(in: .horizontal) {
+                    (Text(MapsText.detailPrefix(item) + " · ").foregroundStyle(.secondary)
+                        + Text(MapsText.stateText(item.status)).fontWeight(.semibold)
+                            .foregroundStyle(MapsText.tone(item.status).color))
+                        .font(.subheadline).lineLimit(1)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(MapsText.detailPrefix(item)).foregroundStyle(.secondary)
+                        Text(MapsText.stateText(item.status)).fontWeight(.semibold)
+                            .foregroundStyle(MapsText.tone(item.status).color)
+                    }
                     .font(.subheadline)
+                }
                 if case .downloading(let percent) = item.status {
                     ProgressView(value: Double(percent), total: 100)
                 }
