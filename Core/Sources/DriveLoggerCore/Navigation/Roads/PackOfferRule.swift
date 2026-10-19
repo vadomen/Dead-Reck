@@ -43,8 +43,13 @@ public struct InstalledPackCoverage: Hashable, Sendable {
 /// downloading, queued) and "Never" names; nil when none. After
 /// `outsideS` continuously outside IN THE SAME region (a change of region,
 /// nil included, restarts the timer), it becomes the pending region; nothing
-/// is shown then. 30 s outside every eligible bbox (abroad, or only declined
-/// regions) clears it.
+/// is shown then. A confident outside estimate whose region is not the
+/// pending one (another region, or none: abroad, or only declined or
+/// excluded regions) forgets it at once (R67.1-4): otherwise a stop within
+/// 30 s of entering region B would offer the previous region A ("You are in
+/// A" while in B). So a non-nil pending region is always the region of the last
+/// confident estimate; only a missing, non-finite or unconfident one (which
+/// says nothing about where the car is) keeps it.
 ///
 /// **Stop.** The active speed (OBD first; km/h) finite, ≥ 0 and
 /// ≤ `stopSpeedKmh` (default 0: OBD speed is whole km/h, so 0 already
@@ -230,6 +235,7 @@ public struct PackOfferRule: Hashable, Sendable {
                     latitude: e.latitude, longitude: e.longitude, in: input.manifestPacks,
                     excluding: input.excluded.union(input.never))?.name
                 if outside == nil || outside?.region != region { outside = Outside(region: region, since: now) }
+                if pendingRegion != region { pendingRegion = nil }  // R67.1-4: never "in A" while in B
                 if let since = outside?.since, now - since >= config.outsideS { pendingRegion = region }
             }
         } else {

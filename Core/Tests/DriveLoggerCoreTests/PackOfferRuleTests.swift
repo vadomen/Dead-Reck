@@ -145,7 +145,7 @@ struct PackOfferRuleTests {
         d.run(0...30, Self.inZZ02, speed: 50)
         #expect(d.rule.pendingRegion == "zz-02")
         d.run(31...60, Self.inZZ04, speed: 50)
-        #expect(d.rule.pendingRegion == "zz-02")
+        #expect(d.rule.pendingRegion == nil)  // forgotten at once in another region (R67.1-4)
         d.at(61, Self.inZZ04, speed: 50)
         #expect(d.rule.pendingRegion == "zz-04")
         #expect(d.run(62...65, Self.inZZ04, speed: 0).last == "zz-04")
@@ -154,6 +154,33 @@ struct PackOfferRuleTests {
         e.run(0...30, Self.inZZ02, speed: 50)
         e.run(31...61, R.Estimate(latitude: 1.5, longitude: 2.5, semiMajorM: 100), speed: 50)
         #expect(e.rule.pendingRegion == nil)
+    }
+
+    @Test("R67.1-4: a stop within 30 s of entering another region offers neither region; the new one after 30 s")
+    func stopSoonAfterRegionChange() {
+        // zz-02 pending, then 10 s driving in zz-04 and a stop there: no
+        // "You are in zz-02" while in zz-04.
+        var d = Drive()
+        d.run(0...30, Self.inZZ02, speed: 50)
+        #expect(d.rule.pendingRegion == "zz-02")
+        d.run(31...40, Self.inZZ04, speed: 50)
+        #expect(d.run(41...60, Self.inZZ04, speed: 0).allSatisfy { $0 == nil })
+        #expect(d.rule.shows["zz-02"] == nil)
+        #expect(d.at(61, Self.inZZ04, speed: 0) == "zz-04")
+
+        // The same in no eligible region (between the bboxes): nothing.
+        var e = Drive()
+        e.run(0...30, Self.inZZ02, speed: 50)
+        let nowhere = R.Estimate(latitude: 1.5, longitude: 2.5, semiMajorM: 100)
+        #expect(e.run(31...50, nowhere, speed: 0).allSatisfy { $0 == nil })
+        #expect(e.rule.pendingRegion == nil)
+
+        // An unconfident or missing estimate does not tell where the car
+        // is: the pending region stays and is offered.
+        var u = Drive()
+        u.run(0...30, Self.inZZ02, speed: 50)
+        let vague = R.Estimate(latitude: 2.5, longitude: 3.5, semiMajorM: 5_000)
+        #expect(u.run(31...34, vague, speed: 0).last == "zz-02")
     }
 
     // MARK: The stop
@@ -369,15 +396,50 @@ struct PackOfferRuleTests {
         #expect(f.offer == nil && f.pendingRegion == nil)
     }
 
-    @Test("Time going backwards or non-finite restarts the timers")
-    func clock() {
+    @Test("Time going backwards restarts the outside and stop timers from the new time (R67.1-3)")
+    func clockBackwards() {
+        // Without the restart, both timers would still count from 100 and
+        // nothing would show before t = 130.
         var d = Drive()
-        d.run(100...120, Self.inZZ02, speed: 0)
-        d.run(0...29, Self.inZZ02, speed: 0)
+        #expect(d.run(100...120, Self.inZZ02, speed: 0).allSatisfy { $0 == nil })
+        #expect(d.run(0...29, Self.inZZ02, speed: 0).allSatisfy { $0 == nil })
         #expect(d.rule.pendingRegion == nil && d.rule.offer == nil)
+        #expect(d.at(30, Self.inZZ02, speed: 0) == "zz-02")
+
+        // A card up when time goes back: the stop restarts, the card hides,
+        // and its return after 3 s is a new show.
+        var s = Drive()
+        #expect(s.run(100...130, Self.inZZ02, speed: 0).last == "zz-02")
+        #expect(s.rule.shows["zz-02"] == 1)
+        #expect(s.run(0...2, Self.inZZ02, speed: 0).allSatisfy { $0 == nil })
+        #expect(s.at(3, Self.inZZ02, speed: 0) == "zz-02")
+        #expect(s.rule.shows["zz-02"] == 2)
+    }
+
+    @Test("A non-finite time hides the card and restarts the outside and stop timers (R67.1-3)")
+    func clockNonFinite() {
+        // The outside timer: restarted at 21, not kept from 0.
+        var d = Drive()
+        #expect(d.run(0...20, Self.inZZ02, speed: 0).allSatisfy { $0 == nil })
         #expect(d.at(.nan, Self.inZZ02, speed: 0) == nil)
-        #expect(d.run(30...59, Self.inZZ02, speed: 0).allSatisfy { $0 == nil })
-        #expect(d.at(60, Self.inZZ02, speed: 0) == "zz-02")
+        #expect(d.run(21...50, Self.inZZ02, speed: 0).allSatisfy { $0 == nil })
+        #expect(d.rule.pendingRegion == nil)
+        #expect(d.at(51, Self.inZZ02, speed: 0) == "zz-02")
+
+        // The stop timer, with a region already pending: restarted at 33,
+        // not kept from 31.
+        var t = Drive()
+        t.run(0...30, Self.inZZ02, speed: 50)
+        #expect(t.rule.pendingRegion == "zz-02")
+        #expect(t.run(31...32, Self.inZZ02, speed: 0).allSatisfy { $0 == nil })
+        #expect(t.at(.infinity, Self.inZZ02, speed: 0) == nil)
+        #expect(t.run(33...35, Self.inZZ02, speed: 0).allSatisfy { $0 == nil })
+        #expect(t.at(36, Self.inZZ02, speed: 0) == "zz-02")
+
+        // A card that is up hides at a non-finite time.
+        var c = Drive()
+        #expect(c.run(0...30, Self.inZZ02, speed: 0).last == "zz-02")
+        #expect(c.at(.nan, Self.inZZ02, speed: 0) == nil && c.rule.offer == nil)
     }
 
     @Test("Deterministic: the same inputs give the same states")
