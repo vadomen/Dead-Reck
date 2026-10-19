@@ -10,6 +10,8 @@ Range: **$ARGUMENTS**
 
 If no range was given, stop and ask for one. Don't guess.
 
+**Scratch files first.** The reviewer resumes from `.claude/review-scratch/<range>.md` (`..` and `/` → `_`; parallel reviewers add `-A`, `-B`, …; see reviewer.md). The name comes from the range text, so a HEAD-relative range (`HEAD~1..HEAD`) maps to the same file in every run. Before round 1, delete any scratch file for this range whose first line names a different run, and delete files of runs already closed in the ledger. A stale file would make the new reviewer skip verification of old findings.
+
 Run a review-fix loop on the range above. Keep a ledger in `docs/REVIEW_LOG.md` (current runs). Older runs (1–34, indexed at the top of the ledger) and closed backlog rows are in `docs/archive/`: read them only on demand (e.g. a finding cites an old ID), never pass them whole.
 
 ## Lite path (no code in the range)
@@ -37,7 +39,8 @@ Each round (max 4 rounds):
    - **Model:** use `sonnet` for docs/config-only ranges, or under 200 changed lines with no new logic. Use `opus` for anything touching Core or App logic.
    - **Scale:** for a range over ~1500 changed lines, spawn 2–3 fresh reviewers in parallel on disjoint file sets you name (e.g. engine / replay / app), each told its set. Merge their findings into one ledger round.
    - **Mutation worktree:** every mutation run (reviewer check 13, author-side mutations) uses its own throwaway worktree `.claude/worktrees/mut-<short-sha>`, removed after. Core runs share `~/.cache/dead-reck-mutants-build`, which SwiftPM locks, so parallel runs queue there; never run two App (xcodebuild) mutation runs at once. Mutations cover Core logic by default; an App mutation (10+ min `xcodebuild` per fresh worktree) runs only for a specific App finding a reviewer names.
-   - **Resume:** if a reviewer stops early (API limit, network), spawn a fresh one for the same round. It resumes from `.claude/review-scratch/<range>.md`. A cut-off attempt is not counted as a round.
+   - **Resume:** if a reviewer stops early (API limit, network), spawn a fresh one for the same round. It resumes from the scratch file (its first line: `# review run N round R …`). A cut-off attempt is not counted as a round.
+   - **Engine output meant to change** (an engine or `NavigationConfig` default change that is not bit-identical by the reviewer's check 12): the author attaches the adoption verdict (the `nav-adoption` skill, full matrix, not a single seed); pass it to the reviewer. Missing verdict = send the author back, as with a missing mutation list. A FAIL blocks the merge unless the user accepts it.
 2. For each BLOCKER/MAJOR finding, verify it yourself against the code before acting: mark it CONFIRMED or REJECTED (with a one-line reason) in the ledger. Do not fix unconfirmed findings.
 3. Fix CONFIRMED findings with the owning agent:
    - `elm-ble-engineer` for ELM327/OBD/BLE;
@@ -47,7 +50,7 @@ Each round (max 4 rounds):
    - `docs-editor` for docs-only fixes (wording in `docs/*.md` or `WORKFLOW.md`), whatever area the finding is about. It has no shell, so you run tests and commit.
 
    Every real bug gets a regression test that fails before the fix and passes after. When the range is on a branch outside the main tree, the fixer works in that branch's worktree, `.claude/worktrees/<task>` (WORKFLOW.md "One engineer agent at a time").
-4. Run `cd Core && swift test`, and the simulator build if `App/` changed (see the `ios-build-test` skill for commands and the `DEVELOPER_DIR` note). If `Core/Sources/DriveLoggerCore/Navigation/` (incl. `Replay/`, `Roads/`) changed, also run `cd Core && swift test -c release --filter 'NavigationRoadPerfTests|NavigationB0Tests'` (their timing asserts run only in release) and report it. All must be green. Commit the round as "review round N: <summary>". Once the round is in the ledger, delete its scratch file(s) in `.claude/review-scratch/`.
+4. Run the checks of the `ios-build-test` skill for what changed: `cd Core && swift test`, its perf gate if Navigation changed, the simulator build if `App/` changed. All must be green. Commit the round as "review round N: <summary>". Once the round is in the ledger, delete its scratch file(s) in `.claude/review-scratch/`.
 5. Append MINOR findings to `docs/BACKLOG.md` as DEFERRED; do not fix them in the loop (lite runs: see "Lite path"). A backlog row the range closes moves, unchanged apart from its status, to `docs/archive/BACKLOG-closed.md`. Ledger and backlog row edits go to `docs-editor` when you delegate them.
 
 Stop when a fresh reviewer reports no BLOCKER or MAJOR findings, then print: rounds run, findings fixed/rejected/deferred, final test results.

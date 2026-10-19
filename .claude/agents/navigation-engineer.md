@@ -6,6 +6,7 @@ model: opus
 effort: high
 skills:
   - ios-build-test
+  - nav-adoption
 color: green
 ---
 

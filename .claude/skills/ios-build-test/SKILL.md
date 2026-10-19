@@ -13,7 +13,8 @@ If `xcode-select -p` points at CommandLineTools, prefix commands with
 
 ## Order of checks (cheapest first)
 1. Core changed -> `cd Core && swift test` (must pass, all of it). One suite: `cd Core && swift test --filter <SuiteName>`.
-   `Core/Sources/DriveLoggerCore/Navigation/` (incl. `Replay/`, `Roads/`) changed -> also `cd Core && swift test -c release --filter 'NavigationRoadPerfTests|NavigationB0Tests'` (their timing asserts run only in release) and report it.
+   The Stop hook (`.claude/hooks/stop-gate.sh`) also runs `swift test --parallel` when Core files differ from HEAD and blocks the turn on failure. It is a safety net, not your check: run the tests yourself and report them.
+   **Perf gate** (this skill is the one place it is defined; other skills and agents point here): `Core/Sources/DriveLoggerCore/Navigation/` (incl. `Replay/`, `Roads/`) changed -> also `cd Core && swift test -c release --filter 'NavigationRoadPerfTests|NavigationB0Tests'` (their timing asserts run only in release) and report it.
 2. Core invariant: `grep -rhoE '^[[:space:]]*import[[:space:]]+[A-Za-z_]+' Core/Sources Core/Tests | sort -u` shows only Foundation/Testing (+ DriveLoggerCore).
 3. Files added/removed/renamed -> `xcodegen generate`, then commit `project.yml` and the regenerated `DriveLogger.xcodeproj` together. Never hand-edit the `.xcodeproj`. `Info.plist` is hand-maintained (`App/Resources/Info.plist`).
 4. App code changed -> simulator build:
@@ -36,8 +37,13 @@ If `xcode-select -p` points at CommandLineTools, prefix commands with
 - "No such module" / missing type in the app but Core tests are green: the project was not regenerated - run `xcodegen generate`.
 - `plugin for module 'TestingMacros' not found`: wrong developer dir, see Toolchain.
 
+## Device builds (only when the user asks)
+- Needs `Config/Local.xcconfig` (team ID lives only there; `cp Config/Local.xcconfig.example Config/Local.xcconfig`). A missing file means signing errors, not a code problem: say so and stop.
+- Test drives use the `DriveLogger-Release` scheme (Debug is `-Onone`; sidecar timings are meaningless). Don't edit schemes locally: they come from `project.yml`.
+- Installing or running on the phone (`xcodebuild … -destination id=…`, `xcrun devicectl device …`) and `scripts/push_packs.sh` without `--dry-run` are "ask" in settings: the user approves each. Never push packs while the app runs (Navigate or Record): packs are memory-mapped and the script refuses. Pre-drive steps: the `test-drive-prep` skill.
+
 ## What the simulator cannot prove
-No BLE, no real motion sensors, no real background behaviour. Any claim about these must be phrased as "untested on hardware" and added to the field checklist.
+No BLE, no real motion sensors, no real background behaviour. Any claim about these must be phrased as "untested on hardware" and added to docs/PLAN.md §6.
 
 ## Reporting
 Always report the exact command, pass/fail, and the number of tests run. Never say "should work" in place of running the command.

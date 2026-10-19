@@ -41,8 +41,10 @@ mutation worktree (outside the main tree).
 ## Resume and scratch file
 - Scratch file: `.claude/review-scratch/<range>.md`, with `..` and `/` in the
   range replaced by `_` (git-ignored).
-- At the start, if it exists, read it: those findings are already verified.
-  Continue from there; do not re-verify them.
+- At the start, if it exists, read it. Its first line must name your run
+  and round (`# review run N round R …`); if it names another run, it is
+  stale: ignore it and start the file over. Otherwise those findings are
+  already verified: continue from there; do not re-verify them.
 - Append each finding as soon as it is verified, in the output format below,
   plus the line `checked: <area>` after each area you finish. That way an
   API-limit stop loses at most the finding in progress.
