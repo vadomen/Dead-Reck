@@ -170,7 +170,7 @@ struct PackDownloadRulesTests {
 
     // MARK: Network policy
 
-    @Test("Network policy: Record pauses first, then no network, then cellular without permission")
+    @Test("Network policy: Record pauses first, then no network, then a metered connection without permission")
     func network() {
         let table: [(D.Connection, Bool, Bool, D.NetworkState)] = [
             (.none, false, false, .offline),
@@ -181,14 +181,50 @@ struct PackDownloadRulesTests {
             (.unmetered, true, false, .allowed),
             (.unmetered, false, true, .pausedForRecording),
             (.unmetered, true, true, .pausedForRecording),
-            (.cellularOrExpensive, false, false, .waitingForWiFi),
-            (.cellularOrExpensive, true, false, .allowed),
-            (.cellularOrExpensive, false, true, .pausedForRecording),
-            (.cellularOrExpensive, true, true, .pausedForRecording),
+            (.cellular, false, false, .waitingForWiFi),
+            (.cellular, true, false, .allowed),
+            (.cellular, false, true, .pausedForRecording),
+            (.cellular, true, true, .pausedForRecording),
+            (.meteredWiFi, false, false, .waitingMeteredWiFi),
+            (.meteredWiFi, true, false, .allowed),
+            (.meteredWiFi, false, true, .pausedForRecording),
+            (.meteredWiFi, true, true, .pausedForRecording),
         ]
+        let connections: [D.Connection] = [.none, .unmetered, .cellular, .meteredWiFi]
+        for c in connections {  // the table is exhaustive: every connection × toggle × record, once
+            for cellular in [false, true] {
+                for record in [false, true] {
+                    #expect(table.filter { $0.0 == c && $0.1 == cellular && $0.2 == record }.count == 1)
+                }
+            }
+        }
+        #expect(table.count == connections.count * 4)
         for (connection, cellular, record, expected) in table {
             #expect(D.networkState(connection: connection, cellularAllowed: cellular, recordActive: record) == expected,
                     "\(connection) cellular=\(cellular) record=\(record)")
         }
+    }
+
+    @Test("Path mapping: unsatisfied is none, cellular wins over the flags, else a flag makes Wi-Fi metered")
+    func pathMapping() {
+        for cellular in [false, true] {
+            for expensive in [false, true] {
+                for constrained in [false, true] {
+                    let label = "cellular=\(cellular) expensive=\(expensive) constrained=\(constrained)"
+                    #expect(D.connection(satisfied: false, cellular: cellular, expensive: expensive,
+                                         constrained: constrained) == .none, "\(label)")
+                    let expected: D.Connection = cellular ? .cellular
+                        : (expensive || constrained ? .meteredWiFi : .unmetered)
+                    #expect(D.connection(satisfied: true, cellular: cellular, expensive: expensive,
+                                         constrained: constrained) == expected, "\(label)")
+                }
+            }
+        }
+        // The named cases, spelled out.
+        #expect(D.connection(satisfied: true, cellular: false, expensive: false, constrained: false) == .unmetered)
+        #expect(D.connection(satisfied: true, cellular: false, expensive: true, constrained: false) == .meteredWiFi)
+        #expect(D.connection(satisfied: true, cellular: false, expensive: false, constrained: true) == .meteredWiFi)
+        #expect(D.connection(satisfied: true, cellular: true, expensive: false, constrained: false) == .cellular)
+        #expect(D.connection(satisfied: true, cellular: true, expensive: true, constrained: true) == .cellular)
     }
 }

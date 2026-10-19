@@ -201,8 +201,8 @@ final class PackOfferMonitor {
     ///    is gone; the answer stands for this drive).
     ///
     /// A cache younger than 24 h is not refetched, so a publish within that
-    /// window still queues the old entry (it fails in Settings → Maps, as
-    /// before).
+    /// window still queues the old entry; the downloader then takes the
+    /// fresh one on the 404 (R67.1-7, `PackDownloader.setFreshEntry`).
     @discardableResult
     func download() -> Task<Void, Never>? {
         guard let shown = offer else { return nil }

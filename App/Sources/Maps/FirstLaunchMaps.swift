@@ -315,13 +315,14 @@ final class FirstLaunchMapsModel {
 
     /// Reads the downloader's connection and the cellular switch.
     func refreshNetwork() async {
-        let connection = await downloader.snapshot().connection
-        let cellular = store.defaults.bool(forKey: MapsSettings.cellularKey)
+        // The downloader's own connection and switch (UX-17): the wording is
+        // what the downloads will do, whatever the UserDefault says.
+        let snapshot = await downloader.snapshot()
         // No recording runs during the first-launch step.
-        let next: Network = switch PackDownloadRules.networkState(connection: connection, cellularAllowed: cellular,
-                                                                  recordActive: false) {
+        let next: Network = switch PackDownloadRules.networkState(
+            connection: snapshot.connection, cellularAllowed: snapshot.cellularAllowed, recordActive: false) {
         case .allowed: .ready
-        case .waitingForWiFi: .waitsForWiFi
+        case .waitingForWiFi, .waitingMeteredWiFi: .waitsForWiFi
         case .offline, .pausedForRecording: .offline
         }
         if next != network { network = next }

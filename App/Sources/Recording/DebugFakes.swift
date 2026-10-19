@@ -19,9 +19,24 @@ enum DebugFakes {
     /// row in each state (installed, update available, downloading 42 %,
     /// failed, waiting for Wi-Fi, one pack not in the manifest).
     @MainActor
-    static func downloadsModel(offline: Bool) -> MapsModel {
-        MapsModel(status: MapsPreviewData.status, manifest: MapsPreviewData.manifest,
-                  downloads: MapsPreviewData.downloads, refresh: offline ? .failed(offline: true) : .ok)
+    static func downloadsModel(offline: Bool, connection: PackDownloadRules.Connection = .unmetered,
+                               cellularAllowed: Bool = false) -> MapsModel {
+        let connection = offline ? .none : connection
+        return MapsModel(
+            status: MapsPreviewData.status, manifest: MapsPreviewData.manifest,
+            downloads: MapsPreviewData.downloads(connection: connection, cellularAllowed: cellularAllowed),
+            refresh: connection == .none ? .failed(offline: true) : .ok)
+    }
+
+    /// `-uiFakeConnection none|cellular|metered|wifi`.
+    static func connection(_ name: String?) -> PackDownloadRules.Connection? {
+        switch name {
+        case "none": PackDownloadRules.Connection.none
+        case "cellular": .cellular
+        case "metered": .meteredWiFi
+        case "wifi": .unmetered
+        default: nil
+        }
     }
 
     /// `-uiFakeMapsShort 1`: a short list (two uninstalled packs, no downloads),

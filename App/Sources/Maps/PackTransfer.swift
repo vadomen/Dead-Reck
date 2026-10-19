@@ -56,6 +56,28 @@ final class PackTransfer: NSObject, URLSessionDataDelegate, @unchecked Sendable 
         case cancelled
         /// The connection failed.
         case transport(String)
+        /// 404: the file is gone (R67.1-7); the reason is Core's.
+        case notFound(String)
+        /// The system refused the request because the path is cellular,
+        /// expensive or constrained and the session does not allow it.
+        case refused(Refusal)
+    }
+
+    enum Refusal: Sendable, Equatable {
+        case cellular, expensive, constrained
+
+        /// URLSession's answer for a path the session's flags forbid
+        /// (`NSURLErrorDataNotAllowed`, or `networkUnavailableReason`).
+        init?(_ error: Error) {
+            guard let error = error as? URLError else { return nil }
+            switch error.networkUnavailableReason {
+            case .cellular?: self = .cellular
+            case .expensive?: self = .expensive
+            case .constrained?: self = .constrained
+            case nil: if error.code == .dataNotAllowed { self = .cellular } else { return nil }
+            @unknown default: return nil
+            }
+        }
     }
 
     private let request: URLRequest
@@ -157,7 +179,7 @@ final class PackTransfer: NSObject, URLSessionDataDelegate, @unchecked Sendable 
             decide(.restart(reason))
             completionHandler(.cancel)
         case .fail(let reason):
-            decide(.failed(reason))
+            decide(http.statusCode == 404 ? .notFound(reason) : .failed(reason))
             completionHandler(.cancel)
         case .append:
             do {
@@ -223,7 +245,9 @@ final class PackTransfer: NSObject, URLSessionDataDelegate, @unchecked Sendable 
         } else if cancelled {
             finish(.cancelled)
         } else if let error {
-            finish(.transport(error.localizedDescription))
+            if let refusal = Refusal(error) { finish(.refused(refusal)) } else {
+                finish(.transport(error.localizedDescription))
+            }
         } else {
             finish(.completed)
         }

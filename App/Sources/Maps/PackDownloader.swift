@@ -35,7 +35,11 @@ import Foundation
 actor PackDownloader {
     enum State: Hashable, Sendable {
         case queued
+        /// On cellular with "Use cellular data" off.
         case waitingForWiFi
+        /// On a metered Wi-Fi (Personal Hotspot, Low Data Mode) with "Use
+        /// cellular data" off: "Waiting — this Wi-Fi is metered".
+        case waitingMeteredWiFi
         case offline
         case pausedForRecording
         case downloading(received: Int64, total: Int64)
@@ -63,6 +67,21 @@ actor PackDownloader {
         /// The path monitor's latest connection (Settings → Maps shows
         /// "Offline" from it, whatever the age of the cached list).
         var connection: PackDownloadRules.Connection = .unmetered
+        /// The downloader's own value of "Use cellular data" (the one the
+        /// policy used; the rows and the state line in Settings → Maps come
+        /// from this snapshot, so they never disagree, UX-16).
+        var cellularAllowed = false
+        /// A Record session runs.
+        var recordActive = false
+        /// The monitor's raw report behind `connection`; nil before the
+        /// first report (and when a test or a fake set a connection only).
+        var path: PackPath?
+        /// The policy decision (`PackDownloadRules.networkState`) for a
+        /// queued job: Diagnostics (UX-17).
+        var policy: PackDownloadRules.NetworkState {
+            PackDownloadRules.networkState(connection: connection, cellularAllowed: cellularAllowed,
+                                           recordActive: recordActive)
+        }
     }
 
     private enum Stop { case pause, cancel, network }
@@ -72,6 +91,9 @@ actor PackDownloader {
         var transfer: PackTransfer?
         var hashTask: Task<Result<String?, Error>, Never>?
         var stop: Stop?
+        /// "Use cellular data" as the transfer's session was configured
+        /// with (nil before one exists).
+        var configuredCellular: Bool?
     }
 
     private let directory: URL
@@ -86,9 +108,15 @@ actor PackDownloader {
     private var states: [String: State] = [:]
     private var updatedForNextStart: Set<String> = []
     private var connection: PackDownloadRules.Connection
+    private var path: PackPath?
     private var cellularAllowed: Bool
+    /// The system refused the request on a metered path the monitor has not
+    /// reported yet (URLSession's `networkUnavailableReason`): the queue
+    /// waits, in this state, until the next path or toggle change.
+    private var refused: State?
     private var recordActive = false
     private var pumping: Task<Void, Never>?
+    private var freshEntry: (@Sendable (String) async -> PackManifest.Pack?)?
     /// Finished or stopped runs (tests wait on it).
     private(set) var finishedRuns = 0
 
@@ -96,6 +124,10 @@ actor PackDownloader {
     ///   - directory: the store directory (partials live next to the packs).
     ///   - makeConfiguration: the URL session configuration; tests add a
     ///     `URLProtocol`. The cellular flags are set on top of it.
+    ///   - freshEntry: the manifest entry of a pack name after a forced
+    ///     manifest refresh (R67.1-7); nil when the name is gone or it
+    ///     failed. Set later with `setFreshEntry` (the manifest service needs
+    ///     the downloader first).
     ///   - runActive: whether a Navigate or Record run is active (for the
     ///     "used from the next start" note), as for `RoadPackLibrary`.
     ///   - hash: the file's SHA-256, nil when cancelled (`sha256(of:)`);
@@ -134,7 +166,8 @@ actor PackDownloader {
            let transfer = running.transfer {
             current[running.job.pack.name] = .downloading(received: transfer.receivedBytes, total: total)
         }
-        return Snapshot(states: current, updatedForNextStart: updatedForNextStart, connection: connection)
+        return Snapshot(states: current, updatedForNextStart: updatedForNextStart, connection: connection,
+                        cellularAllowed: cellularAllowed, recordActive: recordActive, path: path)
     }
 
     var isIdle: Bool { running == nil && queue.isEmpty }
@@ -179,14 +212,36 @@ actor PackDownloader {
         states[name] = nil
     }
 
+    /// A connection without a raw path (tests, fakes).
     func setConnection(_ value: PackDownloadRules.Connection) {
         connection = value
+        path = nil
         networkChanged()
     }
 
+    /// The path monitor's report (UX-17: the raw flags stay for Diagnostics).
+    func setPath(_ value: PackPath) {
+        path = value
+        connection = value.connection
+        networkChanged()
+    }
+
+    /// "Use cellular data". Turning it on restarts a running transfer whose
+    /// session was configured with it off (`allowsCellularAccess` and the
+    /// expensive and constrained flags are fixed per session): otherwise a
+    /// later move to cellular would fail it.
     func setCellularAllowed(_ value: Bool) {
         cellularAllowed = value
+        if value, var run = running, run.stop == nil, run.configuredCellular == false {
+            run.stop = .network
+            run.transfer?.cancel()
+            running = run
+        }
         networkChanged()
+    }
+
+    func setFreshEntry(_ hook: (@Sendable (String) async -> PackManifest.Pack?)?) {
+        freshEntry = hook
     }
 
     /// Record pauses downloads (Navigate does not).
@@ -253,14 +308,16 @@ actor PackDownloader {
 
     private func waitingState(_ policy: PackDownloadRules.NetworkState) -> State {
         switch policy {
-        case .allowed: .queued
+        case .allowed: refused ?? .queued
         case .waitingForWiFi: .waitingForWiFi
+        case .waitingMeteredWiFi: .waitingMeteredWiFi
         case .pausedForRecording: .pausedForRecording
         case .offline: .offline
         }
     }
 
     private func networkChanged() {
+        refused = nil
         if policy != .allowed, var run = running, run.stop == nil {
             run.stop = .network
             run.transfer?.cancel()
@@ -272,7 +329,7 @@ actor PackDownloader {
     private func pump() {
         let policy = self.policy
         for job in queue { states[job.pack.name] = waitingState(policy) }
-        guard running == nil, policy == .allowed, !queue.isEmpty else { return }
+        guard running == nil, policy == .allowed, refused == nil, !queue.isEmpty else { return }
         let job = queue.removeFirst()
         running = Running(job: job)
         states[job.pack.name] = .downloading(received: 0, total: job.pack.size)
@@ -317,7 +374,9 @@ actor PackDownloader {
 
     // MARK: One pack
 
-    private func run(_ job: Job) async {
+    /// - Parameter retriedNotFound: this job already took a fresh manifest
+    ///   entry after a 404 (R67.1-7): a second 404 fails.
+    private func run(_ job: Job, retriedNotFound: Bool = false) async {
         let pack = job.pack
         guard let files = PackPartialFiles(directory: directory, pack: pack) else {
             return fail(job, "invalid pack name")
@@ -356,6 +415,7 @@ actor PackDownloader {
                 configuration.allowsConstrainedNetworkAccess = cellularAllowed
                 configuration.httpCookieStorage = nil
                 configuration.httpShouldSetCookies = false
+                running?.configuredCellular = cellularAllowed
                 let transfer = PackTransfer(request: request, pack: pack, files: files, requestedOffset: offset,
                                             storedETag: storedETag, configuration: configuration)
                 if stopped() { return setStopOutcome(job, files: files) }
@@ -373,6 +433,27 @@ actor PackDownloader {
                     continue
                 case .failed(let reason):
                     return fail(job, reason)
+                case .notFound(let reason):
+                    if stopped() { return setStopOutcome(job, files: files) }
+                    // R67.1-7: the cached manifest may name a file a later
+                    // publish pruned. One forced refresh, one retry with the
+                    // fresh entry of the same name; gone or unchanged → fail.
+                    guard !retriedNotFound, let hook = freshEntry else { return fail(job, reason) }
+                    let fresh = await hook(pack.name)
+                    if stopped() { return setStopOutcome(job, files: files) }
+                    guard let fresh, fresh != pack else { return fail(job, reason) }
+                    files.delete()
+                    let next = Job(pack: fresh, isUpdate: job.isUpdate)
+                    running?.job = next
+                    states[fresh.name] = .downloading(received: 0, total: fresh.size)
+                    return await run(next, retriedNotFound: true)
+                case .refused(let refusal):
+                    if stopped() { return setStopOutcome(job, files: files) }
+                    // The system says this path is cellular, expensive or
+                    // constrained before the monitor did: wait for the next
+                    // path or toggle change instead of failing or looping.
+                    refused = refusal == .cellular ? .waitingForWiFi : .waitingMeteredWiFi
+                    return requeue(job)
                 case .cancelled:
                     return setStopOutcome(job, files: files)
                 case .transport(let message):

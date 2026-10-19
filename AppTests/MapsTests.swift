@@ -331,7 +331,7 @@ struct MapsRowsTests {
         #expect(MapsText.listNote(.ok, connection: .none, hasManifest: true) == "Offline. Showing the saved list.")
         #expect(MapsText.listNote(.ok, connection: .none, hasManifest: false) == "Offline.")
         #expect(MapsText.listNote(.ok, connection: .unmetered, hasManifest: true) == nil)
-        #expect(MapsText.listNote(.idle, connection: .cellularOrExpensive, hasManifest: true) == nil)
+        #expect(MapsText.listNote(.idle, connection: .cellular, hasManifest: true) == nil)
         // A failed fetch on a live connection still says the update failed; offline wins when both hold.
         #expect(MapsText.listNote(.failed(offline: false), connection: .unmetered, hasManifest: true)
                 == "Couldn't update the list. Showing the saved list.")

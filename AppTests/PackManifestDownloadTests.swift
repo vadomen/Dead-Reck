@@ -82,8 +82,8 @@ struct PackManifestRunningJobTests {
 
 /// Collects what an `OrderedRelay` delivers.
 private actor ConnectionSink {
-    private(set) var values: [PackDownloadRules.Connection] = []
-    func add(_ value: PackDownloadRules.Connection) async {
+    private(set) var values: [PackPath] = []
+    func add(_ value: PackPath) async {
         if values.count % 7 == 0 { await Task.yield() }
         values.append(value)
     }
@@ -91,14 +91,14 @@ private actor ConnectionSink {
 
 @Suite("Path changes in order (R66.1-8)")
 struct PackPathRelayTests {
-    static let burst: [PackDownloadRules.Connection] = (0..<300).map {
-        [.cellularOrExpensive, .unmetered, .none][$0 % 3]
+    static let burst: [PackPath] = (0..<300).map {
+        PackPath(connection: [.cellular, .unmetered, .none, .meteredWiFi][$0 % 4])
     }
 
     @Test("The relay delivers every path change in the order sent")
     func order() async {
         let sink = ConnectionSink()
-        let relay = OrderedRelay<PackDownloadRules.Connection> { await sink.add($0) }
+        let relay = OrderedRelay<PackPath> { await sink.add($0) }
         for value in Self.burst { relay.send(value) }
         #expect(await eventually { await sink.values.count == Self.burst.count })
         #expect(await sink.values == Self.burst)
@@ -113,13 +113,13 @@ struct PackPathRelayTests {
         let relay = AppServices.pathRelay(to: downloader)
         await downloader.start(env.pack(stub))
         for value in Self.burst { relay.send(value) }
-        relay.send(.unmetered)
+        relay.send(PackPath(connection: .unmetered))
         #expect(await eventually { await downloader.snapshot().connection == .unmetered && env.installedFiles.count == 1 })
         try await Task.sleep(for: .milliseconds(200))
         #expect(await downloader.snapshot().connection == .unmetered)
 
         for value in Self.burst { relay.send(value) }
-        relay.send(.none)
+        relay.send(PackPath(connection: .none))
         #expect(await eventually { await downloader.snapshot().connection == .none })
         try await Task.sleep(for: .milliseconds(200))
         #expect(await downloader.snapshot().connection == .none, "no older value lands after the latest")

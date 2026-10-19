@@ -34,7 +34,9 @@ final class AppServices {
     private let network = PackNetworkMonitor()
     private let recordActivity: RecordActivityRelay
     /// Path changes, in order, to the downloader (R66.1-8).
-    private let pathRelay: OrderedRelay<PackDownloadRules.Connection>
+    private let pathRelay: OrderedRelay<PackPath>
+    /// "Use cellular data" → downloader, every write, in order (UX-17).
+    private let cellularSetting: CellularSettingObserver
 
     init(
         link: any OBDLinkServicing = OBDLinkFactory.makeDefault(),
@@ -83,14 +85,22 @@ final class AppServices {
         // A fresh manifest cleans partials through the downloader (R66.1-7).
         let manifest = PackManifestService.makeDefault(downloader: downloader)
         self.manifest = manifest
-        Task(priority: .utility) { await manifest.loadCache() }
+        Task(priority: .utility) {
+            await manifest.loadCache()
+            // R67.1-7: a 404 to a pack forces one manifest refresh and takes the fresh entry.
+            await downloader.setFreshEntry { name in
+                await manifest.refresh(force: true)
+                return await manifest.snapshot().manifest?.pack(named: name)
+            }
+        }
         packOffers = PackOfferMonitor(sources: PackOfferMonitor.sources(
             library: roadPacks, manifest: manifest, downloader: downloader))
         // R66.1-8: one task delivers every path change in order, so a quick
         // cellular → Wi-Fi pair can't reach the downloader reversed.
         let pathRelay = Self.pathRelay(to: downloader)
         self.pathRelay = pathRelay
-        network.start { connection in pathRelay.send(connection) }
+        network.start { path in pathRelay.send(path) }
+        cellularSetting = CellularSettingObserver(downloader: downloader)
         // UX-8: every Record-active change, in order, from the first line of
         // `start` to the end of the end path; one task delivers them, so a
         // quick true/false pair can't reach the downloader reversed.
@@ -107,8 +117,8 @@ final class AppServices {
     }
 
     /// The path monitor's relay to the downloader (R66.1-8).
-    nonisolated static func pathRelay(to downloader: PackDownloader) -> OrderedRelay<PackDownloadRules.Connection> {
-        OrderedRelay { connection in await downloader.setConnection(connection) }
+    nonisolated static func pathRelay(to downloader: PackDownloader) -> OrderedRelay<PackPath> {
+        OrderedRelay { path in await downloader.setPath(path) }
     }
 
     /// The offer loop's live values: a run is active (Navigate or Record,
