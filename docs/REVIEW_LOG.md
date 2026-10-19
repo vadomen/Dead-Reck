@@ -770,3 +770,13 @@ Reviewers: three parallel opus reviewers (A: Core PackRegionChoice/PackOfferRule
 Tests before review (0c45720 / c993ea5): Core 1066 tests in 136 suites passed (36 known issues); release `NavigationRoadPerfTests|NavigationB0Tests` 9 tests in 2 suites passed; AppTests 519 tests in 80 suites passed (c993ea5), PackOfferMonitorTests 6/6 (0c45720); simulator build succeeds.
 
 Round 1 outcome: R67.1-1, R67.1-2 fixed; AppTests 522 tests in 81 suites passed; simulator build succeeds; Core unchanged since 0c45720.
+
+### Round 2
+
+Reviewer: one fresh opus reviewer on the round-1 fix commits (0c45720, c80d91e) plus a sweep of the range (offer never in motion / with a dialog / with the map hidden, nothing to the recording or sidecar, coarse fix never stored or sent). Mutations 3/3 killed (author's `<`→`<=` re-checked; per-stop show guard; per-stop reset). No new findings.
+
+Tests at c80d91e: AppTests 522 tests in 81 suites passed; simulator build succeeds; Core unchanged since 0c45720 (1066 tests in 136 suites passed, 36 known issues; release perf 9 tests in 2 suites passed).
+
+### Run 67 summary
+
+2 rounds; 2 MAJOR fixed (R67.1-1 from the user, R67.1-2), 0 rejected, 5 MINOR deferred (R67.1-3..7).
