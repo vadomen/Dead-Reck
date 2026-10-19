@@ -242,13 +242,18 @@ enum FollowSpan {
     static let maxFitM = 1000.0
     static let ellipseFactor = 2.2
 
-    /// Heading-up span that fits the ellipse:
-    /// `min(1000, max(minimum, 2.2 × semi-major))`. A `minimum` already above
-    /// 1000 m (the driver zoomed out) is kept: the fit never zooms *in* past
-    /// what the driver chose.
-    static func span(minimum: Double, semiMajorM: Double) -> Double {
+    /// Span that fits the ellipse:
+    /// `min(1000, 2.2 × semi-major) × 0.5 / (1 − carFromTop)`, but never below
+    /// `minimum` (the driver's zoom, which is not inflated). The last factor
+    /// keeps the ellipse's rear half inside the part of the screen below the
+    /// car: 1 with the car centred (north-up, the default), 1.5 at 2/3
+    /// (`CarPlacement.carFromTop`). It applies after the 1000 m cap, so a large
+    /// ellipse gets at most 1500 m. A `minimum` already above that (the driver
+    /// zoomed out) is kept: the fit never zooms *in* past what the driver chose.
+    static func span(minimum: Double, semiMajorM: Double, carFromTop: Double = 0.5) -> Double {
         let fit = semiMajorM.isFinite ? ellipseFactor * max(semiMajorM, 0) : 0
-        return max(minimum, min(maxFitM, fit))
+        let rear = carFromTop > 0.5 && carFromTop < 1 ? 0.5 / (1 - carFromTop) : 1
+        return max(minimum, min(maxFitM, fit) * rear)
     }
 }
 
@@ -357,7 +362,8 @@ struct FollowZoom: Equatable, Sendable {
 
     static func distance(chosen: Double, headingUp: Bool, semiMajorM: Double?) -> Double {
         guard headingUp, let semiMajorM else { return chosen }
-        let span = FollowSpan.span(minimum: chosen / MapFraming.distancePerSpan, semiMajorM: semiMajorM)
+        let span = FollowSpan.span(
+            minimum: chosen / MapFraming.distancePerSpan, semiMajorM: semiMajorM, carFromTop: CarPlacement.carFromTop)
         return MapFraming.cameraDistance(spanMeters: span)
     }
 }

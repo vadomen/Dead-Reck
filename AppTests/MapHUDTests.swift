@@ -199,6 +199,27 @@ struct MapHUDTests {
 
 @Suite("Car placement (UX-32)")
 struct CarPlacementTests {
+    /// Metres visible behind the car (below it) for a camera distance, heading-up.
+    private func visibleBehindCar(cameraDistance d: Double) -> Double {
+        (1 - CarPlacement.carFromTop) * d * CarPlacement.spanPerDistance
+    }
+
+    @Test("R68.1-1: heading-up, the ellipse's rear half fits below the car; north-up and small ellipses unchanged")
+    func ellipseFitBehindCar() {
+        for semi in [100.0, 300, 450] {
+            let d = FollowZoom.distance(chosen: 100, headingUp: true, semiMajorM: semi)
+            let behind = visibleBehindCar(cameraDistance: d)
+            #expect(behind >= semi, "semi \(semi): \(behind) m behind the car")
+            #expect(behind <= semi * 1.15, "not inflated beyond the 2.2 margin")
+        }
+        // North-up: the old fit, car centred.
+        #expect(abs(FollowZoom.distance(chosen: 100, headingUp: false, semiMajorM: 300) - 100) < 1e-9)
+        #expect(abs(FollowSpan.span(minimum: 500, semiMajorM: 300) - 660) < 1e-9)
+        // A small ellipse leaves the driver's zoom alone.
+        #expect(FollowZoom.distance(chosen: 500, headingUp: true, semiMajorM: 50) == 500)
+        #expect(FollowZoom.distance(chosen: 500, headingUp: true, semiMajorM: nil) == 500)
+    }
+
     @Test("Heading-up puts the camera centre ahead so the car lands at two thirds; north-up does not")
     func ahead() {
         let d = 1000.0
