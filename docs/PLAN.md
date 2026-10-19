@@ -241,7 +241,7 @@ Replay only the current connection's init (M6.1-1) and remembered poll plan and 
 6. **"Calibrating heading":** the label shows while the heading has not converged, with the ellipse drawn; the simulator's engine converges at once, so this was only seen in previews.
 
 ### Added by UX-2 map first (not verified on a device)
-1. **Cold launch:** the app opens on the Map tab; the tab order is Map, Sessions, Settings (UX-3 moved Record and Console into Settings). The DEBUG `-uiTab` launch override uses tab order: 0 Map, 1 Sessions, 2 Settings (it was Record 0, Sessions 1, Console 2, Map 3).
+1. **Cold launch:** the app opens on the Map tab; the tab order is Map, Sessions, Settings (UX-3 moved Record and Console into Settings). The DEBUG `-uiTab` launch override used tab order: 0 Map, 1 Sessions, 2 Settings (it was Record 0, Sessions 1, Console 2, Map 3). Since prompt 30 (UX-14) there is no tab bar and `-uiTab` is replaced by `-uiScreen map|settings|sessions|maps|console|recording|adapter|about`.
 
 ### Added by UX-5 map speed block (not verified on a device)
 1. **Source switch:** drive with OBD connected: the chip reads `OBD`. Unplug the adapter (or switch the ignition off while moving is not needed; stopping the link is enough): within about 2 s the chip changes to `GPS` with the GPS speed (m/s x 3.6, nearest km/h); replug: it returns to `OBD`. With neither (no fix, adapter gone) it reads `-- km/h` with no chip.
@@ -251,14 +251,14 @@ Replay only the current connection's init (M6.1-1) and remembered poll plan and 
 5. **Glance test:** the speed number is readable at arm's length in the mount, in daylight.
 
 ### Added by UX-3 Settings tab and map recording control (not verified on a device)
-1. **Tabs:** Map · Sessions · Settings (gear); Console is a row inside Settings. `-uiTab` (DEBUG): 0 Map, 1 Sessions, 2 Settings.
+1. **Tabs:** Map · Sessions · Settings (gear); Console is a row inside Settings. `-uiTab` (DEBUG): 0 Map, 1 Sessions, 2 Settings (replaced by `-uiScreen` in prompt 30; no tab bar any more, Settings opens from the gear on the map).
 2. **Recording lives in Settings:** Settings, Test drive recording (named "Recording" until UX-1 part 2) shows the unchanged Record screen (checklist, calibration, start/stop, mark, live stats). Opening it refreshes the screen (disk space, adapter). A full test drive: checklist, Start, Mark, Stop, all from there, with the file appearing in Sessions.
 3. **Map Start button:** removed by UX-1 part 2: with no recording the map shows no Start (see "Added by UX-1 part 2", item 3).
 4. **Map recording indicator:** while calibrating or recording, a red dot and elapsed time appear (its own row above Heading/Follow, on the left). It must tick once a second without the map stuttering (follow camera, 10 Hz DR loop). Tapping it asks "Stop recording?"; Keep recording does nothing; Stop recording must actually stop (the dialog's button stops directly, it does not depend on SwiftUI's dismiss order): the indicator disappears and the file is closed, complete and readable in Sessions (size stops growing, `inspect_log` shows a `stop` row and no damage). Check the 56 pt target is hit easily in the mount, and that it does not collide with the Re-centre hint or the Fix recorded toast.
 5. **Diagnostics:** thermal state follows the system (try a warm phone) and the Version/Build rows show the version and Debug or Release.
 
 ### Added by UX-4 Console in Settings (not verified on a device)
-1. **Reach:** Settings, then Console, two taps; the title bar shows "Console" with a back button to Settings. There is no Console tab and `-uiTab 3` opens Map.
+1. **Reach:** Settings, then Console, two taps; the title bar shows "Console" with a back button to Settings. There is no Console tab and `-uiTab 3` opened Map (`-uiTab` is replaced by `-uiScreen`, prompt 30).
 2. **Guards unchanged:** with a recording running, Forget adapter and Drop OBD still ask first and say a recording is in progress; Scan is disabled while the link holds the adapter during a recording; the manual field still accepts only the allowed commands. Check with the real adapter.
 3. **Keyboard:** the manual command field and keyboard behave inside the pushed screen (the field is not hidden by the keyboard, Send works, the log keeps scrolling to the newest line).
 
@@ -307,6 +307,19 @@ Replay only the current connection's init (M6.1-1) and remembered poll plan and 
 10. **Real 5xx:** an interrupted download after a real 5xx resumes (the partial is kept).
 11. **Wi-Fi ↔ cellular handoff:** the rows and the Offline note show the correct state afterwards.
 12. **After the site is deployed:** 416 for an unsatisfiable range on `/packs/v1/*` (curl checks in the prompt 26 report).
+
+### Added by UX-14 / UX-31 / UX-32 / UX-33 / UX-34 map HUD and Settings (prompt 30) — not verified on a device
+1. **HUD at arm's length:** the speed in the top-left card is readable at arm's length in the mount, in daylight.
+2. **GPS and OBD indicators on a drive:** every state is seen at least once (GPS OK, No GPS, GPS off; OBD, OBD lost), each distinguishable without colour alone; "OBD lost" with the adapter unplugged.
+3. **Gear, Settings, Done:** the gear in the right rail opens Settings full screen and Done returns to the map with the camera mode (Following, Heading up / North up) unchanged; navigation keeps running while Settings is open.
+4. **Adapter pairing without Console:** on a fresh install, Settings → OBD adapter → Scan, pick the adapter, Connect; Disconnect and Forget ask first during a recording; the help shows when no adapter is found.
+5. **About links:** Privacy policy and Support open the site pages; "Data and services" shows OpenStreetMap (ODbL, the /data page) and Apple Maps.
+6. **Sessions share from Settings:** Settings → Sessions, Share exports the recording and its sidecar; delete asks first.
+7. **Mount and orientation:** the row re-shows the checklist.
+8. **Recording row:** during a test recording a tap on the row in the top-left card opens the Stop confirmation; Keep recording does nothing.
+9. **OSM line:** with a pack loaded the one-line attribution at the bottom edge does not overlap Apple's Maps / Legal marks on an iPhone with a home indicator.
+10. **Offer card at a stop:** the road-pack offer card (bottom-left zone) does not cover the car marker at a stop in heading-up.
+11. **Console in Release:** hidden until 7 taps on Version in About (proposed default, awaiting the user's decision).
 
 ### Added by the backlog triage sweep (2026-10-17) — not verified on a device
 1. **ELM write-offs and clone banners (bench):** count the write-off notes and the `ATZ banner without 'ELM'` notes over a bench session, and decide whether to model `STOPPED` in the mock (a real ELM327 aborts a pending command on any received byte). (M1-E3)

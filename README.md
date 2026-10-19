@@ -47,7 +47,7 @@ Ukrainian and English.
 |---|---|
 | Logger (M0–M4) | Done. Bench-tested on the iPhone in the test car ([2026-10-07](docs/BENCH_TEST_2026-10-07.md), [2026-10-08](docs/BENCH_TEST_2026-10-08.md): ~16.4 OBD exchanges/s, p50 latency 59 ms) and used on real drives in Kyiv, including GPS-jammed ones. |
 | Navigation engine (N2–N3.3) | Done. Particle filter with OSM road matching; proven on the recorded acceptance drives with `replay_nav`, live and replayed giving the same result. Numbers: [docs/NAVIGATION.md](docs/NAVIGATION.md) ("N3.3: roads live" and later). |
-| Live navigation in the app (N4, UX-1, UX-2…UX-6) | Done in code: Navigate mode, map with the dead-reckoning dot and ellipse, manual fixes, speed-dependent zoom, Settings tab. The device checks in [docs/PLAN.md](docs/PLAN.md) §6 (including 1 h of Navigate: memory, battery, thermal) are still open. |
+| Live navigation in the app (N4, UX-1, UX-2…UX-6) | Done in code: Navigate mode, map with the dead-reckoning dot and ellipse, manual fixes, speed-dependent zoom, Settings behind a gear on the map. The device checks in [docs/PLAN.md](docs/PLAN.md) §6 (including 1 h of Navigate: memory, battery, thermal) are still open. |
 | Road packs (N3.4, UX-8) | Done in code: 28 packs (all of Ukraine + 27 regions) hosted; the app downloads them by region (first launch, Settings → Maps, an offer at a stop when you drive out of coverage) into its private store. Device checks in PLAN §6 are open. |
 | Open | Navigation without OBD (NAV-NOOBD, then maybe UX-7), a "GPS off" switch for spoofing (UX-9), fit the whole ellipse under jamming (UX-10), notice of an interrupted recording (UX-11), dark-mode map controls (UX-13). See [docs/BACKLOG_UX.md](docs/BACKLOG_UX.md) and [docs/BACKLOG.md](docs/BACKLOG.md). |
 
@@ -86,22 +86,29 @@ Details: [docs/NAVIGATION.md](docs/NAVIGATION.md). Open plans:
 
 ## Screens
 
-Three tabs, portrait only: **Map · Sessions · Settings**. The app opens on Map.
+No tab bar, portrait only: the app is the full-screen **Map**, and a gear in
+the map's right rail opens **Settings** full screen (Done returns to the map
+with the camera mode unchanged). Sessions is a row inside Settings.
 On the first launch it shows "Before you drive" (rigid mount, fixed
 orientation) and then "Road maps" (pick which packs to download, see
 [Road packs](#road-packs)), each once; Settings → "Mount and orientation"
 shows the checklist again.
 
 - **Map.** The dead-reckoning dot with its 95 % ellipse, the GPS track for
-  reference, Following (re-centres on its own 8 s after you pan) and Heading
-  up / North up. One large speed value with its source, `54 km/h · OBD` or
-  `· GPS`; the chip colour shows GPS quality (green ≤ 15 m, amber ≤ 100 m,
-  grey for network or stale fixes), the only sign of jamming on the map. The
-  zoom follows speed (≈250 m when slow to ≈1500 m at 110+ km/h). A one-line
+  reference. A compact card top left holds the speed with GPS and OBD
+  indicators (thermal only when not nominal) and, during a test recording,
+  the recording row; a right rail holds North up / Heading up, Following
+  (re-centres on its own 8 s after you pan) and the Settings gear; the car
+  sits in the lower third in heading-up. The indicator of the current speed
+  source (OBD or GPS) is shown bold; a failed one ("No GPS", "OBD lost") has
+  a slashed glyph and a warning colour. The
+  zoom follows speed (≈250 m when slow to ≈1500 m at 110+ km/h). Bottom left,
+  above the bottom edge: the at-a-stop offer, toasts and a one-line
   status: "Hold still — calibrating" with a countdown, "OBD lost —
   reconnecting" with "Stops in m:ss", or "Connect OBD for navigation without
-  GPS" (then only the plain GPS position is shown). A road-pack warning when
-  roads are off, and "© OpenStreetMap contributors" when a pack is in use.
+  GPS" (then only the plain GPS position is shown), and a road-pack warning
+  when roads are off. "© OpenStreetMap contributors" is one line at the
+  bottom edge when a pack is in use.
   **Manual fix:** zoom in to a visible span of 300 m or less and double tap
   where the car really is; "Fix recorded" with Undo for 3 s. During a test
   recording the map shows a red dot with the elapsed time; tapping it asks
@@ -109,7 +116,7 @@ shows the checklist again.
   a card at the next stop offers that region's pack (Download / Not now /
   Never for this region); never in motion. A long press on the speed value toggles the navigation
   stats (ms per step, particles, thermal).
-- **Sessions.** Recordings with date, duration and size. Share exports the
+- **Settings → Sessions.** Recordings with date, duration and size. Share exports the
   recording together with its `.nav.jsonl` sidecar; trash asks first and
   deletes both. The list refreshes on appear and after a recording ends. The
   recording in progress can't be shared or deleted.
@@ -127,7 +134,11 @@ shows the checklist again.
     shown (the notes are remembered). If Start is refused, the reason is
     shown; with no polling adapter, "Record without OBD" is an explicit
     per-recording switch. The screen stays awake while recording.
-  - **Console**: scan, pick, connect, disconnect and forget the adapter,
+  - **OBD adapter**: state, the paired adapter's name, Connect / Disconnect /
+    Forget, Scan (same guards as Console) and a short help when no adapter is
+    found.
+  - **Console** (in Release shown only after 7 taps on Version in About, the
+    Diagnostics gate; a proposed default, not final): scan, pick, connect, disconnect and forget the adapter,
     Re-initialise, and the raw ELM traffic (TX, RX and status lines, newest at
     the bottom). A manual field and quick buttons send only the read-only
     queries (`ATI`, `AT@1`, `ATDP`, `ATDPN`, `ATRV`, mode 01). A rejected
@@ -140,7 +151,9 @@ shows the checklist again.
     OSM date, state) with Download / Cancel / Update; Remove by swipe;
     "Use cellular data" (off by default); "Not offered on the road" with
     Reset. Packs not in the list appear under "Other".
-  - **Diagnostics** and **About**: thermal state, version. Developer rows
+  - **About**: version and build, Privacy policy, Support, "Data and
+    services" (OpenStreetMap ODbL, Apple Maps), a driver-attention line.
+  - **Diagnostics**: thermal state, version. Developer rows
     (build, memory, roads: packs found, verified or refused with the reason,
     packs in use) are always shown in DEBUG; in Release after 7 taps on
     Version (7 more hide them).
@@ -159,7 +172,7 @@ a crash.
    choose the road maps to download (all-Ukraine is preselected, your region
    too if location is allowed), and allow Bluetooth, Motion & Fitness and
    Location (While Using).
-4. First time only: Settings → Console → Scan, tap the adapter. It is
+4. First time only: gear on the map → OBD adapter → Scan, tap the adapter. It is
    remembered and reconnects on its own.
 5. Navigation starts when the adapter is polling. If the car is stationary
    the map shows "Hold still — calibrating" for 5 s: don't touch the phone or
@@ -182,7 +195,7 @@ a crash.
    are written to the recording. Recording continues with the screen locked.
 4. After parking, press STOP (on the map or in Settings). The map returns to
    Navigate if the adapter is still connected.
-5. Sessions tab: share the recording and its sidecar, or copy them with the
+5. Settings → Sessions: share the recording and its sidecar, or copy them with the
    Files app (On My iPhone → DriveLogger). For a timing-faithful test drive,
    build with the `DriveLogger-Release` scheme (Debug is `-Onone`, so the
    sidecar's `msPerStep` is meaningless there).
