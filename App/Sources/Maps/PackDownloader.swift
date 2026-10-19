@@ -139,6 +139,12 @@ actor PackDownloader {
 
     var isIdle: Bool { running == nil && queue.isEmpty }
 
+    /// Names of the running and queued jobs (whatever their waiting state):
+    /// the at-a-stop offer's `excluded` (UX-8).
+    func activeNames() -> Set<String> {
+        Set(queue.map(\.pack.name)).union(running.map { [$0.job.pack.name] } ?? [])
+    }
+
     // MARK: Commands
 
     /// Queues `pack` (a new download, a retry after a failure or an update).
@@ -201,6 +207,41 @@ actor PackDownloader {
             if let pumping { await pumping.value }
             if running == nil, queue.isEmpty { return }
             try? await Task.sleep(for: .milliseconds(5))
+        }
+    }
+
+    // MARK: A fresh manifest (R66.1-7)
+
+    /// A fresh manifest was applied (`PackManifestService`): queued jobs
+    /// take its entry, and stale partials are deleted, except the running
+    /// job's. On this actor, so no job can start or end in between.
+    ///
+    /// - **Running job: kept as it is.** Its partial and metadata are never
+    ///   deleted, even when the manifest gives the pack a new contentHash
+    ///   (the transfer would write into an unlinked file and fail "incomplete
+    ///   download" at the end). It finishes the version it started (URLs are
+    ///   immutable; sha256 and the content hash are still checked), and
+    ///   Settings → Maps then offers the newer one as "Update available".
+    ///   Cancelling and requeueing it would throw away what it has.
+    /// - **Queued job: takes the manifest's entry** of the same name (new
+    ///   URL, size, hashes), so it downloads the current version; its old
+    ///   partial is then stale and deleted. A queued name the manifest no
+    ///   longer lists keeps its job (it fails on its own, e.g. 404).
+    /// - Everything else is `RoadPackStoreRules.stalePartials`: a
+    ///   `.roadpack` is never touched.
+    func manifestApplied(_ manifest: PackManifest) {
+        for index in queue.indices {
+            if let fresh = manifest.pack(named: queue[index].pack.name), fresh != queue[index].pack {
+                queue[index].pack = fresh
+            }
+        }
+        var keep = Set<String>()
+        if let job = running?.job, let files = PackPartialFiles(directory: directory, pack: job.pack) {
+            keep = [files.partial.lastPathComponent, files.metadata.lastPathComponent]
+        }
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory.path) else { return }
+        for name in RoadPackStoreRules.stalePartials(fileNames: names, manifest: manifest) where !keep.contains(name) {
+            try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
         }
     }
 

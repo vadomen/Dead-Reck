@@ -1,3 +1,4 @@
+import DriveLoggerCore
 import SwiftUI
 
 /// Composes the tabs from the app's services. Each tab owns a thin view
@@ -16,6 +17,7 @@ struct RootView: View {
     private let services: AppServices
     @State private var nav: AppNavigation
     @State private var firstLaunch: FirstLaunchModel
+    @State private var firstMaps: FirstLaunchMapsModel
 
     init(services: AppServices) {
         _recording = State(initialValue: RecordingViewModel(services: services))
@@ -39,6 +41,7 @@ struct RootView: View {
         if UserDefaults.standard.bool(forKey: "uiFakeDownloads") || fakeOffline {
             mapsModel = DebugFakes.downloadsModel(offline: fakeOffline)
         }
+        if UserDefaults.standard.bool(forKey: "uiFakeMapsShort") { mapsModel = DebugFakes.shortMapsModel }
         #endif
         _maps = State(initialValue: mapsModel)
         var developerGate = DeveloperGate()
@@ -76,8 +79,30 @@ struct RootView: View {
         initial.tab = AppTab(launchValue: UserDefaults.standard.integer(forKey: "uiTab"))
         // `-uiMaps 1` opens Settings → Maps.
         if UserDefaults.standard.bool(forKey: "uiMaps") || UserDefaults.standard.bool(forKey: "uiFakeDownloads")
-            || UserDefaults.standard.bool(forKey: "uiFakeOffline") { initial.tab = .settings; initial.settingsPath = [.maps] }
+            || UserDefaults.standard.bool(forKey: "uiFakeOffline")
+            || UserDefaults.standard.bool(forKey: "uiFakeMapsShort") { initial.tab = .settings; initial.settingsPath = [.maps] }
         #endif
+        var forceMaps = false
+        #if DEBUG
+        forceMaps = UserDefaults.standard.bool(forKey: FirstLaunchMapsStore.forceKey)
+        #endif
+        var mapsStep = FirstLaunchMapsModel(services: services, forced: forceMaps)
+        #if DEBUG
+        // `-uiFakeFirstLaunchList ok|offline|cached`: a synthetic manifest (screenshots).
+        if let mode = UserDefaults.standard.string(forKey: "uiFakeFirstLaunchList") {
+            mapsStep = FirstLaunchMapsModel(
+                services: services, manifest: DebugFakes.firstLaunchManifest(mode: mode, downloader: services.downloader),
+                forced: forceMaps)
+        }
+        // `-uiFakeConnection none|cellular`: hold the downloader's connection
+        // (the simulator is online), for first-launch button wording shots.
+        if let value = UserDefaults.standard.string(forKey: "uiFakeConnection") {
+            let downloader = services.downloader
+            let fake: PackDownloadRules.Connection = value == "cellular" ? .cellularOrExpensive : .none
+            Task { for _ in 0..<60 { await downloader.setConnection(fake); try? await Task.sleep(for: .milliseconds(500)) } }
+        }
+        #endif
+        _firstMaps = State(initialValue: mapsStep)
         _nav = State(initialValue: initial)
     }
 
@@ -90,12 +115,13 @@ struct RootView: View {
                         .compactMap { $0 as? any CachedLocationProviding }.first?.cachedLocation
                 },
                 onOpenMaps: { nav.tab = .settings; nav.settingsPath = [.maps] },
-                roadsWarning: roadsWarning
+                roadsWarning: roadsWarning,
+                offers: services.packOffers
             )
         } sessions: {
             SessionsScreen(model: sessions)
         } settings: {
-            SettingsScreen(path: $nav.settingsPath, roads: roads, maps: maps, gate: gate, onShowChecklist: { firstLaunch.showAgain() }) {
+            SettingsScreen(path: $nav.settingsPath, roads: roads, maps: maps, offers: services.packOffers, gate: gate, onShowChecklist: { firstLaunch.showAgain() }) {
                 RecordingScreen(model: recording)
             } console: {
                 ConsoleScreen(model: console)
@@ -105,10 +131,21 @@ struct RootView: View {
         // feed is its own view so only it observes the 16 Hz `live` status.
         .background(MapFeed(session: session, model: map))
         .task { await roadsWarning.run() }
+        // UX-8 (2): the at-a-stop offer loop, on any tab.
+        .task {
+            let map = map
+            await services.packOffers.run(live: services.packOfferInputs(speedKmh: { map.speed.kmh.map(Double.init) }))
+        }
         .fullScreenCover(isPresented: $firstLaunch.isPresented) {
             FirstLaunchChecklistView(
                 checklist: $firstLaunch.checklist, canContinue: firstLaunch.canContinue,
                 onContinue: { firstLaunch.confirm() })
+        }
+        // UX-8 (1): after the checklist, never on top of it.
+        .fullScreenCover(isPresented: Binding(
+            get: { !firstLaunch.isPresented && firstMaps.isPresented }, set: { _ in })
+        ) {
+            FirstLaunchMapsView(model: firstMaps)
         }
     }
 }

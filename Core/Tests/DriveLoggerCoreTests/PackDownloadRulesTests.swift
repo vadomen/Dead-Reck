@@ -78,15 +78,20 @@ struct PackDownloadRulesTests {
         }
     }
 
-    @Test("Server quirks: 416 and a 5xx to a ranged request restart without Range; unranged they fail")
+    @Test("416 to a ranged request restarts without Range; a 5xx, ranged or not, fails and keeps the partial (R66.1-6)")
     func restartStatuses() {
         #expect(Self.isRestart(Self.decide(416, range: "bytes */1000")))
         #expect(Self.isRestart(Self.decide(416, range: nil)))
-        for status in [500, 502, 503, 599] {
-            #expect(Self.isRestart(Self.decide(status, range: nil)), "\(status)")
-            #expect(Self.isFail(Self.decide(status, offset: nil, range: nil)), "\(status) unranged")
-        }
         #expect(Self.isFail(Self.decide(416, offset: nil, range: nil)))
+        for status in [500, 502, 503, 504, 599] {
+            // `.fail` is "give up this attempt, keep the partial": never a restart.
+            #expect(Self.decide(status, range: nil)
+                    == .fail(reason: "server error \(status) to a ranged request"), "\(status) ranged")
+            #expect(Self.decide(status, range: "bytes */1000")
+                    == .fail(reason: "server error \(status) to a ranged request"), "\(status) ranged, Content-Range")
+            #expect(Self.decide(status, offset: nil, range: nil) == .fail(reason: "server error \(status)"),
+                    "\(status) unranged")
+        }
     }
 
     @Test("200 -> writeFromZero with the new ETag (ranged or not); a 200 of the wrong length fails")

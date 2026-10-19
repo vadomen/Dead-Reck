@@ -50,6 +50,8 @@ struct MapScreen: View {
     /// The roads warning was tapped: the app opens Settings → Maps.
     var onOpenMaps: () -> Void = {}
     var roadsWarning: RoadsWarningModel?
+    /// The at-a-stop offer (UX-8); nil in previews.
+    var offers: PackOfferMonitor?
     @Environment(\.scenePhase) private var scenePhase
     @State private var thermal = ProcessInfo.processInfo.thermalState
 
@@ -82,13 +84,19 @@ struct MapScreen: View {
             roadsWarning: roadsWarning?.message,
             onRoadsWarningTap: onOpenMaps,
             roadsAttribution: roadsWarning?.attribution ?? false,
-            recordingControl: AnyView(MapRecordingButton(session: session, onStop: { [session] in await session.stop() })),
+            offerCard: offers.map { AnyView(PackOfferCard(monitor: $0)) },
+            recordingControl: AnyView(MapRecordingButton(
+                session: session, offers: offers, onStop: { [session] in await session.stop() })),
             statusLine: AnyView(MapNavigateStatusLine(session: session))
         )
         .onReceive(NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)) { _ in
             thermal = ProcessInfo.processInfo.thermalState
         }
         .onAppear { thermal = ProcessInfo.processInfo.thermalState }
+        // The card may only appear while the map is on screen (UX-8).
+        .onChange(of: isSelected && scenePhase == .active, initial: true) { _, visible in
+            offers?.isMapVisible = visible
+        }
     }
 }
 
@@ -248,6 +256,9 @@ struct GPSMapView: View {
     /// A road pack is attached to the run (`MapAttribution.visible`): the
     /// OSM credit is shown.
     var roadsAttribution = false
+    /// The at-a-stop road-pack offer (UX-8), above the status line; its own
+    /// view, so this one stays plain values.
+    var offerCard: AnyView?
     /// Start button or recording indicator, left of the map controls. A view
     /// of its own (it reads the recorder), so this view stays plain values.
     var recordingControl: AnyView?
@@ -307,6 +318,7 @@ struct GPSMapView: View {
         roadsWarning: String? = nil,
         onRoadsWarningTap: @escaping () -> Void = {},
         roadsAttribution: Bool = false,
+        offerCard: AnyView? = nil,
         recordingControl: AnyView? = nil,
         statusLine: AnyView? = nil
     ) {
@@ -332,6 +344,7 @@ struct GPSMapView: View {
         self.roadsWarning = roadsWarning
         self.onRoadsWarningTap = onRoadsWarningTap
         self.roadsAttribution = roadsAttribution
+        self.offerCard = offerCard
         self.recordingControl = recordingControl
         self.statusLine = statusLine
         self._toast = State(initialValue: initialToast)
@@ -457,7 +470,7 @@ struct GPSMapView: View {
 
     private var content: some View {
         ZStack(alignment: .top) {
-            if isLive {
+            if isLive && !Self.hidesTiles {
                 mapBody(stale: stale)
             } else {
                 Color(.secondarySystemBackground).ignoresSafeArea()
@@ -470,6 +483,9 @@ struct GPSMapView: View {
                     attributionLabel
                 }
                 // Above the fix toast and the controls: stacked, never overlapping.
+                if let offerCard {
+                    offerCard
+                }
                 if let statusLine {
                     statusLine
                 }
@@ -496,6 +512,16 @@ struct GPSMapView: View {
             .background(.regularMaterial, in: Capsule())
             .padding(.horizontal, 16)
             .accessibilityLabel(MapAttribution.text)
+    }
+
+    /// DEBUG `-uiNoMapTiles 1`: a plain background instead of the map, so a
+    /// screenshot shows no real place (the simulator has a real location).
+    private static var hidesTiles: Bool {
+        #if DEBUG
+        return UserDefaults.standard.bool(forKey: "uiNoMapTiles")
+        #else
+        return false
+        #endif
     }
 
     /// Standard map; DEBUG `-uiBlankMap 1` uses plain imagery (no street, POI or

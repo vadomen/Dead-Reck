@@ -33,7 +33,7 @@
 	<key>NSMotionUsageDescription</key>
 	<string>DriveLogger records accelerometer and gyroscope data while you drive so your journey can be reconstructed for dead-reckoning research.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>DriveLogger records your location while you drive to provide a reference track for dead-reckoning research.</string>
+	<string>DriveLogger uses your location while you drive: it records the reference track for dead-reckoning research and navigation, and picks your region's road map on the phone.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>DriveLogger records your location for the whole drive, including when the screen is off, so the reference track for dead-reckoning research has no gaps.</string>
 

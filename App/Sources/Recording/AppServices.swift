@@ -28,8 +28,13 @@ final class AppServices {
     /// `RecordingSession.onRecordActiveChange` through `recordActivity`.
     let manifest: PackManifestService
     let downloader: PackDownloader
+    /// The at-a-stop road-pack offer (UX-8 (2)); the UI runs its loop
+    /// (`run(live: packOfferInputs(speedKmh:))`) and shows `offer`.
+    let packOffers: PackOfferMonitor
     private let network = PackNetworkMonitor()
     private let recordActivity: RecordActivityRelay
+    /// Path changes, in order, to the downloader (R66.1-8).
+    private let pathRelay: OrderedRelay<PackDownloadRules.Connection>
 
     init(
         link: any OBDLinkServicing = OBDLinkFactory.makeDefault(),
@@ -71,14 +76,21 @@ final class AppServices {
             await roadPacks.setRunActivity(runActivity)
             await roadPacks.rescan()
         }
-        let manifest = PackManifestService.makeDefault()
-        self.manifest = manifest
         let downloader = PackDownloader(
             directory: RoadPackStore.defaultDirectory(), library: roadPacks,
             cellularAllowed: UserDefaults.standard.bool(forKey: MapsSettings.cellularKey), runActive: runActivity)
         self.downloader = downloader
+        // A fresh manifest cleans partials through the downloader (R66.1-7).
+        let manifest = PackManifestService.makeDefault(downloader: downloader)
+        self.manifest = manifest
         Task(priority: .utility) { await manifest.loadCache() }
-        network.start { connection in Task { await downloader.setConnection(connection) } }
+        packOffers = PackOfferMonitor(sources: PackOfferMonitor.sources(
+            library: roadPacks, manifest: manifest, downloader: downloader))
+        // R66.1-8: one task delivers every path change in order, so a quick
+        // cellular → Wi-Fi pair can't reach the downloader reversed.
+        let pathRelay = Self.pathRelay(to: downloader)
+        self.pathRelay = pathRelay
+        network.start { connection in pathRelay.send(connection) }
         // UX-8: every Record-active change, in order, from the first line of
         // `start` to the end of the end path; one task delivers them, so a
         // quick true/false pair can't reach the downloader reversed.
@@ -93,31 +105,60 @@ final class AppServices {
         // After the feed hook is set, so the first session's feed is seen.
         session.enableNavigate()
     }
+
+    /// The path monitor's relay to the downloader (R66.1-8).
+    nonisolated static func pathRelay(to downloader: PackDownloader) -> OrderedRelay<PackDownloadRules.Connection> {
+        OrderedRelay { connection in await downloader.setConnection(connection) }
+    }
+
+    /// The offer loop's live values: a run is active (Navigate or Record,
+    /// starting included); the engine's estimate only when the map would
+    /// show it (not without OBD, UX-1 (d)); the map's speed readout.
+    func packOfferInputs(speedKmh: @escaping @MainActor () -> Double?) -> PackOfferMonitor.LiveInputs {
+        let session = session
+        let navigation = navigation
+        return PackOfferMonitor.LiveInputs(
+            runActive: { session.hasActiveRun },
+            estimate: {
+                let status = NavigateStatus.make(
+                    navigate: session.navigateState, recording: session.state, startedAt: session.navigateStartedAt,
+                    timings: session.navigateTimings ?? NavigateConfiguration(), now: .now)
+                guard status.showsEstimate else { return nil }
+                return NavDisplay(await navigation.snapshot()).map(PackOfferRule.Estimate.init)
+            },
+            speedKmh: speedKmh)
+    }
 }
 
 /// Hands `RecordingSession.isRecordActive` changes to the road-pack
 /// downloader (UX-8: downloads pause while Record is active; Navigate does
-/// not pause them). `send` is synchronous and never blocks, so the session
-/// calls it inside `start` before its first suspension; one task delivers
-/// the values in the order sent, each awaited before the next, so the
-/// downloader always ends on the latest value (separate `Task`s per change
-/// could reach the actor in either order).
-final class RecordActivityRelay: Sendable {
-    private let continuation: AsyncStream<Bool>.Continuation
+/// not pause them). See `OrderedRelay`.
+typealias RecordActivityRelay = OrderedRelay<Bool>
+
+/// Delivers values to an async consumer in the order sent (UX-8: the
+/// Record-active signal, and the path monitor's connection, R66.1-8).
+/// `send` is synchronous, never blocks and may be called from any thread
+/// (the session calls it inside `start` before its first suspension; the
+/// path monitor from its queue); one task delivers the values in the order
+/// sent, each awaited before the next, so the consumer always ends on the
+/// latest value (separate `Task`s per change could reach the actor in
+/// either order).
+final class OrderedRelay<Value: Sendable>: Sendable {
+    private let continuation: AsyncStream<Value>.Continuation
     private let task: Task<Void, Never>
 
     /// - Parameter deliver: called with each value, one at a time, in order.
     ///   Off the main actor, at `.userInitiated` so a pause is prompt (the
     ///   downloader's own I/O and hashing stay at `.utility`).
-    init(deliver: @escaping @Sendable (Bool) async -> Void) {
-        let (stream, continuation) = AsyncStream.makeStream(of: Bool.self)
+    init(deliver: @escaping @Sendable (Value) async -> Void) {
+        let (stream, continuation) = AsyncStream.makeStream(of: Value.self)
         self.continuation = continuation
         task = Task.detached(priority: .userInitiated) {
             for await value in stream { await deliver(value) }
         }
     }
 
-    func send(_ value: Bool) {
+    func send(_ value: Value) {
         continuation.yield(value)
     }
 

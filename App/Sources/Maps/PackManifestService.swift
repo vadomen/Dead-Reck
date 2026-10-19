@@ -17,7 +17,10 @@ import Foundation
 ///   pull to refresh (`force`). Never at launch.
 /// - On applying a fresh manifest the store directory's stale partials
 ///   (`RoadPackStoreRules.stalePartials`) are deleted; a `.roadpack` is never
-///   touched.
+///   touched. With a `downloader` (the app) that is the downloader's
+///   `manifestApplied`, on its actor: the running job's partial is kept and
+///   queued jobs take the new entry (R66.1-7). Without one (tests), the
+///   service deletes them itself.
 actor PackManifestService {
     static let manifestURL = URL(string: "https://fugps.pages.dev/packs/manifest.json")!
     static let cacheFileName = "PackManifestCache.json"
@@ -49,6 +52,7 @@ actor PackManifestService {
 
     private let cacheURL: URL
     private let storeDirectory: URL?
+    private let downloader: PackDownloader?
     private let fetch: Fetch
     private let now: @Sendable () -> Date
     private var snapshotValue = Snapshot()
@@ -57,21 +61,33 @@ actor PackManifestService {
     /// - Parameters:
     ///   - cacheDirectory: where the cache file lives (Application Support).
     ///   - storeDirectory: the road pack store, for stale partials; nil skips.
-    init(cacheDirectory: URL, storeDirectory: URL?, fetch: @escaping Fetch = PackManifestService.defaultFetch,
+    ///   - downloader: when set, stale partials go through its
+    ///     `manifestApplied` instead (R66.1-7); `storeDirectory` is unused.
+    init(cacheDirectory: URL, storeDirectory: URL?, downloader: PackDownloader? = nil,
+         fetch: @escaping Fetch = PackManifestService.defaultFetch,
          now: @escaping @Sendable () -> Date = { Date() }) {
         cacheURL = cacheDirectory.appendingPathComponent(Self.cacheFileName)
         self.storeDirectory = storeDirectory
+        self.downloader = downloader
         self.fetch = fetch
         self.now = now
     }
 
-    /// The app's service: cache in Application Support, store partials.
-    static func makeDefault() -> PackManifestService {
+    /// The app's service: cache in Application Support, store partials
+    /// through the app's downloader.
+    static func makeDefault(downloader: PackDownloader) -> PackManifestService {
         PackManifestService(cacheDirectory: RoadPackLibrary.defaultCacheURL().deletingLastPathComponent(),
-                            storeDirectory: RoadPackStore.defaultDirectory())
+                            storeDirectory: RoadPackStore.defaultDirectory(), downloader: downloader)
     }
 
     func snapshot() -> Snapshot { snapshotValue }
+
+    /// The list without the network: the latest one, reading the cache
+    /// first when none is loaded yet (the first-launch list, UX-8 (1)).
+    func cachedManifest() -> PackManifest? {
+        if snapshotValue.manifest == nil { loadCache() }
+        return snapshotValue.manifest
+    }
 
     /// Reads the cache (launch). Does not touch the network or the store.
     func loadCache() {
@@ -103,7 +119,11 @@ actor PackManifestService {
             let envelope = Envelope(fetchedAt: fetchedAt.timeIntervalSince1970, manifest: data)
             if let encoded = try? JSONEncoder().encode(envelope) { try? encoded.write(to: cacheURL, options: .atomic) }
             snapshotValue = Snapshot(manifest: manifest, fetchedAt: fetchedAt, refresh: .ok)
-            deleteStalePartials(manifest)
+            if let downloader {
+                await downloader.manifestApplied(manifest)
+            } else {
+                deleteStalePartials(manifest)
+            }
         } catch {
             snapshotValue.refresh = .failed(offline: Self.isOffline(error))
         }

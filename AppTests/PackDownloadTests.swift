@@ -241,12 +241,12 @@ struct PackDownloaderTests {
         #expect(env.installedFiles.count == 1 && env.downloadFiles.isEmpty)
     }
 
-    @Test("A 500 to a ranged request restarts once without Range")
-    func ranged500() async throws {
+    @Test("A 416 to a ranged request restarts once without Range")
+    func ranged416() async throws {
         let env = try DownloadEnv()
         defer { env.dirs.remove() }
         let stub = PackStub { request, _ in
-            request.value(forHTTPHeaderField: "Range") != nil ? .init(status: 500) : env.full()
+            request.value(forHTTPHeaderField: "Range") != nil ? .init(status: 416) : env.full()
         }
         let pack = env.pack(stub)
         try env.seedPartial(pack, bytes: env.data.count / 2)
@@ -259,8 +259,43 @@ struct PackDownloaderTests {
         #expect(env.installedFiles.count == 1)
     }
 
-    @Test("A server that is simply down is tried twice, not forever")
-    func restartCap() async throws {
+    @Test("R66.1-6: a 503 to a ranged request fails the attempt and keeps the partial; the next Download resumes it")
+    func ranged503KeepsPartial() async throws {
+        let env = try DownloadEnv()
+        defer { env.dirs.remove() }
+        let half = env.data.count / 2
+        let stub = PackStub { request, attempt in
+            guard request.value(forHTTPHeaderField: "Range") == "bytes=\(half)-" else { return .init(status: 400) }
+            return attempt == 0 ? .init(status: 503) : env.partial(from: half)
+        }
+        let pack = env.pack(stub)
+        try env.seedPartial(pack, bytes: half)
+        let files = try #require(PackPartialFiles(directory: env.dirs.store, pack: pack))
+        let downloader = env.downloader()
+        await downloader.start(pack)
+        await downloader.waitUntilIdle()
+        #expect(stub.requests.count == 1, "no restart without Range")
+        guard case .failed(let reason)? = await downloader.snapshot().states["region-a"] else {
+            Issue.record("expected a failed state")
+            return
+        }
+        #expect(reason.contains("503"))
+        #expect(files.partialBytes() == Int64(half), "the partial is kept, byte for byte")
+        #expect(files.readMetadata()?.matches(pack) == true)
+        #expect(env.installedFiles.isEmpty)
+        // The row offers Download again; it resumes from the kept bytes.
+        #expect(MapsText.action(status: .failed(reason), hasPack: true, hasInstalled: false, downloadFailed: true) == .download)
+        await downloader.start(pack)
+        await downloader.waitUntilIdle()
+        #expect(stub.requests.count == 2)
+        #expect(stub.requests[1].value(forHTTPHeaderField: "Range") == "bytes=\(half)-")
+        #expect(stub.bytesServed == Int64(env.data.count - half))
+        #expect(env.installedFiles.count == 1 && env.downloadFiles.isEmpty)
+        #expect(await downloader.snapshot().states.isEmpty)
+    }
+
+    @Test("A server that is simply down is asked once per Download, not in a loop; the partial stays")
+    func serverDown() async throws {
         let env = try DownloadEnv()
         defer { env.dirs.remove() }
         let stub = PackStub { _, _ in .init(status: 500) }
@@ -269,12 +304,13 @@ struct PackDownloaderTests {
         let downloader = env.downloader()
         await downloader.start(pack)
         await downloader.waitUntilIdle()
-        #expect(stub.requests.count == 2)
+        #expect(stub.requests.count == 1)
         guard case .failed? = await downloader.snapshot().states["region-a"] else {
             Issue.record("expected a failed state")
             return
         }
         #expect(env.installedFiles.isEmpty)
+        #expect(env.downloadFiles.count == 2, "partial and metadata kept")
     }
 
     @Test("A complete partial is verified without a request")

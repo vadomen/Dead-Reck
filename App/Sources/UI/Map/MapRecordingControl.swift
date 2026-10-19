@@ -37,12 +37,15 @@ struct StopConfirmation: Equatable {
 /// it alone reads the 16 Hz `session.live`, so the map is not re-rendered.
 struct MapRecordingButton: View {
     let session: RecordingSession
+    /// Told when the Stop dialog is open: no offer card then (UX-8).
+    var offers: PackOfferMonitor?
     /// Runs when "Stop recording" is chosen in the dialog.
     var onStop: @MainActor () async -> Void
     @State private var stop = StopConfirmation()
 
     var body: some View {
         content(MapRecordingControl.make(state: session.state, elapsed: session.live.elapsed))
+            .onChange(of: stop.isPending) { _, open in offers?.isDialogOpen = open }
             .confirmationDialog("Stop recording?", isPresented: pending, titleVisibility: .visible) {
                 Button("Stop recording", role: .destructive) {
                     Task { await onStop() }
