@@ -740,3 +740,13 @@ Reviewers: three parallel opus reviewers (A: Core + scripts/push_packs.sh, B: Ap
 Tests before review: Core 1040 tests in 134 suites passed (36 known issues); release `NavigationRoadPerfTests|NavigationB0Tests` 9 tests in 2 suites passed; AppTests 478 tests in 72 suites passed; Debug and Release simulator builds succeed.
 
 Round 1 outcome: R66.1-1..4 fixed; AppTests 481 tests in 73 suites passed; Release simulator build succeeds; Core unchanged since the pre-review run.
+
+### Round 2
+
+Reviewer: one fresh opus reviewer on the fix commit (b7f4382) plus a sweep of the whole range (mapped `.roadpack` safety, recorder not disturbed, plain GETs only). No new findings. Note on deferred R66.1-8: since R66.1-2 the Offline note also reads the downloader's connection, so a reversed path update can show "Offline." until the next path change; the same ordered relay fixes it (added to the backlog row).
+
+Tests at b7f4382: AppTests 481 tests in 73 suites passed; Release simulator build succeeds; Core unchanged since round 1 (1040 tests in 134 suites passed, 36 known issues; release perf 9 tests in 2 suites passed).
+
+### Run 66 summary
+
+2 rounds; 3 MAJOR fixed (R66.1-1, R66.1-2, R66.1-3), 1 MINOR fixed with R66.1-1 (R66.1-4), 0 rejected, 4 MINOR deferred (R66.1-5, R66.1-6, R66.1-7, R66.1-8).
