@@ -66,6 +66,23 @@ enum MapsText {
     static let cellularToggle = "Use cellular data"
     static let cellularFooter = "Maps download over Wi-Fi only unless this is on."
     static let otherSection = "Other"
+    static let neverSection = "Not offered on the road"
+    static let neverFooter = "You chose Never for these regions. Reset to be offered a map again at a stop."
+    static let resetAll = "Reset all"
+
+    /// A region the at-a-stop offer must not mention again.
+    struct NeverRow: Identifiable, Hashable, Sendable {
+        var id: String { name }
+        var name: String
+        var title: String
+    }
+
+    /// Titles from the manifest where known, else the pack name; names order kept.
+    static func neverRows(names: [String], manifest: PackManifest?, preferredLanguages: [String]) -> [NeverRow] {
+        let titles = Dictionary((manifest?.packs ?? []).map { ($0.name, $0.title(preferredLanguages: preferredLanguages)) },
+                                uniquingKeysWith: { first, _ in first })
+        return names.map { NeverRow(name: $0, title: titles[$0] ?? $0) }
+    }
 
     static func size(_ bytes: Int64?) -> String {
         bytes.map { String(format: "%.1f MB", Double($0) / 1_000_000) } ?? "-- MB"
@@ -389,6 +406,8 @@ final class MapsModel {
 /// Settings → Maps: the model wired to the plain-values content.
 struct MapsScreen: View {
     var model: MapsModel
+    /// Owns the "Never for this region" set (UX-8 (2)); nil in previews.
+    var offers: PackOfferMonitor?
     @State private var confirming: MapsRow?
     @AppStorage(MapsSettings.cellularKey) private var cellularAllowed = false
 
@@ -397,6 +416,9 @@ struct MapsScreen: View {
             rows: model.rows, scansCompleted: model.status.scansCompleted, storeBytes: model.status.storeBytes,
             notice: model.notice, listNote: model.listNote, hasManifest: model.manifest != nil,
             attribution: MapsText.attribution(manifest: model.manifest), cellularAllowed: $cellularAllowed,
+            neverRows: MapsText.neverRows(names: offers?.neverNames ?? [], manifest: model.manifest,
+                                          preferredLanguages: Locale.preferredLanguages),
+            onResetNever: { offers?.resetNever($0) }, onResetAllNever: { offers?.resetAllNever() },
             onRemove: { confirming = $0 }, onAction: { action, row in Task { await model.perform(action, on: row) } },
             onDismissNotice: { model.dismissNotice() }
         )
@@ -431,6 +453,9 @@ struct MapsContent: View {
     var hasManifest = false
     var attribution = RoadsDiagnosticsText.attribution
     @Binding var cellularAllowed: Bool
+    var neverRows: [MapsText.NeverRow] = []
+    var onResetNever: (String) -> Void = { _ in }
+    var onResetAllNever: () -> Void = {}
     var onRemove: (MapsRow) -> Void = { _ in }
     var onAction: (MapsRow.Action, MapsRow) -> Void = { _, _ in }
     var onDismissNotice: () -> Void = {}
@@ -453,6 +478,36 @@ struct MapsContent: View {
             } footer: {
                 Text(MapsText.cellularFooter)
             }
+            if !neverRows.isEmpty { neverSection }
+        }
+    }
+
+    /// Regions marked "Never" on the road; hidden when there are none.
+    private var neverSection: some View {
+        Section {
+            ForEach(neverRows) { item in
+                HStack(spacing: 8) {
+                    Text(item.title).font(.title3.weight(.semibold))
+                    Spacer(minLength: 4)
+                    Button { onResetNever(item.name) } label: {
+                        Text("Reset").frame(minWidth: 44, minHeight: 44)
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityLabel("Offer maps for \(item.title) again")
+                }
+                .frame(minHeight: 44)
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                    Button { onResetNever(item.name) } label: { Label("Reset", systemImage: "arrow.uturn.backward") }
+                }
+            }
+            Button(action: onResetAllNever) {
+                Text(MapsText.resetAll).frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .accessibilityLabel("Offer maps again for all regions")
+        } header: {
+            Text(MapsText.neverSection)
+        } footer: {
+            Text(MapsText.neverFooter)
         }
     }
 
@@ -630,6 +685,16 @@ extension PackManifest {
                             .preview("region-a", hash: "a1b2c3d4")],
                 downloads: .init(), preferredLanguages: ["en"]),
             storeBytes: 168_000_000, cellularAllowed: .constant(false)
+        ).navigationTitle("Maps")
+    }
+}
+
+#Preview("Maps, never list") {
+    NavigationStack {
+        MapsContent(
+            rows: MapsRows(), storeBytes: 0, cellularAllowed: .constant(false),
+            neverRows: MapsText.neverRows(names: ["region-a", "region-c", "zz-unlisted"], manifest: MapsPreviewData.manifest,
+                                          preferredLanguages: ["en"])
         ).navigationTitle("Maps")
     }
 }

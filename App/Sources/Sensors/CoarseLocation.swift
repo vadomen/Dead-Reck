@@ -15,13 +15,25 @@ struct CoarseLocationReading: Hashable, Sendable {
     var timestamp: Date
 }
 
+/// The location permission as the first-launch step needs it. `denied`
+/// includes restricted: neither is ever asked again.
+enum CoarseAuthorization: Hashable, Sendable {
+    case notDetermined
+    case allowed
+    case denied
+}
+
 /// Where the first-launch coarse fix comes from: CoreLocation on a phone; a
 /// fake in tests; a synthetic one for DEBUG screenshots.
 @MainActor
 protocol CoarseLocationSource: AnyObject {
-    /// When In Use (or Always) is already granted. Never asks: the first
-    /// Navigate or Record start does.
+    /// When In Use (or Always) is already granted. Never asks.
     var isAuthorized: Bool { get }
+    /// The permission now.
+    var authorization: CoarseAuthorization { get }
+    /// Asks for When In Use (never Always) and answers once the user has
+    /// answered; the current status without asking unless not determined.
+    func requestAuthorization() async -> CoarseAuthorization
     /// Starts updates; each reading goes to `onReading` on the main actor
     /// until `stop`.
     func start(onReading: @escaping @MainActor (CoarseLocationReading) -> Void)
@@ -29,10 +41,16 @@ protocol CoarseLocationSource: AnyObject {
     func stop()
 }
 
+extension CoarseLocationSource {
+    var authorization: CoarseAuthorization { isAuthorized ? .allowed : .denied }
+    func requestAuthorization() async -> CoarseAuthorization { authorization }
+}
+
 /// The first usable coarse fix within 10 s (UX-8 (1), docs/BACKLOG_UX.md).
 ///
 /// - No authorisation (not determined, denied, restricted): nil at once;
-///   nothing is requested.
+///   nothing is requested here (the first-launch model asks the user
+///   first, `FirstLaunchMapsModel`).
 /// - Every reading is judged by Core's `PackRegionChoice.fixVerdict`
 ///   against the request time: a cached fix taken before the request or
 ///   more than 60 s old, an inaccurate one (> 5 km or invalid) or one that
@@ -136,9 +154,26 @@ final class CoreLocationCoarseSource: CoarseLocationSource {
         manager.delegate = delegate
     }
 
-    var isAuthorized: Bool {
-        let status = manager.authorizationStatus
-        return status == .authorizedWhenInUse || status == .authorizedAlways
+    var isAuthorized: Bool { authorization == .allowed }
+
+    var authorization: CoarseAuthorization { Self.map(manager.authorizationStatus) }
+
+    nonisolated static func map(_ status: CLAuthorizationStatus) -> CoarseAuthorization {
+        switch status {
+        case .authorizedWhenInUse, .authorizedAlways: .allowed
+        case .notDetermined: .notDetermined
+        default: .denied
+        }
+    }
+
+    /// When In Use only; the answer arrives in the delegate's authorisation
+    /// callback. Not asked again once determined.
+    func requestAuthorization() async -> CoarseAuthorization {
+        guard authorization == .notDetermined else { return authorization }
+        return await withCheckedContinuation { continuation in
+            delegate.awaitAuthorization { continuation.resume(returning: $0) }
+            manager.requestWhenInUseAuthorization()
+        }
     }
 
     func start(onReading: @escaping @MainActor (CoarseLocationReading) -> Void) {
@@ -168,6 +203,24 @@ final class CoreLocationCoarseSource: CoarseLocationSource {
 final class CoarseLocationDelegate: NSObject, CLLocationManagerDelegate, Sendable {
     private let lock = NSLock()
     private nonisolated(unsafe) var onReading: (@Sendable (CoarseLocationReading) -> Void)?   // guarded by `lock`
+
+    private nonisolated(unsafe) var onAuthorization: (@Sendable (CoarseAuthorization) -> Void)?   // guarded by `lock`
+
+    /// One answer: the next determined status (the callback that fires when
+    /// the manager is created, still undetermined, is ignored).
+    func awaitAuthorization(_ handler: @escaping @Sendable (CoarseAuthorization) -> Void) {
+        lock.withLock { onAuthorization = handler }
+    }
+
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        let status = manager.authorizationStatus
+        guard status != .notDetermined,
+              let handler = lock.withLock({ () -> (@Sendable (CoarseAuthorization) -> Void)? in
+                  defer { onAuthorization = nil }
+                  return onAuthorization
+              }) else { return }
+        handler(CoreLocationCoarseSource.map(status))
+    }
 
     func begin(_ handler: @escaping @Sendable (CoarseLocationReading) -> Void) {
         lock.withLock { onReading = handler }

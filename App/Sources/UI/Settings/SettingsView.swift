@@ -7,6 +7,7 @@ struct SettingsScreen<Recording: View, Console: View>: View {
     var info: AppInfo = .read()
     var roads: RoadsDiagnosticsModel
     var maps: MapsModel
+    var offers: PackOfferMonitor?
     var gate: DeveloperGate
     var onShowChecklist: () -> Void = {}
     @ViewBuilder var recording: () -> Recording
@@ -17,7 +18,7 @@ struct SettingsScreen<Recording: View, Console: View>: View {
         SettingsContent(path: $path, info: info, thermal: thermal, roads: roads.value,
                         showsDeveloper: gate.showsDiagnostics, versionNote: gate.toast,
                         onVersionTap: { gate.tapVersion() }, onShowChecklist: onShowChecklist,
-                        recording: recording, console: console, maps: { MapsScreen(model: maps) })
+                        recording: recording, console: console, maps: { MapsScreen(model: maps, offers: offers) })
             .task(id: gate.toast) {
                 guard gate.toast != nil else { return }
                 try? await Task.sleep(for: .seconds(3))

@@ -12,12 +12,31 @@ import Testing
 
 @MainActor
 final class FakeCoarseSource: CoarseLocationSource {
-    var isAuthorized: Bool
+    var status: CoarseAuthorization
+    /// What the user answers to the system prompt.
+    var answer: CoarseAuthorization
+    private(set) var requests = 0
+    var isAuthorized: Bool { status == .allowed }
+    var authorization: CoarseAuthorization { status }
     private(set) var starts = 0
     private(set) var stops = 0
     private var onReading: (@MainActor (CoarseLocationReading) -> Void)?
 
-    init(authorized: Bool = true) { isAuthorized = authorized }
+    init(authorized: Bool = true) {
+        status = authorized ? .allowed : .denied
+        answer = status
+    }
+
+    init(status: CoarseAuthorization, answer: CoarseAuthorization = .allowed) {
+        self.status = status
+        self.answer = answer
+    }
+
+    func requestAuthorization() async -> CoarseAuthorization {
+        requests += 1
+        if status == .notDetermined { status = answer }
+        return status
+    }
 
     var isRunning: Bool { onReading != nil }
 
@@ -211,6 +230,17 @@ enum FirstLaunchFixture {
                                            fetch: fetch, now: { FirstLaunchFixture.t0 })
         }
 
+        /// A model whose permission and fix go through `source` (the fake CoreLocation).
+        @MainActor
+        func model(source: FakeCoarseSource, askDelay: Duration = .zero) -> FirstLaunchMapsModel {
+            FirstLaunchMapsModel(
+                store: FirstLaunchMapsStore(defaults: defaults.defaults), manifest: manifest, downloader: downloader,
+                coarseFix: { await CoarseFixRequest(source: source, timeout: .milliseconds(300)).run() },
+                authorization: { source.authorization }, requestAuthorization: { await source.requestAuthorization() },
+                askDelay: askDelay, preferredLanguages: { ["en"] },
+                locale: Locale(identifier: "en_US"), now: { FirstLaunchFixture.t0 })
+        }
+
         @MainActor
         func model(installed: Set<String> = [], fix: @escaping @MainActor () async -> CoarseFixRequest.Result?)
             -> FirstLaunchMapsModel {
@@ -376,5 +406,132 @@ struct FirstLaunchMapsModelTests {
         #expect(model.rows.filter(\.isSelected).map(\.id) == ["zz-01"])
         await model.confirm()
         #expect(await env.downloader.activeNames() == ["zz-01"])
+    }
+}
+
+@Suite("First-launch location permission (UX-8)")
+@MainActor
+struct FirstLaunchPermissionTests {
+    typealias F = FirstLaunchFixture
+
+    @Test("Not determined: says why, asks once (When In Use), then runs the fix on allow; the list is editable meanwhile")
+    func asksThenFix() async throws {
+        let env = try F.Env()
+        defer { env.remove() }
+        let source = FakeCoarseSource(status: .notDetermined, answer: .allowed)
+        let model = env.model(source: source, askDelay: .milliseconds(300))
+        model.start()
+        #expect(await eventually { model.asksLocation }, "the explanation shows before the system prompt")
+        #expect(source.requests == 0, "the prompt waits for the explanation")
+        await model.waitForList()
+        #expect(model.listState == .ready, "the list never waits for location")
+        model.toggle("zz-02")
+        #expect(model.rows.first { $0.id == "zz-02" }?.isSelected == true)
+        await model.waitUntilLoaded()
+        #expect(source.requests == 1 && source.starts == 1)
+        #expect(!model.asksLocation)
+        #expect(model.userEdited, "an edit made while asking is kept")
+        // The fix (not usable here: the fake delivers none) ended with the 300 ms window after the answer.
+        #expect(model.fixState == .none)
+    }
+
+    @Test("Not determined, allowed: the fix starts after the answer and selects the region")
+    func allowedRunsFix() async throws {
+        let env = try F.Env()
+        defer { env.remove() }
+        let source = FakeCoarseSource(status: .notDetermined, answer: .allowed)
+        let model = FirstLaunchMapsModel(
+            store: FirstLaunchMapsStore(defaults: env.defaults.defaults), manifest: env.manifest,
+            downloader: env.downloader, coarseFix: { F.fix() },
+            authorization: { source.authorization }, requestAuthorization: { await source.requestAuthorization() },
+            askDelay: .zero, preferredLanguages: { ["en"] }, locale: Locale(identifier: "en_US"), now: { F.t0 })
+        model.start()
+        await model.waitUntilLoaded()
+        #expect(source.requests == 1)
+        #expect(model.rows.filter(\.isSelected).map(\.id) == ["zz-national", "zz-01"])
+    }
+
+    @Test("Not determined, denied: no fix, national only, list editable")
+    func deniedAnswer() async throws {
+        let env = try F.Env()
+        defer { env.remove() }
+        let source = FakeCoarseSource(status: .notDetermined, answer: .denied)
+        let model = env.model(source: source)
+        model.start()
+        await model.waitUntilLoaded()
+        #expect(source.requests == 1 && source.starts == 0)
+        #expect(model.fixState == .none && !model.asksLocation)
+        #expect(model.rows.filter(\.isSelected).map(\.id) == ["zz-national"])
+        model.toggle("zz-03")
+        #expect(model.selectedCount == 2)
+    }
+
+    @Test("Already denied or restricted: never asked again, national only")
+    func alreadyDenied() async throws {
+        let env = try F.Env()
+        defer { env.remove() }
+        let source = FakeCoarseSource(status: .denied)
+        let model = env.model(source: source)
+        model.start()
+        await model.waitUntilLoaded()
+        #expect(source.requests == 0 && source.starts == 0 && !model.asksLocation)
+        #expect(model.fixState == .none)
+        #expect(model.rows.filter(\.isSelected).map(\.id) == ["zz-national"])
+    }
+
+    @Test("Already granted: no ask, the fix runs at once")
+    func alreadyGranted() async throws {
+        let env = try F.Env()
+        defer { env.remove() }
+        let source = FakeCoarseSource(status: .allowed)
+        let model = env.model(source: source)
+        model.start()
+        #expect(!model.asksLocation)
+        await model.waitUntilLoaded()
+        #expect(source.requests == 0 && source.starts == 1)
+    }
+
+    @Test("The default source answers its status without asking")
+    func defaultExtension() async {
+        let denied = FakeCoarseSource(authorized: false)
+        #expect(await denied.requestAuthorization() == .denied)
+    }
+}
+
+@Suite("First-launch maps wording (UX-8)")
+struct FirstLaunchMapsTextTests {
+    @Test("Button text: counts, size, and 'on Wi-Fi' only when it will wait for Wi-Fi")
+    func confirmTitle() {
+        #expect(FirstLaunchMapsText.confirmTitle(count: 2, bytes: 76_000_000, network: .ready) == "Download 2 maps · 76.0 MB")
+        #expect(FirstLaunchMapsText.confirmTitle(count: 1, bytes: 41_000_000, network: .offline) == "Download 1 map · 41.0 MB")
+        #expect(FirstLaunchMapsText.confirmTitle(count: 2, bytes: 76_000_000, network: .waitsForWiFi)
+            == "Download 2 maps · 76.0 MB on Wi-Fi")
+    }
+
+    @Test("Notes under the button: cellular and offline say what will happen; ready says nothing")
+    func notes() {
+        #expect(FirstLaunchMapsText.networkNote(.ready) == nil)
+        #expect(FirstLaunchMapsText.networkNote(.waitsForWiFi) == FirstLaunchMapsText.cellularNote)
+        #expect(FirstLaunchMapsText.networkNote(.offline) == FirstLaunchMapsText.offlineNote)
+    }
+
+    @Test("Row captions: installed wins, neighbours are 'Nearby', others none")
+    func captions() {
+        typealias Row = FirstLaunchMapsModel.Row
+        func row(_ role: FirstLaunchMapsModel.Role, installed: Bool = false) -> Row {
+            Row(id: "zz", title: "T", sizeBytes: 1, role: role, isSelected: false, isInstalled: installed)
+        }
+        #expect(FirstLaunchMapsText.caption(row(.neighbour)) == "Nearby")
+        #expect(FirstLaunchMapsText.caption(row(.neighbour, installed: true)) == "Installed")
+        #expect(FirstLaunchMapsText.caption(row(.region)) == nil)
+    }
+
+    @Test("Offer question and Never-list titles (manifest title where known, else the name)")
+    func offerAndNever() {
+        #expect(PackOfferText.question(title: "Region A", sizeBytes: 35_000_000)
+            == "You are in Region A, no road map. Download 35.0 MB?")
+        let rows = MapsText.neverRows(names: ["region-a", "zz-unlisted"], manifest: MapsPreviewData.manifest,
+                                      preferredLanguages: ["en"])
+        #expect(rows.map(\.title) == ["Region A", "zz-unlisted"])
     }
 }

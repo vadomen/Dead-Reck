@@ -99,6 +99,9 @@ final class FirstLaunchMapsModel {
     private(set) var rows: [Row] = []
     private(set) var network = Network.offline
     private(set) var fixState = FixState.waiting
+    /// The permission is being asked: the view says why, above the list,
+    /// before and while the system prompt shows. The list stays editable.
+    private(set) var asksLocation = false
     private(set) var isPresented: Bool
     /// The user toggled a row: a late fix no longer changes anything.
     private(set) var userEdited = false
@@ -113,6 +116,10 @@ final class FirstLaunchMapsModel {
     @ObservationIgnored private let downloader: PackDownloader
     @ObservationIgnored private let installedNames: @Sendable () async -> Set<String>
     @ObservationIgnored private let coarseFix: @MainActor () async -> CoarseFixRequest.Result?
+    @ObservationIgnored private let authorization: @MainActor () -> CoarseAuthorization
+    @ObservationIgnored private let requestAuthorization: @MainActor () async -> CoarseAuthorization
+    /// How long the explanation shows before the system prompt.
+    @ObservationIgnored private let askDelay: Duration
     @ObservationIgnored private let preferredLanguages: @Sendable () -> [String]
     @ObservationIgnored private let locale: Locale
     @ObservationIgnored private let now: @MainActor () -> Date
@@ -133,6 +140,9 @@ final class FirstLaunchMapsModel {
     init(store: FirstLaunchMapsStore = FirstLaunchMapsStore(), manifest: PackManifestService,
          downloader: PackDownloader, installedNames: @escaping @Sendable () async -> Set<String> = { [] },
          coarseFix: @escaping @MainActor () async -> CoarseFixRequest.Result?,
+         authorization: @escaping @MainActor () -> CoarseAuthorization = { .allowed },
+         requestAuthorization: @escaping @MainActor () async -> CoarseAuthorization = { .allowed },
+         askDelay: Duration = .seconds(1.5),
          preferredLanguages: @escaping @Sendable () -> [String] = { Locale.preferredLanguages },
          locale: Locale = .current, now: @escaping @MainActor () -> Date = { Date() }, forced: Bool = false) {
         self.store = store
@@ -140,6 +150,9 @@ final class FirstLaunchMapsModel {
         self.downloader = downloader
         self.installedNames = installedNames
         self.coarseFix = coarseFix
+        self.authorization = authorization
+        self.requestAuthorization = requestAuthorization
+        self.askDelay = askDelay
         self.preferredLanguages = preferredLanguages
         self.locale = locale
         self.now = now
@@ -148,11 +161,14 @@ final class FirstLaunchMapsModel {
 
     /// The app's model: the app's manifest, downloader and library, and the
     /// coarse source of `CoarseLocation.makeSource` (DEBUG overrides).
-    convenience init(services: AppServices, forced: Bool = false) {
+    /// `manifest`: DEBUG screenshots pass a synthetic one.
+    convenience init(services: AppServices, manifest: PackManifestService? = nil, forced: Bool = false) {
         let library = services.roadPacks
-        self.init(manifest: services.manifest, downloader: services.downloader,
+        let source = CoarseLocation.makeSource()
+        self.init(manifest: manifest ?? services.manifest, downloader: services.downloader,
                   installedNames: { await FirstLaunchMapsModel.installedNames(library) },
-                  coarseFix: { await CoarseFixRequest(source: CoarseLocation.makeSource()).run() },
+                  coarseFix: { await CoarseFixRequest(source: source).run() },
+                  authorization: { source.authorization }, requestAuthorization: { await source.requestAuthorization() },
                   forced: forced)
     }
 
@@ -177,10 +193,30 @@ final class FirstLaunchMapsModel {
         guard isPresented, listTask == nil else { return }
         listTask = Task { await loadList() }
         fixTask = Task {
-            let result = await coarseFix()
+            let result = await locate()
             guard !Task.isCancelled else { return }
             applyFix(result)
         }
+    }
+
+    /// The fix, after the permission: not determined: say why, then ask once
+    /// (When In Use); the 10 s window starts after the answer. Denied or
+    /// restricted: never asked, no fix. Allowed: the fix at once. The list is
+    /// editable throughout.
+    private func locate() async -> CoarseFixRequest.Result? {
+        switch authorization() {
+        case .denied:
+            return nil
+        case .allowed:
+            break
+        case .notDetermined:
+            asksLocation = true
+            if askDelay > .zero { try? await Task.sleep(for: askDelay) }
+            let answer = Task.isCancelled ? CoarseAuthorization.denied : await requestAuthorization()
+            asksLocation = false
+            guard answer == .allowed else { return nil }
+        }
+        return await coarseFix()
     }
 
     /// Tests: waits for the list and the fix.
@@ -331,6 +367,7 @@ final class FirstLaunchMapsModel {
     private func close() {
         store.markDone()
         isPresented = false
+        asksLocation = false
         listTask?.cancel()
         fixTask?.cancel()
     }
