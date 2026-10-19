@@ -750,3 +750,23 @@ Tests at b7f4382: AppTests 481 tests in 73 suites passed; Release simulator buil
 ### Run 66 summary
 
 2 rounds; 3 MAJOR fixed (R66.1-1, R66.1-2, R66.1-3), 1 MINOR fixed with R66.1-1 (R66.1-4), 0 rejected, 4 MINOR deferred (R66.1-5, R66.1-6, R66.1-7, R66.1-8).
+
+## Run 67: UX-8 first launch, at-a-stop offer, R66.1-5..8, server 416 (main..ux8-first-launch: f52c7a1..0c45720), started 2026-10-19
+
+### Round 1
+
+Reviewers: three parallel opus reviewers (A: Core PackRegionChoice/PackOfferRule/PackDownloadRules + RoadPackLibrary.coverages + site function; B: App services (first-launch model, coarse fix, offer monitor, downloader/manifest, relays); C: App UI + Info.plist + project + docs/site). Author mutations 6/6 killed; reviewer A re-checked 1 + 2 own (time-backwards reset: survived → R67.1-3; card stays up in motion: killed). B and C: no App mutations (none needed).
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R67.1-1 | MAJOR | (user, 2026-10-19) `PackOfferRule`: a region counted as offered the moment its card showed, so a card hidden by drive-off before an answer never came back in that drive. | CONFIRMED | Fix (0c45720): only an answer (Download, Not now, Never) retires a region; an unanswered card shows again at the next stop, at most `maxShowsPerRegion` = 3 per region per drive; one continuous stop is one show; a hidden map consumes no show. Regression test `PackOfferRuleTests/unansweredReshowsAtNextStop` (fails on c993ea5). BACKLOG_UX UX-8 and PLAN §6 item 7 updated. |
+| R67.1-2 | MAJOR | `App/Sources/Maps/PackOfferMonitor.swift:166,117`: the at-a-stop Download queued the pack entry from the cached manifest and nothing in the offer path refreshes it; after a `publish_packs.sh --prune` the old key 404s on every drive for a user who never opens Settings → Maps (failure visible only there). | CONFIRMED | Fix: the tap answers the rule and hides the card at once, then `manifest.refresh(force: false)` (24 h rule, shared in-flight fetch) and queues the entry with the same name from the snapshot; offline → cached entry; name gone → nothing queued. Tests `PackOfferManifestRefreshTests/freshEntry`, `cachedEntry`, `goneEntry` (all 3 fail on 0c45720). Residual (prune within the 24 h window) deferred as R67.1-7. |
+| R67.1-3 | MINOR | `Core/Tests/DriveLoggerCoreTests/PackOfferRuleTests.swift:368`: the `clock()` test passes without the time-backwards reset (`PackOfferRule.swift:209-213`; mutation survived): the NaN step resets the timers before any distinguishing assertion. | DEFERRED | Fix: after `d.run(0...29, …)` expect the offer at 30; test NaN on a fresh drive. Backlog. |
+| R67.1-4 | MINOR | `Core/.../PackOfferRule.swift:232-233,255`: after the estimate moves into another (uninstalled) region, the old `pendingRegion` stays for up to 30 s; a stop in that window offers the previous region ("You are in A" while in B). | DEFERRED | Fix: offer only when `pendingRegion == outside?.region`, or clear it when a confident estimate is in a different region. Backlog. |
+| R67.1-5 | MINOR | `App/Sources/UI/Map/PackOfferCard.swift:52-77`: no Dynamic Type cap (the status line caps at `.accessibility2`); at AX3+ the card grows over the speed readout and "Download" wraps. | DEFERRED | Fix: `.dynamicTypeSize(...DynamicTypeSize.accessibility2)` as `MapNavigateStatus`. Backlog. |
+| R67.1-6 | MINOR | `site/public/privacy.html:37`, `site/public/uk/privacy.html:37`: the pages say the ~16 KB maps list is fetched when Settings → Maps opens; it is now also fetched in the first-launch "Road maps" step (`FirstLaunchMaps.swift:237`) and, when due, on the at-a-stop Download (R67.1-2). | DEFERRED | Not fixed in the loop: prompt 26 limited `site/` edits to the UK label. Fix: one sentence in EN and UK before the next deploy. Backlog; raised to the user. |
+| R67.1-7 | MINOR | (residual of R67.1-2) `PackOfferMonitor.download()` refreshes with `force: false`: a prune published within the cache's 24 h window still queues the old key and 404s. | DEFERRED | Fix: on a 404 to a pack, force one manifest refresh and retry once with the fresh entry of the same name (`PackDownloader` + PackTransfer result case). Backlog. |
+
+Tests before review (0c45720 / c993ea5): Core 1066 tests in 136 suites passed (36 known issues); release `NavigationRoadPerfTests|NavigationB0Tests` 9 tests in 2 suites passed; AppTests 519 tests in 80 suites passed (c993ea5), PackOfferMonitorTests 6/6 (0c45720); simulator build succeeds.
+
+Round 1 outcome: R67.1-1, R67.1-2 fixed; AppTests 522 tests in 81 suites passed; simulator build succeeds; Core unchanged since 0c45720.

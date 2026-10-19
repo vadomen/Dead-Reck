@@ -34,6 +34,7 @@ final class OfferSourcesBox: @unchecked Sendable {
         PackOfferMonitor.Sources(
             installed: { self.lock.withLock { self._reads += 1; return self._installed } },
             manifestPacks: { self.lock.withLock { self._packs } },
+            refreshManifest: {},
             activeDownloads: { self.lock.withLock { self._active } },
             download: { pack in self.lock.withLock { self._downloads.append(pack.name) } })
     }
@@ -197,7 +198,7 @@ struct PackOfferMonitorTests {
         defer { env.dirs.remove() }
         let downloader = env.downloader(connection: .none)
         let sources = PackOfferMonitor.Sources(
-            installed: { [] }, manifestPacks: { F.packs },
+            installed: { [] }, manifestPacks: { F.packs }, refreshManifest: {},
             activeDownloads: { await downloader.activeNames() }, download: { await downloader.start($0) })
         let monitor = PackOfferMonitor(sources: sources, neverStore: PackOfferNeverStore(defaults: defaults.defaults),
                                        preferredLanguages: { ["en"] })
@@ -212,7 +213,7 @@ struct PackOfferMonitorTests {
         monitor.update(now: 51, runActive: false, estimate: nil, speedKmh: nil, dialogOpen: false)
         monitor.drive(52...90, F.inZZ01, speed: 50)
         #expect(monitor.drive(91...95, F.inZZ01, speed: 0).last == "zz-01")
-        await monitor.download()
+        await monitor.download()?.value
         #expect(monitor.offer == nil)
         #expect(monitor.excluded.contains("zz-01"), "excluded at once, before the next refresh")
         #expect(await downloader.activeNames() == ["zz-01", "zz-02"])
@@ -242,5 +243,126 @@ struct PackOfferMonitorTests {
         monitor.isDialogOpen = true
         #expect(await eventually { monitor.offer == nil }, "a dialog hides it")
         #expect(monitor.rule?.shows == ["zz-02": 1] && monitor.rule?.answered.isEmpty == true)
+    }
+}
+
+/// R67.1-2: Download from the card refreshes the manifest (24 h rule) and
+/// queues the current entry of the same name, not the cached one: a publish
+/// with `--prune` deletes the old file, so the cached URL would 404 on every
+/// drive. Real `PackManifestService` and app `sources`; the queued pack is
+/// captured instead of downloaded.
+@Suite("Pack offer Download takes the current manifest entry (R67.1-2)")
+@MainActor
+struct PackOfferManifestRefreshTests {
+    typealias F = OfferFixture
+    nonisolated static let old = "1111111111111111", new = "2222222222222222"
+    nonisolated static let start = Date(timeIntervalSince1970: 1_800_000_000)
+    static let inRegionA = PackOfferRule.Estimate(latitude: 0.5, longitude: 0.5, semiMajorM: 50)
+
+    /// What was queued and fetched; the fetch waits while `held`.
+    final class Probe: @unchecked Sendable {
+        private let lock = NSLock()
+        private var _queued: [PackManifest.Pack] = []
+        private var _fetches = 0
+        private var _held = false
+
+        var queued: [PackManifest.Pack] { lock.withLock { _queued } }
+        var fetches: Int { lock.withLock { _fetches } }
+        var held: Bool {
+            get { lock.withLock { _held } }
+            set { lock.withLock { _held = newValue } }
+        }
+        func queue(_ pack: PackManifest.Pack) { lock.withLock { _queued.append(pack) } }
+        func fetched() { lock.withLock { _fetches += 1 } }
+    }
+
+    nonisolated static func json(_ names: [(String, String)]) -> Data { PackManifestServiceTests.manifestJSON(names: names) }
+
+    /// The cache lists `region-a` with the OLD hash, fetched `age` ago; the
+    /// next fetch answers `fetch`. The monitor offers `region-a` at a stop.
+    static func offering(age: TimeInterval, dirs: StoreFixture.Dirs, defaults: FirstLaunchFixture.Defaults,
+                         probe: Probe, fetch: @escaping PackManifestService.Fetch) async
+        -> (PackOfferMonitor, PackManifestService) {
+        let writer = PackManifestService(cacheDirectory: dirs.root, storeDirectory: nil,
+                                         fetch: { _ in json([("national", "0f0e0d0c0b0a0908"), ("region-a", old)]) },
+                                         now: { start })
+        await writer.refresh(force: true)
+        let service = PackManifestService(cacheDirectory: dirs.root, storeDirectory: nil, fetch: { url in
+            probe.fetched()
+            while probe.held { try await Task.sleep(for: .milliseconds(5)) }
+            return try await fetch(url)
+        }, now: { start.addingTimeInterval(age) })
+        await service.loadCache()
+        let library = RoadPackLibrary(store: RoadPackStore(directory: dirs.store), inbox: nil, cacheURL: nil)
+        let downloader = PackDownloader(directory: dirs.store, library: library, connection: .none)
+        var sources = PackOfferMonitor.sources(library: library, manifest: service, downloader: downloader)
+        sources.download = { probe.queue($0) }
+        let monitor = PackOfferMonitor(sources: sources, neverStore: PackOfferNeverStore(defaults: defaults.defaults),
+                                       preferredLanguages: { ["en"] })
+        await monitor.refreshInputs()
+        monitor.drive(0...40, inRegionA, speed: 50)
+        #expect(monitor.drive(41...44, inRegionA, speed: 0).last == "region-a")
+        return (monitor, service)
+    }
+
+    @Test("A due manifest is refreshed first and the FRESH entry (URL, content hash) is queued; the card hides without waiting")
+    func freshEntry() async throws {
+        let dirs = try StoreFixture.Dirs()
+        defer { dirs.remove() }
+        let defaults = FirstLaunchFixture.Defaults()
+        defer { defaults.remove() }
+        let probe = Probe()
+        let (monitor, _) = await Self.offering(age: 25 * 3600, dirs: dirs, defaults: defaults, probe: probe) { _ in
+            Self.json([("national", "0f0e0d0c0b0a0908"), ("region-a", Self.new)])
+        }
+        probe.held = true
+        let task = monitor.download()
+        #expect(monitor.offer == nil, "hidden on tap")
+        #expect(monitor.rule?.answered == ["region-a"] && monitor.excluded.contains("region-a"))
+        #expect(await eventually { probe.fetches == 1 }, "the refresh runs")
+        #expect(probe.queued.isEmpty, "nothing queued before the fresh list is in")
+        monitor.drive(45...60, Self.inRegionA, speed: 0)
+        #expect(monitor.offer == nil, "not offered again while the refresh runs")
+        probe.held = false
+        await task?.value
+        #expect(probe.queued.map(\.contentHash) == [Self.new])
+        #expect(probe.queued.first?.url.lastPathComponent == "region-a-\(Self.new).roadpack")
+    }
+
+    @Test("Refresh fails (offline): the cached entry is queued; a list younger than 24 h is not refetched")
+    func cachedEntry() async throws {
+        for (age, offline) in [(25.0 * 3600, true), (3600.0, false)] {
+            let dirs = try StoreFixture.Dirs()
+            defer { dirs.remove() }
+            let defaults = FirstLaunchFixture.Defaults()
+            defer { defaults.remove() }
+            let probe = Probe()
+            let (monitor, service) = await Self.offering(age: age, dirs: dirs, defaults: defaults, probe: probe) { _ in
+                if offline { throw URLError(.notConnectedToInternet) }
+                return Self.json([("region-a", Self.new)])
+            }
+            await monitor.download()?.value
+            #expect(probe.fetches == (offline ? 1 : 0))
+            if offline { #expect(await service.snapshot().refresh == .failed(offline: true)) }
+            #expect(probe.queued.map(\.contentHash) == [Self.old], "age \(age)")
+        }
+    }
+
+    @Test("The fresh manifest no longer lists the name: nothing is queued, and it is not offered again")
+    func goneEntry() async throws {
+        let dirs = try StoreFixture.Dirs()
+        defer { dirs.remove() }
+        let defaults = FirstLaunchFixture.Defaults()
+        defer { defaults.remove() }
+        let probe = Probe()
+        let (monitor, _) = await Self.offering(age: 25 * 3600, dirs: dirs, defaults: defaults, probe: probe) { _ in
+            Self.json([("national", "0f0e0d0c0b0a0908"), ("region-b", Self.new)])
+        }
+        await monitor.download()?.value
+        #expect(probe.fetches == 1)
+        #expect(probe.queued.isEmpty)
+        await monitor.refreshInputs()
+        monitor.drive(45...60, Self.inRegionA, speed: 50)
+        #expect(monitor.drive(61...70, Self.inRegionA, speed: 0).allSatisfy { $0 == nil })
     }
 }

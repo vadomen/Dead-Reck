@@ -19,7 +19,7 @@ struct PackOfferCard: View {
             if let offer = shown {
                 PackOfferCardView(
                     offer: offer,
-                    onDownload: { Task { await monitor.download() } },
+                    onDownload: { monitor.download() },
                     onNotNow: { monitor.notNow() },
                     onNever: { monitor.never() })
                     .transition(.move(edge: .bottom).combined(with: .opacity))

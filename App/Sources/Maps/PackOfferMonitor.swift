@@ -39,9 +39,10 @@ struct PackOfferNeverStore {
 /// **Inputs it supplies** (refreshed every tick while a run is active;
 /// each is an actor hop and a copy): installed coverages
 /// (`RoadPackLibrary.coverages()`, so an install or removal is seen within
-/// a tick), the cached manifest's packs (never fetched here), the excluded
-/// names (installed + queued/running/paused in `PackDownloader`, + any
-/// queued from the card) and the persisted "Never" set.
+/// a tick), the cached manifest's packs (never fetched by the tick), the
+/// excluded names (installed + queued/running/paused in `PackDownloader`,
+/// + any queued from the card) and the persisted "Never" set. The manifest
+/// is refreshed only on Download (R67.1-2, `download()`).
 ///
 /// **Not active outside a run**: `offer` is nil and no input is read.
 /// Nothing is written to the recording or the sidecar; the estimate and
@@ -62,6 +63,10 @@ final class PackOfferMonitor {
     struct Sources: Sendable {
         var installed: @Sendable () async -> [InstalledPackCoverage]
         var manifestPacks: @Sendable () async -> [PackManifest.Pack]
+        /// Brings the manifest up to date if it is due (the app:
+        /// `refresh(force: false)`, the 24 h rule, sharing an in-flight
+        /// fetch); a failed fetch leaves the cached list. Download only.
+        var refreshManifest: @Sendable () async -> Void
         /// Queued, waiting, downloading, paused or verifying.
         var activeDownloads: @Sendable () async -> Set<String>
         var download: @Sendable (PackManifest.Pack) async -> Void
@@ -114,6 +119,7 @@ final class PackOfferMonitor {
         Sources(
             installed: { await library.coverages() },
             manifestPacks: { await manifest.snapshot().manifest?.packs ?? [] },
+            refreshManifest: { await manifest.refresh(force: false) },
             activeDownloads: { await downloader.activeNames() },
             download: { await downloader.start($0) })
     }
@@ -179,14 +185,36 @@ final class PackOfferMonitor {
 
     // MARK: Answers
 
-    /// "Download": queued through the downloader (its network policy
-    /// applies); answered, so not offered again in this drive.
-    func download() async {
-        guard let shown = offer, let pack = manifestPacks.first(where: { $0.name == shown.name }) else { return }
+    /// "Download": answered at once (the card hides, the region is not
+    /// offered again in this drive, and the name is excluded until the
+    /// downloader lists it), then, in the returned task, without the UI
+    /// waiting on it (R67.1-2):
+    ///
+    /// 1. `refreshManifest` (the 24 h rule): the cached entry may name a
+    ///    file a later publish deleted (`publish_packs.sh --prune`), and
+    ///    nothing else refreshes the list unless Settings → Maps is opened.
+    /// 2. The current manifest's entry of the same NAME is queued through
+    ///    the downloader (its network policy applies): the fresh URL and
+    ///    hashes after a refresh, the cached entry when the fetch failed
+    ///    (offline) or was not due.
+    /// 3. A manifest that no longer lists the name queues nothing (the pack
+    ///    is gone; the answer stands for this drive).
+    ///
+    /// A cache younger than 24 h is not refetched, so a publish within that
+    /// window still queues the old entry (it fails in Settings → Maps, as
+    /// before).
+    @discardableResult
+    func download() -> Task<Void, Never>? {
+        guard let shown = offer else { return nil }
         rule?.answer(.download, region: shown.name)
         offer = nil
         queuedHere.insert(shown.name)
-        await sources.download(pack)
+        let name = shown.name, sources = sources
+        return Task {
+            await sources.refreshManifest()
+            guard let pack = await sources.manifestPacks().first(where: { $0.name == name }) else { return }
+            await sources.download(pack)
+        }
     }
 
     /// "Not now": hidden for this drive.
