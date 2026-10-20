@@ -114,7 +114,7 @@ shows the checklist again.
   recording the map shows a red dot with the elapsed time; tapping it asks
   before stopping. When you have driven out of every installed region pack,
   a card at the next stop offers that region's pack (Download / Not now /
-  Never for this region); never in motion. A long press on the speed value toggles the navigation
+  Never); never in motion. A long press on the speed value toggles the navigation
   stats (ms per step, particles, thermal).
 - **Settings → Developer → Sessions.** Recordings with date, duration and size. Share exports the
   recording together with its `.nav.jsonl` sidecar; trash asks first and
@@ -238,7 +238,7 @@ neighbouring packs and load together without duplicates.
   installed region pack for 30 s, its region is remembered and offered at the
   next stop (speed 0 for ≥ 3 s), never in motion. Shown again at later stops
   until answered, at most 3 times per region per drive. "Not now" lasts the
-  drive; "Never for this region" lasts until reset in Settings → Maps.
+  drive; "Never" (for that region) lasts until reset in Settings → Maps.
 - **Download rules**: Wi-Fi only unless "Use cellular data" is on; one
   download at a time, the rest queued; resumable (HTTP Range); paused while
   Record runs (Navigate doesn't pause them). The manifest is refreshed when
