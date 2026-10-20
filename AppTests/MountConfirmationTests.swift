@@ -21,7 +21,7 @@ struct MountConfirmationTests {
         model.update(navigate: navigate, obdKmh: kmh, replyUptime: kmh == nil ? nil : now - age, now: now)
     }
 
-    @Test("Shown at a stationary OBD Navigate start, calibrating or running")
+    @Test("Shown at a stationary OBD Navigate start only once calibration has ended")
     func shownAtStationaryStart() {
         let model = MountConfirmationModel(store: OnboardingStore(defaults: defaults()))
         #expect(!model.isVisible, "nothing before the first update")
@@ -29,9 +29,21 @@ struct MountConfirmationTests {
         tick(model, .calibrating, kmh: nil)
         #expect(!model.isVisible)
         tick(model, .calibrating, kmh: 0)
-        #expect(model.isVisible)
+        #expect(!model.isVisible, "Hold still - calibrating: no tap is asked for")
+        tick(model, .running, kmh: 0)
+        #expect(model.isVisible, "calibration done, stationary")
+        tick(model, .running, kmh: 12)
+        #expect(!model.isVisible, "moving")
+    }
+
+    @Test("Calibration hides a visible card and the rule alone never offers it while calibrating")
+    func calibratingHides() {
+        let model = MountConfirmationModel(store: OnboardingStore(defaults: defaults()))
         tick(model, .running, kmh: 0)
         #expect(model.isVisible)
+        tick(model, .calibrating, kmh: 0)
+        #expect(!model.isVisible)
+        #expect(!MountCardRule.isVisible(confirmed: false, navigate: .calibrating, obdKmh: 0, replyUptime: now, now: now))
     }
 
     @Test("Never while OBD speed is above 0, even at 1 km/h")
@@ -96,7 +108,7 @@ struct MountConfirmationTests {
     func confirmedNeverAgain() {
         let d = defaults()
         let model = MountConfirmationModel(store: OnboardingStore(defaults: d))
-        tick(model, .calibrating, kmh: 0)
+        tick(model, .running, kmh: 0)
         #expect(model.isVisible)
         model.confirm()
         #expect(!model.isVisible)
@@ -106,7 +118,7 @@ struct MountConfirmationTests {
         #expect(!model.isVisible, "the next stop")
 
         let next = MountConfirmationModel(store: OnboardingStore(defaults: d))
-        tick(next, .calibrating, kmh: 0)
+        tick(next, .running, kmh: 0)
         #expect(!next.isVisible, "the next launch")
     }
 
@@ -115,8 +127,6 @@ struct MountConfirmationTests {
         let d = defaults()
         d.set(true, forKey: OnboardingStore.legacyChecklistKey)
         let model = MountConfirmationModel(store: OnboardingStore(defaults: d))
-        tick(model, .calibrating, kmh: 0)
-        #expect(!model.isVisible)
         tick(model, .running, kmh: 0)
         #expect(!model.isVisible)
     }
@@ -145,7 +155,7 @@ struct MountConfirmationTests {
         tick(model, .running, kmh: 0)
         #expect(model.visibleWrites == 1)
         tick(model, .running, kmh: 0)
-        tick(model, .calibrating, kmh: 0)
+        tick(model, .running, kmh: 0)
         #expect(model.visibleWrites == 1, "visible to visible")
         model.confirm()
         model.confirm()
@@ -172,14 +182,18 @@ struct MountConfirmationTests {
         model.update(session: rig.session)
         #expect(!model.isVisible, "the link polls at 0, but Navigate is off")
 
-        rig.session.enableNavigate(NavigateConfiguration(stillCalibration: .seconds(30), autoStopAfter: .seconds(600)))
+        rig.session.enableNavigate(NavigateConfiguration(stillCalibration: .seconds(1), autoStopAfter: .seconds(600)))
         #expect(rig.session.navigateState == .calibrating)
         model.update(session: rig.session)
         #expect(!model.isVisible, "Navigate started: no speed reply of its own yet")
         rig.uptime.set(base + 0.1)
         await rig.send(InitScript.poll(seq: 30, speed: 0, at: base + 0.1))
         model.update(session: rig.session)
-        #expect(model.isVisible, "stationary OBD Navigate start")
+        #expect(!model.isVisible, "still calibrating: no tap asked for")
+        #expect(await eventually(5) { rig.session.navigateState == .running })
+        await rig.send(InitScript.poll(seq: 30, speed: 0, at: base + 0.1))
+        model.update(session: rig.session)
+        #expect(model.isVisible, "calibration done, stationary OBD Navigate")
 
         rig.uptime.set(base + 3)
         model.update(session: rig.session)
@@ -202,8 +216,9 @@ struct MountConfirmationTests {
         #expect(!model.isVisible, "not in Record")
         await rig.session.stop()
 
-        // Back to Navigate, stopped: shown again, then answered for good.
+        // Back to Navigate, stopped: after its calibration shown again, then answered for good.
         #expect(rig.session.navigateState.isActive)
+        #expect(await eventually(5) { rig.session.navigateState == .running })
         rig.uptime.set(base + 6)
         await rig.send(InitScript.poll(seq: 34, speed: 0, at: base + 6))
         model.update(session: rig.session)

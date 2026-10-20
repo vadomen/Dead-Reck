@@ -64,6 +64,25 @@ struct AppNavigationTests {
                 "every route except About (its own section) is in exactly one group")
     }
 
+    @Test("REL-EXPORT: Release closed shows only Demo drive; Release open and Debug show Test drive recording, Sessions, Console too")
+    @MainActor func developerGroupByGate() {
+        let demo: SettingsRow = .demoDrive
+        #expect(SettingsRows.demoDriveTitle == "Demo drive (simulated car)")
+        #expect(SettingsRows.developerGroup(isDebug: false, gateOpen: false) == [demo])
+        let all: [SettingsRow] = [demo, .route(.recording), .route(.sessions), .route(.console)]
+        #expect(SettingsRows.developerGroup(isDebug: false, gateOpen: true) == all)
+        #expect(SettingsRows.developerGroup(isDebug: true, gateOpen: false) == all)
+        #expect(SettingsRows.developerGroup(isDebug: true, gateOpen: true) == all)
+        // Through the real gate: Release closed, then 7 taps.
+        let suite = UserDefaults(suiteName: "AppNavigationTests.developerGroupByGate")!
+        suite.removePersistentDomain(forName: "AppNavigationTests.developerGroupByGate")
+        let gate = DeveloperGate(isDebug: false, defaults: suite)
+        #expect(SettingsRows.developerGroup(isDebug: gate.isDebug, gateOpen: gate.showsDiagnostics) == [demo])
+        let t0 = Date(timeIntervalSince1970: 1_000)
+        for i in 0..<7 { gate.tapVersion(at: t0.addingTimeInterval(Double(i) * 0.2)) }
+        #expect(SettingsRows.developerGroup(isDebug: gate.isDebug, gateOpen: gate.showsDiagnostics) == all)
+    }
+
     @Test("Console follows the Diagnostics gate in Release: hidden until the 7 taps, always in DEBUG")
     @MainActor func consoleGate() {
         let suite = UserDefaults(suiteName: "AppNavigationTests.consoleGate")!
