@@ -54,7 +54,7 @@ Starting decisions (from the user, 2026-10-16):
 | # | Decision | Options / recommendation |
 |---|---|---|
 | D1 | App Store name (≤ 30 characters) and subtitle | "DriveLogger" is a working name and probably already taken. Check in App Store Connect when the app record is created. The name should describe navigation without GPS, not a logger. |
-| D2 | Bundle ID | `com.vadomen.fugps` since prompt 35 (was `com.example.drivelogger`). It goes into the App Store permanently and cannot be changed after the first upload. Set in `Config/Local.xcconfig`, the setting is `PRODUCT_BUNDLE_IDENTIFIER`. |
+| D2 | Bundle ID | `com.vadomen.fugps` since prompt 35 (was `com.example.drivelogger`). It goes into the App Store permanently and cannot be changed after the first upload. The setting is `PRODUCT_BUNDLE_IDENTIFIER`: default in `Config/Signing.xcconfig`; `Local.xcconfig` overrides it. |
 | D3 | Countries | Ukraine only, or all. For the EU an individual developer must declare trader / non-trader status under the DSA. A trader publishes address and phone number on the app page. Option: exclude the EU at launch. |
 | D4 | Price | Free: only the Free Apps Agreement is needed, no tax or banking forms. |
 | D5 | Languages | Ukrainian and English (String Catalog; `SWIFT_EMIT_LOC_STRINGS` is already YES). |

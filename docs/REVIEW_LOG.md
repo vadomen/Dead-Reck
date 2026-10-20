@@ -887,3 +887,19 @@ Tests (6c81a97): Core 1072 tests in 137 suites passed (36 known issues); AppTest
 ### Run 72 summary
 
 1 round; 0 fixed, 0 rejected, 1 deferred (R72.1-1).
+
+## Run 73: Prompt 32 UX-18 onboarding — four skippable cards before the UX-8 maps step, checkbox gate removed, Settings How FuGPS works / Mount and orientation read-only, one-time in-car Mounted card, legacy checklist migration; R72.1-1 closed (main..ux18-onboarding: 28a9b3d..460c34f), started 2026-10-20
+
+### Round 1
+
+Reviewer: one opus reviewer (~1200 changed lines, App logic only; Core unchanged). Focus: RootView cover sequencing, Settings review cover, legacy key never written, MountCardRule vs Navigate state, MapFeed paths, offer/mount slot, DEBUG gating, card texts vs App Review 1.4.1.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R73.1-1 | MINOR | `docs/RELEASE_PLAN.md` Phase 0 D2 row (line ~57) still said "Set in `Config/Local.xcconfig`" while R72.1-1 was marked closed for both D2 tables. | DONE | Fixed in the ledger commit (completes the prompt's own R72.1-1 item, so not deferred): "default in `Config/Signing.xcconfig`; `Local.xcconfig` overrides it". |
+
+Tests (460c34f): Core 1072 tests in 137 suites passed (36 known issues); AppTests 632 tests in 92 suites passed, TEST SUCCEEDED.
+
+### Run 73 summary
+
+1 round; no BLOCKER or MAJOR; 1 MINOR fixed in the ledger commit (R73.1-1). Noted, not a finding: `mapsAfterCards` re-implements RootView's cover condition instead of calling shared code.
