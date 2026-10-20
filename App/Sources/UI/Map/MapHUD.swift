@@ -30,24 +30,43 @@ enum HUDGPS: Hashable, Sendable {
 /// (and so which indicator is emphasised) stays the UX-5 rule's decision.
 enum HUDOBD: Hashable, Sendable {
     case connected
+    /// A link that was up in this app session has dropped.
     case lost
+    /// The currently paired adapter has not connected in this app session, or
+    /// none is paired (never paired, or Forget): nothing was lost, so this is
+    /// muted, not a warning.
+    case none
 
-    var label: String { self == .connected ? "OBD" : "OBD lost" }
+    var label: String {
+        switch self {
+        case .connected: "OBD"
+        case .lost: "OBD lost"
+        case .none: "No OBD"
+        }
+    }
 
+    /// Only "lost" is a warning.
     var isFailed: Bool { self == .lost }
+
+    /// Drawn with the slashed glyph: lost, and also "No OBD" (in the muted colour).
+    var isSlashed: Bool { self != .connected }
 
     /// Connected while the adapter is initialised and talking to the car
     /// (`ready`, `polling`; the ELM session's `retrying` is still `polling`),
     /// whether or not a speed reply is fresh: a silent engine on a live link
-    /// reads "OBD". Everything else is "OBD lost": scanning, connecting,
-    /// initialising, reconnecting, failed, Bluetooth off — and also before
-    /// any adapter has connected (kept to the two spec labels: the
-    /// indicator answers "is OBD feeding the app now?", and the answer is no).
-    static func from(link: OBDLinkState?) -> HUDOBD {
+    /// reads "OBD". Otherwise "OBD lost" if a link was up earlier in this app
+    /// session (`everConnected`: scanning, connecting, initialising,
+    /// reconnecting, failed, Bluetooth off), and "No OBD" if none ever was.
+    static func from(link: OBDLinkState?, everConnected: Bool) -> HUDOBD {
         switch link {
         case .ready?, .polling?: .connected
-        default: .lost
+        default: everConnected ? .lost : .none
         }
+    }
+
+    /// Whether `link` means the adapter is up (feeds `MapViewModel.obdEverConnected`).
+    static func isUp(_ link: OBDLinkState?) -> Bool {
+        from(link: link, everConnected: false) == .connected
     }
 }
 
@@ -61,7 +80,10 @@ struct HUDIndicator: Equatable, Sendable {
     /// drawn bold, with the label in the primary text colour.
     var emphasised: Bool
 
-    var slashed: Bool { failed }
+    /// "No OBD" is slashed too but not `failed`: muted colour, no warning.
+    var absent = false
+
+    var slashed: Bool { failed || absent }
 }
 
 /// What the top-left card shows, derived from plain values. The recording row
@@ -80,7 +102,8 @@ struct MapHUDState: Equatable, Sendable {
         speed: MapSpeedReadout, gps: HUDGPS, obd: HUDOBD, thermal: ProcessInfo.ThermalState
     ) -> MapHUDState {
         let gpsIndicator = HUDIndicator(label: gps.label, failed: gps.isFailed, emphasised: speed.source == .gps)
-        let obdIndicator = HUDIndicator(label: obd.label, failed: obd.isFailed, emphasised: speed.source == .obd)
+        let obdIndicator = HUDIndicator(
+            label: obd.label, failed: obd.isFailed, emphasised: speed.source == .obd, absent: obd == .none)
         let thermalText: String? = thermal == .nominal ? nil : "Thermal " + ThermalText.label(thermal)
         var parts = ["\(speed.valueText) km/h", gpsIndicator.label, obdIndicator.label]
         if let thermalText { parts.append(thermalText) }
@@ -243,7 +266,7 @@ struct HUDScheme: Equatable, Sendable {
 
 // MARK: - DEBUG fakes (screenshots)
 
-/// `-uiFakeHUD ok,gpsLost,obdLost,recording,debug,thermal,banner`: synthetic HUD
+/// `-uiFakeHUD ok,gpsLost,obdLost,obdNone,recording,debug,thermal,banner`: synthetic HUD
 /// inputs for simulator screenshots (the simulator has no OBD and a real
 /// position). Parsed here so the parsing is testable; applied by `MapScreen`
 /// in DEBUG builds only. Comma-separated, unknown tokens ignored; an empty or
@@ -252,6 +275,7 @@ struct HUDFakes: Equatable, Sendable {
     var isActive = false
     var gpsLost = false
     var obdLost = false
+    var obdNone = false
     var recording = false
     var debugStrip = false
     var thermal = false
@@ -265,6 +289,7 @@ struct HUDFakes: Equatable, Sendable {
             case "ok": out.isActive = true
             case "gpsLost": out.isActive = true; out.gpsLost = true
             case "obdLost": out.isActive = true; out.obdLost = true
+            case "obdNone": out.isActive = true; out.obdNone = true
             case "recording": out.isActive = true; out.recording = true
             case "debug": out.isActive = true; out.debugStrip = true
             case "thermal": out.isActive = true; out.thermal = true
@@ -275,11 +300,11 @@ struct HUDFakes: Equatable, Sendable {
         return out
     }
 
-    /// The OBD indicator: lost with `obdLost`, else connected.
-    var obd: HUDOBD { obdLost ? .lost : .connected }
+    /// The OBD indicator: lost with `obdLost`, "No OBD" with `obdNone`, else connected.
+    var obd: HUDOBD { obdLost ? .lost : (obdNone ? .none : .connected) }
 
     /// The speed shown: 27 km/h from OBD, or from GPS when OBD is "lost".
     var speed: MapSpeedReadout {
-        MapSpeedReadout(source: obdLost ? .gps : .obd, kmh: 27, quality: .good)
+        MapSpeedReadout(source: (obdLost || obdNone) ? .gps : .obd, kmh: 27, quality: .good)
     }
 }

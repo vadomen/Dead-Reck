@@ -321,6 +321,12 @@ Replay only the current connection's init (M6.1-1) and remembered poll plan and 
 10. **Offer card at a stop:** the road-pack offer card (bottom-left zone) does not cover the car marker at a stop in heading-up.
 11. **Console in Release:** hidden until 7 taps on Version in About (proposed default, awaiting the user's decision).
 
+### Added by prompt 31 follow-ups (branch ux32-followups) — not verified on a device
+1. **Offer card at a stop:** with the pack offer card shown, the car arrow is not under the card (heading-up and north-up); when the card hides the car moves back to its 2/3 placement. The three actions (Download, Not now, Never) are in one row and easy to hit.
+2. **No OBD:** on a fresh install, before pairing any adapter, the HUD reads "No OBD" (muted, not the warning colour); after a connected adapter is unplugged it reads "OBD lost" in the warning colour.
+3. **Adapter name after Forget:** Settings → OBD adapter after Forget A and then tapping B (or B out of range) shows B, never A; a remembered adapter still auto-reconnects at launch and after unplug/replug.
+4. **Settings order:** the root is OBD adapter, Maps, Mount and orientation; About; Developer (Test drive recording, Sessions, Console). In Release, Console is behind the 7-tap gate.
+
 ### Added by UX-17 / UX-16 maps network (prompt 28) — not verified on a device
 1. **Queued pack starts on Wi-Fi:** within a few seconds, with "Use cellular data" on and with it off.
 2. **On cellular, switch on:** a queued pack starts within a few seconds.

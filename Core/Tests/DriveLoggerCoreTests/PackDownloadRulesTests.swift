@@ -4,7 +4,7 @@ import Testing
 @testable import DriveLoggerCore
 
 /// UX-8 (prompt 25): resume plan, response decision (including the measured
-/// server quirks: If-Range ignored, 500 for an unsatisfiable range),
+/// server quirk: If-Range ignored; an unsatisfiable range answers 416),
 /// Content-Range, partial metadata, network policy. Synthetic values only.
 @Suite("Pack download rules (UX-8)")
 struct PackDownloadRulesTests {
@@ -21,7 +21,7 @@ struct PackDownloadRulesTests {
         #expect(D.plan(partialBytes: 0, expectedSize: Self.size, storedETag: Self.etag) == .fresh)
         #expect(D.plan(partialBytes: 1, expectedSize: Self.size, storedETag: Self.etag) == .resume(from: 1, ifRange: Self.etag))
         #expect(D.plan(partialBytes: 999, expectedSize: Self.size, storedETag: nil) == .resume(from: 999, ifRange: nil))
-        // Never a range at or past the size (the server answers 500, not 416).
+        // Never a range at or past the size (the server answers 416).
         #expect(D.plan(partialBytes: 1_000, expectedSize: Self.size, storedETag: Self.etag) == .verifyOnly)
         #expect(D.plan(partialBytes: 1_001, expectedSize: Self.size, storedETag: Self.etag) == .discardAndRestart)
         #expect(D.plan(partialBytes: -1, expectedSize: Self.size, storedETag: Self.etag) == .discardAndRestart)

@@ -24,6 +24,12 @@ final class MapViewModel {
     /// Set only when it changes, so the 16 Hz status does not re-render the map.
     private(set) var speed = MapSpeedReadout.none
     private var obdInput: (kmh: Double?, ageS: Double?)?
+    /// A link to the currently paired adapter has been up in this app session:
+    /// tells "No OBD" (never) from "OBD lost" (it dropped). Belongs to that
+    /// adapter: Forget, or pairing a different one, clears it (R70.1-1).
+    private(set) var obdEverConnected = false
+    /// The adapter the up link was to (the paired one at the time).
+    private var obdConnectedAdapter: UUID?
     private let bearingSource: any MapBearingSource
     /// The recording the track belongs to.
     private(set) var currentFile: URL?
@@ -54,6 +60,18 @@ final class MapViewModel {
         self.track = track
         self.latest = latest
         self.manualFixes = manualFixes
+    }
+
+    /// Feeds `obdEverConnected` from the link state and the paired adapter
+    /// (`rememberedAdapterID`). Call on a change of either.
+    func noteLink(_ state: OBDLinkState?, adapter: UUID? = nil) {
+        if HUDOBD.isUp(state) {
+            obdEverConnected = true
+            obdConnectedAdapter = adapter
+        } else if obdEverConnected, adapter != obdConnectedAdapter {
+            obdEverConnected = false
+            obdConnectedAdapter = nil
+        }
     }
 
     /// Takes the recorder's latest fix. When the scene is not active (locked

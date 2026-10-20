@@ -1,13 +1,18 @@
 import SwiftUI
 
-/// Wording of the at-a-stop offer card (UX-8 (2)).
+/// Wording of the at-a-stop offer card (UX-8 (2), compact form R68.1-3).
 enum PackOfferText {
-    static func question(title: String, sizeBytes: Int64) -> String {
-        "You are in \(title), no road map. Download \(MapsText.size(sizeBytes))?"
+    /// The one line: what is missing and what it costs.
+    static func summary(sizeBytes: Int64) -> String {
+        "No road map here · \(MapsText.size(sizeBytes))"
+    }
+    /// The same line with the region, used when it fits on one line.
+    static func summary(title: String, sizeBytes: Int64) -> String {
+        summary(sizeBytes: sizeBytes) + " · " + title
     }
     static let download = "Download"
     static let notNow = "Not now"
-    static let never = "Never for this region"
+    static let never = "Never"
 }
 
 /// The card wired to the monitor. Its own view, so only it observes `offer`.
@@ -28,7 +33,11 @@ struct PackOfferCard: View {
         .animation(.easeInOut(duration: 0.25), value: shown)
     }
 
-    private var shown: PackOfferMonitor.Offer? {
+    private var shown: PackOfferMonitor.Offer? { Self.current(for: monitor) }
+
+    /// The offer on screen: the monitor's, or the DEBUG fake. The map reads it
+    /// to lift the car out from under the card.
+    static func current(for monitor: PackOfferMonitor) -> PackOfferMonitor.Offer? {
         #if DEBUG
         // `-uiFakeOffer 1`: a synthetic offer (screenshots; no real region).
         if UserDefaults.standard.bool(forKey: "uiFakeOffer") {
@@ -46,37 +55,77 @@ struct PackOfferCardView: View {
     var onDownload: () -> Void = {}
     var onNotNow: () -> Void = {}
     var onNever: () -> Void = {}
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(PackOfferText.question(title: offer.title, sizeBytes: offer.sizeBytes))
-                .font(.headline)
+        VStack(alignment: .leading, spacing: 8) {
+            // One line; the region goes on a second line only when it does not fit.
+            ViewThatFits(in: .horizontal) {
+                Text(PackOfferText.summary(title: offer.title, sizeBytes: offer.sizeBytes))
+                    .font(.headline).lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(PackOfferText.summary(sizeBytes: offer.sizeBytes)).font(.headline)
+                    Text(offer.title).font(.subheadline).foregroundStyle(HUDColors.muted)
+                }
                 .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 10) {
-                Button(action: onDownload) {
-                    Text(PackOfferText.download).font(.headline.bold()).frame(maxWidth: .infinity, minHeight: 56)
-                }
-                .prominentButton()
-                .accessibilityLabel("Download \(offer.title), \(MapsText.size(offer.sizeBytes))")
-                Button(action: onNotNow) {
-                    Text(PackOfferText.notNow).font(.headline).frame(maxWidth: .infinity, minHeight: 56)
-                }
-                .buttonStyle(.bordered)
-                .tint(HUDColors.text)
-                .accessibilityLabel("Not now")
             }
-            Button(action: onNever) {
-                Text(PackOfferText.never).font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
+            // Three actions in one row; in the accessibility sizes they stack
+            // instead (three words no longer fit beside each other there).
+            if typeSize.isAccessibilitySize {
+                VStack(spacing: 8) { actions }
+            } else {
+                HStack(spacing: 8) { actions }
             }
-            .buttonStyle(.bordered)
-                .tint(HUDColors.text)
-            .accessibilityLabel("Never offer maps for \(offer.title)")
         }
         .padding(12)
         .hudSurface(RoundedRectangle(cornerRadius: 16))
         // R67.1-5: the card must not grow over the speed readout at AX3+.
         .dynamicTypeSize(...DynamicTypeSize.accessibility2)
         .accessibilityElement(children: .contain)
+    }
+
+    /// Download takes the width the two short actions leave; all are 48 pt tall.
+    @ViewBuilder
+    private var actions: some View {
+        let stacked = typeSize.isAccessibilitySize
+        Button(action: onDownload) {
+            Text(PackOfferText.download).font(.callout.bold()).lineLimit(1)
+                .frame(maxWidth: .infinity, minHeight: 48)
+        }
+        .buttonStyle(OfferActionStyle(prominent: true))
+        .accessibilityLabel("Download \(offer.title), \(MapsText.size(offer.sizeBytes))")
+        Button(action: onNotNow) {
+            Text(PackOfferText.notNow).font(.callout.weight(.semibold)).lineLimit(1)
+                .padding(.horizontal, stacked ? 0 : 10)
+                .frame(maxWidth: stacked ? .infinity : nil, minHeight: 48)
+        }
+        .buttonStyle(OfferActionStyle(prominent: false))
+        .fixedSize(horizontal: !stacked, vertical: false)
+        .accessibilityLabel("Not now")
+        Button(action: onNever) {
+            Text(PackOfferText.never).font(.callout.weight(.semibold)).lineLimit(1)
+                .padding(.horizontal, stacked ? 0 : 10)
+                .frame(maxWidth: stacked ? .infinity : nil, minHeight: 48)
+        }
+        .buttonStyle(OfferActionStyle(prominent: false))
+        .fixedSize(horizontal: !stacked, vertical: false)
+        .accessibilityLabel("Never offer maps for \(offer.title)")
+    }
+}
+
+/// The offer's buttons: a filled accent face for Download, a quiet face for
+/// the others. Own style so three actions fit one row on a 375 pt phone.
+private struct OfferActionStyle: ButtonStyle {
+    var prominent: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(prominent ? Color("AccentForeground") : HUDColors.text)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(prominent ? Color.accentColor : HUDColors.text.opacity(0.12)))
+            .opacity(configuration.isPressed ? 0.7 : 1)
+            .contentShape(RoundedRectangle(cornerRadius: 12))
     }
 }
 

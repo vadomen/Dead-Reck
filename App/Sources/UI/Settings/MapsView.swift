@@ -162,13 +162,16 @@ enum MapsText {
     /// The note at the top: "Offline" whenever the path monitor reports no
     /// connection (whatever the age of the cached list: a fresh cache means
     /// no fetch, so no failure either), else the latest failed refresh; nil
-    /// when neither.
+    /// when neither. When the connection is `.none` the top network line
+    /// (`networkLine`) already says "Offline", so the note then only says the
+    /// saved list is shown (nil without one): "Offline" appears once.
     static func listNote(_ refresh: PackManifestService.Refresh, connection: PackDownloadRules.Connection = .unmetered,
                          hasManifest: Bool) -> String? {
-        var offline = connection == .none
+        if connection == .none { return hasManifest ? "Showing the saved list." : nil }
+        var offline = false
         if case .failed(let failedOffline) = refresh {
             offline = offline || failedOffline
-        } else if !offline {
+        } else {
             return nil
         }
         let kept = hasManifest ? " Showing the saved list." : ""

@@ -1,4 +1,5 @@
 import DriveLoggerCore
+import CoreGraphics
 import Foundation
 
 /// Pure decisions for the follow camera. No MapKit, so they are unit-testable.
@@ -237,10 +238,42 @@ enum CarPlacement {
     /// the first version (no correction) landed at 68.1 % of the height, not 66.7 %.
     static let spanPerDistance = 0.922 / MapFraming.distancePerSpan
 
+    /// Where the car sits for the current mode, as a fraction of the map
+    /// height from the top: the lower third in heading-up, the middle in
+    /// north-up, and the middle while the at-a-stop offer card is up (R68.1-3:
+    /// the card covers the lower third). One value feeds the camera centre,
+    /// the ellipse fit (`FollowZoom`) and the synthetic basemap.
+    static func carFromTop(headingUp: Bool, offerShown: Bool) -> Double {
+        headingUp && !offerShown ? carFromTop : 0.5
+    }
+
     /// How far ahead of the car the camera centre goes, metres.
-    static func aheadMetres(cameraDistance: Double, headingUp: Bool) -> Double {
+    static func aheadMetres(
+        cameraDistance: Double, headingUp: Bool, carFromTop: Double = CarPlacement.carFromTop
+    ) -> Double {
         guard headingUp, cameraDistance.isFinite, cameraDistance > 0 else { return 0 }
         return cameraDistance * spanPerDistance * (carFromTop - 0.5)
+    }
+
+    /// The car's mark, a circle of this radius around its point, for `clears`.
+    static let carRadius = 20.0
+
+    /// The car's point on a map of `size` (points) and whether `card` (in the
+    /// same coordinates) stays clear of the car's mark.
+    static func clears(card: CGRect, size: CGSize, carFromTop: Double) -> Bool {
+        let car = CGRect(
+            x: size.width / 2 - carRadius, y: size.height * carFromTop - carRadius,
+            width: 2 * carRadius, height: 2 * carRadius)
+        return !card.intersects(car)
+    }
+
+    /// The offer card's frame in the bottom-left zone for a card `height` high:
+    /// left of the rail, above the bottom inset.
+    static func offerCardFrame(size: CGSize, safeBottom: Double = 0, height: Double) -> CGRect {
+        let bottom = size.height - safeBottom - MapLayout.bottomInset()
+        return CGRect(
+            x: MapLayout.edgeInset, y: bottom - height,
+            width: size.width - MapLayout.edgeInset - MapLayout.railReserved, height: height)
     }
 
     /// Where the car lands on the screen, as a fraction of the map height from

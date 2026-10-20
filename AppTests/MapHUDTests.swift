@@ -19,14 +19,14 @@ struct MapHUDTests {
     @Test("GPS and OBD labels, and a failed state is slashed AND flagged failed")
     func indicators() {
         for gps in [HUDGPS.ok, .none, .off] {
-            for obd in [HUDOBD.connected, .lost] {
+            for obd in [HUDOBD.connected, .lost, .none] {
                 let s = state(.obd, gps: gps, obd: obd)
                 #expect(s.gps.label == ["GPS", "No GPS", "GPS off"][[HUDGPS.ok, .none, .off].firstIndex(of: gps)!])
                 #expect(s.gps.failed == (gps != .ok))
                 #expect(s.gps.slashed == s.gps.failed)
-                #expect(s.obd.label == (obd == .connected ? "OBD" : "OBD lost"))
+                #expect(s.obd.label == ["OBD", "OBD lost", "No OBD"][[HUDOBD.connected, .lost, .none].firstIndex(of: obd)!])
                 #expect(s.obd.failed == (obd == .lost))
-                #expect(s.obd.slashed == s.obd.failed)
+                #expect(s.obd.slashed == (obd != .connected), "No OBD is slashed too")
             }
         }
     }
@@ -43,19 +43,76 @@ struct MapHUDTests {
         #expect(state(.obd, gps: .off).obd.emphasised)
     }
 
-    @Test("OBD is connected while the link is initialised (ready or polling), lost otherwise, before any connection too")
+    @Test("OBD is connected while the link is initialised (ready or polling), lost once a link was up, No OBD before")
     func obdFromLink() {
-        #expect(HUDOBD.from(link: .polling(protocolNumber: "A6", voltage: 12.4)) == .connected)
-        #expect(HUDOBD.from(link: .ready) == .connected)
+        #expect(HUDOBD.from(link: .polling(protocolNumber: "A6", voltage: 12.4), everConnected: false) == .connected)
+        #expect(HUDOBD.from(link: .ready, everConnected: true) == .connected)
         let notConnected: [OBDLinkState] = [
             .unavailable(reason: "Bluetooth is off"), .idle, .scanning, .connecting, .discoveringServices,
             .initialising, .reconnecting(attempt: 1), .failed(reason: "x"),
         ]
         for state in notConnected {
-            #expect(HUDOBD.from(link: state) == .lost, "\(state)")
+            #expect(HUDOBD.from(link: state, everConnected: true) == .lost, "\(state)")
+            #expect(HUDOBD.from(link: state, everConnected: false) == .none, "\(state)")
         }
-        // No link at all (previews): lost.
-        #expect(HUDOBD.from(link: nil) == .lost)
+        // No link at all (previews).
+        #expect(HUDOBD.from(link: nil, everConnected: false) == .none)
+        #expect(HUDOBD.from(link: nil, everConnected: true) == .lost)
+    }
+
+    @Test("No OBD is slashed but not failed (muted, no warning colour); lost is both")
+    func noOBDIsNotAWarning() {
+        let none = state(.gps, obd: .none).obd
+        #expect(none.label == "No OBD" && none.slashed && !none.failed)
+        let lost = state(.gps, obd: .lost).obd
+        #expect(lost.slashed && lost.failed)
+    }
+
+    @Test("The view model remembers that a link was up, and keeps it after the drop")
+    @MainActor func everConnected() {
+        let model = MapViewModel()
+        model.noteLink(nil)
+        model.noteLink(.scanning)
+        model.noteLink(.failed(reason: "x"))
+        #expect(!model.obdEverConnected)
+        model.noteLink(.polling(protocolNumber: "6", voltage: nil))
+        #expect(model.obdEverConnected)
+        model.noteLink(.reconnecting(attempt: 1))
+        #expect(model.obdEverConnected)
+        #expect(HUDOBD.from(link: .reconnecting(attempt: 1), everConnected: model.obdEverConnected) == .lost)
+    }
+
+    @Test("Forget clears the memory: connected A, Forget -> No OBD, not OBD lost (R70.1-1)")
+    @MainActor func forgetClearsEverConnected() {
+        let a = UUID()
+        let model = MapViewModel()
+        model.noteLink(.polling(protocolNumber: "6", voltage: nil), adapter: a)
+        model.noteLink(.idle, adapter: nil)
+        #expect(HUDOBD.from(link: .idle, everConnected: model.obdEverConnected) == .none)
+    }
+
+    @Test("Forget A then pair B: B connecting reads No OBD; once B was up and dropped, OBD lost")
+    @MainActor func switchingAdapters() {
+        let a = UUID(), b = UUID()
+        let model = MapViewModel()
+        model.noteLink(.polling(protocolNumber: "6", voltage: nil), adapter: a)
+        model.noteLink(.idle, adapter: nil)
+        model.noteLink(.connecting, adapter: b)
+        #expect(HUDOBD.from(link: .connecting, everConnected: model.obdEverConnected) == .none)
+        model.noteLink(.polling(protocolNumber: "6", voltage: nil), adapter: b)
+        model.noteLink(.reconnecting(attempt: 1), adapter: b)
+        #expect(HUDOBD.from(link: .reconnecting(attempt: 1), everConnected: model.obdEverConnected) == .lost)
+    }
+
+    @Test("A dropping while still paired reads OBD lost, across reconnect states")
+    @MainActor func samePairedDropIsLost() {
+        let a = UUID()
+        let model = MapViewModel()
+        model.noteLink(.polling(protocolNumber: "6", voltage: nil), adapter: a)
+        for state: OBDLinkState in [.reconnecting(attempt: 1), .scanning, .failed(reason: "x")] {
+            model.noteLink(state, adapter: a)
+            #expect(HUDOBD.from(link: state, everConnected: model.obdEverConnected) == .lost)
+        }
     }
 
     @Test("The OBD indicator follows the link, not the speed: a silent engine on a live link reads OBD")
@@ -63,12 +120,12 @@ struct MapHUDTests {
         // Link polling, but no fresh OBD speed (engine off): the source is GPS
         // (UX-5 rule, unchanged) and the indicator still says OBD.
         let s = MapHUDState.make(
-            speed: speed(.gps), gps: .ok, obd: HUDOBD.from(link: .polling(protocolNumber: "6", voltage: nil)),
+            speed: speed(.gps), gps: .ok, obd: HUDOBD.from(link: .polling(protocolNumber: "6", voltage: nil), everConnected: true),
             thermal: .nominal)
         #expect(s.obd.label == "OBD" && !s.obd.failed)
         #expect(s.gps.emphasised && !s.obd.emphasised, "emphasis stays with the speed source")
         // Link lost while the last OBD speed is still the source: lost, and emphasised.
-        let lost = MapHUDState.make(speed: speed(.obd), gps: .ok, obd: HUDOBD.from(link: .reconnecting(attempt: 1)), thermal: .nominal)
+        let lost = MapHUDState.make(speed: speed(.obd), gps: .ok, obd: HUDOBD.from(link: .reconnecting(attempt: 1), everConnected: true), thermal: .nominal)
         #expect(lost.obd.label == "OBD lost" && lost.obd.failed && lost.obd.emphasised)
     }
 
@@ -76,6 +133,8 @@ struct MapHUDTests {
     func fakeOBD() {
         #expect(HUDFakes.parse("ok").obd == .connected)
         #expect(HUDFakes.parse("obdLost").obd == .lost)
+        #expect(HUDFakes.parse("obdNone").obd == .none)
+        #expect(HUDFakes.parse("obdNone").speed.source == .gps)
     }
 
     @Test("GPS state: fresh fix ok, stale none, the reserved switch wins")
@@ -218,6 +277,50 @@ struct CarPlacementTests {
         // A small ellipse leaves the driver's zoom alone.
         #expect(FollowZoom.distance(chosen: 500, headingUp: true, semiMajorM: 50) == 500)
         #expect(FollowZoom.distance(chosen: 500, headingUp: true, semiMajorM: nil) == 500)
+    }
+
+    @Test("R68.1-3: the car is centred while the offer card is up (heading-up), unchanged otherwise")
+    func carFromTopWithOffer() {
+        #expect(CarPlacement.carFromTop(headingUp: true, offerShown: false) == CarPlacement.carFromTop)
+        #expect(CarPlacement.carFromTop(headingUp: true, offerShown: true) == 0.5)
+        #expect(CarPlacement.carFromTop(headingUp: false, offerShown: false) == 0.5)
+        #expect(CarPlacement.carFromTop(headingUp: false, offerShown: true) == 0.5)
+        // Centred: no camera offset, and the ellipse fit is the north-up one (no 1.5 factor).
+        #expect(CarPlacement.aheadMetres(cameraDistance: 800, headingUp: true, carFromTop: 0.5) == 0)
+        let centred = FollowZoom.distance(chosen: 100, headingUp: true, semiMajorM: 300, carFromTop: 0.5)
+        #expect(abs(centred - MapFraming.cameraDistance(spanMeters: 660)) < 1e-9)
+        let lowered = FollowZoom.distance(chosen: 100, headingUp: true, semiMajorM: 300)
+        #expect(lowered > centred, "the lower-third fit needs a wider view")
+        // The zoom state uses its own placement for the fit.
+        var zoom = FollowZoom()
+        let before = zoom.autoFollowDistance(headingUp: true, semiMajorM: 300)
+        zoom.carFromTop = 0.5
+        #expect(zoom.autoFollowDistance(headingUp: true, semiMajorM: 300) < before)
+    }
+
+    @Test("R68.1-3: the offer card never covers the car on the smallest iPhone, heading-up and north-up")
+    func offerCardClearsCar() {
+        let se = CGSize(width: 375, height: 667)
+        // Compact card at default type (~120 pt) up to its stacked worst case at accessibility2 (~250 pt).
+        for height in [120.0, 160, 250] {
+            let card = CarPlacement.offerCardFrame(size: se, height: height)
+            for headingUp in [true, false] {
+                let from = CarPlacement.carFromTop(headingUp: headingUp, offerShown: true)
+                #expect(CarPlacement.clears(card: card, size: se, carFromTop: from),
+                        "headingUp \(headingUp), card \(height) pt")
+            }
+        }
+        // The old placement did collide with the old ~210 pt card: the test can fail.
+        let old = CarPlacement.offerCardFrame(size: se, height: 210)
+        #expect(!CarPlacement.clears(card: old, size: se, carFromTop: CarPlacement.carFromTop))
+    }
+
+    @Test("R68.1-2: the HUD card ends in the recording row only while a recording is active")
+    func hasRecordingRow() {
+        #expect(MapRecordingControl.isActive(.calibrating) && MapRecordingControl.isActive(.recording)
+            && MapRecordingControl.isActive(.stopping))
+        #expect(!MapRecordingControl.isActive(.idle))
+        #expect(!MapRecordingControl.isActive(.failed(reason: "disk full", unwrittenEvents: 0)))
     }
 
     @Test("Heading-up puts the camera centre ahead so the car lands at two thirds; north-up does not")

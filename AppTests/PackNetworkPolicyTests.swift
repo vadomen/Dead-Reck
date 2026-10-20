@@ -33,6 +33,18 @@ private func rangeStart(_ request: URLRequest) -> Int? {
 
 @Suite("Map download network policy (UX-17)")
 struct PackNetworkPolicyTests {
+    @Test("Every URLSession refusal reason maps; Ultra Constrained is Low Data Mode, not unknown")
+    func refusalReasons() {
+        #expect(PackTransfer.Refusal(reason: .cellular) == .cellular)
+        #expect(PackTransfer.Refusal(reason: .expensive) == .expensive)
+        #expect(PackTransfer.Refusal(reason: .constrained) == .constrained)
+        if #available(iOS 26.1, *) {
+            #expect(PackTransfer.Refusal(reason: .ultraConstrained) == .constrained)
+        }
+        #expect(PackTransfer.Refusal(URLError(.dataNotAllowed)) == .cellular)
+        #expect(PackTransfer.Refusal(URLError(.timedOut)) == nil)
+    }
+
     // MARK: Metered Wi-Fi and the toggle
 
     @Test("Metered Wi-Fi with the switch off waits in its own state and makes no request; switch on starts it")
