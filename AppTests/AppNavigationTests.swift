@@ -50,19 +50,18 @@ struct AppNavigationTests {
         #expect(SettingsRoute.allCases == [.recording, .sessions, .maps, .adapter, .console, .about])
     }
 
-    @Test("Main rows: recording, sessions, maps, OBD adapter (UX-34), mount, then Console")
-    func mainRows() {
-        #expect(SettingsRows.main(showsConsole: true, adapterAvailable: false) == [
-            .route(.recording), .route(.sessions), .route(.maps), .mountAndOrientation, .route(.console),
-        ])
-        #expect(SettingsRows.main(showsConsole: true, adapterAvailable: true) == [
-            .route(.recording), .route(.sessions), .route(.maps), .route(.adapter), .mountAndOrientation, .route(.console),
-        ])
-        #expect(!SettingsRows.main(showsConsole: false, adapterAvailable: true).contains(.route(.console)))
+    @Test("Groups: OBD adapter, Maps, Mount; then Developer with recording, Sessions, Console (UX-34, prompt 31)")
+    func groups() {
+        #expect(SettingsRows.driver(adapterAvailable: true) == [.route(.adapter), .route(.maps), .mountAndOrientation])
+        #expect(SettingsRows.driver(adapterAvailable: false) == [.route(.maps), .mountAndOrientation])
         #expect(SettingsRoute.adapterRowAvailable, "UX-34: the screen exists, so the row shows")
-        #expect(SettingsRows.main(showsConsole: false) == [
-            .route(.recording), .route(.sessions), .route(.maps), .route(.adapter), .mountAndOrientation,
-        ], "Release without the Diagnostics gate: the adapter row, no Console")
+        #expect(SettingsRows.developer(showsConsole: true) == [.route(.recording), .route(.sessions), .route(.console)])
+        #expect(SettingsRows.developer(showsConsole: false) == [.route(.recording), .route(.sessions)],
+                "Release without the Diagnostics gate: recording and Sessions stay, no Console")
+        #expect(SettingsRows.developerFooter == "For test drives and diagnostics")
+        let all = SettingsRows.driver() + SettingsRows.developer(showsConsole: true)
+        #expect(Set(all) == Set(SettingsRoute.allCases.filter { $0 != .about }.map(SettingsRow.route) + [.mountAndOrientation]),
+                "every route except About (its own section) is in exactly one group")
     }
 
     @Test("Console follows the Diagnostics gate in Release: hidden until the 7 taps, always in DEBUG")
@@ -70,12 +69,12 @@ struct AppNavigationTests {
         let suite = UserDefaults(suiteName: "AppNavigationTests.consoleGate")!
         suite.removePersistentDomain(forName: "AppNavigationTests.consoleGate")
         let release = DeveloperGate(isDebug: false, defaults: suite)
-        #expect(!SettingsRows.main(showsConsole: release.showsDiagnostics).contains(.route(.console)))
+        #expect(!SettingsRows.developer(showsConsole: release.showsDiagnostics).contains(.route(.console)))
         let t0 = Date(timeIntervalSince1970: 1_000)
         for i in 0..<7 { release.tapVersion(at: t0.addingTimeInterval(Double(i) * 0.2)) }
-        #expect(SettingsRows.main(showsConsole: release.showsDiagnostics).contains(.route(.console)))
+        #expect(SettingsRows.developer(showsConsole: release.showsDiagnostics).contains(.route(.console)))
         let debug = DeveloperGate(isDebug: true, defaults: suite)
-        #expect(SettingsRows.main(showsConsole: debug.showsDiagnostics).contains(.route(.console)))
+        #expect(SettingsRows.developer(showsConsole: debug.showsDiagnostics).contains(.route(.console)))
     }
 
     @Test("About links point at the site's own pages (EN) and the OSM licence pages")

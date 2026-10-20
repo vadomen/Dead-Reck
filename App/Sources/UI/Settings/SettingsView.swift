@@ -7,21 +7,30 @@ enum SettingsRow: Hashable {
     case mountAndOrientation
 }
 
-/// Which main-section rows show, in order (UX-14): Test drive recording,
-/// Sessions, Maps, OBD adapter (UX-34), Mount and orientation,
-/// Console (developer screen: Release shows it only behind the Diagnostics gate).
+/// Which rows show, in order (UX-14, grouped for the driver in prompt 31):
+/// the top group is OBD adapter (UX-34), Maps, Mount and orientation; About is
+/// its own section after it; then "Developer" (footer "For test drives and
+/// diagnostics"): Test drive recording, Sessions and, in Release only behind
+/// the Diagnostics gate, Console.
 enum SettingsRows {
-    static func main(showsConsole: Bool, adapterAvailable: Bool = SettingsRoute.adapterRowAvailable) -> [SettingsRow] {
-        var rows: [SettingsRow] = [.route(.recording), .route(.sessions), .route(.maps)]
+    static let developerFooter = "For test drives and diagnostics"
+
+    static func driver(adapterAvailable: Bool = SettingsRoute.adapterRowAvailable) -> [SettingsRow] {
+        var rows: [SettingsRow] = []
         if adapterAvailable { rows.append(.route(.adapter)) }
-        rows.append(.mountAndOrientation)
+        rows += [.route(.maps), .mountAndOrientation]
+        return rows
+    }
+
+    static func developer(showsConsole: Bool) -> [SettingsRow] {
+        var rows: [SettingsRow] = [.route(.recording), .route(.sessions)]
         if showsConsole { rows.append(.route(.console)) }
         return rows
     }
 }
 
-/// Settings, presented full screen over the map (UX-14): Test drive recording,
-/// Sessions, Maps, Console and diagnostics. The pushed screens are injected so
+/// Settings, presented full screen over the map (UX-14): OBD adapter, Maps,
+/// mount, About, then Developer (recording, Sessions, Console) and diagnostics. The pushed screens are injected so
 /// previews can use fake ones.
 struct SettingsScreen<Recording: View, Console: View, Sessions: View, Adapter: View>: View {
     @Binding var path: [SettingsRoute]
@@ -132,27 +141,44 @@ struct SettingsContent<Recording: View, Console: View, Maps: View, Sessions: Vie
         }
     }
 
+    @ViewBuilder
+    private func rows(_ list: [SettingsRow]) -> some View {
+        ForEach(list, id: \.self) { row in
+            switch row {
+            case .route(let route):
+                NavigationLink(value: route) {
+                    Label(route.title, systemImage: route.systemImage)
+                        .font(.title3)
+                        .frame(minHeight: 44)
+                }
+            case .mountAndOrientation:
+                Button(action: onShowChecklist) {
+                    Label("Mount and orientation", systemImage: "iphone.gen3")
+                        .font(.title3)
+                        .foregroundStyle(Color.primary)
+                        .frame(minHeight: 44)
+                }
+            }
+        }
+    }
+
     var body: some View {
         NavigationStack(path: $path) {
             List {
+                Section { rows(SettingsRows.driver()) }
                 Section {
-                    ForEach(SettingsRows.main(showsConsole: showsDeveloper), id: \.self) { row in
-                        switch row {
-                        case .route(let route):
-                            NavigationLink(value: route) {
-                                Label(route.title, systemImage: route.systemImage)
-                                    .font(.title3)
-                                    .frame(minHeight: 44)
-                            }
-                        case .mountAndOrientation:
-                            Button(action: onShowChecklist) {
-                                Label("Mount and orientation", systemImage: "iphone.gen3")
-                                    .font(.title3)
-                                    .foregroundStyle(Color.primary)
-                                    .frame(minHeight: 44)
-                            }
-                        }
+                    NavigationLink(value: SettingsRoute.about) {
+                        Label(SettingsRoute.about.title, systemImage: SettingsRoute.about.systemImage)
+                            .font(.title3)
+                            .frame(minHeight: 44)
                     }
+                }
+                Section {
+                    rows(SettingsRows.developer(showsConsole: showsDeveloper))
+                } header: {
+                    Text("Developer")
+                } footer: {
+                    Text(SettingsRows.developerFooter)
                 }
                 Section("Diagnostics") {
                     LabeledContent("Thermal state") {
@@ -163,13 +189,6 @@ struct SettingsContent<Recording: View, Console: View, Maps: View, Sessions: Vie
                     if showsDeveloper {
                         LabeledContent("Build", value: AppInfo.configuration)
                         LabeledContent("Memory", value: MemoryFootprint.format(roads.footprintBytes))
-                    }
-                }
-                Section {
-                    NavigationLink(value: SettingsRoute.about) {
-                        Label(SettingsRoute.about.title, systemImage: SettingsRoute.about.systemImage)
-                            .font(.title3)
-                            .frame(minHeight: 44)
                     }
                 }
                 if showsDeveloper { roadsSection }
