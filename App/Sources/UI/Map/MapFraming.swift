@@ -55,3 +55,18 @@ struct ConfirmedFix: Hashable, Identifiable {
     var latitude: Double
     var longitude: Double
 }
+
+extension MapFraming {
+    /// What the camera opens on (R74.1-1). During the demo only the demo's
+    /// own estimate or area; never a real fix or the cached location.
+    enum OpenChoice: Equatable {
+        case fix, estimate, demoRegion, cached, none
+    }
+
+    static func chooseOpen(hasFix: Bool, hasEstimate: Bool, demo: Bool, hasCached: Bool) -> OpenChoice {
+        if demo { return hasEstimate ? .estimate : .demoRegion }
+        if hasFix { return .fix }
+        if hasEstimate { return .estimate }
+        return hasCached ? .cached : .none
+    }
+}

@@ -78,6 +78,9 @@ struct StartBlockerNotice: Equatable, Sendable {
             message = "The OBD adapter is not polling. Connect it in Settings → OBD adapter, "
                 + "or choose to record without OBD."
             offersRecordWithoutOBD = true
+        case .demoDriveRunning?:
+            message = "The demo drive is running. Stop it to record."
+            offersRecordWithoutOBD = false
         }
     }
 }

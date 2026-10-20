@@ -41,7 +41,7 @@ final class DeveloperGate {
     private(set) var unlocked: Bool
     /// "Developer diagnostics shown/hidden", set by the 7th tap.
     private(set) var toast: String?
-    @ObservationIgnored private let isDebug: Bool
+    @ObservationIgnored let isDebug: Bool
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var counter = TapCounter()
 

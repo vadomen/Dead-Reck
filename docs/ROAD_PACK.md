@@ -15,7 +15,9 @@ the replay summary show the attribution wherever roads are used or shown.
 Packs, OSM extracts and `osm/packs.json` (the admin relation IDs) are **never
 committed**: they live in the git-ignored `osm/`, because the choice of regions
 reveals where someone drives. Committed text uses aliases ("national",
-"region-A") only.
+"region-A") only. The one exception is the demo pack bundled with the app
+(REL-DEMO, `App/Resources/Demo/demo.roadpack`): a small area chosen at least 2 km
+from every recording, built ad hoc (its area is in the pack only).
 
 Code:
 - `Core/Sources/DriveLoggerCore/Navigation/Roads/`: Foundation only, linked by the app.

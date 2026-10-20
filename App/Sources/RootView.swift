@@ -21,6 +21,12 @@ struct RootView: View {
     @State private var firstMaps: FirstLaunchMapsModel
     /// The one-time in-car mount card (UX-18 (2)): fed by `MapFeed`, shown by the map.
     @State private var mountConfirmation: MountConfirmationModel
+    /// The demo drive's own map objects (REL-DEMO), made fresh at each start
+    /// so nothing of the previous run shows: the estimate feed, the roads
+    /// warning and the converted roads.
+    @State private var demoFeed: NavigationFeed
+    @State private var demoWarning: RoadsWarningModel
+    @State private var demoLayers: DemoRoadLayers?
 
     init(services: AppServices) {
         _recording = State(initialValue: RecordingViewModel(services: services))
@@ -29,6 +35,8 @@ struct RootView: View {
         _map = State(initialValue: MapViewModel())
         let service = services.navigation
         _navigation = State(initialValue: NavigationFeed(source: { await service.snapshot() }))
+        _demoFeed = State(initialValue: Self.makeDemoFeed(services))
+        _demoWarning = State(initialValue: Self.makeDemoWarning(services))
         _sessions = State(initialValue: SessionsViewModel(services: services))
         _console = State(initialValue: ConsoleViewModel(services: services))
         _roads = State(initialValue: RoadsDiagnosticsModel(library: services.roadPacks, service: service))
@@ -121,27 +129,68 @@ struct RootView: View {
         _nav = State(initialValue: initial)
     }
 
+    /// The demo's feed: its own navigation service, no shared state with the app's.
+    private static func makeDemoFeed(_ services: AppServices) -> NavigationFeed {
+        let service = services.demo.navigation
+        return NavigationFeed(source: { await service.snapshot() })
+    }
+
+    private static func makeDemoWarning(_ services: AppServices) -> RoadsWarningModel {
+        let service = services.demo.navigation
+        guard let library = services.demo.roadPacks else { return RoadsWarningModel(message: nil) }
+        return RoadsWarningModel(source: {
+            await RoadsWarning.current(service: service, library: library)
+        }, attributionSource: {
+            await RoadsWarning.attributionCurrent(service: service)
+        })
+    }
+
+    /// Settings → Demo drive: starts the demo and goes to the map. Refused
+    /// (Record active, no pack): the row says why, nothing changes.
+    private func startDemo() {
+        let demo = services.demo
+        if demo.isRunning {
+            nav.closeSettings()
+            return
+        }
+        demoFeed = Self.makeDemoFeed(services)
+        demoWarning = Self.makeDemoWarning(services)
+        do { try demo.start() } catch { return }
+        demoLayers = demo.roads.map(DemoRoadLayers.init)
+        nav.closeSettings()
+    }
+
     var body: some View {
-        // The map is the app (UX-14): full screen, Settings is a cover over it.
-        // MapScreen stays mounted under the cover, so its model, camera mode
-        // and Following state live on.
-        MapScreen(
-            model: map, session: session, navigation: navigation, isSelected: nav.mapIsLive,
+        // Every map-facing object is the app's, or the running demo's: one
+        // choice, so no frame mixes them (REL-DEMO).
+        let bound = MapBindings.make(
+            appSession: session, appLink: services.link, appFeed: navigation, appWarning: roadsWarning,
+            mount: mountConfirmation, offers: services.packOffers,
             cachedLocation: { [services] in
                 services.sensors.sources.lazy
                     .compactMap { $0 as? any CachedLocationProviding }.first?.cachedLocation
             },
+            demo: services.demo, demoFeed: demoFeed, demoWarning: demoWarning, demoRoads: demoLayers)
+        // The map is the app (UX-14): full screen, Settings is a cover over it.
+        // MapScreen stays mounted under the cover, so its model, camera mode
+        // and Following state live on.
+        MapScreen(
+            model: map, session: bound.session, navigation: bound.navigation, isSelected: nav.mapIsLive,
+            cachedLocation: bound.cachedLocation,
             onOpenMaps: { nav.openSettings(.maps) },
             onOpenSettings: { nav.openSettings() },
-            roadsWarning: roadsWarning,
-            offers: services.packOffers,
-            link: services.link,
-            mountConfirmation: mountConfirmation
+            roadsWarning: bound.roadsWarning,
+            offers: bound.offers,
+            link: bound.link,
+            mountConfirmation: bound.mountConfirmation,
+            demo: bound.demo
         )
         .fullScreenCover(isPresented: $nav.isSettingsPresented) {
             SettingsScreen(
                 path: $nav.settingsPath, roads: roads, maps: maps, offers: services.packOffers, gate: gate,
-                onDone: { nav.closeSettings() }
+                onDone: { nav.closeSettings() },
+                onDemoDrive: { startDemo() },
+                demoRow: DemoDriveRow.make(services.demo.startBlocker)
             ) {
                 RecordingScreen(model: recording)
             } console: {
@@ -164,8 +213,21 @@ struct RootView: View {
         }
         // Ingest at the root so the track keeps filling while Settings is open. The
         // feed is its own view so only it observes the 16 Hz `live` status.
-        .background(MapFeed(session: session, model: map, mount: mountConfirmation))
+        .background(MapFeed(session: bound.session, model: map, mount: bound.mountConfirmation))
         .task { await roadsWarning.run() }
+        // The demo's own roads warning, polled only while it runs.
+        .task(id: services.demo.isRunning) {
+            if services.demo.isRunning { await demoWarning.run() }
+        }
+        .onChange(of: services.demo.isRunning) { _, running in
+            if !running { demoLayers = nil }
+        }
+        .task {
+            #if DEBUG
+            // `-uiDemo 1` starts the demo at launch (screenshots, UI tests).
+            if UserDefaults.standard.bool(forKey: "uiDemo") { startDemo() }
+            #endif
+        }
         // UX-8 (2): the at-a-stop offer loop, with Settings open too.
         .task {
             let map = map

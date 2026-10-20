@@ -65,6 +65,9 @@ struct MapScreen: View {
     /// Navigate status line: read `isVisible`, call `confirm()` on "Mounted".
     /// Fed by `MapFeed`, never here. nil in previews.
     var mountConfirmation: MountConfirmationModel?
+    /// The running demo drive (REL-DEMO): its roads under the arrow, the DEMO
+    /// badge, Stop demo. nil outside the demo.
+    var demo: MapDemo?
     @Environment(\.scenePhase) private var scenePhase
     @State private var thermal = ProcessInfo.processInfo.thermalState
 
@@ -76,9 +79,10 @@ struct MapScreen: View {
             timings: session.navigateTimings ?? NavigateConfiguration(), now: .now)
         // DEBUG `-uiFakeHUD …`: synthetic HUD inputs (screenshots).
         let fake = Self.fakes
+        let shown = model.shown(whileDemo: demo != nil)
         GPSMapView(
-            track: fake.scatter ? MapPreviewData.stopTrack : model.track,
-            latest: fake.scatter ? MapPreviewData.stopFixes.last : model.latest,
+            track: fake.scatter ? MapPreviewData.stopTrack : shown.track,
+            latest: fake.scatter ? MapPreviewData.stopFixes.last : shown.latest,
             lastFixInstant: fake.scatter ? .now : model.lastFixInstant,
             isReceiving: fake.isActive ? !fake.gpsLost : model.isReceiving,
             thermal: fake.thermal ? .fair : thermal,
@@ -100,7 +104,8 @@ struct MapScreen: View {
             roadsWarning: roadsWarning?.message,
             onRoadsWarningTap: onOpenMaps,
             onOpenSettings: onOpenSettings,
-            roadsAttribution: roadsWarning?.attribution ?? false,
+            roadsAttribution: (roadsWarning?.attribution ?? false) || demo != nil,
+            demo: demo,
             offerCard: bottomCard,
             offerShown: offerIsShown || showsMountCard,
             recordingControl: fake.recording
@@ -119,6 +124,13 @@ struct MapScreen: View {
         .onAppear { thermal = ProcessInfo.processInfo.thermalState }
         .onChange(of: link?.state, initial: true) { _, state in model.noteLink(state, adapter: link?.rememberedAdapterID) }
         .onChange(of: link?.rememberedAdapterID) { _, id in model.noteLink(link?.state, adapter: id) }
+        // The demo starts or stops: nothing of the other source stays on the
+        // map (the real position, the demo's last lap), and the link memory
+        // is the new link's.
+        .onChange(of: demo != nil) {
+            model.resetForDemo(demoOn: demo != nil)
+            model.noteLink(link?.state, adapter: link?.rememberedAdapterID)
+        }
         // The card may only appear while the map is on screen (UX-8).
         .onChange(of: isSelected && scenePhase == .active, initial: true) { _, visible in
             offers?.isMapVisible = visible
@@ -315,6 +327,8 @@ struct GPSMapView: View {
     /// A road pack is attached to the run (`MapAttribution.visible`): the
     /// OSM credit is shown.
     var roadsAttribution = false
+    /// The running demo drive: roads overlay, DEMO badge, Stop demo; nil outside it.
+    var demo: MapDemo?
     /// The at-a-stop road-pack offer (UX-8), top of the bottom-left zone; its own
     /// view, so this one stays plain values.
     var offerCard: AnyView?
@@ -331,6 +345,7 @@ struct GPSMapView: View {
     /// Navigate's calibration / OBD-lost banner (UX-1), in the bottom-left zone; nil when it has no text.
     var statusLine: AnyView?
 
+    @Environment(\.colorScheme) private var scheme
     @State private var position: MapCameraPosition = .automatic
     /// Visible north-south extent, metres, from the camera.
     @State private var visibleSpanM: Double?
@@ -386,6 +401,7 @@ struct GPSMapView: View {
         onRoadsWarningTap: @escaping () -> Void = {},
         onOpenSettings: @escaping () -> Void = {},
         roadsAttribution: Bool = false,
+        demo: MapDemo? = nil,
         offerCard: AnyView? = nil,
         offerShown: Bool = false,
         recordingControl: AnyView? = nil,
@@ -416,6 +432,7 @@ struct GPSMapView: View {
         self.onRoadsWarningTap = onRoadsWarningTap
         self.onOpenSettings = onOpenSettings
         self.roadsAttribution = roadsAttribution
+        self.demo = demo
         self.offerCard = offerCard
         self.offerShown = offerShown
         self.recordingControl = recordingControl
@@ -461,7 +478,7 @@ struct GPSMapView: View {
             // navigation feed, then turns/centres the camera.
             // Keyed on showsEstimate too: the loop's captured copy of this view
             // would otherwise keep the value from when it started (R61.1-1).
-            .task(id: MapLoopKey(isLive: isLive, showsEstimate: showsEstimate)) {
+            .task(id: MapLoopKey(isLive: isLive, showsEstimate: showsEstimate, isDemo: demo != nil)) {
                 await frameOnOpen()
                 await runLoop()
             }
@@ -561,6 +578,14 @@ struct GPSMapView: View {
         .overlay(alignment: .topLeading) { hudCard }
         // Right rail: North up / Heading up, Following, Settings.
         .overlay(alignment: .bottomTrailing) { rail }
+        // REL-DEMO: the badge and Stop demo, top right, only while it runs.
+        .overlay(alignment: .topTrailing) {
+            if let demo {
+                DemoControls(onStop: demo.onStop, elapsed: demo.elapsed)
+                    .padding(.trailing, MapLayout.edgeInset)
+                    .padding(.top, 8)
+            }
+        }
         // Bottom-left zone, left of the rail, stacked upward.
         .overlay(alignment: .bottomLeading) { bottomZone }
         // UX-33: the OSM credit, one line at the very bottom edge.
@@ -686,6 +711,17 @@ struct GPSMapView: View {
     private func mapBody(stale: Bool) -> some View {
         MapReader { proxy in
             Map(position: $position) {
+                #if DEBUG
+                // `-uiBlankMap 2`: an opaque flat fill over the demo area, so
+                // a screenshot shows the overlay as on a tile-less map
+                // (airplane mode), with no place names.
+                if UserDefaults.standard.integer(forKey: "uiBlankMap") == 2, let demo {
+                    MapPolygon(coordinates: demo.flatRing)
+                        .foregroundStyle(scheme == .dark
+                            ? Color(red: 0.11, green: 0.13, blue: 0.18) : Color(red: 0.93, green: 0.94, blue: 0.95))
+                }
+                #endif
+                if let demo { DemoRoadsOverlay(roads: demo.roads, dark: scheme == .dark) }
                 TrackOverlay(track: track)
                 if let estimate {
                     NavOverlay(feed: estimate, headingUp: headingUp, cameraHeading: cameraHeading, showEdge: showNavStats)
@@ -926,16 +962,26 @@ struct GPSMapView: View {
         let polled = await navigation?.refreshed()
         let nav = showsEstimate ? polled : nil
         if Task.isCancelled { return }
-        if let fix = latest {
-            frame(center: fix.coordinate, accuracy: fix.horizontalAccuracy)
-        } else if let nav {
-            frame(center: nav.position.coordinate, accuracy: nav.semiMajorM / 3)
-        } else if let cached = cachedLocation() {
+        let cached = cachedLocation()
+        switch MapFraming.chooseOpen(
+            hasFix: latest != nil, hasEstimate: nav != nil, demo: demo != nil, hasCached: cached != nil
+        ) {
+        case .fix:
+            if let fix = latest { frame(center: fix.coordinate, accuracy: fix.horizontalAccuracy) }
+        case .estimate:
+            if let nav { frame(center: nav.position.coordinate, accuracy: nav.semiMajorM / 3) }
+        case .demoRegion:
+            // The demo area, never the user's position (REL-DEMO).
+            if let demo { position = .region(demo.region) }
+        case .cached:
             // Camera only: no dot is drawn for it.
-            frame(
-                center: CLLocationCoordinate2D(latitude: cached.latitude, longitude: cached.longitude),
-                accuracy: cached.horizontalAccuracy
-            )
+            if let cached {
+                frame(
+                    center: CLLocationCoordinate2D(latitude: cached.latitude, longitude: cached.longitude),
+                    accuracy: cached.horizontalAccuracy
+                )
+            }
+        case .none: break
         }
     }
 

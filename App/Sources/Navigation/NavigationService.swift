@@ -152,6 +152,13 @@ actor NavigationService {
     /// inject a slow one (R34.1-3).
     typealias LibraryRescan = @Sendable (RoadPackLibrary) async -> [RoadPackLibrary.PackStatus]
     private let libraryRescan: LibraryRescan
+    /// REL-DEMO: road candidates selected **inline** (`useInlineRoads`):
+    /// a run's selection request is answered on this actor before its next
+    /// input, like `replay_nav --as-live` (`LiveNavigationRun.ingest(_:
+    /// selector:)`), so roads attach after the same input on every run.
+    /// nil: the library's asynchronous selection (the app's runs).
+    private var inlineCandidates: [RoadPackSelection.Candidate]?
+    private var inlineSelectors: [Int: RoadPackSelector] = [:]
 
     init(flushInterval: Duration = .seconds(10), library: RoadPackLibrary? = nil,
          libraryRescan: @escaping LibraryRescan = { await $0.rescan() }) {
@@ -206,6 +213,11 @@ actor NavigationService {
         current = feed.generation
         runsStarted += 1
         roadStates[feed.generation] = RoadsState()
+        if let inlineCandidates {
+            inlineSelectors[feed.generation] = RoadPackSelector(candidates: inlineCandidates)
+            // No library to wait for: the candidates are open.
+            roadStates[feed.generation]?.libraryScanned = true
+        }
         // Rescan the packs (cache hits are cheap); never awaited here. Its
         // result goes into the recording once, as the `roadPacks` row (a
         // no-op in Navigate), and only then does the library count as
@@ -238,7 +250,45 @@ actor NavigationService {
         }
         let request = run.live.newSelectionRequest
         runs[generation] = run
-        if let request { requestRoads(request, generation: generation) }
+        guard let request else { return }
+        if inlineSelectors[generation] != nil {
+            selectInline(request, generation: generation)
+        } else {
+            requestRoads(request, generation: generation)
+        }
+    }
+
+    /// REL-DEMO: road candidates for runs that start from now on, selected
+    /// inline (see `inlineCandidates`). The demo service calls it before its
+    /// first run; the app's service never does.
+    func useInlineRoads(_ candidates: [RoadPackSelection.Candidate]) {
+        inlineCandidates = candidates
+    }
+
+    /// The inline selection, between two inputs: the same attempt, attach
+    /// and `roadsSelection` bookkeeping as `selectionFinished`, at once.
+    private func selectInline(_ request: RoadSelectionRequest, generation: Int) {
+        guard var selector = inlineSelectors[generation], var state = roadStates[generation],
+              var run = runs[generation], run.live.roads == nil else { return }
+        runs[generation] = nil
+        let writer = run.writer
+        let attempt = selector.attempt(for: request)
+        let record = run.live.finishSelection(attempt) { writer?.append($0) }
+        if attempt.network != nil, let refusal = record.refusal { selector.remember(refusal) }
+        selectionAttempts += 1
+        if attempt.network != nil { networksBuilt += 1 }
+        lastAttemptOutcome = record.outcome
+        state.lastOutcome = record.outcome
+        if let refusal = record.refusal {
+            state.refusal = (refusal.names.isEmpty ? "" : refusal.names.joined(separator: ", ") + ": ") + refusal.reason
+        }
+        if record.outcome == .selected {
+            state.names = record.packs ?? []
+            state.refusal = nil
+        }
+        runs[generation] = run
+        roadStates[generation] = state
+        inlineSelectors[generation] = selector
     }
 
     /// Flushes every running recording's sidecar now (R14.1-4); a Navigate
@@ -349,6 +399,7 @@ actor NavigationService {
     private func end(_ generation: Int) {
         guard var run = runs.removeValue(forKey: generation) else { return }
         let state = roadStates.removeValue(forKey: generation)
+        inlineSelectors[generation] = nil
         state?.inFlight?.cancel()
         // The pending repeats' line, then the `unfinished` line of a
         // selection still in flight (an attempt that never finished), then

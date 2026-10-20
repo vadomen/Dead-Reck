@@ -223,6 +223,8 @@ struct MapRunKey: Equatable, Sendable {
 struct MapLoopKey: Equatable, Sendable {
     var isLive: Bool
     var showsEstimate: Bool
+    /// The demo drive started or stopped (REL-DEMO): frame again.
+    var isDemo = false
 }
 
 /// Where the car sits on the screen in heading-up (UX-32): in the lower third,

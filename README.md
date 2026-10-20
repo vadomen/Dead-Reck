@@ -88,7 +88,7 @@ Details: [docs/NAVIGATION.md](docs/NAVIGATION.md). Open plans:
 
 No tab bar, portrait only: the app is the full-screen **Map**, and a gear in
 the map's right rail opens **Settings** full screen (Done returns to the map
-with the camera mode unchanged). Sessions is a row inside Settings.
+with the camera mode unchanged). Sessions is a row inside Settings Developer (in Release behind the gate).
 On the first launch it shows four skippable cards (how FuGPS works,
 connect your adapter, mount the phone, getting the arrow fast; no
 checkboxes) and then "Road maps" (pick which packs to download, see
@@ -96,7 +96,7 @@ checkboxes) and then "Road maps" (pick which packs to download, see
 Settings → "How FuGPS works" shows the cards again and "Mount and
 orientation" shows the mounting text. At the first Navigate start on OBD
 with the car standing, a one-time card asks "Phone mounted and won't move?"
-(Mounted). A phone that confirmed the old checklist sees neither.
+(Mounted), once calibration has ended. The last card has no Skip. A phone that confirmed the old checklist sees neither.
 
 - **Map.** The dead-reckoning dot with its 95 % ellipse, the GPS track for
   reference. A compact card top left holds the speed with GPS and OBD
@@ -120,14 +120,24 @@ with the car standing, a one-time card asks "Phone mounted and won't move?"
   a card at the next stop offers that region's pack (Download / Not now /
   Never); never in motion. A long press on the speed value toggles the navigation
   stats (ms per step, particles, thermal).
-- **Settings → Developer → Sessions.** Recordings with date, duration and size. Share exports the
+- **Settings → Developer → Sessions** (in Release behind the 7-tap gate). Recordings with date, duration and size. Share exports the
   recording together with its `.nav.jsonl` sidecar; trash asks first and
   deletes both. The list refreshes on appear and after a recording ends. The
   recording in progress can't be shared or deleted.
 - **Settings.** Groups: OBD adapter, Maps, Mount and orientation, About, and
-  Developer ("For test drives and diagnostics": Test drive recording, Sessions,
-  Console; Console in Release behind the 7-tap gate on Version in About).
-  - **Developer → Test drive recording**: the former Record screen, unchanged. A big
+  Developer ("For test drives and diagnostics": Demo drive, Test drive
+  recording, Sessions, Console). In Release, Developer shows only Demo drive
+  until 7 taps on Version in About open the gate; then Test drive recording,
+  Sessions and Console appear (a Debug build shows all of them).
+  - **Developer → Demo drive (simulated car)**: runs Navigate on a
+    deterministic synthetic drive (a closed loop of about 5 km) over a bundled
+    read-only demo road pack, with simulated OBD speed and motion. Good GPS for
+    the first minute, then only coarse network-like fixes, so the position
+    continues on the roads. A DEMO badge and "Stop demo" show on the map. Works
+    offline, writes nothing, and holds the real adapter and the app's own
+    session until Stop (Record can't start meanwhile). Going to the background
+    stops it. For App Review and screenshots.
+  - **Developer → Test drive recording** (in Release behind the gate): the former Record screen, unchanged. A big
     banner (red NOT RECORDING, orange KEEP STILL with a countdown, green
     RECORDING with elapsed time), the adapter status (scanning, connecting,
     initialising, or polling with protocol and voltage), OBD speed and GPS
@@ -194,7 +204,8 @@ a crash.
 
 1. Mount the phone and plug in the adapter as above. Don't move the phone
    until the recording is stopped.
-2. Settings → Developer → Test drive recording. Tick "rigid mount" and "fixed
+2. Settings → Developer → Test drive recording (in a Release build first tap
+   Version in About 7 times). Tick "rigid mount" and "fixed
    orientation", optionally fill in the notes, and press START while the car
    is stationary. The first 5 seconds are a keep-still calibration (orange
    banner). Navigate stops and the recording starts its own fresh session.

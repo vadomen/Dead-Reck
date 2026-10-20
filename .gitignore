@@ -18,6 +18,9 @@ logs/
 osm/
 *.osm.pbf
 *.roadpack
+# The one exception: the demo pack bundled with the app (REL-DEMO), a small
+# area chosen away from every recording.
+!App/Resources/Demo/demo.roadpack
 
 # ---------------------------------------------------------------------------
 # Per-developer signing. Config/Signing.xcconfig is committed; this is not.

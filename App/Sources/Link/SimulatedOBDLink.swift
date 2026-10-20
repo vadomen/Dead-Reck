@@ -21,15 +21,18 @@ final class SimulatedOBDLink: OBDLinkService {
     ///   - defaults: nil = a private, empty store (the simulated adapter's
     ///     identifier never lands in the real app's defaults by accident).
     ///   - latency: simulated scan and connect delays.
+    ///   - replyTransform: handed to every connection's `MockELMAdapter`
+    ///     (the demo drive's live speed, REL-DEMO); nil = the script verbatim.
     init(
         rules: [MockELMAdapter.Rule] = MockELMAdapter.Rule.benchCar,
         defaults: UserDefaults? = nil,
         uptime: any UptimeSource = SystemUptimeSource(),
         sessionConfiguration: ELMSessionConfiguration = .default,
         backoff: ReconnectBackoff = .default,
-        latency: Duration = .milliseconds(200)
+        latency: Duration = .milliseconds(200),
+        replyTransform: MockELMAdapter.ReplyTransform? = nil
     ) {
-        let central = SimulatedBLECentral(rules: rules, uptime: uptime, latency: latency)
+        let central = SimulatedBLECentral(rules: rules, uptime: uptime, latency: latency, replyTransform: replyTransform)
         simulatedCentral = central
         super.init(
             central: central,
@@ -80,6 +83,7 @@ final class SimulatedBLECentral: BLECentralClient {
     private let rules: [MockELMAdapter.Rule]
     private let uptime: any UptimeSource
     private let latency: Duration
+    private let replyTransform: MockELMAdapter.ReplyTransform?
     private let lock = NSLock()
     // Guarded by `lock`. The adapter of the current connection.
     private nonisolated(unsafe) var adapter: MockELMAdapter?
@@ -87,10 +91,14 @@ final class SimulatedBLECentral: BLECentralClient {
     // still sleeping when it was cancelled does nothing.
     private nonisolated(unsafe) var generation = 0
 
-    init(rules: [MockELMAdapter.Rule], uptime: any UptimeSource = SystemUptimeSource(), latency: Duration = .milliseconds(200)) {
+    init(
+        rules: [MockELMAdapter.Rule], uptime: any UptimeSource = SystemUptimeSource(), latency: Duration = .milliseconds(200),
+        replyTransform: MockELMAdapter.ReplyTransform? = nil
+    ) {
         self.rules = rules
         self.uptime = uptime
         self.latency = latency
+        self.replyTransform = replyTransform
         (events, continuation) = AsyncStream.makeStream(of: BLECentralEvent.self)
         continuation.yield(.availability(.poweredOn, uptime: uptime.uptimeSeconds))
     }
@@ -121,7 +129,7 @@ final class SimulatedBLECentral: BLECentralClient {
             guard lock.withLock({ generation == mine }) else { return }
             continuation.yield(.connected(id, uptime: uptime.uptimeSeconds))
             try? await Task.sleep(for: latency)
-            let adapter = MockELMAdapter(rules: rules, uptime: uptime)
+            let adapter = MockELMAdapter(rules: rules, uptime: uptime, replyTransform: replyTransform)
             let current = lock.withLock { () -> Bool in
                 guard generation == mine else { return false }
                 self.adapter = adapter
