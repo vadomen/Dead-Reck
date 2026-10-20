@@ -89,10 +89,14 @@ Details: [docs/NAVIGATION.md](docs/NAVIGATION.md). Open plans:
 No tab bar, portrait only: the app is the full-screen **Map**, and a gear in
 the map's right rail opens **Settings** full screen (Done returns to the map
 with the camera mode unchanged). Sessions is a row inside Settings.
-On the first launch it shows "Before you drive" (rigid mount, fixed
-orientation) and then "Road maps" (pick which packs to download, see
-[Road packs](#road-packs)), each once; Settings → "Mount and orientation"
-shows the checklist again.
+On the first launch it shows four skippable cards (how FuGPS works,
+connect your adapter, mount the phone, getting the arrow fast; no
+checkboxes) and then "Road maps" (pick which packs to download, see
+[Road packs](#road-packs)), each once; Skip goes straight to the maps step.
+Settings → "How FuGPS works" shows the cards again and "Mount and
+orientation" shows the mounting text. At the first Navigate start on OBD
+with the car standing, a one-time card asks "Phone mounted and won't move?"
+(Mounted). A phone that confirmed the old checklist sees neither.
 
 - **Map.** The dead-reckoning dot with its 95 % ellipse, the GPS track for
   reference. A compact card top left holds the speed with GPS and OBD
@@ -148,7 +152,8 @@ shows the checklist again.
     Re-initialise button appears. While a recording runs, Disconnect, Forget
     and tapping another adapter ask first (dropping the OBD feed, or
     connecting so the recording gains OBD from then on), and Scan is disabled.
-  - **Mount and orientation**: the first-launch checklist again.
+  - **Mount and orientation**: the mounting text, read-only.
+  - **How FuGPS works**: the four first-launch cards again (Next / Done).
   - **Maps**: every pack in the server's list, one row each (title, size,
     OSM date, state) with Download / Cancel / Update; Remove by swipe;
     "Use cellular data" (off by default); "Not offered on the road" with
@@ -170,7 +175,7 @@ a crash.
 
 1. Fix the phone in the rigid mount in portrait.
 2. Plug the adapter into the car's OBD-II port and switch on the ignition.
-3. Open the app. On first launch tick the "Before you drive" checklist,
+3. Open the app. On first launch read or skip the cards,
    choose the road maps to download (all-Ukraine is preselected, your region
    too if location is allowed), and allow Bluetooth, Motion & Fitness and
    Location (While Using).
@@ -227,7 +232,7 @@ neighbouring packs and load together without duplicates.
 
 **From the server to the phone** (the user's path):
 
-- **First launch**, after the checklist: the "Road maps" step. National is
+- **First launch**, after the cards: the "Road maps" step. National is
   always preselected. If location is allowed, a coarse one-shot fix
   (≤ 5 km, within 10 s) preselects the region whose bbox contains it and
   lists regions within ~20 km as "Nearby", not preselected. Nothing

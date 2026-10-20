@@ -880,7 +880,7 @@ Reviewer: one opus reviewer (~660 changed lines, App logic + new Core test). Foc
 
 | ID | Tag | Finding | Status | Note |
 |---|---|---|---|---|
-| R72.1-1 | MINOR | `docs/RELEASE_PLAN.md` D2 (line ~43) says the bundle id is set in `Config/Local.xcconfig`, not in tracked files; `Config/Signing.xcconfig` now holds the default `com.vadomen.fugps` and Local only overrides it. §2.2 (line ~90) says the privacy manifest "is not in the repo"; `App/Resources/PrivacyInfo.xcprivacy` exists, is bundled and guarded by `RequiredReasonAPITests`. | DEFERRED | Backlog. |
+| R72.1-1 | MINOR | `docs/RELEASE_PLAN.md` D2 (line ~43) says the bundle id is set in `Config/Local.xcconfig`, not in tracked files; `Config/Signing.xcconfig` now holds the default `com.vadomen.fugps` and Local only overrides it. §2.2 (line ~90) says the privacy manifest "is not in the repo"; `App/Resources/PrivacyInfo.xcprivacy` exists, is bundled and guarded by `RequiredReasonAPITests`. | DONE (prompt 32) | Backlog. |
 
 Tests (6c81a97): Core 1072 tests in 137 suites passed (36 known issues); AppTests passed (609 tests in 90 suites, author run; xcodebuild test exit 0 at HEAD).
 

@@ -23,7 +23,7 @@ Done / in code / open, per item. "In code (prompt 35)" = branch `release-blocker
 | Demo mode for App Review (Phase 1 item 5) | open, user decides | REL-DEMO |
 | Export of recordings vs the privacy-manifest reason codes (2.2) | open, user decides (decided 2026-10-20: keep the codes) | REL-EXPORT |
 | Ukrainian + English localisation (D5, 2.3) | open | UX-15 |
-| First launch as instructions (Phase 1 item 3) | open | UX-18 |
+| First launch as instructions (Phase 1 item 3) | in code (prompt 32, UX-18) | UX-18 |
 | Manual "GPS off" + GPS state chip (D8) | open | UX-9 (a) + UX-22 |
 | Restore the estimate after a relaunch (D8) | open | UX-20 |
 | Phases 4-7 (quality, TestFlight, App Store page, submission) | open | |
@@ -40,7 +40,7 @@ Starting decisions (from the user, 2026-10-16):
 | # | Decision |
 |---|---|
 | D1 | Name **FuGPS** (check availability when creating the App Store Connect record) |
-| D2 | Bundle ID **com.vadomen.fugps** (set in `Config/Local.xcconfig`, not in tracked files) |
+| D2 | Bundle ID **com.vadomen.fugps** (default in `Config/Signing.xcconfig`; `Local.xcconfig` overrides it) |
 | D3 | **Ukraine only**: DSA trader status is not needed |
 | D4 | **Free**: Free Apps Agreement, no tax or banking forms |
 | D5 | **uk + en** |
@@ -54,7 +54,7 @@ Starting decisions (from the user, 2026-10-16):
 | # | Decision | Options / recommendation |
 |---|---|---|
 | D1 | App Store name (≤ 30 characters) and subtitle | "DriveLogger" is a working name and probably already taken. Check in App Store Connect when the app record is created. The name should describe navigation without GPS, not a logger. |
-| D2 | Bundle ID | Currently `com.example.drivelogger`. It goes into the App Store permanently and cannot be changed after the first upload. Set in `Config/Local.xcconfig`, the setting is `PRODUCT_BUNDLE_IDENTIFIER`. |
+| D2 | Bundle ID | `com.vadomen.fugps` since prompt 35 (was `com.example.drivelogger`). It goes into the App Store permanently and cannot be changed after the first upload. Set in `Config/Local.xcconfig`, the setting is `PRODUCT_BUNDLE_IDENTIFIER`. |
 | D3 | Countries | Ukraine only, or all. For the EU an individual developer must declare trader / non-trader status under the DSA. A trader publishes address and phone number on the app page. Option: exclude the EU at launch. |
 | D4 | Price | Free: only the Free Apps Agreement is needed, no tax or banking forms. |
 | D5 | Languages | Ukrainian and English (String Catalog; `SWIFT_EMIT_LOC_STRINGS` is already YES). |
@@ -87,7 +87,7 @@ Starting decisions (from the user, 2026-10-16):
 - [ ] Keep dSYMs (crash logs in Xcode Organizer). No third-party SDKs.
 
 ### 2.2 Privacy manifest (`PrivacyInfo.xcprivacy`) — mandatory
-The file is not in the repo. The code uses APIs from the "required reason" categories:
+The manifest is `App/Resources/PrivacyInfo.xcprivacy` (bundled; guarded by `RequiredReasonAPITests`). The code uses APIs from the "required reason" categories:
 
 | API in code | Where | Category / reason (check in Apple's documentation) |
 |---|---|---|
