@@ -19,14 +19,14 @@ struct MapHUDTests {
     @Test("GPS and OBD labels, and a failed state is slashed AND flagged failed")
     func indicators() {
         for gps in [HUDGPS.ok, .none, .off] {
-            for obd in [HUDOBD.connected, .lost] {
+            for obd in [HUDOBD.connected, .lost, .none] {
                 let s = state(.obd, gps: gps, obd: obd)
                 #expect(s.gps.label == ["GPS", "No GPS", "GPS off"][[HUDGPS.ok, .none, .off].firstIndex(of: gps)!])
                 #expect(s.gps.failed == (gps != .ok))
                 #expect(s.gps.slashed == s.gps.failed)
-                #expect(s.obd.label == (obd == .connected ? "OBD" : "OBD lost"))
+                #expect(s.obd.label == ["OBD", "OBD lost", "No OBD"][[HUDOBD.connected, .lost, .none].firstIndex(of: obd)!])
                 #expect(s.obd.failed == (obd == .lost))
-                #expect(s.obd.slashed == s.obd.failed)
+                #expect(s.obd.slashed == (obd != .connected), "No OBD is slashed too")
             }
         }
     }
@@ -43,19 +43,43 @@ struct MapHUDTests {
         #expect(state(.obd, gps: .off).obd.emphasised)
     }
 
-    @Test("OBD is connected while the link is initialised (ready or polling), lost otherwise, before any connection too")
+    @Test("OBD is connected while the link is initialised (ready or polling), lost once a link was up, No OBD before")
     func obdFromLink() {
-        #expect(HUDOBD.from(link: .polling(protocolNumber: "A6", voltage: 12.4)) == .connected)
-        #expect(HUDOBD.from(link: .ready) == .connected)
+        #expect(HUDOBD.from(link: .polling(protocolNumber: "A6", voltage: 12.4), everConnected: false) == .connected)
+        #expect(HUDOBD.from(link: .ready, everConnected: true) == .connected)
         let notConnected: [OBDLinkState] = [
             .unavailable(reason: "Bluetooth is off"), .idle, .scanning, .connecting, .discoveringServices,
             .initialising, .reconnecting(attempt: 1), .failed(reason: "x"),
         ]
         for state in notConnected {
-            #expect(HUDOBD.from(link: state) == .lost, "\(state)")
+            #expect(HUDOBD.from(link: state, everConnected: true) == .lost, "\(state)")
+            #expect(HUDOBD.from(link: state, everConnected: false) == .none, "\(state)")
         }
-        // No link at all (previews): lost.
-        #expect(HUDOBD.from(link: nil) == .lost)
+        // No link at all (previews).
+        #expect(HUDOBD.from(link: nil, everConnected: false) == .none)
+        #expect(HUDOBD.from(link: nil, everConnected: true) == .lost)
+    }
+
+    @Test("No OBD is slashed but not failed (muted, no warning colour); lost is both")
+    func noOBDIsNotAWarning() {
+        let none = state(.gps, obd: .none).obd
+        #expect(none.label == "No OBD" && none.slashed && !none.failed)
+        let lost = state(.gps, obd: .lost).obd
+        #expect(lost.slashed && lost.failed)
+    }
+
+    @Test("The view model remembers that a link was up, and keeps it after the drop")
+    @MainActor func everConnected() {
+        let model = MapViewModel()
+        model.noteLink(nil)
+        model.noteLink(.scanning)
+        model.noteLink(.failed(reason: "x"))
+        #expect(!model.obdEverConnected)
+        model.noteLink(.polling(protocolNumber: "6", voltage: nil))
+        #expect(model.obdEverConnected)
+        model.noteLink(.reconnecting(attempt: 1))
+        #expect(model.obdEverConnected)
+        #expect(HUDOBD.from(link: .reconnecting(attempt: 1), everConnected: model.obdEverConnected) == .lost)
     }
 
     @Test("The OBD indicator follows the link, not the speed: a silent engine on a live link reads OBD")
@@ -63,12 +87,12 @@ struct MapHUDTests {
         // Link polling, but no fresh OBD speed (engine off): the source is GPS
         // (UX-5 rule, unchanged) and the indicator still says OBD.
         let s = MapHUDState.make(
-            speed: speed(.gps), gps: .ok, obd: HUDOBD.from(link: .polling(protocolNumber: "6", voltage: nil)),
+            speed: speed(.gps), gps: .ok, obd: HUDOBD.from(link: .polling(protocolNumber: "6", voltage: nil), everConnected: true),
             thermal: .nominal)
         #expect(s.obd.label == "OBD" && !s.obd.failed)
         #expect(s.gps.emphasised && !s.obd.emphasised, "emphasis stays with the speed source")
         // Link lost while the last OBD speed is still the source: lost, and emphasised.
-        let lost = MapHUDState.make(speed: speed(.obd), gps: .ok, obd: HUDOBD.from(link: .reconnecting(attempt: 1)), thermal: .nominal)
+        let lost = MapHUDState.make(speed: speed(.obd), gps: .ok, obd: HUDOBD.from(link: .reconnecting(attempt: 1), everConnected: true), thermal: .nominal)
         #expect(lost.obd.label == "OBD lost" && lost.obd.failed && lost.obd.emphasised)
     }
 
@@ -76,6 +100,8 @@ struct MapHUDTests {
     func fakeOBD() {
         #expect(HUDFakes.parse("ok").obd == .connected)
         #expect(HUDFakes.parse("obdLost").obd == .lost)
+        #expect(HUDFakes.parse("obdNone").obd == .none)
+        #expect(HUDFakes.parse("obdNone").speed.source == .gps)
     }
 
     @Test("GPS state: fresh fix ok, stale none, the reserved switch wins")

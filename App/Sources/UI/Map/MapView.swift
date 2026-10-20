@@ -79,7 +79,7 @@ struct MapScreen: View {
             isReceiving: fake.isActive ? !fake.gpsLost : model.isReceiving,
             thermal: fake.thermal ? .fair : thermal,
             speed: fake.isActive ? fake.speed : model.speed,
-            obd: fake.isActive ? fake.obd : HUDOBD.from(link: link?.state),
+            obd: fake.isActive ? fake.obd : HUDOBD.from(link: link?.state, everConnected: model.obdEverConnected),
             isLive: isSelected && scenePhase == .active,
             follow: $model.follow,
             headingUp: $headingUp,
@@ -110,6 +110,7 @@ struct MapScreen: View {
             thermal = ProcessInfo.processInfo.thermalState
         }
         .onAppear { thermal = ProcessInfo.processInfo.thermalState }
+        .onChange(of: link?.state, initial: true) { _, state in model.noteLink(state) }
         // The card may only appear while the map is on screen (UX-8).
         .onChange(of: isSelected && scenePhase == .active, initial: true) { _, visible in
             offers?.isMapVisible = visible
