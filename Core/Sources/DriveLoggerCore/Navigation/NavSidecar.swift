@@ -14,9 +14,10 @@ import Foundation
 ///   grid instant;
 /// - `pin`: the estimate at a confirmed manual fix, the prior just before
 ///   the engine ingested it;
-/// - `roads` (v2): written once, when a road network became active: when
-///   (`t`, `afterInputs`) and which packs. A v2 sidecar without it used no
-///   roads.
+/// - `roads` (v2): written when a road network became active: when (`t`,
+///   `afterInputs`) and which packs. A sidecar without it used no roads.
+///   v3: once more each time the run extended its network to a larger set
+///   (prompt 38), each line the whole set; v1 and v2 have at most one.
 /// - `roadsSelection` (within v2, no bump): a road selection attempt, how it
 ///   ended and which pack files it saw, written when the outcome or the
 ///   candidates change; identical repeats are folded into one line with a
@@ -29,7 +30,10 @@ public enum NavSidecar {
     /// The version `LiveNavigationRun` writes. A reader refuses a newer one.
     /// 2 (N3.3): the `roads` line and `Estimate.onRoadShare`; a v1 reader
     /// would skip the roads line and hide which packs the run used.
-    public static let version = 2
+    /// 3 (prompt 38): several `roads` lines (a network extended mid-run),
+    /// with increasing `afterInputs`, each a strict superset of the one
+    /// before; a v2 reader would refuse the second as a duplicate.
+    public static let version = 3
 
     public struct Header: Hashable, Sendable, Codable {
         public var sidecarVersion: Int
@@ -138,8 +142,9 @@ public enum NavSidecar {
         }
     }
 
-    /// v2: the road network a run attached, written once when it became
-    /// active (N3.3). Data: © OpenStreetMap contributors, ODbL 1.0.
+    /// v2: the road network a run attached, written when it became active
+    /// (N3.3); v3: again at each extension to a larger set, each line the
+    /// whole set (prompt 38). Data: © OpenStreetMap contributors, ODbL 1.0.
     public struct Roads: Hashable, Sendable, Codable {
         /// One pack, as `replay_nav` results record it: hashes as 16
         /// lowercase hex digits.
@@ -262,6 +267,15 @@ public enum NavSidecar {
             /// No verified pack at all (no file, or every file refused when
             /// scanned: `candidates` tells which).
             public static let noPacks = Outcome(rawValue: "noPacks")
+            /// A network is attached and every covering pack is in it:
+            /// nothing to add (v3, prompt 38). `packs`: the attached set.
+            public static let noNewPacks = Outcome(rawValue: "noNewPacks")
+            /// A network is attached and the set the covering packs would
+            /// make is not a strict superset of it: the only new covering
+            /// packs are newer versions of attached ones (they wait for the
+            /// next start), or the run refused the extension as one
+            /// (`RoadAttachRefusal.notSuperset`). `packs` and `reason` (v3).
+            public static let notSuperset = Outcome(rawValue: "notSuperset")
             /// Still in flight when the recording ended; `candidates`
             /// omitted (not known).
             public static let unfinished = Outcome(rawValue: "unfinished")
@@ -300,10 +314,14 @@ public enum NavSidecar {
         /// line stands for (`t` is the last one's); nil (omitted) otherwise.
         /// Optional, within v2.
         public var firstT: MonotonicTimestamp?
+        /// The request's `trigger` (v3, optional, diagnostic):
+        /// `libraryChanged` or `coverageEntered`; nil (omitted) for the N3.3
+        /// rule (initialisation, a position used without roads).
+        public var trigger: RoadSelectionTrigger?
 
         public init(t: MonotonicTimestamp, afterInputs: Int, recordedAfterInputs: Int, request: Request,
                     candidates: [Candidate]?, outcome: Outcome, packs: [String]? = nil, reason: String? = nil,
-                    repeats: Int? = nil, firstT: MonotonicTimestamp? = nil) {
+                    repeats: Int? = nil, firstT: MonotonicTimestamp? = nil, trigger: RoadSelectionTrigger? = nil) {
             self.t = t
             self.afterInputs = afterInputs
             self.recordedAfterInputs = recordedAfterInputs
@@ -314,25 +332,27 @@ public enum NavSidecar {
             self.reason = reason
             self.repeats = repeats
             self.firstT = firstT
+            self.trigger = trigger
         }
 
         /// The attempts this line stands for: `repeats`, else 1.
         public var attempts: Int { max(repeats ?? 1, 1) }
 
-        /// The same attempt as `other`: the same outcome, packs, reason and
-        /// candidates (names, states, reasons and `covering`). The one
+        /// The same attempt as `other`: the same outcome, packs, reason,
+        /// trigger and candidates (names, states, reasons and `covering`). The one
         /// definition of "same attempt", for writing (`RoadsSelectionLog`)
         /// and for folding rows in `replay_nav --compare`
         /// (`SidecarComparison.selectionRows`).
         public func isRepeat(of other: RoadsSelection) -> Bool {
             outcome == other.outcome && packs == other.packs && reason == other.reason
-                && candidates == other.candidates
+                && candidates == other.candidates && trigger == other.trigger
         }
 
         /// The attempt for `request`, still in flight when the run ended.
         public init(unfinished request: RoadSelectionRequest, recordedAfterInputs: Int) {
             self.init(t: request.t, afterInputs: request.afterInputs, recordedAfterInputs: recordedAfterInputs,
-                      request: Request(radiusM: request.radiusM), candidates: nil, outcome: .unfinished)
+                      request: Request(radiusM: request.radiusM), candidates: nil, outcome: .unfinished,
+                      trigger: request.trigger)
         }
 
         /// The refused pack set and why, for `refused`; else nil. What a
@@ -347,7 +367,9 @@ public enum NavSidecar {
         public var summary: String {
             var text = String(format: "t %.1f s after %d inputs", t.seconds, afterInputs)
             if recordedAfterInputs != afterInputs { text += " (recorded after \(recordedAfterInputs))" }
-            text += String(format: ", radius %.0f m: ", request.radiusM) + outcome.rawValue
+            text += String(format: ", radius %.0f m", request.radiusM)
+            if let trigger { text += " (\(trigger.rawValue))" }
+            text += ": " + outcome.rawValue
             if let packs, !packs.isEmpty { text += " " + packs.joined(separator: ", ") }
             if let reason { text += ": " + reason }
             if let candidates {
@@ -504,17 +526,23 @@ public enum NavSidecar {
         case unsupportedVersion(Int)
         /// A line other than the last one does not decode (1-based number).
         case malformedLine(number: Int, description: String)
-        /// A second `roads` line (1-based number): a run attaches roads once.
+        /// A second `roads` line (1-based number) in a v1 or v2 sidecar: a
+        /// run of those versions attaches roads once.
         case duplicateRoadsLine(number: Int)
+        /// A later `roads` line (1-based number, v3) that does not extend
+        /// the one before it: `afterInputs` decreases, or its packs are not
+        /// a strict superset.
+        case invalidRoadsLine(number: Int, reason: String)
     }
 
     public struct Contents: Hashable, Sendable {
         public var header: Header
         public var estimates: [Estimate]
         public var pins: [Pin]
-        /// v2: the road network the run attached; nil when it used none
-        /// (and always for v1).
-        public var roads: Roads?
+        /// The `roads` lines in file order: none when the run used no roads
+        /// (and always for v1), at most one for v2, and for v3 one per attach
+        /// or extension, each a strict superset of the one before.
+        public var roads: [Roads] = []
         /// The `roadsSelection` lines, in file order (a line may stand for
         /// several attempts: `RoadsSelection.attempts`); diagnostic, never
         /// compared.
@@ -548,7 +576,7 @@ public enum NavSidecar {
         var header: Header?
         var estimates: [Estimate] = []
         var pins: [Pin] = []
-        var roads: Roads?
+        var roads: [Roads] = []
         var selections: [RoadsSelection] = []
         var unrecognized = 0
         var truncated = false
@@ -574,8 +602,19 @@ public enum NavSidecar {
             case .estimate(let value): estimates.append(value)
             case .pin(let value): pins.append(value)
             case .roads(let value):
-                guard roads == nil else { throw ReadError.duplicateRoadsLine(number: index + 1) }
-                roads = value
+                if let last = roads.last {
+                    guard (header?.sidecarVersion ?? 0) >= 3 else { throw ReadError.duplicateRoadsLine(number: index + 1) }
+                    let before = Set(last.roads.map(\.contentHash)), now = Set(value.roads.map(\.contentHash))
+                    guard value.afterInputs >= last.afterInputs else {
+                        throw ReadError.invalidRoadsLine(number: index + 1, reason: "afterInputs \(value.afterInputs) "
+                                                         + "is before the previous line's \(last.afterInputs)")
+                    }
+                    guard before.isStrictSubset(of: now) else {
+                        throw ReadError.invalidRoadsLine(number: index + 1, reason: "its packs are not a strict "
+                                                         + "superset of the previous line's")
+                    }
+                }
+                roads.append(value)
             case .roadsSelection(let value): selections.append(value)
             case .header, .unrecognized: unrecognized += 1
             }

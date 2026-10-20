@@ -184,11 +184,24 @@ public enum RoadPackSelection {
     ///   or attach). A covering set equal to one of them (names, in
     ///   candidate order) is not built again; its refusal is the outcome.
     ///
+    /// - `attached`, `attachedNames`: the run's network and its packs' names
+    ///   (candidate order; the hex content hashes when unknown), for an
+    ///   extension (prompt 38): the set is the attached packs, the **same
+    ///   open instances**, plus every covering candidate not attached,
+    ///   except a newer version of an attached pack (same pack name,
+    ///   `packIdentity`, another content hash), which waits for the next
+    ///   start.
+    ///
     /// The outcome, in this order: `unusableRequest` (no usable circle),
-    /// `noPacks` (no verified candidate), `noneCovering`, `refused` (known,
-    /// or the network cannot be built), else `selected` with the network.
+    /// `noPacks` (no verified candidate), `noneCovering`; with a network
+    /// attached, `noNewPacks` (every covering pack is attached) or
+    /// `notSuperset` (the only new covering packs are newer versions of
+    /// attached ones: `packs` names them); then `refused` (known, or the
+    /// network cannot be built), else `selected` with the network
+    /// (`packs`: the whole set, attached ones first).
     public static func attempt(_ candidates: [Candidate], refusedAtScan: [Refusal] = [], request: RoadSelectionRequest,
-                               knownRefusals: [Refusal] = []) -> RoadSelectionAttempt {
+                               knownRefusals: [Refusal] = [], attached: RoadNetwork? = nil,
+                               attachedNames: [String] = []) -> RoadSelectionAttempt {
         let chosen = covering(candidates, latitude: request.latitude, longitude: request.longitude,
                               radiusM: request.radiusM)
         let covered = Set(chosen ?? [])
@@ -208,6 +221,30 @@ public enum RoadPackSelection {
         guard let chosen else { return made(.unusableRequest) }
         guard !candidates.isEmpty else { return made(.noPacks) }
         guard !chosen.isEmpty else { return made(.noneCovering) }
+        if let attached {
+            let labels = attachedNames.count == attached.packs.count
+                ? attachedNames : attached.packs.map { NavigationSeed.hex($0.contentHash) }
+            let hashes = Set(attached.packs.map(\.contentHash))
+            let identities = Set(labels.map(packIdentity))
+            let new = chosen.filter { !hashes.contains(candidates[$0].pack.contentHash) }
+            let updates = new.filter { identities.contains(packIdentity(candidates[$0].name)) }
+            let additions = new.filter { !identities.contains(packIdentity(candidates[$0].name)) }
+            guard !additions.isEmpty else {
+                if updates.isEmpty { return made(.noNewPacks, packs: labels) }
+                return made(.notSuperset, packs: updates.map { candidates[$0].name },
+                            reason: "newer versions of attached packs: used from the next start")
+            }
+            let names = labels + additions.map { candidates[$0].name }
+            if let known = knownRefusals.first(where: { $0.names == names }) {
+                return made(.refused, packs: known.names, reason: known.reason)
+            }
+            do {
+                let network = try RoadNetwork(packs: attached.packs + additions.map { candidates[$0].pack })
+                return made(.selected, network: network, packs: names)
+            } catch {
+                return made(.refused, packs: names, reason: String(describing: error))
+            }
+        }
         let names = chosen.map { candidates[$0].name }
         if let known = knownRefusals.first(where: { $0.names == names }) {
             return made(.refused, packs: known.names, reason: known.reason)
@@ -217,6 +254,12 @@ public enum RoadPackSelection {
         case .refused(let refusal): return made(.refused, packs: refusal.names, reason: refusal.reason)
         case .noneCovering, .unusableRequest: return made(.noneCovering)  // not reached: chosen is not empty
         }
+    }
+
+    /// A pack's identity across versions: the `<name>` of a store file name
+    /// (`<name>-<contentHash>.roadpack`), else the whole name.
+    public static func packIdentity(_ name: String) -> String {
+        RoadPackStoreRules.parseFileName(name)?.name ?? name
     }
 
     static func build(_ candidates: [Candidate], _ chosen: [Int]) -> Outcome {
@@ -266,7 +309,8 @@ public struct RoadSelectionAttempt: Sendable {
         NavSidecar.RoadsSelection(t: request.t, afterInputs: request.afterInputs,
                                   recordedAfterInputs: recordedAfterInputs,
                                   request: NavSidecar.RoadsSelection.Request(radiusM: request.radiusM),
-                                  candidates: candidates, outcome: outcome, packs: packs, reason: reason)
+                                  candidates: candidates, outcome: outcome, packs: packs, reason: reason,
+                                  trigger: request.trigger)
     }
 }
 
@@ -277,7 +321,7 @@ public struct RoadSelectionAttempt: Sendable {
 /// failed build, or an attach refused and passed to `remember`) is not
 /// built again; its refusal is returned again.
 public struct RoadPackSelector: Sendable {
-    public let candidates: [RoadPackSelection.Candidate]
+    public private(set) var candidates: [RoadPackSelection.Candidate]
     /// Files refused before selection; listed in each attempt's line.
     public let refusedAtScan: [RoadPackSelection.Refusal]
     /// The latest attempt (diagnostics); nil before the first request.
@@ -305,11 +349,27 @@ public struct RoadPackSelector: Sendable {
         }
     }
 
-    /// The attempt for `request`. A refused set is remembered.
-    public mutating func attempt(for request: RoadSelectionRequest) -> RoadSelectionAttempt {
+    /// The candidates as the coverage trigger watches them.
+    public var watchedPacks: [RoadCoverageWatch.Pack] { candidates.map(RoadCoverageWatch.Pack.init) }
+
+    /// More packs become selectable (`replay_nav --inject-roads`: a pack
+    /// installed during the run). A candidate whose content hash is already
+    /// there is not added twice. Candidates stay in file-name order when
+    /// every one is named by file (`ReplayRoadSet.selector`).
+    public mutating func add(_ more: [RoadPackSelection.Candidate], sortByName: Bool) {
+        let known = Set(candidates.map(\.pack.contentHash))
+        candidates += more.filter { !known.contains($0.pack.contentHash) }
+        if sortByName { candidates.sort { $0.name < $1.name } }
+    }
+
+    /// The attempt for `request`; with `attached`, an extension of that
+    /// network (`RoadPackSelection.attempt`). A refused set is remembered.
+    public mutating func attempt(for request: RoadSelectionRequest, attached: RoadNetwork? = nil,
+                                 attachedNames: [String] = []) -> RoadSelectionAttempt {
         requests += 1
         let attempt = RoadPackSelection.attempt(candidates, refusedAtScan: refusedAtScan, request: request,
-                                                knownRefusals: knownRefusals)
+                                                knownRefusals: knownRefusals, attached: attached,
+                                                attachedNames: attachedNames)
         if attempt.outcome == .refused, let packs = attempt.packs, let reason = attempt.reason {
             remember(RoadPackSelection.Refusal(names: packs, reason: reason))
         }

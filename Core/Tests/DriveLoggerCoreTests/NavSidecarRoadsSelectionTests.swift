@@ -249,7 +249,7 @@ struct NavSidecarRoadsSelectionTests {
 
         let contents = try NavSidecar.read(data)
         #expect(contents.unrecognizedLines == 0 && contents.estimates.count == 3 && contents.pins.count == 2)
-        #expect(contents.roadsSelections.count == 3 && contents.roads == nil)
+        #expect(contents.roadsSelections.count == 3 && contents.roads.isEmpty)
         #expect(Array(contents.roadsSelections[0..<2]) == Array(selections[0..<2]))
         #expect(contents.roadsSelections[2].request.radiusM.isNaN && contents.roadsSelections[2].outcome == .unfinished)
         // Re-encoding the decoded lines gives the same bytes (NaN included).
@@ -271,9 +271,9 @@ struct NavSidecarRoadsSelectionTests {
         #expect(open.roadsSelections.first?.candidates?.first?.state.rawValue == "quarantined")
         #expect(open.unrecognizedLines == 0)
 
-        // duplicateRoadsLine is unchanged by selection lines around it.
+        // duplicateRoadsLine (v2) is unchanged by selection lines around it.
         let roads = NavSidecarV2Tests.roads
-        let twice = lines + [.roads(roads), .roadsSelection(selections[0]), .roads(roads)]
+        let twice = NavSidecarV2Tests.versioned(lines + [.roads(roads), .roadsSelection(selections[0]), .roads(roads)], 2)
         #expect(throws: NavSidecar.ReadError.duplicateRoadsLine(number: twice.count)) { try NavSidecar.read(Live.encoded(twice)) }
     }
 

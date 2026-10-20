@@ -8,7 +8,7 @@ import Foundation
 //       [--set <configKey>=<number>]... [--out logs/out]
 //       [--as-live | --file-order] [--compare <log.nav.jsonl> [--tolerance <m>] [--heading-tolerance <deg>]]
 //       [--write-sidecar <out.nav.jsonl>] [--pin-pair-window <s>] [--strict]
-//       [--roads <pack.roadpack>]... [--wrong-road-tolerance <m>]
+//       [--roads <pack.roadpack>]... [--inject-roads <s>|after-<n>:<pack.roadpack>]... [--wrong-road-tolerance <m>]
 //       [--fix-offset <from>:<to>|auto[:<len>:<step>]]... [--fix-source any|accessory|phone]
 //       [--fix-offset-max <m>] [--fix-offset-step <m>] [--fix-max-acc <m>] [--fix-offset-stat mean|median]
 //       [--fix-offset-course <deg>|off] [--fix-offset-test <m>@<deg>]... [--fix-offset-trace]
@@ -66,11 +66,26 @@ import Foundation
 //   network is attached) the given packs covering the estimate's 95 % circle
 //   are selected and attached at once. The metrics replay and the written
 //   sidecar attach at the same input;
-// - with --compare: at the sidecar's `roads` line (`afterInputs`), the whole
-//   given set (the mode label gets -attach-sidecar); with a sidecar that
+//   The given packs are also watched by the coverage trigger: once the
+//   estimate's circle enters a given pack not attached yet, the attached
+//   set is extended to it at that input (prompt 38);
+// - with --compare: at each of the sidecar's `roads` lines (`afterInputs`),
+//   that line's packs taken from the given ones (the first attached, later
+//   ones extending it; the mode label gets -attach-sidecar), so --roads
+//   must list every pack of every line (more are fine); with a sidecar that
 //   used no roads, the live rule above (-attach-live unless --as-live). A
-//   roadSetHash that differs from the sidecar's, or packs on one side only,
-//   is a warning naming the hashes, and the verdict is never PASS (exact).
+//   sidecar pack not given, packs on one side only, or roads lines that
+//   differ is a warning naming the hashes, and the verdict is never PASS
+//   (exact).
+// --inject-roads <when>:<pack> (repeatable, replay only, prompt 38): a pack
+// the live rule cannot select until <when> — session seconds (before the
+// first input arriving then or later) or after-<n> (after n inputs given
+// to the engine) — when it arrives as the app's library change does: the
+// run watches it and raises a `libraryChanged` selection request at once,
+// which attaches it or extends the attached set. The pack is part of the
+// given set (road truth, label) and the run uses the live rule (label
+// -attach-live unless --as-live, plus -inject-<hash>-<when>); also for
+// --write-sidecar. Not with --compare (which follows the sidecar).
 // --wrong-road-tolerance m (default 20): a
 // matched edge that is not the truth's road still counts as right within m
 // metres of the truth fix. Data: © OpenStreetMap contributors, ODbL 1.0.
@@ -98,7 +113,7 @@ import Foundation
 // order); the label gets -file-order. --compare: run the
 // app's per-recording loop (`LiveNavigationRun`) over the same inputs and
 // compare its 1 Hz estimates and pins with the sidecar the app wrote (one
-// log only; sidecar v1 or v2); see docs/NAV_SIDECAR.md. Without roads on
+// log only; sidecar v1, v2 or v3); see docs/NAV_SIDECAR.md. Without roads on
 // either side, config keys that differ only in road-only keys are named as
 // inert, not blamed (N3-CMPHASH). --write-sidecar: write the sidecar
 // the app would have written for this recording with no drops (the same
@@ -131,7 +146,7 @@ let usage = """
            [--truth <truth.json>] [--seed N|header] [--particles N] [--set <configKey>=<number>]... [--out <dir>]
            [--as-live | --file-order] [--compare <sidecar.nav.jsonl> [--tolerance <m>] [--heading-tolerance <deg>]]
            [--write-sidecar <out.nav.jsonl>] [--pin-pair-window <s>] [--strict]
-           [--roads <pack.roadpack>]... [--wrong-road-tolerance <m>]
+           [--roads <pack.roadpack>]... [--inject-roads <s>|after-<n>:<pack.roadpack>]... [--wrong-road-tolerance <m>]
            [--fix-offset <from>:<to>|auto[:<len>:<step>]]... [--fix-source any|accessory|phone]
            [--fix-offset-max <m>] [--fix-offset-step <m>] [--fix-max-acc <m>] [--fix-offset-stat mean|median]
            [--fix-offset-course <deg>|off] [--fix-offset-test <m>@<deg>]... [--fix-offset-trace]
@@ -157,6 +172,7 @@ var tolerance = SidecarComparison.Tolerance.default
 var pinPairWindow = NavigationReplay.defaultPinPairWindowS
 var strict = false
 var roadPaths: [String] = []
+var injectRoads: [(when: ReplayRoadInjection.When, path: String)] = []
 var wrongRoadTolerance: Double?
 enum FixOffsetWindow { case explicit(Double, Double), auto(lengthS: Double, stepS: Double) }
 var fixOffsetWindows: [FixOffsetWindow] = []
@@ -236,6 +252,23 @@ while !arguments.isEmpty {
         strict = true
     case "--roads":
         roadPaths.append(value())
+    case "--inject-roads":
+        let text = value()
+        guard let colon = text.firstIndex(of: ":") else { fail("--inject-roads needs <s>|after-<n>:<pack>\n\(usage)", status: 2) }
+        let whenText = String(text[..<colon]), path = String(text[text.index(after: colon)...])
+        let when: ReplayRoadInjection.When
+        if whenText.hasPrefix("after-") {
+            guard let n = Int(whenText.dropFirst("after-".count)), n >= 0 else {
+                fail("--inject-roads after-<n> needs a whole number >= 0\n\(usage)", status: 2)
+            }
+            when = .afterInputs(n)
+        } else {
+            let seconds = number(whenText, argument)
+            guard seconds >= 0 else { fail("--inject-roads seconds must be >= 0\n\(usage)", status: 2) }
+            when = .time(seconds: seconds)
+        }
+        guard !path.isEmpty else { fail("--inject-roads needs a pack path\n\(usage)", status: 2) }
+        injectRoads.append((when, path))
     case "--wrong-road-tolerance":
         let metres = number(value(), argument)
         guard metres >= 0 else { fail("--wrong-road-tolerance must be >= 0\n\(usage)", status: 2) }
@@ -333,25 +366,35 @@ if asLive {
 if (comparePath != nil || writeSidecarPath != nil) && paths.count != 1 {
     fail("--compare and --write-sidecar take exactly one log\n\(usage)", status: 2)
 }
-if wrongRoadTolerance != nil && roadPaths.isEmpty {
+if !injectRoads.isEmpty && comparePath != nil {
+    fail("--inject-roads replays a library change; --compare follows the sidecar's roads lines: drop one\n\(usage)", status: 2)
+}
+if wrongRoadTolerance != nil && roadPaths.isEmpty && injectRoads.isEmpty {
     print("note: --wrong-road-tolerance has no effect without --roads")
 }
 
 // --roads: every pack fully verified (content hash and structure). The order
 // given does not matter: RoadNetwork keeps them in content-hash order.
 var roads: ReplayRoadSet?
-if !roadPaths.isEmpty {
+var injections: [ReplayRoadInjection] = []
+if !roadPaths.isEmpty || !injectRoads.isEmpty {
     var packs: [RoadPack] = []
     var names: [UInt64: String] = [:]
-    for path in roadPaths {
+    func load(_ path: String) -> RoadPack {
         do {
             let url = URL(fileURLWithPath: path)
             let pack = try RoadPack(contentsOf: url, verify: true)
             packs.append(pack)
             names[pack.contentHash] = url.lastPathComponent
+            return pack
         } catch {
             fail("cannot read road pack \(path): \(error)", status: 1)
         }
+    }
+    for path in roadPaths { _ = load(path) }
+    for (when, path) in injectRoads {
+        let pack = load(path)
+        injections.append(ReplayRoadInjection(when: when, contentHashes: [pack.contentHash]))
     }
     do {
         roads = ReplayRoadSet(try RoadNetwork(packs: packs), names: names)
@@ -518,13 +561,14 @@ if let comparePath {
 }
 var roadAttach = ReplayRoadAttach.fromStart
 if let contents = compareContents {
-    roadAttach = contents.roads.map { .afterInputs($0.afterInputs) } ?? .live
-} else if asLive {
+    roadAttach = contents.roads.isEmpty ? .live : .schedule(contents.roads.compactMap(ReplayRoadAttachPoint.init))
+} else if asLive || !injections.isEmpty {
     roadAttach = .live
 }
 var baseOptions = ReplayOptions(gps: gps, holdOutAccuracyM: holdOut, config: config)
 baseOptions.roads = roads
 baseOptions.roadAttach = roadAttach
+baseOptions.roadInjections = injections
 if let wrongRoadTolerance { baseOptions.wrongRoadToleranceM = wrongRoadTolerance }
 baseOptions.asLive = asLive
 baseOptions.fileOrder = asLive || fileOrder
@@ -586,7 +630,7 @@ for path in paths {
             let run = NavigationReplay.runLive(
                 inputs: NavigationReplay.fileOrderInputs(from: events), sessionID: header.sessionID,
                 config: NavigationConfig(seed: NavigationSeed.derive(header: header)), appBuild: "replay_nav",
-                roads: roads, attach: .live
+                roads: roads, attach: .live, injections: injections
             ) { line in
                 if case .roadsSelection = line { selections += 1 }
                 writer.append(line)
@@ -596,8 +640,8 @@ for path in paths {
             writer.close()
             if let failure = writer.failure { fail("cannot write \(writeSidecarPath): \(failure)", status: 1) }
             print("Sidecar       wrote \(writeSidecarPath): \(run.estimates) estimates, \(writer.bytesWritten) bytes (as the app would, no drops)"
-                  + (roads == nil ? "" : run.roads.map { "; roads attached after \($0.afterInputs) inputs, roadSetHash \($0.network.roadSetHashHex)" }
-                     ?? "; no roads attached (no given pack covered a selection request)")
+                  + (roads == nil ? "" : run.attachments.isEmpty ? "; no roads attached (no given pack covered a selection request)"
+                     : run.attachments.enumerated().map { "; roads \($0.offset == 0 ? "attached" : "extended") after \($0.element.afterInputs) inputs, roadSetHash \($0.element.network.roadSetHashHex)" }.joined())
                   + (roads == nil ? "" : "; \(selections) roadsSelection line(s) for \(run.selectionLog.attempts) attempt(s)"))
         } catch {
             fail("cannot write \(writeSidecarPath): \(error)", status: 1)
@@ -620,7 +664,9 @@ for path in paths {
     if roads != nil && options.roadAttach != .fromStart {
         print("Roads attach  " + (result.roadsAttachedAfterInputs.map {
             "after \($0) inputs given to the engine, roadSetHash \(result.attachedRoadSetHash ?? "n/a")"
-        } ?? "none (no selection request met a covering pack set)"))
+        } ?? "none (no selection request met a covering pack set)")
+              + (result.roadsExtendedAfterInputs.isEmpty ? ""
+                 : "; extended after " + result.roadsExtendedAfterInputs.map(String.init).joined(separator: ", ") + " inputs"))
     }
     print("")
     metrics.append(ReplayMetrics(result))
@@ -648,7 +694,8 @@ for path in paths {
         let comparison = SidecarComparison(
             sidecar: contents, replay: lines, replayConfig: NavigationEngine(config: options.config).config,
             encodingFailures: NavigationReplay.encodingFailures(in: events).count,
-            givenRoadSetHash: roads?.roadSetHashHex
+            givenRoadSetHash: roads?.roadSetHashHex,
+            givenPackHashes: roads.map { Set($0.network.packs.map { NavigationSeed.hex($0.contentHash) }) }
         )
         print("Sidecar       \(URL(fileURLWithPath: comparePath).lastPathComponent): v\(contents.header.sidecarVersion), \(contents.estimates.count) estimates, \(contents.pins.count) pins, app build \(contents.header.appBuild) (\(contents.header.buildConfiguration ?? "build configuration not recorded"))\(asLive ? "" : fileOrder ? " (--file-order, not --as-live)" : " (not --as-live: arrival order)")")
         print(comparison.report(tolerance: tolerance))

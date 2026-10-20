@@ -224,7 +224,7 @@ struct NavigationReplayLiveRoadsTests {
         let app = Attach.live(inputs, network: set.network, attachAfter: k)
         let header = LiveNavigationRun(sessionID: Attach.sessionID, config: Attach.config(), appBuild: "app").header
         let sidecar = try NavSidecar.read(NavigationLiveTests.encoded([.header(header)] + app.lines))
-        #expect(sidecar.roads?.afterInputs == k)
+        #expect(sidecar.roads.first?.afterInputs == k)
 
         let afterK = ReplayRoadAttach.afterInputs(k)
         let replay = NavigationReplay.liveLines(inputs: inputs, sessionID: Attach.sessionID, config: Attach.config(),
@@ -241,7 +241,7 @@ struct NavigationReplayLiveRoadsTests {
                                               roads: set, attach: .live)
         let early = SidecarComparison(sidecar: sidecar, replay: live, replayConfig: Attach.config(),
                                       givenRoadSetHash: set.roadSetHashHex)
-        #expect(!early.exact && early.roadsMismatch?.contains("the roads line differs") == true)
+        #expect(!early.exact && early.roadsMismatch?.contains("the roads lines differ") == true)
     }
 
     @Test("Compare refuses an exact verdict without the same packs: no packs given, another road set, packs given for a no-roads sidecar")
@@ -254,7 +254,7 @@ struct NavigationReplayLiveRoadsTests {
         let withRoads = NavigationReplay.liveLines(inputs: inputs, sessionID: Attach.sessionID, config: config,
                                                    roads: set, attach: .live)
         let sidecar = try NavSidecar.read(NavigationLiveTests.encoded(withRoads))
-        let k = try #require(sidecar.roads?.afterInputs)
+        let k = try #require(sidecar.roads.first?.afterInputs)
 
         // Sidecar with roads, replay without packs.
         let bare = NavigationReplay.liveLines(inputs: inputs, sessionID: Attach.sessionID, config: config)
@@ -319,7 +319,7 @@ struct NavigationReplayLiveRoadsTests {
         let roadSidecar = try NavSidecar.read(NavigationLiveTests.encoded(
             NavigationReplay.liveLines(inputs: inputs, sessionID: Attach.sessionID, config: old, roads: set, attach: .live)))
         let roadReplay = NavigationReplay.liveLines(inputs: inputs, sessionID: Attach.sessionID, config: config,
-                                                    roads: set, attach: .afterInputs(try #require(roadSidecar.roads?.afterInputs)))
+                                                    roads: set, attach: .afterInputs(try #require(roadSidecar.roads.first?.afterInputs)))
         let e = SidecarComparison(sidecar: roadSidecar, replay: roadReplay, replayConfig: config,
                                   givenRoadSetHash: set.roadSetHashHex)
         #expect(e.inertConfigDifferences.isEmpty && e.configBlamed && !e.exact)

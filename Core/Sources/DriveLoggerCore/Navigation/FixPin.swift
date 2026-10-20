@@ -88,6 +88,9 @@ struct FixPinSource: Sendable {
 
     mutating func setCovered(_ index: Int, _ value: Bool) { ring[index].covered = value }
 
+    /// Forgets fix `index`'s coverage: the packs changed (`extendRoads`).
+    mutating func clearCovered(_ index: Int) { ring[index].covered = nil }
+
     /// Caches fix `index`'s road distances.
     mutating func setRoadDistances(_ index: Int, a: Double, b: Double) {
         ring[index].roadA = a

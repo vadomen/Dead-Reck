@@ -310,6 +310,51 @@ public struct NavigationEngine: Sendable {
         roadMatchedEdge = nil
     }
 
+    /// Replaces the attached network with a larger one, between two inputs
+    /// (prompt 38: a covering pack installed during a run). `network` must
+    /// hold every pack of the attached network and at least one more (by
+    /// content hash: a strict superset); the caller builds it from the same
+    /// open `RoadPack` instances, so nothing already mapped is mapped twice.
+    ///
+    /// Edge numbers are per network (canonical pack order), so the road
+    /// state starts as `attachRoads(_:)` leaves it: every particle on no
+    /// edge, level unknown, 0 m off-road; the distance since the last road
+    /// update, the last attempt, the on-road share and the matched edge
+    /// start fresh, and the fix-pin road caches (coverage and road
+    /// distances per fix, which depend on the packs) are cleared. Nothing
+    /// else changes and no random number is drawn: particles, weights,
+    /// headings and every other state are untouched.
+    ///
+    /// Refused, engine unchanged: with no network attached (`notAttached`:
+    /// use `attachRoads`), when `network` is not a strict superset
+    /// (`notSuperset`), and when `config.validated(roads: network)` would
+    /// change any key (`configWouldChange`).
+    public mutating func extendRoads(_ network: RoadNetwork) throws(RoadAttachRefusal) {
+        guard let attached = roads?.network else { throw .notAttached }
+        let old = Set(attached.packs.map(\.contentHash))
+        let new = Set(network.packs.map(\.contentHash))
+        guard old.isStrictSubset(of: new) else {
+            throw .notSuperset(missing: old.subtracting(new).sorted().map(NavigationSeed.hex))
+        }
+        let keys = config.differingKeys(config.validated(roads: network))
+        guard keys.isEmpty else { throw .configWouldChange(keys: keys) }
+        roads = RoadMatcher(network: network, cacheCapacity: roadCacheCapacity)
+        if isInitialized {
+            let n = east.count
+            roadEdge = [UInt32](repeating: RoadMatcher.noEdge, count: n)
+            roadLevel = [Int8](repeating: RoadGeometry.unknownLevel, count: n)
+            offRoadM = [Double](repeating: 0, count: n)
+        }
+        roadDistanceM = 0
+        lastRoadAttemptNs = nil
+        roadShare = nil
+        roadMatchedEdge = nil
+        clearFixPinRoadCache()
+        for k in fixPin.indices {
+            for j in fixPin[k].ring.indices { fixPin[k].clearCovered(j) }
+        }
+    }
+
     // MARK: Ingest
 
     /// Ingests one input, in arrival order. An implausible forward time jump
