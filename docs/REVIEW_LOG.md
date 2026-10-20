@@ -843,3 +843,17 @@ Reviewer: one opus reviewer (~770 changed lines, App-only logic). Focus: R68.1-4
 Tests before review (d042d80): Core 1069 tests in 136 suites passed (36 known issues); AppTests 596 tests in 90 suites passed.
 
 Round 1 outcome: R70.1-1 fixed (review round 1 commit); AppTests 599 tests in 90 suites passed; Debug simulator build 0 warnings. Tapping B while A is up cannot mis-attribute the up state to B: `connect(to:)` runs `disconnect()` (state `.idle`) before `remember(id)`.
+
+### Round 2
+
+Reviewer: one fresh opus reviewer on the whole range (67e9f9c). Checked the R70.1-1 fix at launch with a remembered adapter (`rememberedAdapterID` loaded in the service's init, before `MapScreen`), Bluetooth off/on, Forget while Bluetooth is off (the `rememberedAdapterID` observer clears the flag), tapping B while A is up, and whether a genuine drop of the paired adapter can read "No OBD" (no: reconnects never change `rememberedAdapterID`). No mutations (no Core logic; no specific App finding).
+
+No findings.
+
+Reviewer assessment (not a finding): `obdEverConnected` is fed only by `MapScreen`'s `onChange` hooks; if SwiftUI skips them while the map is under the Settings cover or the app is in the background, a link that comes up and drops entirely in that window reads "No OBD" instead of "OBD lost" (muted indicator, no data loss; device-only). Keeping the flag in `OBDLinkService` would remove the dependency.
+
+Tests (67e9f9c): Core 1069 tests in 136 suites passed (36 known issues); AppTests 599 tests in 90 suites passed; Debug simulator build 0 warnings.
+
+### Run 70 summary
+
+2 rounds; 1 MAJOR fixed (R70.1-1), 0 rejected, 1 MINOR deferred (R70.1-2).
