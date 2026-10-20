@@ -251,6 +251,8 @@ struct MapHUDTests {
         let f = HUDFakes.parse("gpsLost, recording,debug,bogus")
         #expect(f.isActive && f.gpsLost && f.recording && f.debugStrip && !f.obdLost && !f.thermal && !f.banner)
         #expect(HUDFakes.parse("banner").banner)
+        let stop = HUDFakes.parse("calibrating,stopped")
+        #expect(stop.calibrating && stop.stopped && stop.obd == .connected && stop.speed.kmh == 0)
         #expect(HUDFakes.parse("obdLost").speed.source == .gps)
         #expect(HUDFakes.parse("ok").speed.source == .obd)
     }

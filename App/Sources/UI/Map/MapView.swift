@@ -61,6 +61,10 @@ struct MapScreen: View {
     /// previews. Only `state` is read, so the map re-renders on link state
     /// changes, not on poll traffic.
     var link: (any OBDLinkServicing)?
+    /// The one-time in-car mount card (UX-18 (2)), for the card above the
+    /// Navigate status line: read `isVisible`, call `confirm()` on "Mounted".
+    /// Fed by `MapFeed`, never here. nil in previews.
+    var mountConfirmation: MountConfirmationModel?
     @Environment(\.scenePhase) private var scenePhase
     @State private var thermal = ProcessInfo.processInfo.thermalState
 
@@ -97,15 +101,16 @@ struct MapScreen: View {
             onRoadsWarningTap: onOpenMaps,
             onOpenSettings: onOpenSettings,
             roadsAttribution: roadsWarning?.attribution ?? false,
-            offerCard: offers.map { AnyView(PackOfferCard(monitor: $0)) },
-            offerShown: offers.map { PackOfferCard.current(for: $0) != nil } ?? false,
+            offerCard: bottomCard,
+            offerShown: offerIsShown || showsMountCard,
             recordingControl: fake.recording
                 ? AnyView(MapRecordingIndicatorLabel(elapsed: "12:34"))
                 : AnyView(MapRecordingButton(
                     session: session, offers: offers, onStop: { [session] in await session.stop() })),
             hasActiveRecording: fake.isActive ? fake.recording : MapRecordingControl.isActive(session.state),
             statusLine: fake.isActive
-                ? (fake.banner ? AnyView(NavigateStatusLabel(status: .waitingForOBD(secondsLeft: 272))) : nil)
+                ? (fake.banner ? AnyView(NavigateStatusLabel(status: .waitingForOBD(secondsLeft: 272)))
+                    : fake.calibrating ? AnyView(NavigateStatusLabel(status: .calibrating(secondsLeft: 24))) : nil)
                 : (status.text == nil ? nil : AnyView(MapNavigateStatusLine(session: session)))
         )
         .onReceive(NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)) { _ in
@@ -122,6 +127,22 @@ struct MapScreen: View {
 }
 
 extension MapScreen {
+    private var offerIsShown: Bool { offers.map { PackOfferCard.current(for: $0) != nil } ?? false }
+
+    /// The in-car mount card shows only when no pack offer is up: one card at a
+    /// time in the offer's slot, so the two never overlap and the road-ahead
+    /// area stays as with an offer (`offerShown` lifts the car for either).
+    private var showsMountCard: Bool { mountConfirmation?.isVisible == true && !offerIsShown }
+
+    /// The top card of the bottom-left zone, above the Navigate status line.
+    private var bottomCard: AnyView? {
+        if showsMountCard, let mountConfirmation {
+            return AnyView(MountConfirmationCardView(onConfirm: { mountConfirmation.confirm() })
+                .transition(.move(edge: .bottom).combined(with: .opacity)))
+        }
+        return offers.map { AnyView(PackOfferCard(monitor: $0)) }
+    }
+
     fileprivate static var fakes: HUDFakes {
         #if DEBUG
         return HUDFakes.parse(UserDefaults.standard.string(forKey: "uiFakeHUD"))
@@ -159,12 +180,16 @@ extension MapScreen {
 struct MapFeed: View {
     let session: RecordingSession
     let model: MapViewModel
+    /// The in-car mount card (UX-18 (2)): fed the same OBD speed and the
+    /// Navigate state; it only observes.
+    var mount: MountConfirmationModel?
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         Color.clear
             .frame(width: 0, height: 0)
             .onChange(of: session.live.obdSpeedKmh, initial: true) { refreshStationary() }
+            .onChange(of: session.navigateState) { refreshStationary() }
             // A 0 that goes stale with no new reading must stop counting
             // as stopped: re-check twice a second (reads, never observes).
             .task {
@@ -216,6 +241,7 @@ extension MapFeed {
             session.live.obdSpeedKmh, replyUptime: session.obdSpeedReplyUptime,
             now: session.currentUptimeSeconds
         )
+        mount?.update(session: session)
     }
 }
 

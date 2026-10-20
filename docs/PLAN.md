@@ -294,6 +294,14 @@ Replay only the current connection's init (M6.1-1) and remembered poll plan and 
 7. **Diagnostics in Release:** in a Release build the developer rows are hidden until 7 taps on Version in About; 7 more taps hide them again.
 8. **`push_packs.sh` after Remove-while-navigating (R65.1-4):** the pack is copied, not "skipped (unchanged)". Also check whether `devicectl device copy from` can read the store state file.
 
+### Added by UX-18 onboarding (prompt 32) — not verified on a device
+1. **Fresh install:** four full-screen cards (no checkboxes), then the location ask and the road-maps step.
+2. **Skip:** Skip on any card goes straight to the maps step; the cards do not come back at the next launch.
+3. **Settings:** "How FuGPS works" (last in the top group) reopens cards 1–4 read-only with Next / Done, no Skip, no maps step; "Mount and orientation" opens a read-only full-text screen with no checkboxes.
+4. **In-car card:** at the first Navigate start on OBD while stationary, "Phone mounted and won't move?" with a large "Mounted" appears above the calibration line; it hides while OBD speed is above 0 and returns at the next stop until answered; after "Mounted" it never shows again; it never shows in Record; navigation is unchanged.
+5. **Upgrade:** a phone that confirmed the old first-launch checklist sees neither the cards nor the in-car card.
+6. **Wording:** no card tells the driver to touch the phone while moving; the pin tip is addressed to a passenger.
+
 ### Added by UX-8 first launch and the at-a-stop offer (prompt 26) — not verified on a device
 1. **First launch with a fix:** the permission line ("Allow location to suggest your region's map. It stays on the phone."), then the system prompt; the region is preselected and its neighbours listed under "Nearby"; nothing downloads before the tap.
 2. **Permission denied, or no fix in 10 s:** national only is preselected, and the list is editable.
@@ -372,7 +380,7 @@ Replay only the current connection's init (M6.1-1) and remembered poll plan and 
 4. **Reconnect while locked after an auto-stop:** let Navigate auto-stop (5 min without OBD) with the phone locked, then reconnect the adapter while still locked. Note whether the new Navigate session gets GPS fixes while locked, or only after unlock. Under When In Use, CoreLocation may refuse to start updates from the background.
 
 ### Added by UX-1 part 2, Navigate UI (not verified on a device)
-1. **First launch (b):** on a fresh install the app opens with "Before you drive" (rigid mount, fixed orientation); Continue only with both ticked; it never shows again after a relaunch or a reconnect; Settings → "Mount and orientation" shows it again. Record's own per-drive checklist still appears at Start.
+1. **First launch (b), replaced by UX-18 (prompt 32), see "Added by UX-18" below:** the old "Before you drive" checkbox gate no longer appears. Record's own per-drive checklist still appears at Start.
 2. **No OBD (d):** with the adapter unplugged the map shows "Connect OBD for navigation without GPS", no dead-reckoning dot or ellipse, and the live GPS position (green dot, street zoom) once a fix arrives (item 6); plug in: the line changes to calibrating (or disappears when moving) without touching the phone.
 3. **Test drive recording from Settings:** the map has no Start; Settings → "Test drive recording" starts Record as before (checklist, calibration, file). During the recording the map shows the red dot and elapsed time and no Navigate line; Stop from the map asks first; after Stop the map returns to Navigate.
 4. **Heading reset per session:** in heading-up, end a Navigate session (auto-stop, or Record → Stop) and start a new one: the map's heading resets as it does at a new recording; a short OBD drop inside one session does not reset it.

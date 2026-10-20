@@ -4,7 +4,7 @@ import Testing
 
 @testable import DriveLogger
 
-@Suite("UX-1 part 2: first-launch checklist, heading reset, Record from Settings", .serialized)
+@Suite("UX-1 part 2 / UX-18: first-launch cards, heading reset, Record from Settings", .serialized)
 @MainActor
 struct FirstLaunchAndTestDriveTests {
     func defaults() -> UserDefaults {
@@ -14,48 +14,125 @@ struct FirstLaunchAndTestDriveTests {
         return d
     }
 
-    @Test("First launch asks; confirming stores it; the next launch does not ask")
-    func askedOnce() {
-        let d = defaults()
-        let first = FirstLaunchModel(store: FirstLaunchStore(defaults: d))
-        #expect(first.isPresented)
-        first.confirm()  // nothing ticked: refused
-        #expect(first.isPresented)
-        #expect(!FirstLaunchStore(defaults: d).isConfirmed)
-        first.checklist.mountConfirmed = true
-        #expect(!first.canContinue)
-        first.confirm()
-        #expect(first.isPresented)
-        first.checklist.orientationConfirmed = true
-        #expect(first.canContinue)
-        first.confirm()
-        #expect(!first.isPresented)
-        #expect(FirstLaunchStore(defaults: d).isConfirmed)
+    func store(_ d: UserDefaults) -> OnboardingStore { OnboardingStore(defaults: d) }
 
-        let second = FirstLaunchModel(store: FirstLaunchStore(defaults: d))
-        #expect(!second.isPresented)
+    @Test("Fresh install shows the cards at card 1; seen once, the next launch does not")
+    func freshShowsCards() {
+        let d = defaults()
+        let first = OnboardingModel(store: store(d))
+        #expect(first.isPresented)
+        #expect(first.mode == .firstRun)
+        #expect(first.card == .howItWorks)
+        #expect(!store(d).cardsSeen, "showing them stores nothing")
+        first.skip()
+        #expect(!OnboardingModel(store: store(d)).isPresented)
     }
 
-    @Test("The debug override forces it even when confirmed; Settings shows it again unticked")
-    func forcedAndShownAgain() {
+    @Test("Next walks cards 1 to 4, the button reads Continue on the last, and Continue marks the cards seen")
+    func nextThenContinue() {
         let d = defaults()
-        FirstLaunchStore(defaults: d).markConfirmed()
-        #expect(FirstLaunchModel(store: FirstLaunchStore(defaults: d), forced: true).isPresented)
-        let model = FirstLaunchModel(store: FirstLaunchStore(defaults: d))
-        model.checklist = PreDriveChecklist(mountConfirmed: true, orientationConfirmed: true)
-        model.showAgain()
-        #expect(model.isPresented)
-        #expect(!model.checklist.isComplete)
-        // Closing it again does not unset the stored answer.
-        #expect(FirstLaunchStore(defaults: d).isConfirmed)
+        let model = OnboardingModel(store: store(d))
+        #expect(OnboardingCard.allCases.count == 4)
+        for expected in OnboardingCard.allCases.dropLast() {
+            #expect(model.card == expected && !model.isLast)
+            #expect(model.primaryTitle == "Next")
+            #expect(model.showsSkip, "Skip on every card")
+            model.primary()
+            #expect(model.isPresented && !store(d).cardsSeen, "not seen until the end")
+        }
+        #expect(model.card == .arrow && model.isLast)
+        #expect(model.primaryTitle == "Continue")
+        model.primary()
+        #expect(!model.isPresented)
+        #expect(store(d).cardsSeen)
+    }
+
+    @Test("Skip on any card marks the cards seen and closes them")
+    func skipAnywhere() {
+        for card in 1...4 {
+            let d = defaults()
+            let model = OnboardingModel(store: store(d), forcedCard: card)
+            #expect(model.card.number == card)
+            model.skip()
+            #expect(!model.isPresented)
+            #expect(store(d).cardsSeen)
+        }
+    }
+
+    @Test("Seen cards are not shown; a legacy confirmed checklist counts as seen; nothing ever writes the legacy key")
+    func seenAndLegacy() {
+        let seen = defaults()
+        store(seen).markCardsSeen()
+        #expect(!OnboardingModel(store: store(seen)).isPresented)
+
+        let legacy = defaults()
+        legacy.set(true, forKey: OnboardingStore.legacyChecklistKey)
+        #expect(!OnboardingModel(store: store(legacy)).isPresented, "the old checklist was confirmed: no cards")
+        #expect(MountConfirmationModel(store: store(legacy)).isVisible == false)
+        #expect(store(legacy).mountConfirmed, "and no in-car card")
+
+        // A fresh install going through the whole flow never writes the legacy key.
+        let fresh = defaults()
+        let model = OnboardingModel(store: store(fresh))
+        model.skip()
+        OnboardingModel(store: store(fresh), forcedCard: 4).primary()
+        MountConfirmationModel(store: store(fresh)).confirm()
+        #expect(fresh.object(forKey: OnboardingStore.legacyChecklistKey) == nil)
+    }
+
+    @Test("The debug override opens at that card even when seen; out-of-range values are ignored")
+    func forcedCard() {
+        let d = defaults()
+        store(d).markCardsSeen()
+        let model = OnboardingModel(store: store(d), forcedCard: 3)
+        #expect(model.isPresented && model.card == .mount)
+        #expect(!OnboardingModel(store: store(d), forcedCard: 0).isPresented)
+        #expect(!OnboardingModel(store: store(d), forcedCard: 5).isPresented)
+    }
+
+    @Test("Review (Settings): from card 1, Next then Done, no Skip, never touches the store")
+    func review() {
+        let d = defaults()
+        let model = OnboardingModel(mode: .review, store: store(d))
+        #expect(!model.isPresented)
+        model.page = 2
+        model.show()
+        #expect(model.isPresented && model.card == .howItWorks)
+        #expect(!model.showsSkip)
+        model.skip()
+        #expect(model.isPresented, "no Skip in review")
+        model.primary(); model.primary(); model.primary()
+        #expect(model.isLast && model.primaryTitle == "Done")
+        model.primary()
+        #expect(!model.isPresented)
+        #expect(!store(d).cardsSeen && !store(d).mountConfirmed)
+        #expect(d.object(forKey: OnboardingStore.cardsSeenKey) == nil)
+    }
+
+    @Test("The maps step is sequenced after the cards: the root's rule is cards-not-presented and maps-presented")
+    func mapsAfterCards() {
+        let d = defaults()
+        let cards = OnboardingModel(store: store(d))
+        func mapsCoverShows(mapsPresented: Bool) -> Bool { !cards.isPresented && mapsPresented }
+        #expect(!mapsCoverShows(mapsPresented: true), "never on top of the cards")
+        cards.skip()
+        #expect(mapsCoverShows(mapsPresented: true), "straight to the maps step after Skip")
+        #expect(!mapsCoverShows(mapsPresented: false))
+    }
+
+    @Test("Card wording: fixed texts, no advice to touch the phone while moving, the vehicles link is on the site")
+    func cardText() {
+        #expect(OnboardingCard.allCases.map(\.title) == [
+            "How FuGPS works", "Connect your adapter", "Mount the phone", "Getting the arrow fast"])
+        #expect(OnboardingText.vehiclesURL.absoluteString == "https://fugps.pages.dev/vehicles.html")
+        #expect(OnboardingText.position(.mount) == "Card 3 of 4")
+        #expect(OnboardingText.driverAttention == "Don't use the phone while driving. Set it up before you set off.")
     }
 
     @Test("It is separate from Record's per-drive checklist")
     func separateFromRecord() {
         let d = defaults()
-        let model = FirstLaunchModel(store: FirstLaunchStore(defaults: d))
-        model.checklist = PreDriveChecklist(mountConfirmed: true, orientationConfirmed: true)
-        model.confirm()
+        OnboardingModel(store: store(d)).skip()
         // Record's store keeps only notes, and its checklist is still incomplete.
         #expect(ChecklistStore(defaults: d).load().isComplete == false)
     }

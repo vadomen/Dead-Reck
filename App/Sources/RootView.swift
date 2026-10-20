@@ -16,8 +16,11 @@ struct RootView: View {
     private let session: RecordingSession
     private let services: AppServices
     @State private var nav: AppNavigation
-    @State private var firstLaunch: FirstLaunchModel
+    /// The first-run info cards (UX-18 (1)), before the maps step.
+    @State private var onboarding: OnboardingModel
     @State private var firstMaps: FirstLaunchMapsModel
+    /// The one-time in-car mount card (UX-18 (2)): fed by `MapFeed`, shown by the map.
+    @State private var mountConfirmation: MountConfirmationModel
 
     init(services: AppServices) {
         _recording = State(initialValue: RecordingViewModel(services: services))
@@ -70,12 +73,19 @@ struct RootView: View {
         #endif
         _roadsWarning = State(initialValue: warningModel)
         var initial = AppNavigation()
-        var forceFirstLaunch = false
+        var forcedCard: Int?
         #if DEBUG
-        // `-uiFirstLaunch 1` shows the first-launch checklist (screenshots).
-        forceFirstLaunch = UserDefaults.standard.bool(forKey: "uiFirstLaunch")
+        // `-uiOnboarding 1...4` opens the info cards at that card, seen or not (screenshots).
+        forcedCard = UserDefaults.standard.object(forKey: "uiOnboarding") == nil
+            ? nil : UserDefaults.standard.integer(forKey: "uiOnboarding")
         #endif
-        _firstLaunch = State(initialValue: FirstLaunchModel(forced: forceFirstLaunch))
+        _onboarding = State(initialValue: OnboardingModel(forcedCard: forcedCard))
+        var forceMountCard = false
+        #if DEBUG
+        // `-uiMountCard 1` shows the in-car mount card whatever the state (screenshots).
+        forceMountCard = UserDefaults.standard.bool(forKey: "uiMountCard")
+        #endif
+        _mountConfirmation = State(initialValue: MountConfirmationModel(forced: forceMountCard))
         #if DEBUG
         // `-uiScreen map|settings|sessions|maps|console|recording|adapter|about`
         // opens Map, Settings or a Settings sub-screen at launch (screenshots).
@@ -125,19 +135,12 @@ struct RootView: View {
             onOpenSettings: { nav.openSettings() },
             roadsWarning: roadsWarning,
             offers: services.packOffers,
-            link: services.link
+            link: services.link,
+            mountConfirmation: mountConfirmation
         )
         .fullScreenCover(isPresented: $nav.isSettingsPresented) {
             SettingsScreen(
                 path: $nav.settingsPath, roads: roads, maps: maps, offers: services.packOffers, gate: gate,
-                onShowChecklist: {
-                    // One cover at a time: close Settings, then show the checklist.
-                    nav.closeSettings()
-                    Task {
-                        try? await Task.sleep(for: .milliseconds(500))
-                        firstLaunch.showAgain()
-                    }
-                },
                 onDone: { nav.closeSettings() }
             ) {
                 RecordingScreen(model: recording)
@@ -161,21 +164,19 @@ struct RootView: View {
         }
         // Ingest at the root so the track keeps filling while Settings is open. The
         // feed is its own view so only it observes the 16 Hz `live` status.
-        .background(MapFeed(session: session, model: map))
+        .background(MapFeed(session: session, model: map, mount: mountConfirmation))
         .task { await roadsWarning.run() }
         // UX-8 (2): the at-a-stop offer loop, with Settings open too.
         .task {
             let map = map
             await services.packOffers.run(live: services.packOfferInputs(speedKmh: { map.speed.kmh.map(Double.init) }))
         }
-        .fullScreenCover(isPresented: $firstLaunch.isPresented) {
-            FirstLaunchChecklistView(
-                checklist: $firstLaunch.checklist, canContinue: firstLaunch.canContinue,
-                onContinue: { firstLaunch.confirm() })
+        .fullScreenCover(isPresented: $onboarding.isPresented) {
+            OnboardingCardsView(model: onboarding)
         }
-        // UX-8 (1): after the checklist, never on top of it.
+        // UX-8 (1): after the info cards, never on top of them.
         .fullScreenCover(isPresented: Binding(
-            get: { !firstLaunch.isPresented && firstMaps.isPresented }, set: { _ in })
+            get: { !onboarding.isPresented && firstMaps.isPresented }, set: { _ in })
         ) {
             FirstLaunchMapsView(model: firstMaps)
         }

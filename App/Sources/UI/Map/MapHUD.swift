@@ -266,7 +266,7 @@ struct HUDScheme: Equatable, Sendable {
 
 // MARK: - DEBUG fakes (screenshots)
 
-/// `-uiFakeHUD ok,gpsLost,obdLost,obdNone,recording,debug,thermal,banner`: synthetic HUD
+/// `-uiFakeHUD ok,gpsLost,obdLost,obdNone,recording,debug,thermal,banner,calibrating,stopped`: synthetic HUD
 /// inputs for simulator screenshots (the simulator has no OBD and a real
 /// position). Parsed here so the parsing is testable; applied by `MapScreen`
 /// in DEBUG builds only. Comma-separated, unknown tokens ignored; an empty or
@@ -284,6 +284,10 @@ struct HUDFakes: Equatable, Sendable {
     /// UX-35 screenshots: a short good line, then a stop with scattered
     /// Wi-Fi-like fixes (`MapPreviewData.stopTrack`).
     var scatter = false
+    /// The keep-still banner (`NavigateStatus.calibrating`), for the in-car mount card.
+    var calibrating = false
+    /// OBD speed 0 km/h (a stop).
+    var stopped = false
 
     static func parse(_ value: String?) -> HUDFakes {
         var out = HUDFakes()
@@ -298,6 +302,8 @@ struct HUDFakes: Equatable, Sendable {
             case "thermal": out.isActive = true; out.thermal = true
             case "banner": out.isActive = true; out.banner = true
             case "scatter": out.isActive = true; out.scatter = true
+            case "calibrating": out.isActive = true; out.calibrating = true
+            case "stopped": out.isActive = true; out.stopped = true
             default: break
             }
         }
@@ -309,6 +315,6 @@ struct HUDFakes: Equatable, Sendable {
 
     /// The speed shown: 27 km/h from OBD, or from GPS when OBD is "lost".
     var speed: MapSpeedReadout {
-        MapSpeedReadout(source: (obdLost || obdNone) ? .gps : .obd, kmh: 27, quality: .good)
+        MapSpeedReadout(source: (obdLost || obdNone) ? .gps : .obd, kmh: stopped ? 0 : 27, quality: .good)
     }
 }

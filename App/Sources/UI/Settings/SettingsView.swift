@@ -3,12 +3,14 @@ import SwiftUI
 /// A row of Settings' main section.
 enum SettingsRow: Hashable {
     case route(SettingsRoute)
-    /// Re-opens the first-launch checklist (not a pushed screen).
+    /// Pushes the read-only mount text (card 3 of the info cards); no checkboxes.
     case mountAndOrientation
+    /// UX-18: re-opens info cards 1-4, read only (not a route).
+    case howItWorks
 }
 
 /// Which rows show, in order (UX-14, grouped for the driver in prompt 31):
-/// the top group is OBD adapter (UX-34), Maps, Mount and orientation; About is
+/// the top group is OBD adapter (UX-34), Maps, Mount and orientation, How FuGPS works; About is
 /// its own section after it; then "Developer" (footer "For test drives and
 /// diagnostics"): Test drive recording, Sessions and, in Release only behind
 /// the Diagnostics gate, Console.
@@ -18,7 +20,7 @@ enum SettingsRows {
     static func driver(adapterAvailable: Bool = SettingsRoute.adapterRowAvailable) -> [SettingsRow] {
         var rows: [SettingsRow] = []
         if adapterAvailable { rows.append(.route(.adapter)) }
-        rows += [.route(.maps), .mountAndOrientation]
+        rows += [.route(.maps), .mountAndOrientation, .howItWorks]
         return rows
     }
 
@@ -39,7 +41,6 @@ struct SettingsScreen<Recording: View, Console: View, Sessions: View, Adapter: V
     var maps: MapsModel
     var offers: PackOfferMonitor?
     var gate: DeveloperGate
-    var onShowChecklist: () -> Void = {}
     var onDone: () -> Void = {}
     @ViewBuilder var recording: () -> Recording
     @ViewBuilder var console: () -> Console
@@ -53,7 +54,7 @@ struct SettingsScreen<Recording: View, Console: View, Sessions: View, Adapter: V
                         showsDeveloper: gate.showsDiagnostics,
                         network: NetworkDiagnosticsText.rows(maps.downloads, setting: maps.cellularSetting),
                         versionNote: gate.toast,
-                        onVersionTap: { gate.tapVersion() }, onShowChecklist: onShowChecklist, onDone: onDone,
+                        onVersionTap: { gate.tapVersion() }, onDone: onDone,
                         recording: recording, console: console, maps: { MapsScreen(model: maps, offers: offers) },
                         sessions: sessions, adapter: adapter)
             .task(id: gate.toast) {
@@ -91,7 +92,6 @@ struct SettingsContent<Recording: View, Console: View, Maps: View, Sessions: Vie
     /// "Developer diagnostics shown/hidden", under Version for a moment.
     var versionNote: String?
     var onVersionTap: () -> Void = {}
-    var onShowChecklist: () -> Void = {}
     var onDone: () -> Void = {}
     @ViewBuilder var recording: () -> Recording
     @ViewBuilder var console: () -> Console
@@ -101,6 +101,9 @@ struct SettingsContent<Recording: View, Console: View, Maps: View, Sessions: Vie
     /// Shows the matched road, the on-road share and the engine numbers on
     /// the map; the map's long-press on the speed number sets it too.
     @AppStorage("debug.navStats") private var showNavStats = false
+    /// "How FuGPS works": the info cards again, read only (UX-18 (3)).
+    @State private var cards = OnboardingModel(mode: .review)
+    @State private var showsMount = false
 
     private var roadsSection: some View {
         Section("Roads") {
@@ -152,8 +155,15 @@ struct SettingsContent<Recording: View, Console: View, Maps: View, Sessions: Vie
                         .frame(minHeight: 44)
                 }
             case .mountAndOrientation:
-                Button(action: onShowChecklist) {
+                Button { showsMount = true } label: {
                     Label("Mount and orientation", systemImage: "iphone.gen3")
+                        .font(.title3)
+                        .foregroundStyle(Color.primary)
+                        .frame(minHeight: 44)
+                }
+            case .howItWorks:
+                Button { cards.show() } label: {
+                    Label("How FuGPS works", systemImage: "questionmark.circle")
                         .font(.title3)
                         .foregroundStyle(Color.primary)
                         .frame(minHeight: 44)
@@ -202,6 +212,8 @@ struct SettingsContent<Recording: View, Console: View, Maps: View, Sessions: Vie
                         .frame(minWidth: 44, minHeight: 44)
                 }
             }
+            .navigationDestination(isPresented: $showsMount) { MountInfoScreen() }
+            .fullScreenCover(isPresented: $cards.isPresented) { OnboardingCardsView(model: cards) }
             .navigationDestination(for: SettingsRoute.self) { route in
                 switch route {
                 case .recording:
