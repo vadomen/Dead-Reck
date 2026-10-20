@@ -132,6 +132,37 @@ struct NavigationRoadExtendTests {
         #expect(try run() == (try run()))
     }
 
+    @Test("extendRoads with roadFixPinCheck on: every ring fix's coverage and road distances and every source's road shift are cleared, so the next road check queries the larger network afresh (R75.1-1)")
+    func extendClearsFixPinRoadCache() throws {
+        typealias P = NavigationFixPinTests
+        let drive = P.lDrive(eastS: 60)
+        let net = try P.roads(drive)
+        let inputs = P.inputs(drive, pins: [(30.03, 0, 0)])
+        var engine = P.run(inputs, config: P.config(roads: 1), roads: net).engine
+        let ring = engine.fixPin[0].ring
+        #expect(engine.counters.fixPinRoadRechecks >= 5, "the road check ran while down-weighted")
+        #expect(ring.filter { $0.covered != nil }.count >= 10, "coverage cached (fixes since the last check not yet)")
+        #expect(ring.contains { $0.roadA != nil && $0.roadB != nil }, "road distances cached")
+        let shift = try #require(engine.fixPin[0].offset)
+        #expect(engine.fixPin[0].roadShift.map { !$0.east.isNaN && !$0.north.isNaN } == true)
+
+        try engine.extendRoads(try RoadNetwork(packs: net.packs + [try Self.far()]))
+        #expect(engine.fixPin.count == FixPinSource.Kind.allCases.count)
+        for source in engine.fixPin {
+            #expect(source.ring.allSatisfy { $0.covered == nil && $0.roadA == nil && $0.roadB == nil })
+            #expect(source.roadShift.map { $0.east.isNaN && $0.north.isNaN } == true)
+        }
+        #expect(engine.fixPin[0].ring.count == ring.count, "the fixes themselves stay")
+
+        // The next check queries every covered fix again (A and B), and
+        // gives what a cleared cache gives.
+        let plane = try #require(engine.tangentPlane)
+        let queries = engine.counters.fixPinRoadDistanceQueries
+        let next = engine.roadFixPinComparison(.accessory, shiftEast: shift.east, shiftNorth: shift.north, plane: plane)
+        #expect(next.fixes >= 10)
+        #expect(engine.counters.fixPinRoadDistanceQueries - queries == 2 * next.fixes)
+    }
+
     @Test("extendRoads draws no random number: with only far packs (no road near any particle) the run extended mid-way gives the no-roads run's positions, headings and ellipses bit for bit")
     func extendDrawsNothing() throws {
         let inputs = Attach.inputs()
@@ -419,8 +450,29 @@ struct NavigationRoadExtendTests {
                                                                  request: .init(radiusM: 1), candidates: [],
                                                                  outcome: .selected, packs: ["a", "b"])))
 
-        let notSuperset = Live.sampleLines() + [.roads(second), .roads(first)]
-        #expect(throws: NavSidecar.ReadError.self) { try NavSidecar.read(Live.encoded(notSuperset)) }
+        // Back in afterInputs and shrunk: the afterInputs check comes first.
+        let backAndShrunk = Live.sampleLines() + [.roads(second), .roads(first)]
+        #expect(throws: NavSidecar.ReadError.invalidRoadsLine(number: 8, reason: "afterInputs 10 is before the previous line's 900")) {
+            try NavSidecar.read(Live.encoded(backAndShrunk))
+        }
+        // afterInputs non-decreasing, packs not a strict superset (R75.1-2):
+        // the same set (later, or at the same afterInputs), a disjoint set, a
+        // shrunk set.
+        let notSuperset = NavSidecar.ReadError.invalidRoadsLine(
+            number: 8, reason: "its packs are not a strict superset of the previous line's")
+        let cases: [(String, NavSidecar.Roads, NavSidecar.Roads)] = [
+            ("same set", first, Self.roadsLine(["00000000000000a1"], afterInputs: 900)),
+            ("same set, same afterInputs", Self.roadsLine(["00000000000000a1"], afterInputs: 900),
+             Self.roadsLine(["00000000000000a1"], afterInputs: 900)),
+            ("disjoint", first, Self.roadsLine(["00000000000000b2"], afterInputs: 900)),
+            ("shrunk", Self.roadsLine(["00000000000000a1", "00000000000000b2"], afterInputs: 10),
+             Self.roadsLine(["00000000000000a1"], afterInputs: 900)),
+        ]
+        for (label, a, b) in cases {
+            #expect(throws: notSuperset, "\(label)") {
+                try NavSidecar.read(Live.encoded(Live.sampleLines() + [.roads(a), .roads(b)]))
+            }
+        }
         let backwards = Live.sampleLines() + [.roads(Self.roadsLine(["00000000000000a1"], afterInputs: 950)), .roads(second)]
         #expect(throws: NavSidecar.ReadError.invalidRoadsLine(number: 8, reason: "afterInputs 900 is before the previous line's 950")) {
             try NavSidecar.read(Live.encoded(backwards))

@@ -934,3 +934,22 @@ R74.1-1 and R74.1-2 verified closed. Tests (aa188c4): Core 1096 tests in 139 sui
 ### Run 74 summary
 
 2 rounds; 2 MAJOR confirmed and fixed with regression tests (R74.1-1, R74.1-2); 0 rejected; 5 MINOR deferred (R74.1-3..6, R74.2-1). Engine output bit-identical vs 7878090 (clean drive, seed 1, national / no roads). Noted, not a finding: `logs/ACCEPTANCE.md` names a second pack file that no longer exists under that name.
+
+## Run 75: Prompt 38 roads in a running session (library change and coverage-entered re-selection, extendRoads, sidecar v3, replay schedule and --inject-roads), banner Download, only-main-roads offer, remove during a run, Finding your position status, matched road line, ellipse fit (main..roads-ux-fixes: 8413414..8634577), started 2026-10-20
+
+### Round 1
+
+Reviewers: three opus reviewers in parallel: A engine, B sidecar/replay/docs, C app. Result: 0 BLOCKER, 4 MAJOR (all CONFIRMED, fixed in round 1), 3 MINOR (DEFERRED), 1 MINOR waiting on the user (wording). A and B verified bit-identity: clean drive, seed 1, roads on / off / as-live, GeoJSON byte-identical and sidecars identical apart from `sidecarVersion`; the seven acceptance as-live runs never extend.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R75.1-1 | MAJOR | `NavigationEngine.swift:352-355`: `extendRoads`' fix-pin road reset (`clearFixPinRoadCache` + the `clearCovered` loop) had no test; deleting it failed nothing. | CONFIRMED, FIXED | Test `NavigationRoadExtendTests/extendClearsFixPinRoadCache`; removing each part fails it. |
+| R75.1-2 | MAJOR | `NavigationRoadExtendTests.swift:422-423`, `NavSidecar.swift:612`: the v3 reader's strict-superset check was never reached, because the only case also went backwards in `afterInputs`. | CONFIRMED, FIXED | In `sidecarV3`: same-set, same-set at equal `afterInputs`, disjoint and shrunk cases, each expecting the exact `invalidRoadsLine` reason; the existing case tightened to its exact error. Removing the guard, or `isStrictSubset` → `isSubset`, fails them. |
+| R75.1-3 | MAJOR | `PackOfferMonitor.swift:293` (input `AppServices.swift:152`): the B4 "Only main roads here" offer could never show: the session's pack names are store file names `<name>-<hash>.roadpack` but were compared against manifest names. | CONFIRMED, FIXED | Names mapped through `RoadPackStoreRules.parseFileName(_)?.name`, keeping the raw name when it does not parse. Test `RoadsBannerDownloadTests.contextStoreFileNames` (fails without the mapping). |
+| R75.1-4 | MAJOR | `MapView.swift:180`, `RoadsWarning.swift:119`: while the "No road pack covers this area" banner hosts the offer, the card is hidden and the banner had only Download, so there was no Not now / Never and the offer repeated at every stop. | CONFIRMED, FIXED | Shared `PackOfferActions`; the banner shows Not now and Never at a stop. Test `RoadsBannerDownloadTests.bannerAnswers`. |
+| R75.1-5 | MINOR | `NavigationReplay.swift:376`: the `runLive` schedule has no test for two roads lines at equal `afterInputs`; mutating `while` to `if` survives. | DEFERRED | BACKLOG. |
+| R75.1-6 | MINOR | `SidecarComparison.swift:205`: the line-by-line roads comparison is untested when only the first of two lines differs; comparing only `.last` survives. | DEFERRED | BACKLOG. |
+| R75.1-7 | MINOR | `RoadsWarning.swift:93`, `PackOfferMonitor.swift:189`: after a banner Download, "Downloading <region>…" shows while the job is queued waiting for Wi-Fi (cellular off); the text should come from the downloader's state. | DEFERRED | BACKLOG. |
+| R75.1-8 | MINOR | `MapsView.swift:154`: the Remove-during-run confirmation "Navigation will run without this map until you restart the app." contradicts the behaviour: the pack stays in use until restart and is deleted at the next launch. | OPEN | User wording decision. Proposed: "This map stays in use until you restart the app, then it is removed." Not in BACKLOG. |
+
+Tests at round 1 start: Core 1110 tests in 140 suites passed; release perf gate 9 passed; AppTests 689 tests in 102 suites passed.

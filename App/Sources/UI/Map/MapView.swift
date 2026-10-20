@@ -104,7 +104,9 @@ struct MapScreen: View {
             showNavStats: fake.debugStrip ? .constant(true) : $showNavStats,
             roadsWarning: warningText,
             roadsWarningDownload: warningDownload,
-            onRoadsWarningDownload: { offers?.download() },
+            onRoadsWarningDownload: { offerActions?.download() },
+            onRoadsWarningNotNow: { offerActions?.notNow() },
+            onRoadsWarningNever: { offerActions?.never() },
             onRoadsWarningTap: onOpenMaps,
             onOpenSettings: onOpenSettings,
             roadsAttribution: (roadsWarning?.attribution ?? false) || demo != nil,
@@ -156,6 +158,9 @@ extension MapScreen {
         #endif
         return roadsWarning?.message
     }
+
+    /// The card's answers, reused by the banner that hosts the offer (R75.1-4).
+    private var offerActions: PackOfferActions? { offers.map(PackOfferActions.init(monitor:)) }
 
     /// B3: the warning's Download, from the at-a-stop offer.
     private var warningDownload: RoadsWarningDownload? {
@@ -350,6 +355,9 @@ struct GPSMapView: View {
     /// The Download on that line (B3), when the manifest has a region here.
     var roadsWarningDownload: RoadsWarningDownload?
     var onRoadsWarningDownload: () -> Void = {}
+    /// The card's other two answers, when the banner hosts the offer (R75.1-4).
+    var onRoadsWarningNotNow: () -> Void = {}
+    var onRoadsWarningNever: () -> Void = {}
     var onRoadsWarningTap: () -> Void
     /// The gear at the bottom of the right rail (UX-14, UX-32).
     var onOpenSettings: () -> Void = {}
@@ -436,6 +444,8 @@ struct GPSMapView: View {
         roadsWarning: String? = nil,
         roadsWarningDownload: RoadsWarningDownload? = nil,
         onRoadsWarningDownload: @escaping () -> Void = {},
+        onRoadsWarningNotNow: @escaping () -> Void = {},
+        onRoadsWarningNever: @escaping () -> Void = {},
         onRoadsWarningTap: @escaping () -> Void = {},
         onOpenSettings: @escaping () -> Void = {},
         roadsAttribution: Bool = false,
@@ -469,6 +479,8 @@ struct GPSMapView: View {
         self.roadsWarning = roadsWarning
         self.roadsWarningDownload = roadsWarningDownload
         self.onRoadsWarningDownload = onRoadsWarningDownload
+        self.onRoadsWarningNotNow = onRoadsWarningNotNow
+        self.onRoadsWarningNever = onRoadsWarningNever
         self.onRoadsWarningTap = onRoadsWarningTap
         self.onOpenSettings = onOpenSettings
         self.roadsAttribution = roadsAttribution
@@ -891,6 +903,10 @@ struct GPSMapView: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(download.buttonText)
+                    HStack(spacing: 8) {
+                        bannerAnswer(PackOfferText.notNow, label: "Not now", action: onRoadsWarningNotNow)
+                        bannerAnswer(PackOfferText.never, label: "Never offer maps for \(download.title)", action: onRoadsWarningNever)
+                    }
                 case .queued:
                     Label(download.queuedText, systemImage: "arrow.down.circle")
                         .font(.subheadline.weight(.semibold))
@@ -901,6 +917,19 @@ struct GPSMapView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Not now / Never on the banner: quiet face, 48 pt tall, as on the card.
+    private func bannerAnswer(_ text: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(text).font(.callout.weight(.semibold)).lineLimit(1)
+                .frame(maxWidth: .infinity, minHeight: 48)
+                .foregroundStyle(HUDColors.text)
+                .hudSurface(Capsule())
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
     }
 
     private func roadsWarningLine(_ text: String) -> some View {

@@ -293,6 +293,8 @@ enum PackOfferContext {
     static func make(sessionPackNames: [String], manifestPacks: [PackManifest.Pack]) -> PackOfferMonitor.Offer.Context {
         guard !sessionPackNames.isEmpty else { return .noRoadMap }
         let national = Set(manifestPacks.filter { $0.kind == .national }.map(\.name))
-        return sessionPackNames.allSatisfy(national.contains) ? .onlyMainRoads : .noRoadMap
+        // The session reports store file names (`<name>-<hash>.roadpack`); the manifest lists bare names.
+        let names = sessionPackNames.map { RoadPackStoreRules.parseFileName($0)?.name ?? $0 }
+        return names.allSatisfy(national.contains) ? .onlyMainRoads : .noRoadMap
     }
 }

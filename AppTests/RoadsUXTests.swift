@@ -77,6 +77,50 @@ struct RoadsBannerDownloadTests {
         #expect(PackOfferContext.make(sessionPackNames: ["zz-national"], manifestPacks: []) == .noRoadMap)
     }
 
+    @Test("Context: the session's store file names (<name>-<hash>.roadpack) map to manifest names (R75.1-3)")
+    func contextStoreFileNames() {
+        let packs = F.packs
+        let hash = "0123456789abcdef"
+        #expect(PackOfferContext.make(sessionPackNames: ["zz-national-\(hash).roadpack"], manifestPacks: packs) == .onlyMainRoads)
+        #expect(PackOfferContext.make(
+            sessionPackNames: ["zz-national-\(hash).roadpack", "zz-01-\(hash).roadpack"], manifestPacks: packs) == .noRoadMap)
+        #expect(PackOfferContext.make(sessionPackNames: ["zz-01-\(hash).roadpack"], manifestPacks: packs) == .noRoadMap)
+        // An unparseable name stays as it is: a bare manifest name still matches, a stray file does not.
+        #expect(PackOfferContext.make(sessionPackNames: ["zz-national"], manifestPacks: packs) == .onlyMainRoads)
+        #expect(PackOfferContext.make(sessionPackNames: ["zz-national.roadpack"], manifestPacks: packs) == .noRoadMap)
+        #expect(PackOfferContext.make(sessionPackNames: ["zz-national-\(hash).roadpack", "stray.roadpack"], manifestPacks: packs) == .noRoadMap)
+    }
+
+    @Test("The banner's Not now and Never are the card's answers and suppress the offer afterwards (R75.1-4)")
+    func bannerAnswers() async {
+        for never in [false, true] {
+            let defaults = FirstLaunchFixture.Defaults()
+            defer { defaults.remove() }
+            let box = OfferSourcesBox(packs: F.packs)
+            let monitor = PackOfferMonitorTests.make(box, defaults: defaults)
+            await monitor.refreshInputs()
+            monitor.drive(0...30, F.inZZ02, speed: 50)
+            #expect(monitor.drive(31...34, F.inZZ02, speed: 0).last == "zz-02")
+            let hosted = RoadsWarningOffer.make(
+                message: RoadsWarning.noneCovering, offer: monitor.offer, downloadingTitle: nil, recording: false)
+            #expect(RoadsWarningOffer.hostsOffer(hosted))
+
+            let actions = PackOfferActions(monitor: monitor)
+            if never { actions.never() } else { actions.notNow() }
+            #expect(monitor.offer == nil)
+            #expect(monitor.neverNames == (never ? ["zz-02"] : []))
+            monitor.drive(35...80, F.inZZ02, speed: 50)
+            #expect(monitor.drive(81...90, F.inZZ02, speed: 0).allSatisfy { $0 == nil }, "not offered again this drive")
+            #expect(RoadsWarningOffer.make(
+                message: RoadsWarning.noneCovering, offer: monitor.offer, downloadingTitle: nil, recording: false) == nil)
+            if never {
+                monitor.update(now: 91, runActive: false, estimate: F.inZZ02, speedKmh: 0, dialogOpen: false)
+                monitor.drive(92...130, F.inZZ02, speed: 50)
+                #expect(monitor.drive(131...140, F.inZZ02, speed: 0).allSatisfy { $0 == nil }, "Never holds in a new drive")
+            }
+        }
+    }
+
     @Test("The loop gives the offer the session's roads; Download names the region until the drive ends")
     func monitorFlow() async {
         let defaults = FirstLaunchFixture.Defaults()

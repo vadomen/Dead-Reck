@@ -30,6 +30,21 @@ enum PackOfferText {
     static let never = "Never"
 }
 
+/// The three answers to the offer, one wiring for the card and for the roads
+/// banner that hosts the offer (R75.1-4): both reach the same monitor paths.
+@MainActor
+struct PackOfferActions {
+    var download: () -> Void
+    var notNow: () -> Void
+    var never: () -> Void
+
+    init(monitor: PackOfferMonitor) {
+        download = { monitor.download() }
+        notNow = { monitor.notNow() }
+        never = { monitor.never() }
+    }
+}
+
 /// The card wired to the monitor. Its own view, so only it observes `offer`.
 struct PackOfferCard: View {
     var monitor: PackOfferMonitor
@@ -37,11 +52,9 @@ struct PackOfferCard: View {
     var body: some View {
         Group {
             if let offer = shown {
+                let actions = PackOfferActions(monitor: monitor)
                 PackOfferCardView(
-                    offer: offer,
-                    onDownload: { monitor.download() },
-                    onNotNow: { monitor.notNow() },
-                    onNever: { monitor.never() })
+                    offer: offer, onDownload: actions.download, onNotNow: actions.notNow, onNever: actions.never)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
