@@ -348,6 +348,26 @@ struct DemoSensorModelTests {
         #expect(zip(canonical, canonical.dropFirst()).allSatisfy { $0.arrival <= $1.arrival })
         let obd = canonical.filter { if case .obd = $0 { true } else { false } }
         #expect(abs(Double(obd.count) / end - 1 / 0.061) < 0.1)
+        // Pinned independently of the sequencer: every motion sample, OBD
+        // poll and fix up to `end`, sorted by arrival, motion before OBD
+        // before location on a tie.
+        var all: [(Int64, Int, NavigationInput)] = []
+        for n in 0...Int(end * 100) {
+            all.append((Int64(n) * 10_000_000, 0,
+                        .motion(model.motion(at: Double(n) / 100).motion, at: MonotonicTimestamp(nanoseconds: Int64(n) * 10_000_000))))
+        }
+        var k = 0
+        while Int64(k) * 61_000_000 + 59_000_000 <= Int64(end * 1e9) {
+            all.append((Int64(k) * 61_000_000 + 59_000_000, 1, model.obdInput(poll: k)))
+            k += 1
+        }
+        for second in 0...Int(end) {
+            if let fix = model.locationInput(second: second) { all.append((Int64(second) * 1_000_000_000, 2, fix)) }
+        }
+        let pinned = all.sorted { ($0.0, $0.1) < ($1.0, $1.1) }.map(\.2)
+        #expect(canonical == pinned)
+        #expect(pinned.contains { if case .obd(_, let t) = $0 { t.nanoseconds % 10_000_000 == 0 } else { false } },
+                "the grid has OBD/motion ties")
         var outputs: [[NavigationInput]] = []
         for seed in [1, 2, 3] as [UInt64] {
             var sequencer = DemoFeedSequencer(model: model)
