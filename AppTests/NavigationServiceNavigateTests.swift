@@ -530,7 +530,7 @@ struct NavigationServiceNavigateTests {
             try NavigationServiceRoadsTests.compare(sidecarURL: sidecar, header: header, events: early + late,
                                                     packs: [pack])
         }.value
-        #expect(contents.roads?.afterInputs == early.count, "attached where the gate opened")
+        #expect(contents.roads.first?.afterInputs == early.count, "attached where the gate opened")
         #expect(comparison.exact, "\(comparison.report(tolerance: .default))")
         // Only the recording's own scratch directory got files.
         let written = before.writtenSince(sessionID: header.sessionID)
