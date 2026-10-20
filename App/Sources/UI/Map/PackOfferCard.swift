@@ -55,6 +55,7 @@ struct PackOfferCardView: View {
     var onDownload: () -> Void = {}
     var onNotNow: () -> Void = {}
     var onNever: () -> Void = {}
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -68,10 +69,12 @@ struct PackOfferCardView: View {
                 }
                 .fixedSize(horizontal: false, vertical: true)
             }
-            // Three actions in one row; at the largest sizes they stack instead.
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 8) { actions }
+            // Three actions in one row; in the accessibility sizes they stack
+            // instead (three words no longer fit beside each other there).
+            if typeSize.isAccessibilitySize {
                 VStack(spacing: 8) { actions }
+            } else {
+                HStack(spacing: 8) { actions }
             }
         }
         .padding(12)
@@ -81,28 +84,48 @@ struct PackOfferCardView: View {
         .accessibilityElement(children: .contain)
     }
 
+    /// Download takes the width the two short actions leave; all are 48 pt tall.
     @ViewBuilder
     private var actions: some View {
+        let stacked = typeSize.isAccessibilitySize
         Button(action: onDownload) {
-            Text(PackOfferText.download).font(.headline.bold()).lineLimit(1)
+            Text(PackOfferText.download).font(.callout.bold()).lineLimit(1)
                 .frame(maxWidth: .infinity, minHeight: 48)
         }
-        .prominentButton()
+        .buttonStyle(OfferActionStyle(prominent: true))
         .accessibilityLabel("Download \(offer.title), \(MapsText.size(offer.sizeBytes))")
         Button(action: onNotNow) {
-            Text(PackOfferText.notNow).font(.headline).lineLimit(1)
-                .frame(maxWidth: .infinity, minHeight: 48)
+            Text(PackOfferText.notNow).font(.callout.weight(.semibold)).lineLimit(1)
+                .padding(.horizontal, stacked ? 0 : 10)
+                .frame(maxWidth: stacked ? .infinity : nil, minHeight: 48)
         }
-        .buttonStyle(.bordered)
-        .tint(HUDColors.text)
+        .buttonStyle(OfferActionStyle(prominent: false))
+        .fixedSize(horizontal: !stacked, vertical: false)
         .accessibilityLabel("Not now")
         Button(action: onNever) {
-            Text(PackOfferText.never).font(.headline).lineLimit(1)
-                .frame(maxWidth: .infinity, minHeight: 48)
+            Text(PackOfferText.never).font(.callout.weight(.semibold)).lineLimit(1)
+                .padding(.horizontal, stacked ? 0 : 10)
+                .frame(maxWidth: stacked ? .infinity : nil, minHeight: 48)
         }
-        .buttonStyle(.bordered)
-        .tint(HUDColors.text)
+        .buttonStyle(OfferActionStyle(prominent: false))
+        .fixedSize(horizontal: !stacked, vertical: false)
         .accessibilityLabel("Never offer maps for \(offer.title)")
+    }
+}
+
+/// The offer's buttons: a filled accent face for Download, a quiet face for
+/// the others. Own style so three actions fit one row on a 375 pt phone.
+private struct OfferActionStyle: ButtonStyle {
+    var prominent: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(prominent ? Color("AccentForeground") : HUDColors.text)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(prominent ? Color.accentColor : HUDColors.text.opacity(0.12)))
+            .opacity(configuration.isPressed ? 0.7 : 1)
+            .contentShape(RoundedRectangle(cornerRadius: 12))
     }
 }
 
