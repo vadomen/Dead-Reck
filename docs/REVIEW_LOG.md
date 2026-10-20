@@ -903,3 +903,20 @@ Tests (460c34f): Core 1072 tests in 137 suites passed (36 known issues); AppTest
 ### Run 73 summary
 
 1 round; no BLOCKER or MAJOR; 1 MINOR fixed in the ledger commit (R73.1-1). Noted, not a finding: `mapsAfterCards` re-implements RootView's cover condition instead of calling shared code.
+
+## Run 74: Prompt 36 REL-DEMO demo drive (bundled demo pack, deterministic route and sensor streams, demo-owned Navigate pipeline, DEMO badge, roads overlay) and REL-EXPORT developer gate; UX-18 follow-up (main..rel-demo: 7878090..4451765), started 2026-10-20
+
+### Round 1
+
+Reviewers: three opus reviewers in parallel (~4150 changed lines): A Core (Navigation/Demo, MockELMAdapter, Simulation, pack), B App pipeline and isolation (DemoDriveController, RecordingSession/OBDLinkService holds, NavigationService inline roads), C UI, gate, onboarding, docs. A: bit-identical engine output vs 7878090 on the clean drive, seed 1, national pack and no roads (the acceptance notes' second pack file no longer exists under its old name; not a finding).
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R74.1-1 | MAJOR | `MapView.swift`: starting the demo could frame the camera on the user's real position: `resetForDemo()` ran in `.onChange` after the switching render, and the framing task captured that render's `latest` (the last real display fix) — the R61.1-1 captured-copy pattern. | CONFIRMED, FIXED | The model tags its data as demo or app (`resetForDemo(demoOn:)`), `shown(whileDemo:)` masks the other source's track and fix in the switching render (both directions); `MapFraming.chooseOpen` never picks a real fix or the cached location during the demo. Tests `maskedUntilReset`, `demoOpenChoice` (fail on the old logic). |
+| R74.1-2 | MAJOR | `RoadPackPolylines.swift:31`: the guard joining only contiguous edges of a way was untested (mutation survived); the demo pack has 3 non-contiguous same-way neighbours (up to 355 m), which would draw chords across the overlay. | CONFIRMED, FIXED | Tests `polylinesGap` (synthetic gapped way → two lines) and `polylinesNoChords` (every polyline step is a pack segment); the mutation fails both. |
+| R74.1-3 | MINOR | PLAN §6 says Files folder "DriveLogger"; it is FuGPS. | DEFERRED | BACKLOG. |
+| R74.1-4 | MINOR | `site/public/support.html` points to Settings → Sessions (gated in Release) and explains location "Always". | DEFERRED | BACKLOG; before the next site deploy. |
+| R74.1-5 | MINOR | Stop demo's accessibility label differs from its visible text (Voice Control). | DEFERRED | BACKLOG. |
+| R74.1-6 | MINOR | Adapter Connect during the demo is silently held. | DEFERRED | BACKLOG. |
+
+Tests (4451765 + round 1): Core 1096 tests in 139 suites passed (36 known issues); AppTests 655 tests in 94 suites passed.

@@ -124,13 +124,41 @@ struct DemoDriveUITests {
         model.ingest(fix, file: nil, run: 3, isActive: true)
         model.noteLink(.polling(protocolNumber: "6", voltage: nil), adapter: UUID())
         #expect(model.latest != nil && !model.track.runs.isEmpty && model.obdEverConnected)
-        model.resetForDemo()
+        model.resetForDemo(demoOn: true)
         #expect(model.latest == nil && model.track.runs.isEmpty && !model.isReceiving)
         #expect(model.bearing == nil && !model.obdEverConnected && model.runKey == MapRunKey(file: nil, run: nil))
         #expect(model.speed == .none)
         // The next run is a new run again.
         model.ingest(fix, file: nil, run: 3, isActive: true)
         #expect(model.latest != nil)
+    }
+
+    @Test("R74.1-1: a real fix is masked from the switching render on, in both directions")
+    func maskedUntilReset() {
+        let model = MapViewModel()
+        model.ingest(MapPreviewData.fix(1, accuracy: 5), file: nil, run: 3, isActive: true)
+        // Real data, demo not yet on: shown.
+        #expect(model.shown(whileDemo: false).latest != nil)
+        // The render where the demo is on but the reset has not run: masked.
+        #expect(model.shown(whileDemo: true).latest == nil)
+        #expect(model.shown(whileDemo: true).track.runs.isEmpty)
+        model.resetForDemo(demoOn: true)
+        model.ingest(MapPreviewData.fix(2, accuracy: 5), file: nil, run: 4, isActive: true)
+        #expect(model.shown(whileDemo: true).latest != nil)
+        // Stop: the demo's last state is masked before the reset.
+        #expect(model.shown(whileDemo: false).latest == nil)
+        model.resetForDemo(demoOn: false)
+        #expect(model.shown(whileDemo: false).latest == nil)
+    }
+
+    @Test("R74.1-1: the demo wins the opening frame over a real fix and the cached location")
+    func demoOpenChoice() {
+        #expect(MapFraming.chooseOpen(hasFix: true, hasEstimate: false, demo: true, hasCached: true) == .demoRegion)
+        #expect(MapFraming.chooseOpen(hasFix: true, hasEstimate: true, demo: true, hasCached: true) == .estimate)
+        #expect(MapFraming.chooseOpen(hasFix: true, hasEstimate: true, demo: false, hasCached: true) == .fix)
+        #expect(MapFraming.chooseOpen(hasFix: false, hasEstimate: true, demo: false, hasCached: true) == .estimate)
+        #expect(MapFraming.chooseOpen(hasFix: false, hasEstimate: false, demo: false, hasCached: true) == .cached)
+        #expect(MapFraming.chooseOpen(hasFix: false, hasEstimate: false, demo: false, hasCached: false) == .none)
     }
 
     @Test("Record's start UI shows the demo blocker text")

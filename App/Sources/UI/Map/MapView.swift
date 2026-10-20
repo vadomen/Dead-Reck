@@ -79,9 +79,10 @@ struct MapScreen: View {
             timings: session.navigateTimings ?? NavigateConfiguration(), now: .now)
         // DEBUG `-uiFakeHUD …`: synthetic HUD inputs (screenshots).
         let fake = Self.fakes
+        let shown = model.shown(whileDemo: demo != nil)
         GPSMapView(
-            track: fake.scatter ? MapPreviewData.stopTrack : model.track,
-            latest: fake.scatter ? MapPreviewData.stopFixes.last : model.latest,
+            track: fake.scatter ? MapPreviewData.stopTrack : shown.track,
+            latest: fake.scatter ? MapPreviewData.stopFixes.last : shown.latest,
             lastFixInstant: fake.scatter ? .now : model.lastFixInstant,
             isReceiving: fake.isActive ? !fake.gpsLost : model.isReceiving,
             thermal: fake.thermal ? .fair : thermal,
@@ -127,7 +128,7 @@ struct MapScreen: View {
         // map (the real position, the demo's last lap), and the link memory
         // is the new link's.
         .onChange(of: demo != nil) {
-            model.resetForDemo()
+            model.resetForDemo(demoOn: demo != nil)
             model.noteLink(link?.state, adapter: link?.rememberedAdapterID)
         }
         // The card may only appear while the map is on screen (UX-8).
@@ -961,19 +962,26 @@ struct GPSMapView: View {
         let polled = await navigation?.refreshed()
         let nav = showsEstimate ? polled : nil
         if Task.isCancelled { return }
-        if let fix = latest {
-            frame(center: fix.coordinate, accuracy: fix.horizontalAccuracy)
-        } else if let nav {
-            frame(center: nav.position.coordinate, accuracy: nav.semiMajorM / 3)
-        } else if let demo {
+        let cached = cachedLocation()
+        switch MapFraming.chooseOpen(
+            hasFix: latest != nil, hasEstimate: nav != nil, demo: demo != nil, hasCached: cached != nil
+        ) {
+        case .fix:
+            if let fix = latest { frame(center: fix.coordinate, accuracy: fix.horizontalAccuracy) }
+        case .estimate:
+            if let nav { frame(center: nav.position.coordinate, accuracy: nav.semiMajorM / 3) }
+        case .demoRegion:
             // The demo area, never the user's position (REL-DEMO).
-            position = .region(demo.region)
-        } else if let cached = cachedLocation() {
+            if let demo { position = .region(demo.region) }
+        case .cached:
             // Camera only: no dot is drawn for it.
-            frame(
-                center: CLLocationCoordinate2D(latitude: cached.latitude, longitude: cached.longitude),
-                accuracy: cached.horizontalAccuracy
-            )
+            if let cached {
+                frame(
+                    center: CLLocationCoordinate2D(latitude: cached.latitude, longitude: cached.longitude),
+                    accuracy: cached.horizontalAccuracy
+                )
+            }
+        case .none: break
         }
     }
 

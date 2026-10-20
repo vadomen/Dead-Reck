@@ -10,6 +10,10 @@ import Observation
 final class MapViewModel {
     private(set) var track = GPSTrack()
     private(set) var latest: LocationSample?
+    /// Which source the model's data belongs to (R74.1-1): set by
+    /// `resetForDemo`, which runs one render after the switch, so the view
+    /// masks the data (`shown(whileDemo:)`) in between.
+    private(set) var isDemoSource = false
     /// Follow state; lives here so it survives the tab's view being rebuilt.
     var follow = FollowController()
     /// Direction of travel for heading-up (display only); nil until a good one.
@@ -183,7 +187,8 @@ final class MapViewModel {
     /// "was up" memory, manual flags), so neither the user's real position
     /// nor the demo's last lap is ever drawn for the other. The next run or
     /// display fix fills it again.
-    func resetForDemo() {
+    func resetForDemo(demoOn: Bool) {
+        isDemoSource = demoOn
         track = GPSTrack()
         latest = nil
         lastFixInstant = nil
@@ -201,6 +206,12 @@ final class MapViewModel {
             stationaryWrites += 1
         }
         refreshSpeed()
+    }
+
+    /// The data the map may draw and frame on while the demo is `demoOn`: nil
+    /// track and fix when the model still holds the other source's.
+    func shown(whileDemo demoOn: Bool) -> (track: GPSTrack, latest: LocationSample?) {
+        isDemoSource == demoOn ? (track, latest) : (GPSTrack(), nil)
     }
 
     /// Remembers a fix the recorder staged so the map can show it. `id` is the

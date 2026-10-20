@@ -345,4 +345,47 @@ struct DemoDriveTests {
         #expect(six.isOneway && six.highwayClass == .primary && six.points.count == 2)
         #expect(pack.polylines(classes: [.primary]).map(\.osmWayID) == [6])
     }
+
+    @Test("Polylines do not join consecutive edges of one way across a gap (synthetic, R74.1-2)")
+    func polylinesGap() throws {
+        // Way 7's third node has no location (outside the extract): the way
+        // splits into the edges at offsets 0 (points 0–1) and 3 (points
+        // 3–4), consecutive in the pack but not contiguous. Joining them
+        // would draw a chord from (10, 0) to (30, 0) over the missing node.
+        let p = [RoadFixture.point(0, 0), RoadFixture.point(10, 0), RoadFixture.point(30, 0), RoadFixture.point(40, 0)]
+        func node(_ id: Int, _ q: RoadPoint) -> String { "n\(id)x\(RoadFixture.degrees(q.lonE7))y\(RoadFixture.degrees(q.latE7))" }
+        let line = "w7 v1 dV c0 t i0 u Thighway=residential N" + [node(1, p[0]), node(2, p[1]), "n3xy", node(4, p[2]), node(5, p[3])].joined(separator: ",")
+        let pack = try RoadFixture.build([line])
+        #expect(RoadFixture.edges(of: pack, way: 7).map(\.wayPointOffset) == [0, 3])
+        #expect(RoadFixture.edgeIndices(of: pack, way: 7) == [0, 1], "the two pieces are consecutive pack edges")
+        let lines = pack.polylines()
+        #expect(lines.map(\.points) == [[p[0], p[1]], [p[2], p[3]]])
+        #expect(lines.allSatisfy { $0.osmWayID == 7 && $0.highwayClass == .residential && !$0.isOneway })
+    }
+
+    @Test("RoadPack.polylines on the demo pack: every consecutive point pair is a pack segment (no chords across a way's gaps)")
+    func polylinesNoChords() throws {
+        let (pack, _, _) = try Self.fixture()
+        struct Pair: Hashable { var a: RoadPoint; var b: RoadPoint }
+        var segments = Set<Pair>()
+        var gaps = 0
+        var previous: RoadEdgeRecord?
+        for e in 0..<pack.edgeCount {
+            let r = pack.edge(e)
+            let first = Int(r.firstPoint), count = Int(r.pointCount)
+            for k in first..<(first + count - 1) { segments.insert(Pair(a: pack.point(k), b: pack.point(k + 1))) }
+            if let q = previous, q.osmWayID == r.osmWayID, q.wayPointOffset + q.pointCount - 1 != r.wayPointOffset { gaps += 1 }
+            previous = r
+        }
+        // The check bites only if the pack has a way whose consecutive edges
+        // leave a gap (the bundled pack has 3).
+        #expect(gaps >= 1, "the demo pack has a gapped way")
+        for classes in [Set(RoadClass.allCases), [.primary, .secondary, .tertiary]] {
+            for line in pack.polylines(classes: classes) {
+                for k in 0..<(line.points.count - 1) {
+                    #expect(segments.contains(Pair(a: line.points[k], b: line.points[k + 1])), "way \(line.osmWayID): chord at point \(k)")
+                }
+            }
+        }
+    }
 }
