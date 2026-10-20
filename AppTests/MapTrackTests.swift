@@ -157,8 +157,9 @@ struct MapTrackTests {
         }
     }
 
-    @Test("Runs share endpoints and change on band change")
+    @Test("Runs share endpoints and change on a gap; fair fixes never join the line")
     func runs() {
+        // Adapted for UX-35: the old version expected good/fair/good runs.
         var track = GPSTrack()
         track.append(fix(t: 0, accuracy: 5))
         track.append(fix(t: 2, accuracy: 5))
@@ -166,10 +167,73 @@ struct MapTrackTests {
         track.append(fix(t: 6, accuracy: 50))
         track.append(fix(t: 8, accuracy: 5))
         let runs = track.runs
-        #expect(runs.map(\.band) == [.good, .fair, .good])
-        #expect(runs[1].points.first == runs[0].points.last)
-        #expect(runs[2].points.first == runs[1].points.last)
-        #expect(runs[2].points.last?.t == 8)
+        #expect(runs.map(\.band) == [.good])
+        #expect(runs[0].points.map(\.t) == [0, 2, 8])
+        #expect(track.faded.map(\.t) == [4, 6])
+        #expect(track.faded.map(\.band) == [.fair, .fair])
+    }
+
+    @Test("A stationary run of 20 fair and poor fixes scattered 50 m gives 0 runs and 20 dots")
+    func stationaryScatter() {
+        var track = GPSTrack()
+        for i in 0..<20 {
+            let a = Double((i * 7) % 11 - 5) * 0.0001
+            let b = Double((i * 3) % 9 - 4) * 0.0001
+            track.append(fix(t: Double(i) * 2, accuracy: i % 2 == 0 ? 60 : 110, lat: a, lon: b))
+        }
+        #expect(track.points.isEmpty)
+        #expect(track.runs.isEmpty)
+        #expect(track.faded.count == 20)
+        #expect(Set(track.faded.map(\.band)) == [.fair, .poor])
+    }
+
+    @Test("Mixed good and fair: runs only from good points, faded dots never bridge")
+    func mixedGoodFair() {
+        var track = GPSTrack()
+        track.append(fix(t: 0, accuracy: 5))
+        track.append(fix(t: 2, accuracy: 5))
+        // Fair dots for 100 s, then good again: past gapThreshold, so a new segment.
+        for i in 0..<25 { track.append(fix(t: 4 + Double(i) * 4, accuracy: 80)) }
+        track.append(fix(t: 104, accuracy: 5))
+        track.append(fix(t: 106, accuracy: 5))
+        #expect(track.runs.count == 2)
+        #expect(track.runs.allSatisfy { $0.band == .good })
+        #expect(track.points.filter(\.segmentStart).count == 2)
+        #expect(track.faded.count == 25)
+        // A short run of fair dots (within the threshold) does not split the line.
+        var short = GPSTrack()
+        short.append(fix(t: 0, accuracy: 5))
+        short.append(fix(t: 4, accuracy: 80))
+        short.append(fix(t: 8, accuracy: 300))
+        short.append(fix(t: 12, accuracy: 5))
+        #expect(short.runs.count == 1)
+        #expect(short.runs[0].points.map(\.t) == [0, 12])
+        #expect(short.faded.map(\.band) == [.fair, .poor])
+    }
+
+    @Test("Faded dots keep 2 s spacing, the cap, and share time dedupe with the line")
+    func fadedRules() {
+        var track = GPSTrack()
+        track.append(fix(t: 0, accuracy: 50))
+        track.append(fix(t: 1, accuracy: 50))
+        track.append(fix(t: 2, accuracy: 500))
+        track.append(fix(t: 2, accuracy: 5))
+        #expect(track.faded.map(\.t) == [0, 2])
+        #expect(track.points.isEmpty)
+        for i in 0..<300 { track.append(fix(t: 10 + Double(i) * 2, accuracy: 3000)) }
+        #expect(track.faded.count == GPSTrack.maxFaded)
+        #expect(track.faded.last?.t == Double(10 + 299 * 2))
+    }
+
+    @Test("Bad fixes stay faded dots and never join the line")
+    func badFixesFaded() {
+        var track = GPSTrack()
+        track.append(fix(t: 0, accuracy: 5))
+        track.append(fix(t: 2, accuracy: 2000))
+        track.append(fix(t: 4, accuracy: 5))
+        #expect(track.faded.map(\.band) == [.bad])
+        #expect(track.runs.count == 1)
+        #expect(track.runs[0].points.map(\.t) == [0, 4])
     }
 }
 

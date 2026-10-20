@@ -149,17 +149,17 @@ struct MapNavigationTests {
 
     // MARK: faded fixes
 
-    @Test("Fixes over 1000 m are faded dots, outside the polyline")
+    @Test("Fixes over 15 m are faded dots, outside the polyline")
     func fadedSplit() {
         var track = GPSTrack()
         track.append(fix(t: 0, accuracy: 5))
-        track.append(fix(t: 2, accuracy: 1000))      // poor, still in the line
+        track.append(fix(t: 2, accuracy: 1000))      // poor: faded (UX-35)
         track.append(fix(t: 4, accuracy: 1000.5))    // bad: faded
         track.append(fix(t: 6, accuracy: 5000))      // bad: faded
         track.append(fix(t: 8, accuracy: 5))
-        #expect(track.points.map(\.t) == [0, 2, 8])
-        #expect(track.faded.map(\.t) == [4, 6])
-        #expect(track.runs.allSatisfy { $0.band != .bad })
+        #expect(track.points.map(\.t) == [0, 8])
+        #expect(track.faded.map(\.t) == [2, 4, 6])
+        #expect(track.runs.allSatisfy { $0.band == .good })
         // No bridge or segment break caused by them.
         #expect(track.points.filter(\.segmentStart).count == 1)
     }

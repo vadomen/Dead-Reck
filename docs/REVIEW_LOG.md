@@ -857,3 +857,17 @@ Tests (67e9f9c): Core 1069 tests in 136 suites passed (36 known issues); AppTest
 ### Run 70 summary
 
 2 rounds; 1 MAJOR fixed (R70.1-1), 0 rejected, 1 MINOR deferred (R70.1-2).
+
+## Run 71: UX-35 GPS track line only from good fixes, debrief rows, R70.1-2 (main..ux35-track: 5f79285..e9b5a67), started 2026-10-20
+
+### Round 1
+
+Reviewer: one opus reviewer (~150 changed lines, App-only logic). Focus: good-only `points`/`runs`, fair/poor/bad to `faded` with band kept, shared `lastSeenT` dedupe, `gapThreshold` against the last good point after faded dots, adapted tests (`runs`, `fadedSplit`: stricter, not weaker), DEBUG `-uiFakeHUD scatter` gating, privacy, docs vs code. No mutations (App-only; no specific App finding); author's logic -> test list judged by reading.
+
+No findings.
+
+Tests (e9b5a67): Core 1069 tests in 136 suites passed (36 known issues); AppTests 603 tests in 90 suites passed.
+
+### Run 71 summary
+
+1 round; 0 fixed, 0 rejected, 0 deferred. R70.1-2 (run 70) closed by this range (5f79285).

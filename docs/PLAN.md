@@ -302,7 +302,7 @@ Replay only the current connection's init (M6.1-1) and remembered poll plan and 
 5. **Airplane mode on first launch:** only "Download maps later" is offered, and the app works without maps.
 6. **On cellular:** the button says "on Wi-Fi" and waits for Wi-Fi; "Use cellular data" sets the Settings → Maps toggle.
 7. **Leaving installed coverage while driving:** nothing shows in motion; one offer at the next real stop (OBD speed 0 for 3 s); the card hides on drive-off; if unanswered it is shown again at the next stop, at most 3 times per region per drive; once answered (Download, Not now, Never), not again in that drive.
-8. **"Never for this region":** persisted across launches; Reset in Settings → Maps → "Not offered on the road" brings the offer back on a later drive.
+8. **"Never":** persisted across launches; Reset in Settings → Maps → "Not offered on the road" brings the offer back on a later drive.
 9. **Cost of the 1 Hz offer loop** while recording in the background (CPU, thermal, battery).
 10. **Real 5xx:** an interrupted download after a real 5xx resumes (the partial is kept).
 11. **Wi-Fi ↔ cellular handoff:** the rows and the Offline note show the correct state afterwards.
@@ -326,6 +326,9 @@ Replay only the current connection's init (M6.1-1) and remembered poll plan and 
 2. **No OBD:** on a fresh install, before pairing any adapter, the HUD reads "No OBD" (muted, not the warning colour); after a connected adapter is unplugged it reads "OBD lost" in the warning colour.
 3. **Adapter name after Forget:** Settings → OBD adapter after Forget A and then tapping B (or B out of range) shows B, never A; a remembered adapter still auto-reconnects at launch and after unplug/replug.
 4. **Settings order:** the root is OBD adapter, Maps, Mount and orientation; About; Developer (Test drive recording, Sessions, Console). In Release, Console is behind the 7-tap gate.
+
+### Added by UX-35 GPS track (prompt 34, branch ux35-track) — not verified on a device
+1. **UX-35 — long stop under jamming:** the GPS track shows faded dots (yellow/orange/red by accuracy), no line; a line is drawn only from fixes <= 15 m.
 
 ### Added by UX-17 / UX-16 maps network (prompt 28) — not verified on a device
 1. **Queued pack starts on Wi-Fi:** within a few seconds, with "Use cellular data" on and with it off.

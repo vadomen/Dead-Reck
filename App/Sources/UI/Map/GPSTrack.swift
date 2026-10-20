@@ -59,14 +59,18 @@ struct GPSTrack: Sendable, Equatable {
     static let initialMinInterval = 2.0
     /// A jump in fix time larger than this starts a new segment.
     static let gapSeconds = 30.0
-    /// Fixes worse than 1000 m (`AccuracyBand.bad`) are not part of the
-    /// line: they are kept apart as faded dots, newest `maxFaded` only.
+    /// Only `AccuracyBand.good` fixes (15 m or better) form the line. Fair,
+    /// poor and bad fixes are kept apart as faded dots, newest `maxFaded`
+    /// only. 100 dots at the 2 s spacing cover the last 200 s; kept at 100
+    /// because every dot is a MapKit annotation and a stop under jamming only
+    /// needs the recent scatter, not its whole history.
     static let maxFaded = 100
 
     private(set) var points: [TrackPoint] = []
     /// Cached; recomputed only when `points` changes.
     private(set) var runs: [TrackRun] = []
-    /// Fixes with accuracy over 1000 m, oldest first, capped at `maxFaded`.
+    /// Fixes with accuracy over 15 m (fair, poor, bad), oldest first, capped
+    /// at `maxFaded`.
     /// Never in `points` or `runs`, so they cannot draw a line or bridge a gap.
     private(set) var faded: [TrackPoint] = []
     private(set) var minInterval = GPSTrack.initialMinInterval
@@ -93,7 +97,7 @@ struct GPSTrack: Sendable, Equatable {
         // Same fix re-delivered by the 1 Hz tick, or an older one: skip.
         if let lastSeenT, t <= lastSeenT { return }
         lastSeenT = t
-        if band == .bad {
+        if band != .good {
             if let last = faded.last, t - last.t < Self.initialMinInterval { return }
             faded.append(TrackPoint(
                 latitude: fix.latitude, longitude: fix.longitude,
