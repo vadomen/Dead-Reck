@@ -60,6 +60,65 @@ extension RoadsWarning {
     }
 }
 
+/// The Download action on the roads warning (B3, prompt 38): when the line says
+/// "No road pack covers this area" (or there are no packs at all) and the
+/// manifest has a region for the place, the line offers **Download <region>**.
+/// It is the at-a-stop offer (`PackOfferMonitor`) shown in the banner: the same
+/// rule (a confident estimate outside every region pack for 30 s, the car
+/// stopped for 3 s, never in motion, "Not now" / "Never" respected) and the same
+/// downloader (Wi-Fi / cellular policy; paused while Record is active), so the
+/// banner never offers what the card would not. While the banner hosts the
+/// offer the card is not shown (one surface, not two).
+struct RoadsWarningDownload: Equatable, Sendable {
+    enum State: Equatable, Sendable {
+        /// The offer is up: a button.
+        case offer
+        /// Download tapped; queued or running: a line, no button.
+        case queued
+    }
+
+    var title: String
+    var sizeBytes: Int64?
+    var state: State
+    /// A recording is active: the downloader waits for it to end.
+    var recording: Bool
+
+    /// The button's label.
+    var buttonText: String {
+        recording ? "Download \(title) after recording" : "Download \(title)"
+    }
+
+    /// The line that replaces the button once it was tapped.
+    var queuedText: String {
+        recording ? "\(title) downloads after the recording" : "Downloading \(title)\u{2026}"
+    }
+}
+
+enum RoadsWarningOffer {
+    /// The warnings that the driver can fix by downloading a region.
+    static func offersDownload(message: String?) -> Bool {
+        message == RoadsWarning.noneCovering || message == RoadsWarning.noPacks
+    }
+
+    /// The banner's download, or nil: no such warning, or neither an offer
+    /// nor a queued download to speak of.
+    static func make(
+        message: String?, offer: PackOfferMonitor.Offer?, downloadingTitle: String?, recording: Bool
+    ) -> RoadsWarningDownload? {
+        guard offersDownload(message: message) else { return nil }
+        if let offer {
+            return RoadsWarningDownload(title: offer.title, sizeBytes: offer.sizeBytes, state: .offer, recording: recording)
+        }
+        if let downloadingTitle {
+            return RoadsWarningDownload(title: downloadingTitle, sizeBytes: nil, state: .queued, recording: recording)
+        }
+        return nil
+    }
+
+    /// The card is not shown while the banner hosts the offer.
+    static func hostsOffer(_ download: RoadsWarningDownload?) -> Bool { download?.state == .offer }
+}
+
 /// Observed by the map. `message` is written only when it changes.
 @MainActor
 @Observable

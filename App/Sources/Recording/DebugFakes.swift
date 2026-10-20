@@ -28,6 +28,22 @@ enum DebugFakes {
             refresh: connection == .none ? .failed(offline: true) : .ok)
     }
 
+    /// `-uiFakeRemovalPending 1`: one pack marked for removal and a run
+    /// active (B5): the row offers Download again, and Remove warns that
+    /// navigation loses the map until the app restarts.
+    @MainActor
+    static var removalModel: MapsModel {
+        MapsModel(
+            status: RoadPackLibrary.Status(
+                packs: [
+                    .preview("national", bytes: 41_000_000, hash: "0f0e0d0c", coverage: false),
+                    .preview("region-a", hash: "a1b2c3d4", pending: true),
+                    .preview("region-b", hash: "5e6f7a8b"),
+                ],
+                scansCompleted: 1, storeBytes: 134_000_000),
+            manifest: MapsPreviewData.manifest, downloads: PackDownloader.Snapshot(), refresh: .ok, runActive: true)
+    }
+
     /// `-uiFakeConnection none|cellular|metered|wifi`.
     static func connection(_ name: String?) -> PackDownloadRules.Connection? {
         switch name {

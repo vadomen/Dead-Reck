@@ -307,7 +307,7 @@ struct FollowCameraRateTests {
                 smoother: &smoother, gate: &gate, zoom: &zoom, publishPending: &pending,
                 published: published, headingUp: headingUp, frozen: false,
                 target: estimate ? 40 * now : nil,   // turning 40 deg/s: the smoother keeps moving
-                hasEstimate: estimate, hasCenter: true, semiMajorM: estimate ? 5 : nil, dt: tick,
+                hasEstimate: estimate, hasCenter: true, ellipse: estimate ? FitEllipse(semiMajorM: 5) : nil, dt: tick,
                 now: t(now)
             ) {
                 result.writes.append(now)
@@ -367,7 +367,7 @@ struct FollowCameraRateTests {
             FollowCameraTick.decide(
                 smoother: &smoother, gate: &gate, zoom: &zoom, publishPending: &pending,
                 published: published, headingUp: false, frozen: false, target: nil,
-                hasEstimate: true, hasCenter: true, semiMajorM: nil, dt: 0.1, now: t(at)
+                hasEstimate: true, hasCenter: true, ellipse: nil, dt: 0.1, now: t(at)
             )
         }
         #expect(tick(true, 1.0) != nil)
@@ -388,7 +388,7 @@ struct FollowCameraRateTests {
         let write = FollowCameraTick.decide(
             smoother: &smoother, gate: &gate, zoom: &zoom, publishPending: &pending,
             published: true, headingUp: true, frozen: true, target: 90,
-            hasEstimate: true, hasCenter: true, semiMajorM: nil, dt: 0.1, now: t(1.05)
+            hasEstimate: true, hasCenter: true, ellipse: nil, dt: 0.1, now: t(1.05)
         )
         #expect(write?.heading == 90)
     }
