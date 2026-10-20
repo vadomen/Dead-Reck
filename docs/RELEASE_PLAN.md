@@ -20,8 +20,8 @@ Done / in code / open, per item. "In code (prompt 35)" = branch `release-blocker
 | Permission texts for a driver (2.3) | in code (prompt 35) | |
 | Privacy manifest (2.2) | in code (prompt 35) | |
 | Release surfaces: launch arguments and `DebugAutoRecord` inert in Release (Phase 1 item 6) | in code (prompt 35) | |
-| Demo mode for App Review (Phase 1 item 5) | open, user decides | REL-DEMO |
-| Export of recordings vs the privacy-manifest reason codes (2.2) | open, user decides (decided 2026-10-20: keep the codes) | REL-EXPORT |
+| Demo mode for App Review (Phase 1 item 5) | done in code (prompt 36, branch `rel-demo`); device checks open (PLAN §6) | REL-DEMO |
+| Export of recordings vs the privacy-manifest reason codes (2.2) | done in code (prompt 36): codes kept, Record, Sessions and Console behind the 7-tap gate in Release; device checks open (PLAN §6) | REL-EXPORT |
 | Ukrainian + English localisation (D5, 2.3) | open | UX-15 |
 | First launch as instructions (Phase 1 item 3) | in code (prompt 32, UX-18) | UX-18 |
 | Manual "GPS off" + GPS state chip (D8) | open | UX-9 (a) + UX-22 |
@@ -72,8 +72,8 @@ Starting decisions (from the user, 2026-10-16):
 2. **UX-8 + N3.4**: packs are downloaded into Application Support (not Documents) with the attribute `isExcludedFromBackup = true`. This is a requirement of the iOS Data Storage Guidelines: content that can be downloaded again must not end up in the iCloud backup, and a violation is a known cause of rejection. The `Documents/RoadPacks/` bridge remains only as a developer path.
 3. **First launch (onboarding)**: what the app is and what it needs (an ELM327 BLE adapter), permissions one at a time and in context, pack selection and download, a one-time phone-mounting checklist (UX-1 (b)).
 4. **"No OBD" scenario** (UX-1 (d)): a plain GPS position with a "Connect OBD" hint. Without it the app is empty for the reviewer (see 2.4, 2.1 App Completeness).
-5. **Demo mode for App Review**: a hidden switch (for example Settings → About → 5 taps) that starts `SimulatedOBDLink` and `SimulatedSensors` on the device in a Release build. This is the most reliable way to show the functionality to someone without a car and an adapter. Check that turning it on does not change Record or the log format. Note: "About → 5 taps" conflicts with the Diagnostics gate (7 taps on Version in About, prompt 25), so demo mode needs a different gesture, to be chosen when demo mode is built. *(2026-10-20: tracked as REL-DEMO in `docs/BACKLOG_UX.md`; proposal: Settings → Developer → "Demo drive (simulated car)", visible in Release, so no hidden gesture; the user decides.)*
-6. **Remove the "research" surfaces for an ordinary user**: Console and Record only in Settings → Developer; the SIMULATED badge visible only in demo mode; `DebugAutoRecord` is already under `#if DEBUG`, check the remaining launch arguments (`uiScreen`, `uiFakeHUD`; `uiTab` was replaced by `uiScreen` in prompt 30).
+5. **Demo mode for App Review**: the most reliable way to show the functionality to someone without a car and an adapter. ~~A hidden switch (for example Settings → About → 5 taps)~~ *(2026-10-20, prompt 36, decided and in code as REL-DEMO in `docs/BACKLOG_UX.md`: Settings → Developer → "Demo drive (simulated car)", visible in Release, so no hidden gesture and no clash with the 7-tap Diagnostics gate.)* It runs Navigate on a deterministic synthetic drive over a bundled read-only demo road pack, with simulated OBD speed and motion on demo-owned instances of the real session, navigation service and engine; a DEMO badge and "Stop demo" show on the map; it works offline and writes nothing (no recording, sidecar or files). It does not change Record or the log format.
+6. **Remove the "research" surfaces for an ordinary user**: Console, Record and Sessions only in Settings → Developer, and in Release behind the 7-tap gate on Version in About (REL-EXPORT, prompt 36; Developer shows only "Demo drive" until the gate opens); the SIMULATED badge visible only in demo mode; `DebugAutoRecord` is already under `#if DEBUG`, check the remaining launch arguments (`uiScreen`, `uiFakeHUD`; `uiTab` was replaced by `uiScreen` in prompt 30).
 7. **Safety disclaimer**: "do not interact with the phone while driving; the position estimate is approximate". Shown at first launch and in About. The uncertainty ellipse is already honest, which is a plus.
 
 ## Phase 2. Compliance with Apple requirements
@@ -96,7 +96,7 @@ The manifest is `App/Resources/PrivacyInfo.xcprivacy` (bundled; guarded by `Requ
 | file `.modificationDate` | Core `RoadPackCatalog` | `NSPrivacyAccessedAPICategoryFileTimestamp`, `C617.1` |
 | `volumeAvailableCapacity*` | Core `DiskSpace` | `NSPrivacyAccessedAPICategoryDiskSpace`, `E174.1` + `85F4.1` |
 
-Decided 2026-10-20: keep the reason codes CA92.1, 35F9.1, C617.1, E174.1 and 85F4.1. Codes 35F9.1, E174.1 and 85F4.1 say the data may not be sent off-device; the app never sends it, but a user-initiated export carries absolute uptime (header `referenceUptimeSeconds`) and free-space bytes (`lowDiskSpace` rows). See REL-EXPORT in `docs/BACKLOG_UX.md` (option: Record and Sessions behind the 7-tap gate in Release; a log-format change only if Apple asks).
+Decided 2026-10-20: keep the reason codes CA92.1, 35F9.1, C617.1, E174.1 and 85F4.1. Codes 35F9.1, E174.1 and 85F4.1 say the data may not be sent off-device; the app never sends it, but a user-initiated export carries absolute uptime (header `referenceUptimeSeconds`) and free-space bytes (`lowDiskSpace` rows). Resolved by REL-EXPORT (`docs/BACKLOG_UX.md`, prompt 36): in Release, Record (Test drive recording), Sessions and Console sit behind the 7-tap gate on Version in About, so export is developer-only and the settings route guard refuses them while the gate is closed; existing recordings stay reachable through Files. A log-format change only if Apple asks.
 
 Also: `NSPrivacyTracking = false`, no tracking domains, `NSPrivacyCollectedDataTypes` empty if no data leaves the device. Core is statically linked into the app, so a manifest in the app target covers both modules. The file is added to `project.yml` as a resource, after which `xcodegen generate` is needed.
 
@@ -106,7 +106,7 @@ Also: `NSPrivacyTracking = false`, no tracking domains, `NSPrivacyCollectedDataT
 - [ ] `UIFileSharingEnabled`: keep (this is how Record logs reach Files), but make sure Documents holds nothing technical: packs move to Application Support.
 
 ### 2.4 App Review Guidelines: risky points
-- **2.1 App Completeness.** The reviewer has no car with OBD. What to provide: the demo mode (Phase 1 item 5), a video of a real drive (link in the Review Notes) and instructions in 3–4 steps. This is the **main rejection risk**.
+- **2.1 App Completeness.** The reviewer has no car with OBD. What to provide: the demo drive (Settings → Developer → "Demo drive (simulated car)", Phase 1 item 5; in code, prompt 36), a video of a real drive (link in the Review Notes) and instructions in 3–4 steps. This is the **main rejection risk**.
 - **4.2 Minimum Functionality.** Without OBD the app must still do something useful (map + GPS) and explain clearly why the adapter is needed.
 - **2.5.4 Background modes.** Use only for their intended purpose, otherwise rejection.
 - **5.1.1 Data collection.** Privacy policy at a URL and in the app. Permissions are requested in context, without coercion.
@@ -156,6 +156,23 @@ Also: `NSPrivacyTracking = false`, no tracking domains, `NSPrivacyCollectedDataT
 - [ ] Review Notes: what the app is, how to test without a car (demo mode), the video link, an explanation of background modes and Bluetooth.
   - Road maps are OpenStreetMap data files (not code), downloaded after install from the app's own website over HTTPS and verified by SHA-256 and the pack's content hash; the app works without them.
 
+### Review Notes (draft)
+
+Plain English, ready to paste into App Store Connect. Fill in the video link before submitting.
+
+```
+FuGPS estimates the car's position when GPS is absent or distorted. It uses the car's speed, read over OBD-II, and the phone's motion sensors, and can match the position to offline road maps.
+
+Normal use needs an OBD-II Bluetooth LE adapter (ELM327-compatible) in the car, so you can test without a car using the built-in demo:
+1. Open Settings (the gear on the map) -> Developer -> Demo drive (simulated car).
+2. The map shows a simulated drive, marked with a DEMO badge.
+3. After about a minute the simulated GPS is lost, and the position keeps moving along the roads.
+4. Tap Stop demo to return to the normal map.
+The demo works offline and stores nothing. A video of a real drive: <VIDEO LINK>
+
+Bluetooth is used only to talk to the OBD-II adapter. Location (When In Use) gives the map position and GPS fixes. Navigate keeps a background location activity session so the position continues while the screen is locked during a drive. Nothing leaves the phone, and there are no accounts or analytics. Road maps are optional OpenStreetMap data downloaded from our website.
+```
+
 ## Phase 7. Submission and release
 1. Submit for Review with **Manual release** (you publish yourself after approval).
 2. **Phased release** over 7 days: can be paused if crashes appear.
@@ -194,5 +211,5 @@ and the bundle ID. This is one small prompt for ios-ui-engineer / sensors-loggin
 
 ## Open questions
 - D1–D9 above are decided (D7 revised 2026-10-20).
-- Is Record visible to an ordinary user at all (Settings → Developer behind a switch)?
+- ~~Is Record visible to an ordinary user at all (Settings → Developer behind a switch)?~~ Decided 2026-10-20 (REL-EXPORT): no, in Release it is behind the 7-tap gate.
 - Should we collect user consent to hand over recordings for research (in the future)? If so, that is already "Data Collected" and a separate section of the privacy policy, so better not in 1.0.
