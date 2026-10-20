@@ -7,7 +7,7 @@ sidecar exists so that `replay_nav --as-live --compare` can prove a Mac replay
 reproduces the drive exactly, or explain why it does not.
 
 - It is separate from the log format and versioned on its own (`NavSidecar.version`,
-  currently 2). The logger and `inspect_log` never read it. `LogStore` shares
+  currently 3). The logger and `inspect_log` never read it. `LogStore` shares
   and deletes it together with its recording. `.gitignore` covers it
   (`*.jsonl`), and it holds real positions, so it stays private like the
   recording.
@@ -27,8 +27,8 @@ are written as the strings `"inf"`, `"-inf"` and `"nan"`.
 | `header` | first line, written and flushed at Start | `sidecarVersion`, `sessionID`, `seed`, `configHash`, `configJSON`, `appBuild`, `buildConfiguration` (optional) |
 | `estimate` | each whole second of session time, from the engine's initialisation on | `t`, `latitude`, `longitude`, `headingDeg`, `headingStdDeg`, `semiMajorM`, `semiMinorM`, `orientationDeg` (95 % ellipse), `converged`, `speedScale`, `droppedInputs`, `msPerStep`, `maxStepMs`, `onRoadShare` (v2, optional) |
 | `pin` | at each confirmed manual fix (`manualFix` row) | `t` (the fix's), `latitude`, `longitude` (where the driver put the pin), `mapSpanM`, `prior` (an `estimate` object: the engine just before it ingested the pin; absent when the pin initialised the engine) |
-| `roads` (v2) | once, when a road network becomes active | `t` (optional), `afterInputs`, `roads` (per pack: `contentHash`, `formatVersion`, `osmTimestamp`, `gridID`), `roadSetHash` |
-| `roadsSelection` (within v2) | a road selection attempt, when its outcome is known and it differs from the last such line; identical repeats as one line, at the next change, at an attach or at the end | `t`, `afterInputs`, `recordedAfterInputs`, `request` (`radiusM`), `candidates` (per pack file: `name`, `state`, `reason` or `covering`; absent for `unfinished`), `outcome`, `packs` (optional), `reason` (optional), `repeats` and `firstT` (optional, a line of repeats only) |
+| `roads` (v2) | when a road network becomes active; v3: again at each extension to a larger set, each line the whole set | `t` (optional), `afterInputs`, `roads` (per pack: `contentHash`, `formatVersion`, `osmTimestamp`, `gridID`), `roadSetHash` |
+| `roadsSelection` (within v2) | a road selection attempt, when its outcome is known and it differs from the last such line; identical repeats as one line, at the next change, at an attach or at the end | `t`, `afterInputs`, `recordedAfterInputs`, `request` (`radiusM`), `candidates` (per pack file: `name`, `state`, `reason` or `covering`; absent for `unfinished`), `outcome`, `packs` (optional), `reason` (optional), `repeats` and `firstT` (optional, a line of repeats only), `trigger` (v3, optional) |
 
 - **pin.prior** is taken when the pin is written, about 3 s after the tap
   (`engine.estimate(at: t)` for a past `t` returns the current state), so while
@@ -57,11 +57,20 @@ are written as the strings `"inf"`, `"-inf"` and `"nan"`.
   of the cloud on a road at the last road update. The key is omitted when
   it is nil (no roads, or no road update yet), so a no-roads `estimate` line
   is byte-identical to a v1 line.
-- **roads** (v2): written once, when the run attaches a road network
+- **roads** (v2): written when the run attaches a road network
   (`LiveNavigationRun.attachRoads`, docs/NAVIGATION.md "Live in the app").
-  A v2 sidecar without a `roads` line used no roads. Its line comes where
+  A sidecar without a `roads` line used no roads. Its line comes where
   the attach happened: right after the header for a network given at
   Start, else between the lines of the inputs before and after it.
+  - **v3, several lines** (prompt 38): each time the run extends its
+    network to a larger set (`LiveNavigationRun.extendRoads`, a pack
+    installed during the run or a pack whose coverage the car entered),
+    another `roads` line follows, where the extension happened, with the
+    **whole** set: its `roads` are a strict superset of the previous
+    line's (by `contentHash`), its `afterInputs` at least the previous
+    line's (equal when two selections finished between the same two
+    inputs). The network is used from the next input on. A set is never
+    removed or replaced mid-run. A v1 or v2 sidecar has at most one line.
   - `afterInputs`: the number of navigation inputs the run had been handed
     (`LiveNavigationRun.inputs`, a rejected time jump included) before the
     attach; the network is used from the next input on. 0: before the
@@ -140,15 +149,34 @@ are written as the strings `"inf"`, `"-inf"` and `"nan"`.
       twice), or the run refused this set before (it is not built again;
       the earlier reason is repeated), or the run refused the attach
       (`RoadAttachRefusal`, e.g. the config would change).
-    - `selected`: the covering set attached (`packs`: their names). Its
+    - `selected`: the covering set attached (`packs`: their names), or,
+      with a network attached (v3), the attached set extended by the new
+      covering packs (`packs`: the whole set, the attached ones first). Its
       `roads` line follows immediately.
+    - `noNewPacks` (v3): a network is attached and every covering pack is
+      in it; nothing changes. `packs`: the attached set.
+    - `notSuperset` (v3): a network is attached and the covering packs
+      would not make a strict superset of it: the only new ones are newer
+      versions of attached packs (same pack name, another content hash;
+      they are used from the next start), or the run refused the set as
+      not a superset (`RoadAttachRefusal.notSuperset`). `packs` and
+      `reason`.
     - `unfinished`: the attempt was still in flight when the recording
       ended. The app writes it last, after any pending repeats, before
       closing the sidecar.
     `outcome` and `state` are open string sets: a reader keeps a value
     it does not know.
-  - `packs`: the pack names involved, for `selected` and `refused`.
-  - `reason`: why, for `refused`.
+  - `packs`: the pack names involved, for `selected`, `refused`,
+    `noNewPacks` and `notSuperset`.
+  - `reason`: why, for `refused` and `notSuperset`.
+  - `trigger` (v3, optional, diagnostic): why the request was raised
+    beyond the N3.3 rule: `libraryChanged` (the library's verified packs
+    changed during the run) or `coverageEntered` (the estimate's circle
+    entered a verified pack the run had not attached). Absent for the N3.3
+    rule (the engine initialised, or used a position with no network), so
+    such a line is byte-identical to a v2 line. Part of "the same attempt"
+    (`isRepeat(of:)`). An open string set. `--compare` shows it after the
+    radius.
   - Without packs to select from (no road pack library in the app; no
     `--roads` in `replay_nav`) there are no attempts and no lines.
   - Data: © OpenStreetMap contributors, ODbL 1.0.
@@ -168,7 +196,8 @@ are written as the strings `"inf"`, `"-inf"` and `"nan"`.
 | Version | Changes |
 |---|---|
 | 1 | Header, `estimate` and `pin` as above. Within v1, with no version bump: the header's optional `buildConfiguration`. |
-| 2 | N3.3: the `roads` line and the estimate's optional `onRoadShare`. The header is unchanged in shape (written at Start, before any position, so it cannot name the packs). The app always writes v2. A v1 reader refuses v2: it would skip the `roads` line and hide which packs the run used. Within v2, with no version bump: the `roadsSelection` line. It is a new line kind and diagnostic only, never an input to `--compare`, so a v2 reader that predates it skips and counts it (the new-line-kind rule below). Its optional `repeats` and `firstT` (identical repeats folded into one line; before them, one line per attempt) are also within v2: a reader that predates them decodes such a line and ignores the two keys (the optional-field rule below), so it sees one attempt where the line stands for `repeats`. |
+| 2 | N3.3: the `roads` line and the estimate's optional `onRoadShare`. The header is unchanged in shape (written at Start, before any position, so it cannot name the packs). The app wrote v2 until prompt 38. A v1 reader refuses v2: it would skip the `roads` line and hide which packs the run used. Within v2, with no version bump: the `roadsSelection` line. It is a new line kind and diagnostic only, never an input to `--compare`, so a v2 reader that predates it skips and counts it (the new-line-kind rule below). Its optional `repeats` and `firstT` (identical repeats folded into one line; before them, one line per attempt) are also within v2: a reader that predates them decodes such a line and ignores the two keys (the optional-field rule below), so it sees one attempt where the line stands for `repeats`. |
+| 3 | Prompt 38: several `roads` lines, one per attach or extension to a larger set (each the whole set, a strict superset of the previous line's, `afterInputs` not decreasing); a v2 reader would refuse the second as a duplicate and could not reproduce the run. The `roadsSelection` line's optional `trigger` and the outcomes `noNewPacks` and `notSuperset`. A run that never extends writes exactly the v2 lines under a v3 header. The app always writes v3. |
 
 The rules for a change:
 - A new **optional** field that a reader can ignore without misreading
@@ -211,15 +240,19 @@ minutes: 2 lines, 489 bytes, 0.06 % of its 764 KB sidecar. Written one line
 per attempt, before repeats were folded, they took 1461 lines and 341 KB,
 about 45 % on top of its estimates. Every change of outcome or candidates
 (a pack becomes covering, a file appears or is refused) starts a new run.
-Once roads attach there are no more attempts.
+Once roads attach the N3.3 rule raises no more attempts; a library change
+or the coverage trigger can (v3, `trigger`), a few per drive.
 
 ## Reading
 
 `NavSidecar.read(_:)` checks the following:
-- The first line must be a `header` with a version this reader knows (1 or
-  2); a newer version is refused.
-- A second `roads` line is refused (`duplicateRoadsLine`): a run attaches
-  roads once.
+- The first line must be a `header` with a version this reader knows (1, 2
+  or 3); a newer version is refused.
+- `roads` lines are `Contents.roads`, in file order. In v1 and v2 a second
+  one is refused (`duplicateRoadsLine`): those runs attach roads once. In
+  v3 each later line must extend the one before it, else it is refused
+  (`invalidRoadsLine`): `afterInputs` not smaller, packs a strict superset
+  by `contentHash`.
 - `roadsSelection` lines are a known kind (`Contents.roadsSelections`, in
   file order), any number of them; they are not counted as unknown. A line
   stands for `RoadsSelection.attempts` attempts (`repeats`, else 1).
@@ -268,20 +301,23 @@ blamed as a cause, and do not affect the verdict (N3-CMPHASH, closed in
 N3.3). A sidecar written before `roadCorrelationM` became 100 compares that
 way.
 
-**Roads (v2).** The replay's road packs are `--roads` (each fully verified):
-- the sidecar has a `roads` line: the given packs, all of them as one
-  network, are attached after its `afterInputs` inputs;
+**Roads (v2, v3).** The replay's road packs are `--roads` (each fully verified):
+- the sidecar has `roads` lines: each line's packs, taken from the given
+  ones (the same open instances), are attached after its `afterInputs`
+  inputs, the first line's by attach, each later one's by extension
+  (`ReplayRoadAttach.schedule`). `--roads` must list every pack of every
+  line (the union); more packs are fine;
 - it has none (v1, or v2 without roads) and packs are given: the live rule
   (`replay_nav --as-live --roads`, docs/NAVIGATION.md);
 - it has none and no packs are given: as before roads existed.
 
-A `Roads` line names both sides' `roadSetHash` and `afterInputs`. The roads
-**match** only when the sidecar's `roadSetHash` equals the given packs' and
-the replay's `roads` line equals the sidecar's. Otherwise (another set,
-packs on one side only, another attach point) a `Warning` names the hashes,
-the mismatch is listed as a known cause, and the verdict is at best
-**PASS within tolerance**, never exact: an unknown pack must not hide a
-difference.
+A `Roads` line names both sides' `roadSetHash` and `afterInputs`, line by
+line. The roads **match** only when every pack of the sidecar's lines was
+given and the replay's `roads` lines equal the sidecar's, one for one.
+Otherwise (a sidecar pack not given, packs on one side only, another
+attach point or set) a `Warning` names the hashes, the mismatch is listed
+as a known cause, and the verdict is at best **PASS within tolerance**,
+never exact: an unknown pack must not hide a difference.
 
 **Verdict:**
 - **PASS (exact)** when every compared field is identical bit for bit and
@@ -312,9 +348,11 @@ simulator, where the service's sidecar matches the Core loop.
 `--write-sidecar <path>` writes the sidecar the app would have written for a
 recording, with no drops. It uses the same loop with file order, the header
 seed and the default config, to check `--compare` end to end on a Mac. With
-`--roads` it attaches them by the live rule (the app with its packs ready),
-at the same input as the `--as-live` metrics replay, and writes the `roads`
-line there. The selection attempts are `roadsSelection` lines, repeats
+`--roads` it attaches them by the live rule (the app with its packs ready,
+watched by the coverage trigger), at the same inputs as the `--as-live`
+metrics replay, and writes the `roads` lines there; with `--inject-roads`
+the held-back packs arrive as a library change (docs/NAVIGATION.md
+"replay_nav"). The selection attempts are `roadsSelection` lines, repeats
 folded as the app folds them, the pending ones written at the end;
 `replay_nav` prints the number of lines and of attempts. The replay
 selects synchronously, so `recordedAfterInputs` equals `afterInputs`.

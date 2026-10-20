@@ -705,11 +705,27 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   attaches them by the live rule with the packs ready: at each selection
   request (`RoadSelectionRule`) the given packs covering the estimate's 95 %
   circle are selected (`RoadPackSelector`) and attached at that input
-  boundary. The summary's `Roads attach` line and `metrics.json`
-  (`roadsAttachedAfterInputs`, `attachedRoadSetHash`) record when and which
-  set; `roads`/`roadSetHash` stay the given set (the road truth's). The
-  written sidecar (`--write-sidecar`, always this rule) attaches at the same
-  input.
+  boundary. The given packs are also watched by the coverage trigger
+  (prompt 38, "Roads in a running session" below): when the circle enters
+  a given pack not attached yet, the attached set is extended to it at
+  that input. The summary's `Roads attach` line and `metrics.json`
+  (`roadsAttachedAfterInputs`, `attachedRoadSetHash`, and
+  `roadsExtendedAfterInputs` when the set was extended; absent otherwise)
+  record when and which set (`attachedRoadSetHash` is the final one);
+  `roads`/`roadSetHash` stay the given set (the road truth's). The written
+  sidecar (`--write-sidecar`, always this rule) attaches and extends at the
+  same inputs.
+- `--inject-roads <when>:<pack>` (repeatable, replay only, prompt 38): a
+  pack the live rule cannot select until `<when>`, session seconds (before
+  the first input the engine accepts arriving then or later) or
+  `after-<n>` (after n inputs given to the engine). Then it arrives as the
+  app's library change does: the run watches it and raises a
+  `libraryChanged` selection request at once, which attaches it or extends
+  the attached set. The pack is part of the given set (road truth, label);
+  the run uses the live rule (`-attach-live` unless `--as-live`), and the
+  mode label gets `-inject-<first 8 hex of the pack's set hash>-at-<s>s` or
+  `-after-<n>`. `--write-sidecar` writes the same run. Refused with
+  `--compare`, which follows the sidecar's `roads` lines.
 - `--file-order`: inputs in file order, as `--as-live`, but with any
   `--seed`, `--particles` and `--set`: a seed sweep of the live order. The
   mode label gets `-file-order`.
@@ -722,16 +738,19 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   `--heading-tolerance` (default 0.1°). Exit status 4 on a failure. A seed or
   config-hash mismatch is a warning; without roads on either side, keys that
   differ only in road-only keys are named inert, not blamed (N3-CMPHASH).
-  With `--roads`: a sidecar `roads` line attaches the given set at its
-  `afterInputs` (the metrics replay too); a sidecar without one gets the live
-  rule. Replay-only estimates after the sidecar's last estimate are counted
+  With `--roads`: each sidecar `roads` line attaches that line's packs,
+  taken from the given ones (the same open instances), at its
+  `afterInputs`, the first by `attachRoads`, each later one (v3) by
+  `extendRoads` (the metrics replay too; `ReplayRoadAttach.schedule`). So
+  `--roads` must list every pack of every line, the union; more packs are
+  fine. A sidecar without one gets the live rule. Replay-only estimates after the sidecar's last estimate are counted
   as "the sidecar ends early" (R14.1-4: lines since the last flush lost to a
   kill), named as a cause, not as "no known cause". The mode label then gets `-attach-sidecar` (attached at the
   sidecar's `afterInputs`) or, without `--as-live`, `-attach-live`, so the
   row and GeoJSON do not overwrite the from-start or `--as-live` run's
-  (R32.1-5). A `roadSetHash` that differs, or packs on one side only, is a warning
-  naming the hashes, and the verdict is never PASS (exact). Format and
-  verdicts:
+  (R32.1-5). A sidecar pack not given, packs on one side only, or `roads`
+  lines that differ (compared line by line) is a warning naming the hashes,
+  and the verdict is never PASS (exact). Format and verdicts:
   [NAV_SIDECAR.md](NAV_SIDECAR.md).
 - `--write-sidecar <path>` (one log): writes the sidecar the app would have
   written for the recording with no drops (same loop, file order, header seed,
@@ -928,7 +947,8 @@ For every recording it:
 
 **Roads attached mid-run (N3.3).** `LiveNavigationRun` starts without roads
 unless a network is given at init. `NavigationEngine.attachRoads(_:)`
-attaches one between two inputs, once, before or after initialisation: the
+attaches one between two inputs, before or after initialisation (a larger
+set later goes through `extendRoads`, below): the
 road state starts cleared (as a reseed leaves it), and nothing else changes,
 so every line before the attach is the no-roads run's, and an attach before
 the first input equals `init(config:roads:)`. It is refused, engine
@@ -938,11 +958,61 @@ mid-run. The selection rule (`RoadSelectionRule`): the run raises a
 `RoadSelectionRequest` (the estimate's centre and 95 % semi-major axis)
 after the ingest at which the engine first initialises and, while no
 network is attached, after every ingest in which it used a position (a fix,
-a released held fix, a manual fix). Once a network is attached no request
-is raised again, a manual reset of the cloud included. The attach's
+a released held fix, a manual fix). Once a network is attached this rule
+raises no request again, a manual reset of the cloud included; the
+library-change and coverage triggers below still do. The attach's
 `afterInputs` is the run's `inputs` then; its `t` is the engine's latest
 accepted arrival (`NavigationEngine.latestArrival`), nil for an attach
 before the first input.
+
+**Roads in a running session (prompt 38).** A pack installed (downloaded,
+or put back) while a run is going reaches it at once, and a car driving
+into the coverage of a pack the run has not attached picks it up:
+- **Extend, never replace.** `NavigationEngine.extendRoads(_:)` swaps the
+  attached network for a strict superset (by content hash) built from the
+  same open `RoadPack` instances plus the new ones, between two inputs. It
+  is refused, engine unchanged, with no network attached (`notAttached`),
+  for a set that is not a strict superset (`notSuperset`), and when the
+  config would change. Edge numbers are per network, so the road state
+  starts as `attachRoads` leaves it (every particle on no edge, level
+  unknown, 0 m off-road; the distance since the last road update, the last
+  attempt, the on-road share and the matched edge fresh), and the fix-pin
+  road caches (coverage and road distances per fix) are cleared. Nothing
+  else changes and no random number is drawn. With the default 1 s road
+  interval the first road update after it runs at the next moving step
+  with no evidence, the next one a second later with the distance driven.
+  A network is never detached: a pack removed during the run stays in use
+  until the next start (Diagnostics: "Removal pending — in use until
+  restart"), and a newer version of an attached pack (same pack name,
+  another content hash) waits for the next start too.
+- **When the run asks** (`RoadSelectionRule`, besides the N3.3 rule, with
+  or without a network): `LiveNavigationRun.libraryChanged(_:)`, when the
+  library's verified packs changed, raises a request at once (trigger
+  `libraryChanged`, the estimate at the latest arrival, `afterInputs` =
+  `inputs`; none before initialisation). The coverage trigger
+  (`RoadCoverageWatch`) checks, after an ingest that raised no other
+  request and at most once per whole second of the latest arrival, whether
+  the estimate's circle intersects a watched pack that is not attached and
+  did not at the previous check (trigger `coverageEntered`). It is
+  edge-triggered: a pack that stays intersecting (its set refused, say)
+  raises nothing more until the circle leaves it and comes back. A request
+  marks the packs its circle intersects as seen. A pack is tested exactly
+  (`RoadPackCoverage.intersects`, the selection's own test) only when the
+  circle reaches its bounding box; attached packs are never tested; with no
+  watched pack, or every one attached (the replays with roads from the
+  start), nothing is computed at all.
+- **The set** (`RoadPackSelection.attempt` with `attached:`): the attached
+  packs plus every covering candidate not attached, except a newer version
+  of an attached pack. Outcomes with a network attached: `noNewPacks`
+  (every covering pack attached), `notSuperset` (only newer versions are
+  new, or the run refused the set as not a superset), `refused`, or
+  `selected` with the whole set, written as a `roads` line (sidecar v3,
+  [NAV_SIDECAR.md](NAV_SIDECAR.md)).
+- **Replay.** `replay_nav --as-live --roads` watches the given packs from
+  the start; `--inject-roads` holds packs back until an input or time, then
+  replays the library change; `--compare` follows the sidecar's `roads`
+  lines (`ReplayRoadAttach.schedule`), so the live run's asynchronous
+  decisions are reproduced bit for bit from the lines it wrote.
 
 **Pack catalog and selection (N3.3, Core).**
 `RoadPackCatalog(urls:cache:)` takes the pack files a caller offers (it
@@ -990,17 +1060,30 @@ update in a recording:
   after a successful attach).
   The selection is asynchronous, so the live attach can come some inputs
   after the request; `replay_nav --as-live` attaches at the request itself.
+  With roads attached the task gets the attached network and its names and
+  the attempt is an extension (prompt 38); the request behind an attach is
+  kept only when a library change or the coverage trigger raised it.
+- **Library changes** (prompt 38). Each finished library scan compares its
+  verified candidates' content hashes with the previous scan's; when the
+  set differs, `RoadPackLibrary.candidatesRevision` goes up and the service
+  hands the new candidates to every running run: the first time after the
+  run's own rescan they only become its watched packs, every later
+  revision is a `libraryChanged` request, selected as above. The map's
+  roads warning reads the run's roads (`RoadsStatus.inUse`), so it clears
+  as soon as a mid-run attach succeeds. Downloads stay paused during a
+  recording, as before.
   A request that arrives during a selection replaces the pending one (it is
   not an attempt and writes no line). A refused set is remembered with its
   reason and not built again; a repeat is `refused` again. At the end the
   repeats still pending are written, then a selection still in flight as
   `unfinished`, before the sidecar closes. Recording and the sensor streams never wait for
   any of it; until the attach the run is the no-roads run.
-- **Sidecar.** The app writes sidecar v2. The attach writes its `roads`
-  line (`t`, `afterInputs`, each pack's content hash, format, OSM timestamp
-  and grid, and `roadSetHash`), and estimates carry `onRoadShare`.
-  `replay_nav --as-live --roads <same packs> --compare <sidecar>` attaches
-  at that `afterInputs` ([NAV_SIDECAR.md](NAV_SIDECAR.md)). The selection
+- **Sidecar.** The app writes sidecar v3 (prompt 38). The attach writes its
+  `roads` line (`t`, `afterInputs`, each pack's content hash, format, OSM
+  timestamp and grid, and `roadSetHash`), each extension another one with
+  the whole set, and estimates carry `onRoadShare`.
+  `replay_nav --as-live --roads <every pack of those lines> --compare <sidecar>`
+  attaches and extends at those `afterInputs` ([NAV_SIDECAR.md](NAV_SIDECAR.md)). The selection
   attempts are recorded as `roadsSelection` lines, diagnostic only, with
   the outcome, the pack files seen and why none attached. A line is written
   when the outcome or the candidates change. Identical repeats are counted
@@ -1012,10 +1095,12 @@ update in a recording:
 - **Diagnostics** (Settings): a Road packs section lists each pack
   (verified, or the refusal reason; size, OSM date, hash prefix, and
   "cached" or "verified in x s"). Below it: "Roads in use" (the pack
-  names and the session time roads became active, for a recording or a
-  Navigate run; else none, a refusal
-  reason, or "looking for a pack"), the on-road share, and "© OpenStreetMap
-  contributors" while a pack is in use. The Memory row is the app's
+  names and the session time roads became active, and ", extended at x s"
+  after an extension, for a recording or a Navigate run; else none, a
+  refusal reason, or "looking for a pack"), the on-road share, and "©
+  OpenStreetMap contributors" while a pack is in use. A pack pending
+  removal that the run has attached reads "Removal pending — in use until
+  restart". The Memory row is the app's
   `phys_footprint`, for D1.
 
 The as-live replays with roads, the Mac memory numbers and the late-attach
