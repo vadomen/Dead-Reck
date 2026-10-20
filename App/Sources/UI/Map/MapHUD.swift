@@ -32,8 +32,9 @@ enum HUDOBD: Hashable, Sendable {
     case connected
     /// A link that was up in this app session has dropped.
     case lost
-    /// No adapter has connected in this app session (or none is paired):
-    /// nothing was lost, so this is muted, not a warning.
+    /// The currently paired adapter has not connected in this app session, or
+    /// none is paired (never paired, or Forget): nothing was lost, so this is
+    /// muted, not a warning.
     case none
 
     var label: String {

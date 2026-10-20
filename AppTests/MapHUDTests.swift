@@ -82,6 +82,39 @@ struct MapHUDTests {
         #expect(HUDOBD.from(link: .reconnecting(attempt: 1), everConnected: model.obdEverConnected) == .lost)
     }
 
+    @Test("Forget clears the memory: connected A, Forget -> No OBD, not OBD lost (R70.1-1)")
+    @MainActor func forgetClearsEverConnected() {
+        let a = UUID()
+        let model = MapViewModel()
+        model.noteLink(.polling(protocolNumber: "6", voltage: nil), adapter: a)
+        model.noteLink(.idle, adapter: nil)
+        #expect(HUDOBD.from(link: .idle, everConnected: model.obdEverConnected) == .none)
+    }
+
+    @Test("Forget A then pair B: B connecting reads No OBD; once B was up and dropped, OBD lost")
+    @MainActor func switchingAdapters() {
+        let a = UUID(), b = UUID()
+        let model = MapViewModel()
+        model.noteLink(.polling(protocolNumber: "6", voltage: nil), adapter: a)
+        model.noteLink(.idle, adapter: nil)
+        model.noteLink(.connecting, adapter: b)
+        #expect(HUDOBD.from(link: .connecting, everConnected: model.obdEverConnected) == .none)
+        model.noteLink(.polling(protocolNumber: "6", voltage: nil), adapter: b)
+        model.noteLink(.reconnecting(attempt: 1), adapter: b)
+        #expect(HUDOBD.from(link: .reconnecting(attempt: 1), everConnected: model.obdEverConnected) == .lost)
+    }
+
+    @Test("A dropping while still paired reads OBD lost, across reconnect states")
+    @MainActor func samePairedDropIsLost() {
+        let a = UUID()
+        let model = MapViewModel()
+        model.noteLink(.polling(protocolNumber: "6", voltage: nil), adapter: a)
+        for state: OBDLinkState in [.reconnecting(attempt: 1), .scanning, .failed(reason: "x")] {
+            model.noteLink(state, adapter: a)
+            #expect(HUDOBD.from(link: state, everConnected: model.obdEverConnected) == .lost)
+        }
+    }
+
     @Test("The OBD indicator follows the link, not the speed: a silent engine on a live link reads OBD")
     func obdIndependentOfSpeed() {
         // Link polling, but no fresh OBD speed (engine off): the source is GPS

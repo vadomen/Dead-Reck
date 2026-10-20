@@ -112,7 +112,8 @@ struct MapScreen: View {
             thermal = ProcessInfo.processInfo.thermalState
         }
         .onAppear { thermal = ProcessInfo.processInfo.thermalState }
-        .onChange(of: link?.state, initial: true) { _, state in model.noteLink(state) }
+        .onChange(of: link?.state, initial: true) { _, state in model.noteLink(state, adapter: link?.rememberedAdapterID) }
+        .onChange(of: link?.rememberedAdapterID) { _, id in model.noteLink(link?.state, adapter: id) }
         // The card may only appear while the map is on screen (UX-8).
         .onChange(of: isSelected && scenePhase == .active, initial: true) { _, visible in
             offers?.isMapVisible = visible

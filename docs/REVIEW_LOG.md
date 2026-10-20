@@ -828,3 +828,18 @@ Tests before review (16f36c3): Core 1069 tests in 136 suites passed (36 known is
 ### Run 69 summary
 
 1 round; 0 BLOCKER/MAJOR, 1 MINOR fixed (R69.1-1), 0 rejected, 0 deferred.
+
+## Run 70: UX-32 follow-ups — No OBD, offer card vs car, Settings groups, R68.1-2..5, ultraConstrained (main..ux32-followups: 2d36e00..d042d80), started 2026-10-20
+
+### Round 1
+
+Reviewer: one opus reviewer (~770 changed lines, App-only logic). Focus: R68.1-4 name check vs a genuinely connected adapter (first pairing remembers the ID before the record exists; UUID compare is case-insensitive — fine), car placement and ellipse fit while the offer card shows/hides (every camera write reads `headingState.zoom.carFromTop` — fine), "No OBD" vs "OBD lost" across session events, privacy. No mutations (App-only; Core changed in comments only); author's logic -> test list judged by reading.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R70.1-1 | MAJOR | `App/Sources/UI/Map/MapHUD.swift:63` (`HUDOBD.from(link:everConnected:)`) via `MapView.swift:82`: `MapViewModel.obdEverConnected` is never cleared, so after adapter A polled and the driver Forgets it (Settings → OBD adapter → Forget, `rememberedAdapterID` nil) the HUD reads "OBD lost" in the warning colour for the rest of the session; the spec says "No OBD" with no adapter paired. | CONFIRMED | Verified: `forget()` (`OBDLinkService.swift:260-267`) clears the remembered ID; the flag is only ever set (`MapViewModel.swift:64`). Fixed (ios-ui-engineer): `MapViewModel.noteLink(_:adapter:)` ties the flag to the paired adapter (`rememberedAdapterID`); Forget or a different adapter clears it while the link is down; a drop of the same paired adapter stays "OBD lost". Tests `MapHUDTests.forgetClearsEverConnected`, `switchingAdapters` (fail with the clearing branch disabled), `samePairedDropIsLost`. |
+| R70.1-2 | MINOR | `README.md:117`, `README.md:241`, `docs/PLAN.md:305` (§6 check 8) still call the offer button "Never for this region"; it is now labelled "Never" (`PackOfferText.never`; accessibility label "Never offer maps for <region>" unchanged). | DEFERRED | Backlog. |
+
+Tests before review (d042d80): Core 1069 tests in 136 suites passed (36 known issues); AppTests 596 tests in 90 suites passed.
+
+Round 1 outcome: R70.1-1 fixed (review round 1 commit); AppTests 599 tests in 90 suites passed; Debug simulator build 0 warnings. Tapping B while A is up cannot mis-attribute the up state to B: `connect(to:)` runs `disconnect()` (state `.idle`) before `remember(id)`.
