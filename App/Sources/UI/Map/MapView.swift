@@ -61,6 +61,10 @@ struct MapScreen: View {
     /// previews. Only `state` is read, so the map re-renders on link state
     /// changes, not on poll traffic.
     var link: (any OBDLinkServicing)?
+    /// The one-time in-car mount card (UX-18 (2)), for the card above the
+    /// Navigate status line: read `isVisible`, call `confirm()` on "Mounted".
+    /// Fed by `MapFeed`, never here. nil in previews.
+    var mountConfirmation: MountConfirmationModel?
     @Environment(\.scenePhase) private var scenePhase
     @State private var thermal = ProcessInfo.processInfo.thermalState
 
@@ -159,12 +163,16 @@ extension MapScreen {
 struct MapFeed: View {
     let session: RecordingSession
     let model: MapViewModel
+    /// The in-car mount card (UX-18 (2)): fed the same OBD speed and the
+    /// Navigate state; it only observes.
+    var mount: MountConfirmationModel?
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         Color.clear
             .frame(width: 0, height: 0)
             .onChange(of: session.live.obdSpeedKmh, initial: true) { refreshStationary() }
+            .onChange(of: session.navigateState) { refreshStationary() }
             // A 0 that goes stale with no new reading must stop counting
             // as stopped: re-check twice a second (reads, never observes).
             .task {
@@ -216,6 +224,7 @@ extension MapFeed {
             session.live.obdSpeedKmh, replyUptime: session.obdSpeedReplyUptime,
             now: session.currentUptimeSeconds
         )
+        mount?.update(session: session)
     }
 }
 

@@ -5,7 +5,8 @@ import SwiftUI
 /// orientation) has been confirmed on this phone. Record keeps its own
 /// per-drive checklist (`PreDriveChecklist`); this one is asked once.
 struct FirstLaunchStore {
-    static let key = "firstLaunch.checklistConfirmed"
+    /// Read by `OnboardingStore` for the UX-18 migration.
+    static let key = OnboardingStore.legacyChecklistKey
 
     var defaults: UserDefaults = .standard
 

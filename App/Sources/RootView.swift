@@ -18,6 +18,8 @@ struct RootView: View {
     @State private var nav: AppNavigation
     @State private var firstLaunch: FirstLaunchModel
     @State private var firstMaps: FirstLaunchMapsModel
+    /// The one-time in-car mount card (UX-18 (2)): fed by `MapFeed`, shown by the map.
+    @State private var mountConfirmation: MountConfirmationModel
 
     init(services: AppServices) {
         _recording = State(initialValue: RecordingViewModel(services: services))
@@ -76,6 +78,12 @@ struct RootView: View {
         forceFirstLaunch = UserDefaults.standard.bool(forKey: "uiFirstLaunch")
         #endif
         _firstLaunch = State(initialValue: FirstLaunchModel(forced: forceFirstLaunch))
+        var forceMountCard = false
+        #if DEBUG
+        // `-uiMountCard 1` shows the in-car mount card whatever the state (screenshots).
+        forceMountCard = UserDefaults.standard.bool(forKey: "uiMountCard")
+        #endif
+        _mountConfirmation = State(initialValue: MountConfirmationModel(forced: forceMountCard))
         #if DEBUG
         // `-uiScreen map|settings|sessions|maps|console|recording|adapter|about`
         // opens Map, Settings or a Settings sub-screen at launch (screenshots).
@@ -125,7 +133,8 @@ struct RootView: View {
             onOpenSettings: { nav.openSettings() },
             roadsWarning: roadsWarning,
             offers: services.packOffers,
-            link: services.link
+            link: services.link,
+            mountConfirmation: mountConfirmation
         )
         .fullScreenCover(isPresented: $nav.isSettingsPresented) {
             SettingsScreen(
@@ -161,7 +170,7 @@ struct RootView: View {
         }
         // Ingest at the root so the track keeps filling while Settings is open. The
         // feed is its own view so only it observes the 16 Hz `live` status.
-        .background(MapFeed(session: session, model: map))
+        .background(MapFeed(session: session, model: map, mount: mountConfirmation))
         .task { await roadsWarning.run() }
         // UX-8 (2): the at-a-stop offer loop, with Settings open too.
         .task {
