@@ -871,3 +871,19 @@ Tests (e9b5a67): Core 1069 tests in 136 suites passed (36 known issues); AppTest
 ### Run 71 summary
 
 1 round; 0 fixed, 0 rejected, 0 deferred. R70.1-2 (run 70) closed by this range (5f79285).
+
+## Run 72: Prompt 35 release blockers — bundle id/FuGPS/versioning, Navigate background location (D7 revised), permission texts, privacy manifest, release surfaces, RELEASE_PLAN status (main..release-blockers: be23842..6c81a97), started 2026-10-20
+
+### Round 1
+
+Reviewer: one opus reviewer (~660 changed lines, App logic + new Core test). Focus: Navigate background-session lifecycle on every stop path and the Record↔Navigate hand-over, When In Use + CLBackgroundActivitySession, manifest bundling, required-reason scanner false negatives, bump_build.sh, privacy, docs vs code. Mutations (Core test side): manifest DiskSpace entry removed → RequiredReasonAPITests fails (killed); `activeInputModes` added to an App file → RequiredReasonAPITests fails (killed). App logic -> test list judged by reading.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R72.1-1 | MINOR | `docs/RELEASE_PLAN.md` D2 (line ~43) says the bundle id is set in `Config/Local.xcconfig`, not in tracked files; `Config/Signing.xcconfig` now holds the default `com.vadomen.fugps` and Local only overrides it. §2.2 (line ~90) says the privacy manifest "is not in the repo"; `App/Resources/PrivacyInfo.xcprivacy` exists, is bundled and guarded by `RequiredReasonAPITests`. | DEFERRED | Backlog. |
+
+Tests (6c81a97): Core 1072 tests in 137 suites passed (36 known issues); AppTests passed (609 tests in 90 suites, author run; xcodebuild test exit 0 at HEAD).
+
+### Run 72 summary
+
+1 round; 0 fixed, 0 rejected, 1 deferred (R72.1-1).
