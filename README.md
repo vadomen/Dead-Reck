@@ -49,7 +49,7 @@ Ukrainian and English.
 | Navigation engine (N2–N3.3) | Done. Particle filter with OSM road matching; proven on the recorded acceptance drives with `replay_nav`, live and replayed giving the same result. Numbers: [docs/NAVIGATION.md](docs/NAVIGATION.md) ("N3.3: roads live" and later). |
 | Live navigation in the app (N4, UX-1, UX-2…UX-6) | Done in code: Navigate mode, map with the dead-reckoning dot and ellipse, manual fixes, speed-dependent zoom, Settings behind a gear on the map. The device checks in [docs/PLAN.md](docs/PLAN.md) §6 (including 1 h of Navigate: memory, battery, thermal) are still open. |
 | Road packs (N3.4, UX-8) | Done in code: 28 packs (all of Ukraine + 27 regions) hosted; the app downloads them by region (first launch, Settings → Maps, an offer at a stop when you drive out of coverage) into its private store. Device checks in PLAN §6 are open. |
-| Open | Navigation without OBD (NAV-NOOBD, then maybe UX-7), a "GPS off" switch for spoofing (UX-9), fit the whole ellipse under jamming (UX-10), notice of an interrupted recording (UX-11), dark-mode map controls (UX-13). See [docs/BACKLOG_UX.md](docs/BACKLOG_UX.md) and [docs/BACKLOG.md](docs/BACKLOG.md). |
+| Open | Navigation without OBD (NAV-NOOBD, then maybe UX-7), a "GPS off" switch for spoofing (UX-9), fit the whole ellipse under jamming (UX-10), notice of an interrupted recording (UX-11). See [docs/BACKLOG_UX.md](docs/BACKLOG_UX.md) and [docs/BACKLOG.md](docs/BACKLOG.md). |
 
 ## How it works
 
@@ -116,12 +116,14 @@ shows the checklist again.
   a card at the next stop offers that region's pack (Download / Not now /
   Never for this region); never in motion. A long press on the speed value toggles the navigation
   stats (ms per step, particles, thermal).
-- **Settings → Sessions.** Recordings with date, duration and size. Share exports the
+- **Settings → Developer → Sessions.** Recordings with date, duration and size. Share exports the
   recording together with its `.nav.jsonl` sidecar; trash asks first and
   deletes both. The list refreshes on appear and after a recording ends. The
   recording in progress can't be shared or deleted.
-- **Settings.**
-  - **Test drive recording**: the former Record screen, unchanged. A big
+- **Settings.** Groups: OBD adapter, Maps, Mount and orientation, About, and
+  Developer ("For test drives and diagnostics": Test drive recording, Sessions,
+  Console; Console in Release behind the 7-tap gate on Version in About).
+  - **Developer → Test drive recording**: the former Record screen, unchanged. A big
     banner (red NOT RECORDING, orange KEEP STILL with a countdown, green
     RECORDING with elapsed time), the adapter status (scanning, connecting,
     initialising, or polling with protocol and voltage), OBD speed and GPS
@@ -137,8 +139,8 @@ shows the checklist again.
   - **OBD adapter**: state, the paired adapter's name, Connect / Disconnect /
     Forget, Scan (same guards as Console) and a short help when no adapter is
     found.
-  - **Console** (in Release shown only after 7 taps on Version in About, the
-    Diagnostics gate; a proposed default, not final): scan, pick, connect, disconnect and forget the adapter,
+  - **Developer → Console** (in Release shown only after 7 taps on Version in
+    Settings → About, the Diagnostics gate): scan, pick, connect, disconnect and forget the adapter,
     Re-initialise, and the raw ELM traffic (TX, RX and status lines, newest at
     the bottom). A manual field and quick buttons send only the read-only
     queries (`ATI`, `AT@1`, `ATDP`, `ATDPN`, `ATRV`, mode 01). A rejected
@@ -156,7 +158,7 @@ shows the checklist again.
   - **Diagnostics**: thermal state, version. Developer rows
     (build, memory, roads: packs found, verified or refused with the reason,
     packs in use) are always shown in DEBUG; in Release after 7 taps on
-    Version (7 more hide them).
+    Version in Settings → About (7 more hide them).
 
 On the simulator the adapter and sensors are simulated and labelled so;
 Bluetooth or a sensor being unavailable is shown as a red or orange state, not
@@ -187,7 +189,7 @@ a crash.
 
 1. Mount the phone and plug in the adapter as above. Don't move the phone
    until the recording is stopped.
-2. Settings → Test drive recording. Tick "rigid mount" and "fixed
+2. Settings → Developer → Test drive recording. Tick "rigid mount" and "fixed
    orientation", optionally fill in the notes, and press START while the car
    is stationary. The first 5 seconds are a keep-still calibration (orange
    banner). Navigate stops and the recording starts its own fresh session.
@@ -195,7 +197,7 @@ a crash.
    are written to the recording. Recording continues with the screen locked.
 4. After parking, press STOP (on the map or in Settings). The map returns to
    Navigate if the adapter is still connected.
-5. Settings → Sessions: share the recording and its sidecar, or copy them with the
+5. Settings → Developer → Sessions: share the recording and its sidecar, or copy them with the
    Files app (On My iPhone → DriveLogger). For a timing-faithful test drive,
    build with the `DriveLogger-Release` scheme (Debug is `-Onone`, so the
    sidecar's `msPerStep` is meaningless there).
