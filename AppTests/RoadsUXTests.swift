@@ -179,6 +179,36 @@ struct RemoveDuringRunTests {
         await model.perform(.downloadAgain, on: pending)
         #expect(await cleared.names == ["region-a"])
     }
+
+    /// `perform(.downloadAgain)` on a pending row with the manifest's pack:
+    /// the hook's answer decides whether the pack is downloaded.
+    private func downloadAgain(hook: Bool?) async throws -> (cleared: [String], started: Bool) {
+        let dirs = try StoreFixture.Dirs()
+        defer { dirs.remove() }
+        let library = RoadPackLibrary(store: RoadPackStore(directory: dirs.store), inbox: nil, cacheURL: nil)
+        // No connection: a started download only queues (and waits), nothing is fetched.
+        let downloader = PackDownloader(directory: dirs.store, library: library, connection: .none)
+        let cleared = ClearedNames()
+        let model = MapsModel(library: library, downloader: downloader, runActive: { true },
+                              cancelRemoval: hook.map { answer -> @Sendable (String) async -> Bool in
+                                  { name in await cleared.add(name); return answer }
+                              })
+        await model.perform(.downloadAgain, on: row(pending: true))
+        let started = await downloader.snapshot().states["region-a"] != nil
+        await downloader.cancel(name: "region-a")
+        await downloader.waitUntilIdle()
+        return (await cleared.names, started)
+    }
+
+    @Test("Download again: the hook clearing the mark means no download; the hook failing (files gone) or missing falls back to downloading the manifest's pack")
+    func downloadAgainFallback() async throws {
+        let cleared = try await downloadAgain(hook: true)
+        #expect(cleared.cleared == ["region-a"] && !cleared.started, "mark cleared, nothing downloaded")
+        let failed = try await downloadAgain(hook: false)
+        #expect(failed.cleared == ["region-a"] && failed.started, "the hook could not clear it: download instead")
+        let none = try await downloadAgain(hook: nil)
+        #expect(none.cleared.isEmpty && none.started)
+    }
 }
 
 private actor ClearedNames {

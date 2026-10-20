@@ -44,7 +44,7 @@ struct RootView: View {
         let session = services.session
         var mapsModel = MapsModel(
             library: library, manifest: services.manifest, downloader: services.downloader,
-            runActive: { session.hasActiveRun })
+            runActive: { session.hasActiveRun }, cancelRemoval: services.cancelRemoval)
         #if DEBUG
         // `-uiFakeMaps 1`: two synthetic installed packs and one pending removal
         // (simulator screenshots; the simulator has no packs).

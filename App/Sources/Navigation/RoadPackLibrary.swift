@@ -442,6 +442,32 @@ actor RoadPackLibrary {
         return outcome
     }
 
+    /// Brings back pack `name` marked for removal (Settings → Maps,
+    /// "Download again", B5): clears the mark of each of its marked files
+    /// (`RoadPackStore.unmark`) and rescans, so it is in the active set
+    /// again with no restart and no download. The rescan goes through
+    /// `candidatesRevision` like any change, so running sessions are
+    /// offered the pack again (one that still has it attached, as removal
+    /// never detaches, finds nothing new). Returns false, changing nothing,
+    /// without a store, when no file of that name is marked (it was deleted
+    /// already, or never marked), or when a mark cannot be cleared. Waits
+    /// for the first scan (launch maintenance).
+    @discardableResult
+    func cancelRemoval(name: String) async -> Bool {
+        guard let store else { return false }
+        await firstScanFinished()
+        let marked = RoadPackStoreRules.activeSet(store.list().installedFiles).markedForRemoval.filter { $0.name == name }
+        guard !marked.isEmpty else { return false }
+        do {
+            for file in marked { try store.unmark(file.fileName) }
+        } catch {
+            await rescan()
+            return false
+        }
+        await rescan()
+        return true
+    }
+
     /// Installs a pack file from outside the store (a finished download,
     /// prompt 25) through `RoadPackInstaller`, off this actor; clears a
     /// removal mark of the stored file, so the pack is offered again, and

@@ -154,3 +154,100 @@ struct NavigationServiceLibraryChangeTests {
         #expect(RoadsDiagnosticsModel.markInUse(status, roads: roads).packs.allSatisfy { !$0.inUseUntilRestart })
     }
 }
+
+@Suite("Road pack library: cancel a removal (B5)", .serialized)
+@MainActor
+struct RoadPackCancelRemovalTests {
+    typealias Roads = NavigationServiceRoadsTests
+    let helper = NavigationServiceRoadsTests()
+
+    /// A store with one installed covering pack named `region-a`.
+    static func installed(_ dirs: StoreFixture.Dirs) throws -> (RoadPackStore, String) {
+        let store = RoadPackStore(directory: dirs.store)
+        let source = try RoadPackFixture.write(try RoadPackFixture.data(), named: "a.roadpack", in: dirs.sources)
+        let file = try #require(store.installer.install(from: source, name: "region-a").installed).fileName
+        return (store, file)
+    }
+
+    @Test("cancelRemoval clears the marks of a pack pending removal and rescans: active, verified and a candidate again, with a new candidatesRevision; false (nothing changed) when nothing of that name is marked or there is no store")
+    func cancelRemoval() async throws {
+        let dirs = try StoreFixture.Dirs()
+        defer { dirs.remove() }
+        let (store, file) = try Self.installed(dirs)
+        let library = RoadPackLibrary(store: store, inbox: nil, cacheURL: nil)
+        await library.setRunActivity { true }
+        #expect(await library.candidates().candidates.map(\.name) == [file])
+        #expect(await library.cancelRemoval(name: "region-a") == false, "not marked")
+
+        #expect(await library.remove(name: "region-a") == .removalPending([file]))
+        #expect(await library.status().packs.first { $0.name == file }?.pendingRemoval == true)
+        #expect(await library.candidates().candidates.isEmpty)
+        let afterRemove = await library.candidatesRevision
+        #expect(afterRemove == 1)
+
+        #expect(await library.cancelRemoval(name: "region-a"))
+        let status = try #require(await library.status().packs.first { $0.name == file })
+        #expect(status.verified && !status.pendingRemoval && status.refusal == nil)
+        #expect(await library.candidates().candidates.map(\.name) == [file])
+        #expect(await library.candidatesRevision == afterRemove + 1, "running sessions are offered it again")
+        #expect(store.markedFileNames().isEmpty)
+        #expect(await library.cancelRemoval(name: "region-a") == false, "already cleared")
+        #expect(await library.cancelRemoval(name: "region-b") == false, "not installed")
+
+        let plain = RoadPackLibrary(source: { [] }, cacheURL: nil)
+        #expect(await plain.cancelRemoval(name: "region-a") == false, "no store")
+    }
+
+    @Test("A run keeps the pack it attached through Remove and cancelRemoval (one roads line, noNewPacks when it is offered again); the next run attaches it as normal")
+    func runKeepsPackAndNextRunAttaches() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let dirs = try StoreFixture.Dirs()
+        defer { dirs.remove() }
+        let (store, file) = try Self.installed(dirs)
+        let library = RoadPackLibrary(store: store, inbox: nil, cacheURL: nil)
+        await library.setRunActivity { true }
+        let service = NavigationService(library: library)
+
+        let (feed, tap) = helper.makeFeed(43, scratch: scratch)
+        let task = service.start(feed)
+        for event in Roads.events(1...2) { tap.record(event) }
+        #expect(await helper.waitUntil {
+            let inUse = await service.roadsStatus().inUse, syncs = await service.librarySyncs
+            return inUse && syncs >= 1
+        })
+        #expect(await library.remove(name: "region-a") == .removalPending([file]))
+        #expect(await helper.waitUntil {
+            let offered = await service.libraryChangesOffered, outcome = await service.lastAttemptOutcome
+            return offered >= 1 && outcome == .noPacks
+        })
+        #expect(await service.roadsStatus().packNames == [file], "never detached")
+        #expect(await library.cancelRemoval(name: "region-a"))
+        #expect(await helper.waitUntil {
+            let offered = await service.libraryChangesOffered, outcome = await service.lastAttemptOutcome
+            return offered >= 2 && outcome == .noNewPacks
+        })
+        #expect(await service.roadsStatus().packNames == [file])
+        for event in Roads.events(2.5...4) { tap.record(event) }
+        tap.finish()
+        await task.value
+        let first = try NavSidecar.read(contentsOf: feed.requiredSidecarURL)
+        #expect(first.roads.count == 1)
+        #expect(first.roadsSelections.map(\.outcome) == [.selected, .noPacks, .noNewPacks])
+        #expect(first.roadsSelections.dropFirst().allSatisfy { $0.trigger == .libraryChanged })
+
+        let (next, nextTap) = helper.makeFeed(44, scratch: scratch)
+        let nextTask = service.start(next)
+        for event in Roads.events(1...4) { nextTap.record(event) }
+        // Active: this run's status, not the finished run's.
+        #expect(await helper.waitUntil {
+            let status = await service.roadsStatus()
+            return status.active && status.inUse
+        })
+        nextTap.finish()
+        await nextTask.value
+        let second = try NavSidecar.read(contentsOf: next.requiredSidecarURL)
+        #expect(second.roads.count == 1 && second.roadsSelections.first?.outcome == .selected)
+        #expect(second.roadsSelections.first?.trigger == nil && second.roadsSelections.first?.packs == [file])
+    }
+}

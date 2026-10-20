@@ -361,10 +361,11 @@ final class MapsModel {
     @ObservationIgnored private let defaults: UserDefaults
     /// A Navigate or Record run is active (the app: `RecordingSession.hasActiveRun`).
     @ObservationIgnored private let runActiveCheck: @MainActor () -> Bool
-    /// Clears a pack's removal mark without a download (B5). The library has
-    /// no such call yet (`RoadPackLibrary.cancelRemoval(name:)` is needed; the
-    /// navigation engineer's); until it is wired, Download again fetches the
-    /// manifest's pack, which clears the mark when it installs.
+    /// Clears a pack's removal mark without a download (B5;
+    /// `RoadPackLibrary.cancelRemoval(name:)`, wired by `AppServices`).
+    /// Without it, or when it returns false (the files are gone), Download
+    /// again fetches the manifest's pack, which clears the mark when it
+    /// installs.
     @ObservationIgnored private let cancelRemoval: (@Sendable (String) async -> Bool)?
     /// The "Use cellular data" UserDefault as last read (Diagnostics shows it
     /// next to the downloader's own value).
@@ -470,8 +471,7 @@ final class MapsModel {
     }
 
     func perform(_ action: MapsRow.Action, on row: MapsRow) async {
-        if action == .downloadAgain, let cancelRemoval {
-            _ = await cancelRemoval(row.id)
+        if action == .downloadAgain, let cancelRemoval, await cancelRemoval(row.id) {
             await refreshAll()
             return
         }
