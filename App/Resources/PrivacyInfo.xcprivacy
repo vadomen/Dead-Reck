@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Privacy manifest of the app target (App Store requirement). Covers the app
+  and DriveLoggerCore, which links into it statically.
+
+  No tracking, no tracking domains, and no data collected: recordings stay on
+  the phone unless the user shares one themselves (Files app), and a road-pack
+  download is a plain file request with no account, identifier or position.
+
+  NSPrivacyAccessedAPITypes lists every required-reason API category the
+  sources use. Core's RequiredReasonAPITests scans App/Sources and
+  Core/Sources/DriveLoggerCore and fails when a category appears there with no
+  entry here: add the entry (and a reason from Apple's list) before using a
+  new one.
+-->
+<plist version="1.0">
+<dict>
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<!-- Settings and first-launch state (UserDefaults, @AppStorage), read
+		     and written by this app only. -->
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>CA92.1</string>
+			</array>
+		</dict>
+		<!-- ProcessInfo.systemUptime is the session clock's time base, the same
+		     one CoreMotion stamps its samples with: elapsed time between events
+		     inside the app. -->
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategorySystemBootTime</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>35F9.1</string>
+			</array>
+		</dict>
+		<!-- Size, type and dates of the app's own files (recordings, road packs,
+		     partial downloads), all inside the app container. -->
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>C617.1</string>
+			</array>
+		</dict>
+		<!-- Free space: Record refuses to start, warns and stops before the disk
+		     is full (E174.1); the refusal shows the free space (85F4.1). -->
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryDiskSpace</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>E174.1</string>
+				<string>85F4.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

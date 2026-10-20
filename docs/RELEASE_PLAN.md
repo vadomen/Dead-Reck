@@ -2,6 +2,32 @@
 
 Compiled 2026-10-16 (repo at `16db485`); decisions taken by the user on 2026-10-16. Status notes in *(italics)* were added on 2026-10-17.
 
+## Status (2026-10-20)
+
+Done / in code / open, per item. "In code (prompt 35)" = branch `release-blockers`, not yet merged or checked on a device.
+
+| Item | Status | Commit or backlog ID |
+|---|---|---|
+| UX-1 Navigate mode (Phase 1 item 1) | done in code; device checks open (PLAN §6) | e65c1a1, a478bbc, cb5e1b9, 2b300e7 (UX-1) |
+| UX-8 + N3.4 packs: storage, download, first launch, at-a-stop offer (Phase 1 item 2, Phase 3) | done in code; device checks open | UX-8 / N3.4 (merge 9c826cb); N3.4 merge c79aed1 |
+| Pack server and site hosting (Phase 3) | done | c82c55d, 25b8ffd (UX-8 row) |
+| App icon 1024 px (2.1) | done, no dark/tinted variants yet | ab4ec07 |
+| About + attribution (2.6) | done in code (prompt 30) | UX-31, UX-33 (merge 4e45714) |
+| Developer group in Settings (Phase 1 item 6) | done in code (prompt 31) | UX-32 follow-ups (528035e, merge 7061f34) |
+| Site pages (`site/`) | done | BACKLOG_UX SITE-1 for the open follow-ups |
+| Identity: bundle id `com.vadomen.fugps`, display name FuGPS, `MARKETING_VERSION` 1.0.0, build number script (2.1, D1, D2) | in code (prompt 35) | |
+| Navigate in the background (D7 revised, 2.3) | in code (prompt 35); device check in PLAN §6 | |
+| Permission texts for a driver (2.3) | in code (prompt 35) | |
+| Privacy manifest (2.2) | in code (prompt 35) | |
+| Release surfaces: launch arguments and `DebugAutoRecord` inert in Release (Phase 1 item 6) | in code (prompt 35) | |
+| Demo mode for App Review (Phase 1 item 5) | open, user decides | REL-DEMO |
+| Export of recordings vs the privacy-manifest reason codes (2.2) | open, user decides (decided 2026-10-20: keep the codes) | REL-EXPORT |
+| Ukrainian + English localisation (D5, 2.3) | open | UX-15 |
+| First launch as instructions (Phase 1 item 3) | open | UX-18 |
+| Manual "GPS off" + GPS state chip (D8) | open | UX-9 (a) + UX-22 |
+| Restore the estimate after a relaunch (D8) | open | UX-20 |
+| Phases 4-7 (quality, TestFlight, App Store page, submission) | open | |
+
 Starting decisions (from the user, 2026-10-16):
 
 - Account: Apple Developer Program, **individual**.
@@ -19,7 +45,7 @@ Starting decisions (from the user, 2026-10-16):
 | D4 | **Free**: Free Apps Agreement, no tax or banking forms |
 | D5 | **uk + en** |
 | D6 | **Cloudflare R2** (+ public bucket / custom domain), free egress |
-| D7 | **No background location**: the app works with the screen on (see the consequences in 2.3) |
+| D7 | ~~No background location~~ **Revised 2026-10-20:** background operation stays (see Phase 0 and 2.3) |
 
 ---
 
@@ -34,6 +60,9 @@ Starting decisions (from the user, 2026-10-16):
 | D5 | Languages | Ukrainian and English (String Catalog; `SWIFT_EMIT_LOC_STRINGS` is already YES). |
 | D6 | Pack hosting | GitHub Releases, Cloudflare R2 or S3+CDN. The index is signed (UX-8). The server sees the IP of whoever downloads; this must be reflected in the privacy policy. |
 | D7 | Whether Navigate needs background location | If Navigate works with the screen locked, the `location` mode stays and is justified in the Review Notes. If not, it can be removed, reducing the risk of rejection under 2.5.4. |
+| D7 revised (2026-10-20) | **Background operation stays** (decided by the user) | `UIBackgroundModes` keeps `location` and `bluetooth-central`. Navigate, not only Record, keeps running with the screen locked (the 2026-10-20 drive survived a 2.6 min lock and a phone call in Record). Review Notes justify it as turn-by-turn-style navigation while driving. Supersedes the "No background location" decision of 2026-10-16. |
+| D8 (2026-10-20) | **v1.0 scope** (decided by the user) | UX-18, UX-9 (a) + UX-22, UX-20, UX-15 and the release blockers. **UX-21 (speed cameras) moves to 1.1.** |
+| D9 (2026-10-20) | **Developer account** (decided by the user) | The Apple Developer Program account (individual) already exists. |
 
 ---
 
@@ -43,7 +72,7 @@ Starting decisions (from the user, 2026-10-16):
 2. **UX-8 + N3.4**: packs are downloaded into Application Support (not Documents) with the attribute `isExcludedFromBackup = true`. This is a requirement of the iOS Data Storage Guidelines: content that can be downloaded again must not end up in the iCloud backup, and a violation is a known cause of rejection. The `Documents/RoadPacks/` bridge remains only as a developer path.
 3. **First launch (onboarding)**: what the app is and what it needs (an ELM327 BLE adapter), permissions one at a time and in context, pack selection and download, a one-time phone-mounting checklist (UX-1 (b)).
 4. **"No OBD" scenario** (UX-1 (d)): a plain GPS position with a "Connect OBD" hint. Without it the app is empty for the reviewer (see 2.4, 2.1 App Completeness).
-5. **Demo mode for App Review**: a hidden switch (for example Settings → About → 5 taps) that starts `SimulatedOBDLink` and `SimulatedSensors` on the device in a Release build. This is the most reliable way to show the functionality to someone without a car and an adapter. Check that turning it on does not change Record or the log format. Note: "About → 5 taps" conflicts with the Diagnostics gate (7 taps on Version in About, prompt 25), so demo mode needs a different gesture, to be chosen when demo mode is built.
+5. **Demo mode for App Review**: a hidden switch (for example Settings → About → 5 taps) that starts `SimulatedOBDLink` and `SimulatedSensors` on the device in a Release build. This is the most reliable way to show the functionality to someone without a car and an adapter. Check that turning it on does not change Record or the log format. Note: "About → 5 taps" conflicts with the Diagnostics gate (7 taps on Version in About, prompt 25), so demo mode needs a different gesture, to be chosen when demo mode is built. *(2026-10-20: tracked as REL-DEMO in `docs/BACKLOG_UX.md`; proposal: Settings → Developer → "Demo drive (simulated car)", visible in Release, so no hidden gesture; the user decides.)*
 6. **Remove the "research" surfaces for an ordinary user**: Console and Record only in Settings → Developer; the SIMULATED badge visible only in demo mode; `DebugAutoRecord` is already under `#if DEBUG`, check the remaining launch arguments (`uiScreen`, `uiFakeHUD`; `uiTab` was replaced by `uiScreen` in prompt 30).
 7. **Safety disclaimer**: "do not interact with the phone while driving; the position estimate is approximate". Shown at first launch and in About. The uncertainty ellipse is already honest, which is a plus.
 
@@ -64,15 +93,16 @@ The file is not in the repo. The code uses APIs from the "required reason" categ
 |---|---|---|
 | `UserDefaults` | App (checklist, OBDLinkService, uiScreen) | `NSPrivacyAccessedAPICategoryUserDefaults`, `CA92.1` |
 | `ProcessInfo.systemUptime` | Core `SessionClock` | `NSPrivacyAccessedAPICategorySystemBootTime`, `35F9.1` |
-| file `.modificationDate` | Core `RoadPackCatalog` | `NSPrivacyAccessedAPICategoryFileTimestamp`, `C617.1` / `3B52.1` |
-| `volumeAvailableCapacity*` | Core `DiskSpace` | `NSPrivacyAccessedAPICategoryDiskSpace`, `E174.1` |
+| file `.modificationDate` | Core `RoadPackCatalog` | `NSPrivacyAccessedAPICategoryFileTimestamp`, `C617.1` |
+| `volumeAvailableCapacity*` | Core `DiskSpace` | `NSPrivacyAccessedAPICategoryDiskSpace`, `E174.1` + `85F4.1` |
+
+Decided 2026-10-20: keep the reason codes CA92.1, 35F9.1, C617.1, E174.1 and 85F4.1. Codes 35F9.1, E174.1 and 85F4.1 say the data may not be sent off-device; the app never sends it, but a user-initiated export carries absolute uptime (header `referenceUptimeSeconds`) and free-space bytes (`lowDiskSpace` rows). See REL-EXPORT in `docs/BACKLOG_UX.md` (option: Record and Sessions behind the 7-tap gate in Release; a log-format change only if Apple asks).
 
 Also: `NSPrivacyTracking = false`, no tracking domains, `NSPrivacyCollectedDataTypes` empty if no data leaves the device. Core is statically linked into the app, so a manifest in the app target covers both modules. The file is added to `project.yml` as a resource, after which `xcodegen generate` is needed.
 
 ### 2.3 Info.plist: permission texts and background modes
 - [ ] Rewrite the purpose strings for an ordinary user instead of "for dead-reckoning research", for example: "…to estimate your position when GPS is unavailable or jammed". Translate the texts (InfoPlist.xcstrings).
-- [ ] `NSLocationAlwaysAndWhenInUseUsageDescription` is present, but the code only calls `requestWhenInUseAuthorization`. This is allowed, but the string must match what the app actually does.
-- [ ] `UIBackgroundModes` (D7 = no location). Consequences: with the screen locked iOS suspends the app, CoreMotion and GNSS stop → Navigate and **Record** work only with the screen on. Needed: `isIdleTimerDisabled = true` during Navigate/Record; the `lifecycle` event for entering the background is already written, so check that the gap is visible in `inspect_log`. Open question D7a: remove `location` for all builds or only for the App Store (a separate configuration / Info.plist), so that test Record drives keep background operation. `bluetooth-central` without background sensors gives almost nothing; the recommendation is to remove it too. Delete `NSLocationAlwaysAndWhenInUseUsageDescription` (the code only asks for When In Use).
+- [ ] `UIBackgroundModes` (D7 revised, 2026-10-20): keeps `location` and `bluetooth-central`. Navigate and Record both keep running with the screen locked. Authorisation stays **When In Use**; a `CLBackgroundActivitySession` (with `allowsBackgroundLocationUpdates`) makes it work in the background, so there is no Always prompt. `NSLocationAlwaysAndWhenInUseUsageDescription` is removed, because nothing requests Always. The session is held while Navigate or Record runs and released when it stops (Navigate also auto-stops after 5 min without OBD). The display-only location feed (map without OBD) stays foreground-only. Review Notes justify the modes as turn-by-turn-style navigation while driving (2.5.4). Device check in PLAN §6 (lock during Navigate; battery over 1 h, locked vs on). The `lifecycle` event for entering the background is already written.
 - [ ] `UIFileSharingEnabled`: keep (this is how Record logs reach Files), but make sure Documents holds nothing technical: packs move to Application Support.
 
 ### 2.4 App Review Guidelines: risky points
@@ -163,6 +193,6 @@ the icon, `PrivacyInfo.xcprivacy`, `ITSAppUsesNonExemptEncryption`, the permissi
 and the bundle ID. This is one small prompt for ios-ui-engineer / sensors-logging-engineer.
 
 ## Open questions
-- D1–D7 above.
+- D1–D9 above are decided (D7 revised 2026-10-20).
 - Is Record visible to an ordinary user at all (Settings → Developer behind a switch)?
 - Should we collect user consent to hand over recordings for research (in the future)? If so, that is already "Data Collected" and a separate section of the privacy policy, so better not in 1.0.

@@ -69,17 +69,49 @@ struct InfoPlistTests {
             "NSBluetoothAlwaysUsageDescription",
             "NSMotionUsageDescription",
             "NSLocationWhenInUseUsageDescription",
-            "NSLocationAlwaysAndWhenInUseUsageDescription",
         ]
     )
     func hasPurposeString(key: String) {
         // A missing purpose string is a silent permission denial at runtime, and
-        // an App Store rejection.
+        // an App Store rejection. Written for a driver: the app's name, no
+        // "research".
         let value = info[key] as? String
         #expect(value?.isEmpty == false, "\(key) is missing or empty")
+        #expect(value?.contains("FuGPS") == true, "\(key) does not name the app")
+        #expect(value?.localizedCaseInsensitiveContains("research") == false, "\(key) mentions research")
     }
 
-    @Test("Background modes cover recording with the screen off")
+    @Test("No Always location purpose string: nothing requests Always; When In Use plus the background session covers a locked screen")
+    func noAlwaysLocation() {
+        #expect(info["NSLocationAlwaysAndWhenInUseUsageDescription"] == nil)
+        #expect(info["NSLocationAlwaysUsageDescription"] == nil)
+        let location = info["NSLocationWhenInUseUsageDescription"] as? String ?? ""
+        #expect(location.contains("screen locked"), "says it keeps working with the screen locked")
+    }
+
+    @Test("App Store identity: display name FuGPS, numeric versions, exempt encryption")
+    func storeIdentity() {
+        #expect(info["CFBundleDisplayName"] as? String == "FuGPS")
+        let version = info["CFBundleShortVersionString"] as? String ?? ""
+        #expect(version.wholeMatch(of: /[0-9]+\.[0-9]+\.[0-9]+/) != nil, "MARKETING_VERSION \(version)")
+        let build = info["CFBundleVersion"] as? String ?? ""
+        #expect(build.wholeMatch(of: /[0-9]+/) != nil, "CURRENT_PROJECT_VERSION \(build) is an integer")
+        #expect(info["ITSAppUsesNonExemptEncryption"] as? Bool == false)
+    }
+
+    @Test("The privacy manifest ships in the app bundle")
+    func privacyManifestInBundle() throws {
+        let url = try #require(Bundle.main.url(forResource: "PrivacyInfo", withExtension: "xcprivacy"))
+        let data = try Data(contentsOf: url)
+        let manifest = try #require(try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
+        #expect(manifest["NSPrivacyTracking"] as? Bool == false)
+        #expect((manifest["NSPrivacyTrackingDomains"] as? [Any])?.isEmpty == true)
+        #expect((manifest["NSPrivacyCollectedDataTypes"] as? [Any])?.isEmpty == true)
+        let types = manifest["NSPrivacyAccessedAPITypes"] as? [[String: Any]] ?? []
+        #expect(!types.isEmpty)
+    }
+
+    @Test("Background modes cover Record and Navigate with the screen off")
     func declaresBackgroundModes() {
         let modes = info["UIBackgroundModes"] as? [String] ?? []
         #expect(modes.contains("bluetooth-central"))

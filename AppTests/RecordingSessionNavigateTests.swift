@@ -69,6 +69,34 @@ extension LogEvent {
     }
 }
 
+/// Fake `CLBackgroundActivitySession`s for `ReferenceLocationSource`:
+/// counts every one made and every one released.
+@MainActor
+final class FakeBackgroundActivitySessions {
+    private(set) var made = 0
+    fileprivate(set) var released = 0
+    /// Made and not yet released.
+    var held: Int { made - released }
+
+    func make() -> any BackgroundActivitySessionHandle {
+        made += 1
+        return Handle(owner: self)
+    }
+
+    private final class Handle: BackgroundActivitySessionHandle {
+        private weak var owner: FakeBackgroundActivitySessions?
+        private var invalidated = false
+
+        init(owner: FakeBackgroundActivitySessions) { self.owner = owner }
+
+        func invalidate() {
+            guard !invalidated else { return }
+            invalidated = true
+            owner?.released += 1
+        }
+    }
+}
+
 /// `onNavigationFeed` for tests: keeps every feed, collects each feed's
 /// inputs in order, and passes them on unchanged (same order, same values)
 /// to a `NavigationService` through a proxy tap.
@@ -439,7 +467,7 @@ struct RecordingSessionNavigateTests {
         #expect(second > recordGeneration)
         #expect(rig.session.navigateState == .running, "moving at 20 km/h when Record stopped: no still phase")
         #expect(rig.idle.values == [true], "never off between the modes")
-        #expect(rig.source.startedWithBackgroundLocation == [false, true, false])
+        #expect(rig.source.startedWithBackgroundLocation == [true, true, true], "both modes hold background location (D7 revised)")
         let feeds = rig.tee.feeds
         #expect(feeds.map(\.generation) == [first, recordGeneration, second])
         #expect(feeds.map(\.output) == [.navigateOnly, .recording(recordingURL: url, sidecarURL: LogStore.navSidecarURL(for: url)),
@@ -727,20 +755,113 @@ struct RecordingSessionNavigateTests {
         #expect(await eventually(10) { rig.tee.ended.contains(generation) })
     }
 
-    @Test("Navigate starts its location source without background location; Record still holds it")
-    func noBackgroundLocationInNavigate() async throws {
+    // MARK: Background location (D7 revised 2026-10-20)
+
+    @Test("Navigate and Record both start their location source with background location (D7 revised)")
+    func backgroundLocationInBothModes() async throws {
         let scratch = try ScratchStore()
         defer { scratch.remove() }
         let location = ScriptedSource()
+        location.holdsBackgroundLocation = false
         let rig = NavigateRig(store: scratch.store, extraSources: [location])
         await rig.connect(speed: 0)
         rig.session.enableNavigate(Self.quick)
-        #expect(location.startedWithBackgroundLocation == [false])
+        #expect(location.startedWithBackgroundLocation == [true])
         try await rig.session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
-        #expect(location.startedWithBackgroundLocation == [false, true])
+        #expect(location.startedWithBackgroundLocation == [true, true])
         await rig.session.stop()
-        #expect(location.startedWithBackgroundLocation == [false, true, false])
+        #expect(location.startedWithBackgroundLocation == [true, true, true])
         rig.session.disableNavigate()
+    }
+
+    /// A rig whose location source is a real `ReferenceLocationSource`
+    /// (When In Use, so no CoreLocation prompt) holding fake background
+    /// activity sessions, so the test sees each one made and released.
+    private static func backgroundRig(
+        _ store: LogStore, configuration: NavigateConfiguration = quick
+    ) async -> (NavigateRig, ReferenceLocationSource, FakeBackgroundActivitySessions) {
+        let sessions = FakeBackgroundActivitySessions()
+        let location = ReferenceLocationSource(
+            authorization: FakeLocationAuthorization(.authorizedWhenInUse),
+            lastKnownLocation: FakeLastKnownLocation(nil),
+            backgroundSession: { sessions.make() }
+        )
+        let rig = NavigateRig(store: store, extraSources: [location])
+        await rig.connect(speed: 0)
+        rig.session.enableNavigate(configuration)
+        return (rig, location, sessions)
+    }
+
+    @Test("Navigate start holds a background activity session, as Record does; locking keeps it; disableNavigate releases it")
+    func navigateHoldsBackgroundSession() async throws {
+        let (rig, location, sessions) = await Self.backgroundRig(Self.absentStore())
+        #expect(rig.session.navigateGeneration != nil)
+        #expect(location.holdsBackgroundLocation)
+        #expect(sessions.made == 1 && sessions.held == 1)
+        #expect(location.locationAuthorizationDetail.hasSuffix("backgroundActivitySession=held"))
+        // Locking the phone touches nothing: the session stays held.
+        rig.session.handleScenePhase(.inactive)
+        rig.session.handleScenePhase(.background)
+        #expect(sessions.made == 1 && sessions.held == 1 && rig.session.navigateState != .off)
+        rig.session.handleScenePhase(.active)
+
+        rig.session.disableNavigate()
+        #expect(rig.session.navigateState == .off)
+        #expect(sessions.made == 1 && sessions.held == 0, "released when Navigate stops")
+        #expect(location.locationAuthorizationDetail.hasSuffix("backgroundActivitySession=none"))
+    }
+
+    @Test("Navigate's auto-stop and the app closing release the background activity session")
+    func navigateStopsReleaseBackgroundSession() async throws {
+        // Auto-stop: the link gone for longer than `autoStopAfter`.
+        let (rig, _, sessions) = await Self.backgroundRig(
+            Self.absentStore(), configuration: NavigateConfiguration(stillCalibration: .zero, autoStopAfter: .milliseconds(300)))
+        #expect(sessions.held == 1)
+        rig.link.state = .idle
+        #expect(await eventually(5) { if case .waitingForOBD = rig.session.navigateState { true } else { false } })
+        #expect(sessions.held == 1, "still held while waiting for the adapter")
+        #expect(await eventually(5) { rig.session.navigateState == .off })
+        #expect(sessions.made == 1 && sessions.held == 0, "released by the auto-stop")
+
+        // willTerminate (the app closed from the switcher).
+        let (closing, _, closingSessions) = await Self.backgroundRig(Self.absentStore())
+        #expect(closingSessions.held == 1)
+        closing.session.handleWillTerminate()
+        #expect(closing.session.navigateState == .off)
+        #expect(closingSessions.made == 1 && closingSessions.held == 0, "released when the app closes")
+    }
+
+    @Test("Record unchanged: Start holds its own background session once Navigate's is released; Stop releases it")
+    func recordBackgroundSessionUnchanged() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let (rig, location, sessions) = await Self.backgroundRig(scratch.store)
+        #expect(sessions.made == 1 && sessions.held == 1)
+        try await rig.session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
+        #expect(rig.session.navigateState == .off)
+        #expect(sessions.made == 2 && sessions.held == 1, "Navigate's released, Record's held: never two")
+        #expect(location.locationAuthorizationDetail.hasSuffix("backgroundActivitySession=held"))
+        await rig.session.stop()
+        // Navigate resumes (the link still polls) with a session of its own.
+        #expect(rig.session.navigateGeneration != nil)
+        #expect(sessions.made == 3 && sessions.held == 1)
+        rig.session.disableNavigate()
+        #expect(sessions.held == 0)
+
+        // Record alone, Navigate never enabled: as before UX-1.
+        let alone = FakeBackgroundActivitySessions()
+        let recordOnly = ReferenceLocationSource(
+            authorization: FakeLocationAuthorization(.authorizedWhenInUse),
+            lastKnownLocation: FakeLastKnownLocation(nil),
+            backgroundSession: { alone.make() }
+        )
+        let plain = NavigateRig(store: scratch.store, extraSources: [recordOnly])
+        await plain.connect(speed: 0)
+        #expect(alone.made == 0, "polling without enableNavigate starts nothing")
+        try await plain.session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
+        #expect(alone.made == 1 && alone.held == 1)
+        await plain.session.stop()
+        #expect(alone.made == 1 && alone.held == 0)
     }
 
     @Test("Map fix on arrival (R24.1-1): latestFix takes each fix as the source shows it, in Navigate and Record, without the 1 s live tick; never a fix of an ended run")

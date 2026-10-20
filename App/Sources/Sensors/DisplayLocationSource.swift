@@ -12,9 +12,10 @@ import Foundation
 /// again when the run has ended and the app is still active. At most one
 /// location consumer runs at any time.
 ///
-/// Never background location (D7): no `allowsBackgroundLocationUpdates`, no
+/// Never background location: no `allowsBackgroundLocationUpdates`, no
 /// `CLBackgroundActivitySession`; the session stops it when the scene is not
-/// active. Never asks for permission: it starts only when When In Use (or
+/// active (only Navigate's and Record's own sources run with the screen
+/// locked, D7 revised 2026-10-20). Never asks for permission: it starts only when When In Use (or
 /// Always) is already granted; the first Navigate or Record start asks.
 @MainActor
 protocol DisplayLocationProviding: AnyObject {
