@@ -70,11 +70,23 @@ final class PackTransfer: NSObject, URLSessionDataDelegate, @unchecked Sendable 
         /// (`NSURLErrorDataNotAllowed`, or `networkUnavailableReason`).
         init?(_ error: Error) {
             guard let error = error as? URLError else { return nil }
-            switch error.networkUnavailableReason {
-            case .cellular?: self = .cellular
-            case .expensive?: self = .expensive
-            case .constrained?: self = .constrained
-            case nil: if error.code == .dataNotAllowed { self = .cellular } else { return nil }
+            if let reason = error.networkUnavailableReason {
+                self.init(reason: reason)
+            } else if error.code == .dataNotAllowed {
+                self = .cellular
+            } else {
+                return nil
+            }
+        }
+
+        /// The path the system refused. Ultra Constrained (newer than the
+        /// iOS 17 deployment target) is a stricter Low Data Mode: `.constrained`.
+        init?(reason: URLError.NetworkUnavailableReason) {
+            switch reason {
+            case .cellular: self = .cellular
+            case .expensive: self = .expensive
+            case .constrained: self = .constrained
+            case .ultraConstrained: self = .constrained
             @unknown default: return nil
             }
         }
