@@ -968,7 +968,13 @@ struct GPSMapView: View {
     private func frame(center: CLLocationCoordinate2D, accuracy: Double) {
         reseedHeading()
         let center = estimate?.latest?.position.coordinate ?? center
-        let span = MapFraming.spanMeters(horizontalAccuracy: accuracy)
+        var span = MapFraming.spanMeters(horizontalAccuracy: accuracy)
+        // C8: an estimate on screen is framed whole, as the follow loop keeps it.
+        if let ellipse = estimate?.latest.map(FitEllipse.init) {
+            let fit = headingState.zoom.requiredSpanM(
+                ellipse: ellipse, headingUp: headingUp, cameraHeading: headingState.smoother.heading ?? 0)
+            span = max(span, EllipseFit.distance(forSpanM: fit) / MapFraming.distancePerSpan)
+        }
         if headingUp, follow.isFollowing, effectiveBearing != nil {
             // A region would be north-up; keep the mode.
             let framed = MapFraming.cameraDistance(spanMeters: span)
