@@ -17,7 +17,6 @@ struct OnboardingStoreTests {
         #expect(OnboardingStore.cardsSeenKey == "onboarding.cardsSeen")
         #expect(OnboardingStore.mountConfirmedKey == "onboarding.mountConfirmed")
         #expect(OnboardingStore.legacyChecklistKey == "firstLaunch.checklistConfirmed")
-        #expect(FirstLaunchStore.key == "firstLaunch.checklistConfirmed")
     }
 
     @Test("A fresh install has seen nothing and confirmed nothing")

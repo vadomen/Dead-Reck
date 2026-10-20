@@ -101,15 +101,16 @@ struct MapScreen: View {
             onRoadsWarningTap: onOpenMaps,
             onOpenSettings: onOpenSettings,
             roadsAttribution: roadsWarning?.attribution ?? false,
-            offerCard: offers.map { AnyView(PackOfferCard(monitor: $0)) },
-            offerShown: offers.map { PackOfferCard.current(for: $0) != nil } ?? false,
+            offerCard: bottomCard,
+            offerShown: offerIsShown || showsMountCard,
             recordingControl: fake.recording
                 ? AnyView(MapRecordingIndicatorLabel(elapsed: "12:34"))
                 : AnyView(MapRecordingButton(
                     session: session, offers: offers, onStop: { [session] in await session.stop() })),
             hasActiveRecording: fake.isActive ? fake.recording : MapRecordingControl.isActive(session.state),
             statusLine: fake.isActive
-                ? (fake.banner ? AnyView(NavigateStatusLabel(status: .waitingForOBD(secondsLeft: 272))) : nil)
+                ? (fake.banner ? AnyView(NavigateStatusLabel(status: .waitingForOBD(secondsLeft: 272)))
+                    : fake.calibrating ? AnyView(NavigateStatusLabel(status: .calibrating(secondsLeft: 24))) : nil)
                 : (status.text == nil ? nil : AnyView(MapNavigateStatusLine(session: session)))
         )
         .onReceive(NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)) { _ in
@@ -126,6 +127,22 @@ struct MapScreen: View {
 }
 
 extension MapScreen {
+    private var offerIsShown: Bool { offers.map { PackOfferCard.current(for: $0) != nil } ?? false }
+
+    /// The in-car mount card shows only when no pack offer is up: one card at a
+    /// time in the offer's slot, so the two never overlap and the road-ahead
+    /// area stays as with an offer (`offerShown` lifts the car for either).
+    private var showsMountCard: Bool { mountConfirmation?.isVisible == true && !offerIsShown }
+
+    /// The top card of the bottom-left zone, above the Navigate status line.
+    private var bottomCard: AnyView? {
+        if showsMountCard, let mountConfirmation {
+            return AnyView(MountConfirmationCardView(onConfirm: { mountConfirmation.confirm() })
+                .transition(.move(edge: .bottom).combined(with: .opacity)))
+        }
+        return offers.map { AnyView(PackOfferCard(monitor: $0)) }
+    }
+
     fileprivate static var fakes: HUDFakes {
         #if DEBUG
         return HUDFakes.parse(UserDefaults.standard.string(forKey: "uiFakeHUD"))

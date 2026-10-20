@@ -12,7 +12,7 @@ import Foundation
 struct OnboardingStore {
     static let cardsSeenKey = "onboarding.cardsSeen"
     static let mountConfirmedKey = "onboarding.mountConfirmed"
-    /// The UX-1 checklist's key (`FirstLaunchStore.key`). An on-disk string:
+    /// The UX-1 checklist's key (the removed `FirstLaunchStore.key`). An on-disk string:
     /// never rename it.
     static let legacyChecklistKey = "firstLaunch.checklistConfirmed"
 
