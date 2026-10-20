@@ -55,6 +55,7 @@ struct SettingsScreen<Recording: View, Console: View, Sessions: View, Adapter: V
     var gate: DeveloperGate
     var onDone: () -> Void = {}
     var onDemoDrive: (() -> Void)?
+    var demoRow: DemoDriveRow = .ready
     @ViewBuilder var recording: () -> Recording
     @ViewBuilder var console: () -> Console
     @ViewBuilder var sessions: () -> Sessions
@@ -64,7 +65,7 @@ struct SettingsScreen<Recording: View, Console: View, Sessions: View, Adapter: V
 
     var body: some View {
         SettingsContent(path: $path, info: info, thermal: thermal, roads: roads.value,
-                        showsDeveloper: gate.showsDiagnostics, isDebugBuild: gate.isDebug, onDemoDrive: onDemoDrive,
+                        showsDeveloper: gate.showsDiagnostics, isDebugBuild: gate.isDebug, onDemoDrive: onDemoDrive, demoRow: demoRow,
                         network: NetworkDiagnosticsText.rows(maps.downloads, setting: maps.cellularSetting),
                         versionNote: gate.toast,
                         onVersionTap: { gate.tapVersion() }, onDone: onDone,
@@ -104,6 +105,8 @@ struct SettingsContent<Recording: View, Console: View, Maps: View, Sessions: Vie
     var isDebugBuild = DeveloperGate.buildIsDebug
     /// Demo drive (simulated car): nil until the demo pipeline exists, then the row is disabled.
     var onDemoDrive: (() -> Void)?
+    /// Whether Demo drive can start now, or why not (Record active).
+    var demoRow: DemoDriveRow = .ready
     /// "Map downloads network" rows (UX-17), shown with the developer rows.
     var network: [NetworkDiagnosticsText.Row] = []
     /// "Developer diagnostics shown/hidden", under Version for a moment.
@@ -161,6 +164,10 @@ struct SettingsContent<Recording: View, Console: View, Maps: View, Sessions: Vie
         }
     }
 
+    private var demoEnabled: Bool {
+        onDemoDrive != nil && demoRow == .ready
+    }
+
     @ViewBuilder
     private func rows(_ list: [SettingsRow]) -> some View {
         ForEach(list, id: \.self) { row in
@@ -179,14 +186,18 @@ struct SettingsContent<Recording: View, Console: View, Maps: View, Sessions: Vie
                         .frame(minHeight: 44)
                 }
             case .demoDrive:
-                // Placeholder until the demo pipeline lands (REL-DEMO).
-                Button { onDemoDrive?() } label: {
-                    Label(SettingsRows.demoDriveTitle, systemImage: "car")
-                        .font(.title3)
-                        .foregroundStyle(Color.primary)
-                        .frame(minHeight: 44)
+                VStack(alignment: .leading, spacing: 2) {
+                    Button { onDemoDrive?() } label: {
+                        Label(SettingsRows.demoDriveTitle, systemImage: "car")
+                            .font(.title3)
+                            .foregroundStyle(demoEnabled ? Color.primary : Color.secondary)
+                            .frame(minHeight: 44)
+                    }
+                    .disabled(!demoEnabled)
+                    if case .blocked(let reason) = demoRow {
+                        Text(reason).font(.footnote).foregroundStyle(.secondary)
+                    }
                 }
-                .disabled(onDemoDrive == nil)
             case .howItWorks:
                 Button { cards.show() } label: {
                     Label("How FuGPS works", systemImage: "questionmark.circle")
@@ -240,7 +251,16 @@ struct SettingsContent<Recording: View, Console: View, Maps: View, Sessions: Vie
             }
             .navigationDestination(isPresented: $showsMount) { MountInfoScreen() }
             .fullScreenCover(isPresented: $cards.isPresented) { OnboardingCardsView(model: cards) }
+            // Defensive (REL-EXPORT): a route the gate hides never renders,
+            // even if something puts it on the path; and it is taken off it.
+            .onChange(of: path, initial: true) { _, new in
+                let kept = SettingsRoute.permitted(new, isDebug: isDebugBuild, gateOpen: showsDeveloper)
+                if kept != new { path = kept }
+            }
             .navigationDestination(for: SettingsRoute.self) { route in
+                if !route.isAllowed(isDebug: isDebugBuild, gateOpen: showsDeveloper) {
+                    EmptyView()
+                } else {
                 switch route {
                 case .recording:
                     recording()
@@ -262,12 +282,28 @@ struct SettingsContent<Recording: View, Console: View, Maps: View, Sessions: Vie
                 case .about:
                     AboutScreen(info: info, versionNote: versionNote, onVersionTap: onVersionTap)
                 }
+                }
             }
         }
     }
 }
 
 extension SettingsRoute {
+    /// The test drive recording, Sessions and Console are Developer rows:
+    /// in Release they exist only behind the 7-tap gate. The other routes
+    /// are always allowed.
+    func isAllowed(isDebug: Bool, gateOpen: Bool) -> Bool {
+        switch self {
+        case .recording, .sessions, .console: isDebug || gateOpen
+        case .maps, .adapter, .about: true
+        }
+    }
+
+    /// `path` without the routes the gate hides.
+    static func permitted(_ path: [SettingsRoute], isDebug: Bool, gateOpen: Bool) -> [SettingsRoute] {
+        path.filter { $0.isAllowed(isDebug: isDebug, gateOpen: gateOpen) }
+    }
+
     var title: String {
         switch self {
         case .recording: "Test drive recording"

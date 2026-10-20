@@ -178,6 +178,31 @@ final class MapViewModel {
         if next != speed { speed = next }
     }
 
+    /// The demo drive starts or stops (REL-DEMO): everything the map shows of
+    /// the previous source goes (track, dot, bearing, speed, the link's
+    /// "was up" memory, manual flags), so neither the user's real position
+    /// nor the demo's last lap is ever drawn for the other. The next run or
+    /// display fix fills it again.
+    func resetForDemo() {
+        track = GPSTrack()
+        latest = nil
+        lastFixInstant = nil
+        isReceiving = false
+        manualFixes = []
+        bearingSource.reset()
+        bearing = nil
+        currentFile = nil
+        currentRun = nil
+        obdInput = nil
+        obdEverConnected = false
+        obdConnectedAdapter = nil
+        if isStationary {
+            isStationary = false
+            stationaryWrites += 1
+        }
+        refreshSpeed()
+    }
+
     /// Remembers a fix the recorder staged so the map can show it. `id` is the
     /// recorder's pending-fix id.
     func addManualFix(id: Int, latitude: Double, longitude: Double) {

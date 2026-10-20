@@ -15,6 +15,10 @@ enum AboutContent {
     /// Every data source the build uses. Nothing else is fetched or bundled.
     static let osmCredit = "Road data © OpenStreetMap contributors, available under the Open Database License (ODbL) 1.0."
     static let osmHowToGet = "The road packs are a derived database; get the data on the site's data page."
+    /// The roads of the demo drive, bundled in the app (REL-DEMO): OSM data of
+    /// 2026-10-08, a Geofabrik extract. No place name. Starts with the same
+    /// credit the map shows during the demo (`DemoDriveRoads.attribution`).
+    static let demoMapCredit = DemoDriveRoads.attribution + ", ODbL 1.0. Demo drive map data: OSM data of 2026-10-08 (Geofabrik extract), bundled in the app."
     static let mapsCredit = "The map picture comes from Apple Maps (MapKit)."
     /// Core's package has no dependencies and project.yml adds none.
     static let licences = "This app bundles no third-party code."
@@ -49,6 +53,7 @@ struct AboutScreen: View {
                     Text("OpenStreetMap").font(.headline)
                     Text(AboutContent.osmCredit)
                     Text(AboutContent.osmHowToGet).foregroundStyle(.secondary)
+                    Text(AboutContent.demoMapCredit).foregroundStyle(.secondary)
                 }
                 .font(.subheadline)
                 linkRow("Get the road data", systemImage: "arrow.down.circle", url: AboutContent.dataURL)

@@ -217,6 +217,14 @@ struct DemoDriveRoads: Sendable {
     var route: [GeoPoint]
     static let attribution = "© OpenStreetMap contributors"
 
+    /// Plain values (previews, tests).
+    init(lines: [Line], southWest: GeoPoint, northEast: GeoPoint, route: [GeoPoint]) {
+        self.lines = lines
+        self.southWest = southWest
+        self.northEast = northEast
+        self.route = route
+    }
+
     init(pack: RoadPack, drive: DemoDrive) {
         func geo(_ p: RoadPoint) -> GeoPoint { GeoPoint(latitude: p.latitude, longitude: p.longitude) }
         lines = pack.polylines().map { Line(highwayClass: $0.highwayClass, isOneway: $0.isOneway, points: $0.points.map(geo)) }

@@ -65,6 +65,9 @@ struct MapScreen: View {
     /// Navigate status line: read `isVisible`, call `confirm()` on "Mounted".
     /// Fed by `MapFeed`, never here. nil in previews.
     var mountConfirmation: MountConfirmationModel?
+    /// The running demo drive (REL-DEMO): its roads under the arrow, the DEMO
+    /// badge, Stop demo. nil outside the demo.
+    var demo: MapDemo?
     @Environment(\.scenePhase) private var scenePhase
     @State private var thermal = ProcessInfo.processInfo.thermalState
 
@@ -100,7 +103,8 @@ struct MapScreen: View {
             roadsWarning: roadsWarning?.message,
             onRoadsWarningTap: onOpenMaps,
             onOpenSettings: onOpenSettings,
-            roadsAttribution: roadsWarning?.attribution ?? false,
+            roadsAttribution: (roadsWarning?.attribution ?? false) || demo != nil,
+            demo: demo,
             offerCard: bottomCard,
             offerShown: offerIsShown || showsMountCard,
             recordingControl: fake.recording
@@ -119,6 +123,13 @@ struct MapScreen: View {
         .onAppear { thermal = ProcessInfo.processInfo.thermalState }
         .onChange(of: link?.state, initial: true) { _, state in model.noteLink(state, adapter: link?.rememberedAdapterID) }
         .onChange(of: link?.rememberedAdapterID) { _, id in model.noteLink(link?.state, adapter: id) }
+        // The demo starts or stops: nothing of the other source stays on the
+        // map (the real position, the demo's last lap), and the link memory
+        // is the new link's.
+        .onChange(of: demo != nil) {
+            model.resetForDemo()
+            model.noteLink(link?.state, adapter: link?.rememberedAdapterID)
+        }
         // The card may only appear while the map is on screen (UX-8).
         .onChange(of: isSelected && scenePhase == .active, initial: true) { _, visible in
             offers?.isMapVisible = visible
@@ -315,6 +326,8 @@ struct GPSMapView: View {
     /// A road pack is attached to the run (`MapAttribution.visible`): the
     /// OSM credit is shown.
     var roadsAttribution = false
+    /// The running demo drive: roads overlay, DEMO badge, Stop demo; nil outside it.
+    var demo: MapDemo?
     /// The at-a-stop road-pack offer (UX-8), top of the bottom-left zone; its own
     /// view, so this one stays plain values.
     var offerCard: AnyView?
@@ -386,6 +399,7 @@ struct GPSMapView: View {
         onRoadsWarningTap: @escaping () -> Void = {},
         onOpenSettings: @escaping () -> Void = {},
         roadsAttribution: Bool = false,
+        demo: MapDemo? = nil,
         offerCard: AnyView? = nil,
         offerShown: Bool = false,
         recordingControl: AnyView? = nil,
@@ -416,6 +430,7 @@ struct GPSMapView: View {
         self.onRoadsWarningTap = onRoadsWarningTap
         self.onOpenSettings = onOpenSettings
         self.roadsAttribution = roadsAttribution
+        self.demo = demo
         self.offerCard = offerCard
         self.offerShown = offerShown
         self.recordingControl = recordingControl
@@ -461,7 +476,7 @@ struct GPSMapView: View {
             // navigation feed, then turns/centres the camera.
             // Keyed on showsEstimate too: the loop's captured copy of this view
             // would otherwise keep the value from when it started (R61.1-1).
-            .task(id: MapLoopKey(isLive: isLive, showsEstimate: showsEstimate)) {
+            .task(id: MapLoopKey(isLive: isLive, showsEstimate: showsEstimate, isDemo: demo != nil)) {
                 await frameOnOpen()
                 await runLoop()
             }
@@ -561,6 +576,14 @@ struct GPSMapView: View {
         .overlay(alignment: .topLeading) { hudCard }
         // Right rail: North up / Heading up, Following, Settings.
         .overlay(alignment: .bottomTrailing) { rail }
+        // REL-DEMO: the badge and Stop demo, top right, only while it runs.
+        .overlay(alignment: .topTrailing) {
+            if let demo {
+                DemoControls(onStop: demo.onStop)
+                    .padding(.trailing, MapLayout.edgeInset)
+                    .padding(.top, 8)
+            }
+        }
         // Bottom-left zone, left of the rail, stacked upward.
         .overlay(alignment: .bottomLeading) { bottomZone }
         // UX-33: the OSM credit, one line at the very bottom edge.
@@ -686,6 +709,7 @@ struct GPSMapView: View {
     private func mapBody(stale: Bool) -> some View {
         MapReader { proxy in
             Map(position: $position) {
+                if let demo { DemoRoadsOverlay(roads: demo.roads) }
                 TrackOverlay(track: track)
                 if let estimate {
                     NavOverlay(feed: estimate, headingUp: headingUp, cameraHeading: cameraHeading, showEdge: showNavStats)
@@ -930,6 +954,9 @@ struct GPSMapView: View {
             frame(center: fix.coordinate, accuracy: fix.horizontalAccuracy)
         } else if let nav {
             frame(center: nav.position.coordinate, accuracy: nav.semiMajorM / 3)
+        } else if let demo {
+            // The demo area, never the user's position (REL-DEMO).
+            position = .region(demo.region)
         } else if let cached = cachedLocation() {
             // Camera only: no dot is drawn for it.
             frame(
