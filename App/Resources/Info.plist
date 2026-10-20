@@ -10,7 +10,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>DriveLogger</string>
+	<string>FuGPS</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -25,20 +25,27 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<!-- Encryption is only HTTPS through URLSession plus SHA-256 file hashes
+	     (CryptoKit, integrity only): exempt, so App Store Connect does not ask
+	     the export-compliance question on every upload. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 
 	<!-- Permission purpose strings. Shown verbatim in the system prompt, so
-	     they say what is recorded and why rather than naming an API. -->
+	     they tell a driver in plain words what each one is for rather than
+	     naming an API. No Always location: nothing requests it; the
+	     background activity session keeps When In Use working with the
+	     screen locked (D7 revised), so there is no Always purpose string. -->
 	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>DriveLogger connects to your car's OBD-II adapter over Bluetooth to record speed and engine data for dead-reckoning research.</string>
+	<string>FuGPS connects to your car's OBD-II Bluetooth adapter to read its speed and engine data, so it can keep estimating your position when GPS is jammed. If you record a drive, this data is saved in the recording on your phone.</string>
 	<key>NSMotionUsageDescription</key>
-	<string>DriveLogger records accelerometer and gyroscope data while you drive so your journey can be reconstructed for dead-reckoning research.</string>
+	<string>FuGPS uses your phone's motion sensors to follow the car's turns, braking and acceleration, so it can keep estimating your position when GPS is jammed. If you record a drive, this data is saved in the recording on your phone.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>DriveLogger uses your location while you drive: it records the reference track for dead-reckoning research and navigation, and picks your region's road map on the phone.</string>
-	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>DriveLogger records your location for the whole drive, including when the screen is off, so the reference track for dead-reckoning research has no gaps.</string>
+	<string>FuGPS uses your location to show where you are and to keep estimating your position when GPS is jammed, also with the screen locked while you drive, and to pick the road map for your area. If you record a drive, your route is saved in the recording on your phone.</string>
 
-	<!-- Recording has to survive the screen locking mid-drive: location keeps
-	     the GNSS track running and bluetooth-central keeps the OBD link alive. -->
+	<!-- Record and Navigate have to survive the screen locking mid-drive
+	     (D7 revised): location keeps the GNSS fixes and the estimate running,
+	     bluetooth-central keeps the OBD link alive. -->
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>bluetooth-central</string>

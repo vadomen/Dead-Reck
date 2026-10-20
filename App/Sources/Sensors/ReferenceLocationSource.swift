@@ -17,12 +17,13 @@ import Foundation
 /// - no distance filter, no automatic pausing (fixes keep coming while the
 ///   car waits at a light);
 /// - `allowsBackgroundLocationUpdates` and a `CLBackgroundActivitySession`
-///   held while recording, so the app keeps running with the screen locked
-///   (the `location` background mode is in Info.plist). When-In-Use
-///   authorisation is enough with the session. Navigate (UX-1, D7: no
-///   background location) clears `holdsBackgroundLocation` before `start`:
-///   then neither is used, and everything else — accuracy, activity type,
-///   filter, pausing, the sample stream — is the same.
+///   held while a recording or a Navigate session runs (D7 revised
+///   2026-10-20), so the app keeps running with the screen locked (the
+///   `location` background mode is in Info.plist) and released at `stop`.
+///   When-In-Use authorisation is enough with the session: nothing asks for
+///   Always. `holdsBackgroundLocation` stays configurable (false: neither is
+///   used, and everything else — accuracy, activity type, filter, pausing,
+///   the sample stream — is the same); both modes set it true.
 ///
 /// Time (docs/PLAN.md §3.4): `CLLocation.timestamp` is wall clock. At
 /// receipt the delegate reads `receivedT = clock.now()` and `Date()`
@@ -70,9 +71,9 @@ final class ReferenceLocationSource: SensorSource, LiveReferenceFixReporting, Ba
     LocationAuthorizationReporting, CachedLocationProviding, BackgroundLocationConfigurable {
     let name = "referenceLocation"
 
-    /// Read by `start`: true (the default, Record) sets
-    /// `allowsBackgroundLocationUpdates` and holds a
-    /// `CLBackgroundActivitySession`; false (Navigate, D7) does neither.
+    /// Read by `start`: true (the default; Record and Navigate, D7 revised)
+    /// sets `allowsBackgroundLocationUpdates` and holds a
+    /// `CLBackgroundActivitySession` until `stop`; false does neither.
     var holdsBackgroundLocation = true
 
     /// The most recent fix of the current run, for the dashboard only.
@@ -98,7 +99,10 @@ final class ReferenceLocationSource: SensorSource, LiveReferenceFixReporting, Ba
     /// Where the cached position is read: `manager` in the app, a fake in
     /// tests.
     private let lastKnownLocation: any LastKnownLocationProviding
-    private var backgroundSession: CLBackgroundActivitySession?
+    /// Makes the background activity session `start` holds:
+    /// `CLBackgroundActivitySession()` in the app, a fake in tests.
+    private let makeBackgroundSession: @MainActor () -> any BackgroundActivitySessionHandle
+    private var backgroundSession: (any BackgroundActivitySessionHandle)?
     private var running = false
 
     /// Called on the main actor after each authorisation change
@@ -111,12 +115,17 @@ final class ReferenceLocationSource: SensorSource, LiveReferenceFixReporting, Ba
     ///     tests pass a fake.
     ///   - lastKnownLocation: nil reads the same manager's `location`;
     ///     tests pass a fake.
+    ///   - backgroundSession: nil makes a real
+    ///     `CLBackgroundActivitySession`; tests pass a fake to see it held
+    ///     and released.
     init(
         authorization: (any LocationAuthorizationProviding)? = nil,
-        lastKnownLocation: (any LastKnownLocationProviding)? = nil
+        lastKnownLocation: (any LastKnownLocationProviding)? = nil,
+        backgroundSession: (@MainActor () -> any BackgroundActivitySessionHandle)? = nil
     ) {
         let manager = CLLocationManager()
         self.manager = manager
+        makeBackgroundSession = backgroundSession ?? { CLBackgroundActivitySession() }
         self.authorization = authorization ?? manager
         self.lastKnownLocation = lastKnownLocation ?? manager
         manager.delegate = delegate
@@ -156,7 +165,7 @@ final class ReferenceLocationSource: SensorSource, LiveReferenceFixReporting, Ba
         if authorization.authorizationStatus == .notDetermined {
             manager.requestWhenInUseAuthorization()
         }
-        backgroundSession = holdsBackgroundLocation ? CLBackgroundActivitySession() : nil
+        backgroundSession = holdsBackgroundLocation ? makeBackgroundSession() : nil
         manager.startUpdatingLocation()
         running = true
     }
@@ -260,13 +269,22 @@ protocol BackgroundExecutionProviding: SensorSource {
 }
 
 /// A source that can start with or without background location (UX-1, D7).
-/// `RecordingSession` sets `holdsBackgroundLocation` before every `start`:
-/// true for a recording, false for Navigate. On a phone,
-/// `ReferenceLocationSource`.
+/// `RecordingSession` sets `holdsBackgroundLocation` before every `start`
+/// from the run: true for a recording and, since D7 was revised
+/// (2026-10-20), for Navigate too. On a phone, `ReferenceLocationSource`.
 @MainActor
 protocol BackgroundLocationConfigurable: SensorSource {
     var holdsBackgroundLocation: Bool { get set }
 }
+
+/// A background activity session while it is held: `CLBackgroundActivitySession`
+/// in the app, a fake in tests. `invalidate()` releases it.
+@MainActor
+protocol BackgroundActivitySessionHandle: AnyObject {
+    func invalidate()
+}
+
+extension CLBackgroundActivitySession: BackgroundActivitySessionHandle {}
 
 /// A source that reports location authorisation for the `lifecycle`
 /// `locationAuthorization` row `RecordingSession` writes at start (M4).

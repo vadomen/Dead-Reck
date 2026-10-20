@@ -62,6 +62,9 @@ targets:
       # Listed explicitly rather than globbing App/Resources so Info.plist is
       # not also copied in as a bundle resource.
       - path: App/Resources/Assets.xcassets
+      # Privacy manifest (App Store): a bundle resource at the app's root.
+      - path: App/Resources/PrivacyInfo.xcprivacy
+        buildPhase: resources
     dependencies:
       - package: DriveLoggerCore
     settings:
@@ -70,7 +73,8 @@ targets:
         INFOPLIST_FILE: App/Resources/Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
-        MARKETING_VERSION: "0.1.0"
+        MARKETING_VERSION: "1.0.0"
+        # Integer build number, bumped once per upload by scripts/bump_build.sh.
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_EMIT_LOC_STRINGS: YES
         # iPhone only. Must be set per-target: XcodeGen writes a default of

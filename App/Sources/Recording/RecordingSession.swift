@@ -366,11 +366,14 @@ struct RecordingNavigationFeed: Sendable {
 /// - The screen stays awake while either mode runs; the idle timer is only
 ///   set when that changes, so the Navigate → Record → Navigate switch never
 ///   turns it off in between.
-/// - No background location (D7): `BackgroundLocationConfigurable` sources
-///   start with `holdsBackgroundLocation` false. Background and foreground
-///   reset nothing and write nothing: the engine keeps its state, and the
-///   time the app is suspended is a gap in every stream like any other.
-///   `backgroundRiskWarning` stays a Record concern.
+/// - Background location as in Record (D7 revised 2026-10-20):
+///   `BackgroundLocationConfigurable` sources start with
+///   `holdsBackgroundLocation` true, so the session keeps running with the
+///   screen locked; it is released when the session's sources stop.
+///   Background and foreground reset nothing and write nothing: the engine
+///   keeps its state, and any time the app is suspended anyway is a gap in
+///   every stream like any other. `backgroundRiskWarning` stays a Record
+///   concern.
 /// - `willTerminate` ends the session.
 @MainActor
 @Observable
@@ -923,7 +926,8 @@ final class RecordingSession {
         lastScenePhase = phase
         // Only `.active` runs the map-only position feed (R61.1-4):
         // `.inactive` (control centre, app switcher, a call) stops it too,
-        // and `.background` must (D7). A run's own sources are not touched.
+        // and `.background` must (it is never background location). A run's
+        // own sources are not touched: they keep running when locked (D7 revised).
         updateDisplayLocation()
         switch phase {
         case .background:
@@ -1187,8 +1191,8 @@ final class RecordingSession {
 
     /// Starts every source on the session's clock and sink, a recording's
     /// or (UX-1) a Navigate session's: one function, so the two start the
-    /// same sources in the same order. Only `holdsBackgroundLocation` differs
-    /// (D7).
+    /// same sources in the same order, both with background location (D7
+    /// revised).
     private func startSources(_ rec: some SessionRun) {
         for source in sources {
             if case .unavailable(let reason) = source.availability {

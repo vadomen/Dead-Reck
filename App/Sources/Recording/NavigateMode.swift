@@ -65,7 +65,8 @@ protocol SessionRun: AnyObject {
     /// Where every source and link row goes.
     var sink: LogSink { get }
     /// Handed to every `BackgroundLocationConfigurable` source before it
-    /// starts: true for a recording, false for Navigate (D7).
+    /// starts. True for a recording and for Navigate (D7 revised
+    /// 2026-10-20: Navigate keeps running with the screen locked).
     var holdsBackgroundLocation: Bool { get }
     var startedSources: [any SensorSource] { get set }
     /// Link events are forwarded while true.
@@ -92,7 +93,10 @@ final class NavigateRun: SessionRun {
     /// `LogSink.tapOnly(navigationTap.tap)`.
     let sink: LogSink
     let navigationTap: NavigationTap
-    let holdsBackgroundLocation = false
+    /// D7 revised (2026-10-20): like a recording, so the estimate continues
+    /// with the screen locked; released when the session ends (its sources
+    /// stop: `disableNavigate`, auto-stop, Record's Start, `willTerminate`).
+    let holdsBackgroundLocation = true
     var startedSources: [any SensorSource] = []
     var acceptsLinkEvents = true
     var replayedStartupInit = false

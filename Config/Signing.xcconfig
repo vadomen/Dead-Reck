@@ -7,7 +7,7 @@
 // Never write a DEVELOPMENT_TEAM into this file, into project.yml, or into the
 // generated .xcodeproj.
 
-PRODUCT_BUNDLE_IDENTIFIER = com.example.drivelogger
+PRODUCT_BUNDLE_IDENTIFIER = com.vadomen.fugps
 
 CODE_SIGN_STYLE = Automatic
 
