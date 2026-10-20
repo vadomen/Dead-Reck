@@ -43,7 +43,7 @@ struct MapBindings {
                 session: session, link: link, navigation: demoFeed, roadsWarning: demoWarning,
                 mountConfirmation: nil, offers: nil, cachedLocation: { nil },
                 demo: MapDemo(roads: demoRoads, southWest: roads.southWest, northEast: roads.northEast,
-                              onStop: { demo.stop() }))
+                              onStop: { demo.stop() }, elapsed: { demo.elapsedSeconds }))
         }
         return MapBindings(
             session: appSession, link: appLink, navigation: appFeed, roadsWarning: appWarning,

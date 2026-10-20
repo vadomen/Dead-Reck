@@ -211,6 +211,7 @@ struct SettingsContent<Recording: View, Console: View, Maps: View, Sessions: Vie
 
     var body: some View {
         NavigationStack(path: $path) {
+            ScrollViewReader { scroller in
             List {
                 Section { rows(SettingsRows.driver()) }
                 Section {
@@ -240,6 +241,19 @@ struct SettingsContent<Recording: View, Console: View, Maps: View, Sessions: Vie
                 }
                 if showsDeveloper { roadsSection }
                 if showsDeveloper, !network.isEmpty { networkSection }
+                #if DEBUG
+                Color.clear.frame(height: 1).id("settingsEnd").listRowBackground(Color.clear)
+                #endif
+            }
+            #if DEBUG
+            // `-uiSettingsScroll 1`: scrolled to the bottom at launch (screenshots).
+            .task {
+                if UserDefaults.standard.bool(forKey: "uiSettingsScroll") {
+                    try? await Task.sleep(for: .milliseconds(500))
+                    scroller.scrollTo("settingsEnd", anchor: .bottom)
+                }
+            }
+            #endif
             }
             .navigationTitle("Settings")
             .toolbar {

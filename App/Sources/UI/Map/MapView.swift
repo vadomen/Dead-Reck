@@ -344,6 +344,7 @@ struct GPSMapView: View {
     /// Navigate's calibration / OBD-lost banner (UX-1), in the bottom-left zone; nil when it has no text.
     var statusLine: AnyView?
 
+    @Environment(\.colorScheme) private var scheme
     @State private var position: MapCameraPosition = .automatic
     /// Visible north-south extent, metres, from the camera.
     @State private var visibleSpanM: Double?
@@ -579,7 +580,7 @@ struct GPSMapView: View {
         // REL-DEMO: the badge and Stop demo, top right, only while it runs.
         .overlay(alignment: .topTrailing) {
             if let demo {
-                DemoControls(onStop: demo.onStop)
+                DemoControls(onStop: demo.onStop, elapsed: demo.elapsed)
                     .padding(.trailing, MapLayout.edgeInset)
                     .padding(.top, 8)
             }
@@ -709,7 +710,17 @@ struct GPSMapView: View {
     private func mapBody(stale: Bool) -> some View {
         MapReader { proxy in
             Map(position: $position) {
-                if let demo { DemoRoadsOverlay(roads: demo.roads) }
+                #if DEBUG
+                // `-uiBlankMap 2`: an opaque flat fill over the demo area, so
+                // a screenshot shows the overlay as on a tile-less map
+                // (airplane mode), with no place names.
+                if UserDefaults.standard.integer(forKey: "uiBlankMap") == 2, let demo {
+                    MapPolygon(coordinates: demo.flatRing)
+                        .foregroundStyle(scheme == .dark
+                            ? Color(red: 0.11, green: 0.13, blue: 0.18) : Color(red: 0.93, green: 0.94, blue: 0.95))
+                }
+                #endif
+                if let demo { DemoRoadsOverlay(roads: demo.roads, dark: scheme == .dark) }
                 TrackOverlay(track: track)
                 if let estimate {
                     NavOverlay(feed: estimate, headingUp: headingUp, cameraHeading: cameraHeading, showEdge: showNavStats)

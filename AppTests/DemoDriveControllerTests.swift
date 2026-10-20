@@ -100,7 +100,7 @@ struct DemoDriveControllerTests {
         // The demo's navigation: estimates, and roads from the demo pack alone.
         let attached = await until(40) { await rig.demo.navigation.roadsStatus().packNames == ["demo.roadpack"] }
         #expect(attached)
-        let snapshot = await AppServices.liveSnapshot(app: NavigationService(), demo: rig.demo.navigation)()
+        let snapshot = await rig.demo.navigation.snapshot()
         let estimate = try #require(snapshot.estimate)
         #expect(estimate.latitude >= roads.southWest.latitude && estimate.latitude <= roads.northEast.latitude)
         #expect(estimate.longitude >= roads.southWest.longitude && estimate.longitude <= roads.northEast.longitude)

@@ -121,15 +121,6 @@ final class AppServices {
         demo = DemoDriveController(session: session, link: link, packURL: DemoRoadPack.url(in: .main))
     }
 
-    /// The navigation the map follows (REL-DEMO): the demo's while it has a
-    /// run, else the app's. For `NavigationFeed(source:)`.
-    nonisolated static func liveSnapshot(app: NavigationService, demo: NavigationService) -> NavigationFeed.Source {
-        {
-            if await demo.currentGeneration != nil { return await demo.snapshot() }
-            return await app.snapshot()
-        }
-    }
-
     /// The path monitor's relay to the downloader (R66.1-8).
     nonisolated static func pathRelay(to downloader: PackDownloader) -> OrderedRelay<PackPath> {
         OrderedRelay { path in await downloader.setPath(path) }

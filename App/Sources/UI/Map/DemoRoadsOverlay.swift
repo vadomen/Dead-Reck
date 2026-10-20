@@ -37,17 +37,17 @@ enum DemoRoadTier: Int, CaseIterable, Comparable, Sendable {
     }
 
     /// Slate on the light map, pale on the dark one; the minor roads fainter.
-    var color: Color {
+    /// Explicit, not a dynamic colour: MapKit overlays resolve dynamic
+    /// colours as light whatever the appearance.
+    func color(dark: Bool) -> Color {
         let alpha: Double = switch self {
         case .major: 0.9
         case .collector: 0.8
         case .minor: 0.6
         }
-        return Color(uiColor: UIColor { traits in
-            traits.userInterfaceStyle == .dark
-                ? UIColor(red: 0.78, green: 0.82, blue: 0.88, alpha: alpha)
-                : UIColor(red: 0.27, green: 0.31, blue: 0.38, alpha: alpha)
-        })
+        return dark
+            ? Color(red: 0.80, green: 0.84, blue: 0.90, opacity: alpha)
+            : Color(red: 0.27, green: 0.31, blue: 0.38, opacity: alpha)
     }
 }
 
@@ -84,6 +84,8 @@ struct MapDemo: Equatable {
     var southWest: GeoPoint
     var northEast: GeoPoint
     var onStop: () -> Void
+    /// Demo seconds now (the demo's own clock), for the DEBUG clock readout.
+    var elapsed: () -> Double? = { nil }
 
     static func == (a: MapDemo, b: MapDemo) -> Bool {
         a.roads === b.roads && a.southWest == b.southWest && a.northEast == b.northEast
@@ -103,16 +105,31 @@ struct MapDemo: Equatable {
     }
 }
 
+#if DEBUG
+extension MapDemo {
+    /// A box four times the demo area, for the DEBUG flat basemap.
+    var flatRing: [CLLocationCoordinate2D] {
+        let r = region
+        let dy = r.span.latitudeDelta * 2, dx = r.span.longitudeDelta * 2
+        let c = r.center
+        return [(-1.0, -1.0), (-1, 1), (1, 1), (1, -1)].map {
+            CLLocationCoordinate2D(latitude: c.latitude + $0.0 * dy, longitude: c.longitude + $0.1 * dx)
+        }
+    }
+}
+#endif
+
 /// The demo roads as map content. Its own type so it is rebuilt only when the
 /// layers change.
 struct DemoRoadsOverlay: MapContent {
     var roads: DemoRoadLayers
+    var dark: Bool
 
     var body: some MapContent {
         ForEach(Array(roads.layers.enumerated()), id: \.offset) { _, layer in
             ForEach(Array(layer.lines.enumerated()), id: \.offset) { _, line in
                 MapPolyline(coordinates: line)
-                    .stroke(layer.tier.color, style: StrokeStyle(lineWidth: layer.tier.lineWidth, lineCap: .round, lineJoin: .round))
+                    .stroke(layer.tier.color(dark: dark), style: StrokeStyle(lineWidth: layer.tier.lineWidth, lineCap: .round, lineJoin: .round))
             }
         }
     }
@@ -122,6 +139,8 @@ struct DemoRoadsOverlay: MapContent {
 /// speed card). Always together: the badge exists exactly while the demo runs.
 struct DemoControls: View {
     var onStop: () -> Void
+    /// DEBUG `-uiDemoClock 1` only: demo seconds, for reproducible screenshots.
+    var elapsed: () -> Double? = { nil }
 
     static let badgeText = "DEMO"
     static let stopText = "Stop demo"
@@ -137,6 +156,17 @@ struct DemoControls: View {
                 .background(Color(red: 1.0, green: 0.78, blue: 0.1), in: Capsule())
                 .shadow(color: .black.opacity(0.25), radius: 5, y: 2)
                 .accessibilityLabel("Demo drive, simulated car")
+            #if DEBUG
+            if UserDefaults.standard.bool(forKey: "uiDemoClock") {
+                TimelineView(.periodic(from: .now, by: 0.2)) { _ in
+                    Text(elapsed().map { String(format: "t %.1f s", $0) } ?? "t --")
+                        .font(.system(size: 14, weight: .bold, design: .monospaced))
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .background(.black.opacity(0.7), in: Capsule())
+                        .foregroundStyle(.white)
+                }
+            }
+            #endif
             Button(action: onStop) {
                 Label(Self.stopText, systemImage: "stop.fill")
                     .font(.system(size: 18, weight: .bold))
