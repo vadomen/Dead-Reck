@@ -953,3 +953,18 @@ Reviewers: three opus reviewers in parallel: A engine, B sidecar/replay/docs, C 
 | R75.1-8 | MINOR | `MapsView.swift:154`: the Remove-during-run confirmation "Navigation will run without this map until you restart the app." contradicts the behaviour: the pack stays in use until restart and is deleted at the next launch. | OPEN | User wording decision. Proposed: "This map stays in use until you restart the app, then it is removed." Not in BACKLOG. |
 
 Tests at round 1 start: Core 1110 tests in 140 suites passed; release perf gate 9 passed; AppTests 689 tests in 102 suites passed.
+
+### Round 2
+
+Reviewers: two fresh opus reviewers: A Core plus the nav docs, B the App plus the UX/PLAN/README docs (HEAD efcab67). Result: 0 BLOCKER, 0 MAJOR, 2 MINOR (DEFERRED). Both reviewers: ready to merge. R75.1-1..4 verified fixed. A killed 3 mutations: the coverage-watch subset edge, the once-per-second gate, and the bounds-only bbox. Bit-identity holds: clean drive, seed 1, roads off / on / as-live; GeoJSON byte-identical; metrics identical apart from timing; the written sidecar identical apart from timing and `sidecarVersion` 2 to 3. The as-live run never extends.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R75.2-1 | MINOR | `App/Sources/UI/Settings/MapsView.swift:474`: a double tap on "Download again" re-downloads an installed pack. The second `cancelRemoval` runs during the first one's rescan suspension, finds no marks, returns false, and falls back to `downloader.start`. | DEFERRED | BACKLOG. Fix: an in-flight guard per row, or fall back only when the pack is neither marked nor active. |
+| R75.2-2 | MINOR | `App/Sources/UI/Map/MapEllipseFit.swift:69-73`: the fit's bottom inset reserves only the 140 pt offer card. It leaves out the bottom-zone lines (roads warning, position status, Navigate status) and the banner hosting the offer (~156 pt), so the rear tip of a long along-track ellipse can sit under the opaque roads-warning capsule. | DEFERRED | BACKLOG. Fix: add the measured bottom-zone height to `Viewport.bottom`. |
+
+Tests at round 2: Core 1111 tests in 140 suites passed; AppTests 691 tests in 102 suites passed; simulator build OK.
+
+### Run 75 summary
+
+2 rounds; 4 fixed (R75.1-1..4); 0 rejected; 5 deferred (R75.1-5..7, R75.2-1, R75.2-2). R75.1-8 open pending the user's wording decision. The ellipse-fit span ceiling (`EllipseFit.maxSpanM`) is pending a user decision.
