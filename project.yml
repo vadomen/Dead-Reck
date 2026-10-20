@@ -65,6 +65,10 @@ targets:
       # Privacy manifest (App Store): a bundle resource at the app's root.
       - path: App/Resources/PrivacyInfo.xcprivacy
         buildPhase: resources
+      # The demo drive's road pack (REL-DEMO), opened read-only from the
+      # bundle; never installed into the pack library.
+      - path: App/Resources/Demo/demo.roadpack
+        buildPhase: resources
     dependencies:
       - package: DriveLoggerCore
     settings:
