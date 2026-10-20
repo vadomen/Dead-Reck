@@ -47,6 +47,14 @@ struct FirstLaunchAndTestDriveTests {
         #expect(store(d).cardsSeen)
     }
 
+    @Test("Skip is hidden on the last card (it would equal Continue), shown on cards 1-3")
+    func noSkipOnLastCard() {
+        for card in 1...4 {
+            let model = OnboardingModel(store: store(defaults()), forcedCard: card)
+            #expect(model.showsSkip == (card != 4), "card \(card)")
+        }
+    }
+
     @Test("Skip on any card marks the cards seen and closes them")
     func skipAnywhere() {
         for card in 1...4 {

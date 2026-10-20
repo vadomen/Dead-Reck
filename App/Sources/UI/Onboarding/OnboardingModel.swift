@@ -33,8 +33,9 @@ final class OnboardingModel {
 
     var card: OnboardingCard { OnboardingCard.allCases[min(max(page, 0), OnboardingCard.allCases.count - 1)] }
     var isLast: Bool { card == OnboardingCard.allCases.last }
-    /// Review has no Skip: there is nothing to skip past.
-    var showsSkip: Bool { mode == .firstRun }
+    /// Review has no Skip (nothing to skip past), and the last card has none
+    /// either: there Skip would do exactly what Continue does.
+    var showsSkip: Bool { mode == .firstRun && !isLast }
 
     var primaryTitle: String {
         guard isLast else { return OnboardingText.next }
@@ -54,7 +55,7 @@ final class OnboardingModel {
 
     /// Skip, on any card: the same end as the last card's Continue.
     func skip() {
-        guard showsSkip else { return }
+        guard mode == .firstRun else { return }
         finish()
     }
 

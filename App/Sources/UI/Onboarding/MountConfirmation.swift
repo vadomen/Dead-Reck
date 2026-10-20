@@ -8,10 +8,11 @@ import Observation
 /// Shown only while all hold:
 /// - not yet answered on this phone (`OnboardingStore.mountConfirmed`,
 ///   which the UX-1 checklist migration also sets);
-/// - Navigate runs on OBD: `NavigateState` is `.calibrating` or `.running`,
-///   both of which mean the link is `polling`. `.off` (no session, and
+/// - Navigate runs on OBD and calibration has ended: `NavigateState` is
+///   `.running`. `.calibrating` hides it ("Hold still - calibrating" asks
+///   for a still phone, so no tap is asked then). `.off` (no session, and
 ///   always `.off` while Record starts, runs or stops) and `.waitingForOBD`
-///   (the link dropped) hide it;
+///   (the link dropped) hide it too;
 /// - the car stands: a fresh OBD speed of exactly 0 (`StationaryRule`, the
 ///   same rule heading-up holds still on). No speed reply yet, a stale one
 ///   or any speed above 0 hides it, so it is never shown in motion.
@@ -24,9 +25,9 @@ enum MountCardRule {
     ) -> Bool {
         guard !confirmed else { return false }
         switch navigate {
-        case .calibrating, .running:
+        case .running:
             return StationaryRule.isStopped(kmh: obdKmh, replyUptime: replyUptime, now: now)
-        case .off, .waitingForOBD:
+        case .off, .calibrating, .waitingForOBD:
             return false
         }
     }
