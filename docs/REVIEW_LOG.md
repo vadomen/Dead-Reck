@@ -920,3 +920,17 @@ Reviewers: three opus reviewers in parallel (~4150 changed lines): A Core (Navig
 | R74.1-6 | MINOR | Adapter Connect during the demo is silently held. | DEFERRED | BACKLOG. |
 
 Tests (4451765 + round 1): Core 1096 tests in 139 suites passed (36 known issues); AppTests 655 tests in 94 suites passed.
+
+### Round 2
+
+Reviewer: one fresh opus reviewer on the whole range, verifying the round-1 fixes and the seams between the round-1 sets (sequencer ↔ DemoDriveController ↔ MapBindings/RootView). Mutations: the author's polyline guard (killed by both new tests) and `MockELMAdapter` reply transform dropped (killed by the transform test).
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R74.2-1 | MINOR | `MapView.swift`: demo start rebuilds the Map with the last real camera; the demo region is written only after an actor hop, so the first frame(s) show the user's real area; real manual-fix markers are not masked. Residual of R74.1-1 (the author's noted `@State position`). | DEFERRED | BACKLOG; before App Store screenshots or previews. |
+
+R74.1-1 and R74.1-2 verified closed. Tests (aa188c4): Core 1096 tests in 139 suites passed (36 known issues); AppTests 655 tests in 94 suites passed.
+
+### Run 74 summary
+
+2 rounds; 2 MAJOR confirmed and fixed with regression tests (R74.1-1, R74.1-2); 0 rejected; 5 MINOR deferred (R74.1-3..6, R74.2-1). Engine output bit-identical vs 7878090 (clean drive, seed 1, national / no roads). Noted, not a finding: `logs/ACCEPTANCE.md` names a second pack file that no longer exists under that name.
