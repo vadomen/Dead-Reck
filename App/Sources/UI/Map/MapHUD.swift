@@ -281,6 +281,9 @@ struct HUDFakes: Equatable, Sendable {
     var thermal = false
     /// The OBD-lost banner (`NavigateStatus.waitingForOBD`).
     var banner = false
+    /// UX-35 screenshots: a short good line, then a stop with scattered
+    /// Wi-Fi-like fixes (`MapPreviewData.stopTrack`).
+    var scatter = false
 
     static func parse(_ value: String?) -> HUDFakes {
         var out = HUDFakes()
@@ -294,6 +297,7 @@ struct HUDFakes: Equatable, Sendable {
             case "debug": out.isActive = true; out.debugStrip = true
             case "thermal": out.isActive = true; out.thermal = true
             case "banner": out.isActive = true; out.banner = true
+            case "scatter": out.isActive = true; out.scatter = true
             default: break
             }
         }

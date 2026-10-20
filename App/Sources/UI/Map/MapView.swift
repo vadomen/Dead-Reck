@@ -73,9 +73,9 @@ struct MapScreen: View {
         // DEBUG `-uiFakeHUD …`: synthetic HUD inputs (screenshots).
         let fake = Self.fakes
         GPSMapView(
-            track: model.track,
-            latest: model.latest,
-            lastFixInstant: model.lastFixInstant,
+            track: fake.scatter ? MapPreviewData.stopTrack : model.track,
+            latest: fake.scatter ? MapPreviewData.stopFixes.last : model.latest,
+            lastFixInstant: fake.scatter ? .now : model.lastFixInstant,
             isReceiving: fake.isActive ? !fake.gpsLost : model.isReceiving,
             thermal: fake.thermal ? .fair : thermal,
             speed: fake.isActive ? fake.speed : model.speed,
@@ -992,11 +992,12 @@ private struct TrackOverlay: MapContent {
     var track: GPSTrack
 
     var body: some MapContent {
-        // Fixes worse than 1000 m: faded dots, not part of the line.
+        // Fixes over 15 m (fair, poor, bad): faded dots in their band colour,
+        // never part of the line.
         ForEach(track.faded, id: \.t) { point in
             Annotation("", coordinate: point.coordinate) {
                 Circle()
-                    .fill(AccuracyBand.bad.color.opacity(0.3))
+                    .fill(point.band.color.opacity(0.3))
                     .frame(width: 10, height: 10)
             }
         }
@@ -1120,6 +1121,35 @@ enum MapPreviewData {
         )
     }
 
+    /// A short line of good fixes, then a stop: 20 fair/poor fixes scattered
+    /// about 50 m around one spot, as Wi-Fi/cell positioning gives under jamming.
+    static var stopFixes: [LocationSample] {
+        var out: [LocationSample] = []
+        for i in 0..<12 {
+            out.append(LocationSample(
+                latitude: Double(i - 12) * 0.00012, longitude: 0, altitude: 0, horizontalAccuracy: 6,
+                verticalAccuracy: 5, speed: 8, speedAccuracy: 1, course: 0, courseAccuracy: 5,
+                receivedT: MonotonicTimestamp(seconds: Double(i) * 2), ageS: 0))
+        }
+        for i in 0..<20 {
+            // Fixed pseudo-random offsets (no RNG, so screenshots repeat).
+            let a = Double((i * 37) % 20) / 10 - 1
+            let b = Double((i * 53 + 7) % 20) / 10 - 1
+            out.append(LocationSample(
+                latitude: a * 0.00045, longitude: b * 0.00045, altitude: 0,
+                horizontalAccuracy: i % 3 == 0 ? 110 : (i % 3 == 1 ? 60 : 30),
+                verticalAccuracy: 5, speed: 0, speedAccuracy: 1, course: 0, courseAccuracy: 5,
+                receivedT: MonotonicTimestamp(seconds: 40 + Double(i) * 3), ageS: 0))
+        }
+        return out
+    }
+
+    static var stopTrack: GPSTrack {
+        var track = GPSTrack()
+        for f in stopFixes { track.append(f) }
+        return track
+    }
+
     static var track: GPSTrack {
         var track = GPSTrack()
         for i in 0..<60 {
@@ -1142,6 +1172,14 @@ enum MapPreviewData {
         track: MapPreviewData.track,
         latest: MapPreviewData.fix(59, accuracy: 12, gapAfter: 60),
         lastFixInstant: .now, isReceiving: true, thermal: .fair, isLive: true,
+        follow: .constant(FollowController(following: true))
+    )
+}
+
+#Preview("Stop with scattered fixes") {
+    GPSMapView(
+        track: MapPreviewData.stopTrack, latest: MapPreviewData.stopFixes.last,
+        lastFixInstant: .now, isReceiving: true, thermal: .nominal, isLive: true,
         follow: .constant(FollowController(following: true))
     )
 }
