@@ -12,7 +12,11 @@ enum MapsSettings {
 /// One row of Settings → Maps: a manifest pack merged with the installed one
 /// of the same name, or an installed pack the manifest does not list.
 struct MapsRow: Identifiable, Hashable, Sendable {
-    enum Action: Hashable, Sendable { case download, cancel, update }
+    enum Action: Hashable, Sendable {
+        case download, cancel, update
+        /// A pack marked for removal: clears the mark (B5, prompt 38).
+        case downloadAgain
+    }
 
     enum Status: Hashable, Sendable {
         case notInstalled
@@ -145,9 +149,16 @@ enum MapsText {
 
     static func confirmationTitle(_ row: MapsRow) -> String { "Remove \(row.title)?" }
 
-    static func confirmationMessage(_ row: MapsRow) -> String {
-        "Frees \(size(row.installed?.sizeBytes ?? row.sizeBytes)). Recordings are not affected."
+    /// Shown in the confirmation while a Navigate or Record run is active: the
+    /// pack is only marked then, and the running session loses it (B5).
+    static let removeDuringRunWarning = "Navigation will run without this map until you restart the app."
+
+    static func confirmationMessage(_ row: MapsRow, runActive: Bool = false) -> String {
+        let base = "Frees \(size(row.installed?.sizeBytes ?? row.sizeBytes)). Recordings are not affected."
+        return runActive ? removeDuringRunWarning + " " + base : base
     }
+
+    static let downloadAgain = "Download again"
 
     /// The notice after Remove, nil when nothing needs saying.
     static func notice(_ outcome: RoadPackLibrary.RemoveOutcome, packName: String) -> String? {
@@ -229,6 +240,7 @@ enum MapsText {
         case .download: "Download \(title)"
         case .cancel: "Cancel download of \(title)"
         case .update: "Update \(title)"
+        case .downloadAgain: "Download \(title) again"
         }
     }
 
@@ -263,14 +275,17 @@ enum MapsText {
     }
 
     /// The row's action button. Download and Update need the manifest entry.
-    static func action(status: MapsRow.Status, hasPack: Bool, hasInstalled: Bool, downloadFailed: Bool)
-        -> MapsRow.Action? {
+    /// `canRestore`: the app can clear a removal mark itself, so a pack the
+    /// manifest does not list can be brought back too (B5).
+    static func action(status: MapsRow.Status, hasPack: Bool, hasInstalled: Bool, downloadFailed: Bool,
+                       canRestore: Bool = false) -> MapsRow.Action? {
         switch status {
         case .queued, .waitingForWiFi, .waitingMeteredWiFi, .offline, .downloading, .pausedForRecording: .cancel
         case .notInstalled: hasPack ? .download : nil
         case .updateAvailable: hasPack ? .update : nil
         case .failed: downloadFailed && hasPack ? (hasInstalled ? .update : .download) : nil
-        case .verifying, .installed, .updatedNextStart, .removalPending: nil
+        case .removalPending: hasPack || canRestore ? .downloadAgain : nil
+        case .verifying, .installed, .updatedNextStart: nil
         }
     }
 
@@ -281,7 +296,7 @@ enum MapsText {
     /// any manifest they are all in `listed` with the code as title.
     static func rows(manifest: PackManifest?, installed: [RoadPackLibrary.PackStatus],
                      downloads: PackDownloader.Snapshot, preferredLanguages: [String],
-                     locale: Locale = .current) -> MapsRows {
+                     locale: Locale = .current, canRestore: Bool = false) -> MapsRows {
         var byName: [String: RoadPackLibrary.PackStatus] = [:]
         for pack in installed where pack.installed {
             guard let name = pack.packName else { continue }
@@ -301,7 +316,7 @@ enum MapsText {
                 sizeBytes: pack?.size ?? installed?.sizeBytes,
                 osmTimestamp: pack?.osmTimestamp ?? installed?.osmTimestamp, status: status,
                 action: action(status: status, hasPack: pack != nil, hasInstalled: installed != nil,
-                               downloadFailed: downloadFailed),
+                               downloadFailed: downloadFailed, canRestore: canRestore),
                 pack: pack, installed: installed,
                 canRemove: installed.map(canRemove) ?? false)
         }
@@ -344,14 +359,25 @@ final class MapsModel {
     @ObservationIgnored private let downloader: PackDownloader?
     @ObservationIgnored private let preferredLanguages: @Sendable () -> [String]
     @ObservationIgnored private let defaults: UserDefaults
+    /// A Navigate or Record run is active (the app: `RecordingSession.hasActiveRun`).
+    @ObservationIgnored private let runActiveCheck: @MainActor () -> Bool
+    /// Clears a pack's removal mark without a download (B5). The library has
+    /// no such call yet (`RoadPackLibrary.cancelRemoval(name:)` is needed; the
+    /// navigation engineer's); until it is wired, Download again fetches the
+    /// manifest's pack, which clears the mark when it installs.
+    @ObservationIgnored private let cancelRemoval: (@Sendable (String) async -> Bool)?
     /// The "Use cellular data" UserDefault as last read (Diagnostics shows it
     /// next to the downloader's own value).
     private(set) var cellularSetting = false
 
     init(library: RoadPackLibrary, manifest: PackManifestService? = nil, downloader: PackDownloader? = nil,
          defaults: UserDefaults = .standard,
+         runActive: @escaping @MainActor () -> Bool = { false },
+         cancelRemoval: (@Sendable (String) async -> Bool)? = nil,
          preferredLanguages: @escaping @Sendable () -> [String] = { Locale.preferredLanguages }) {
         self.defaults = defaults
+        runActiveCheck = runActive
+        self.cancelRemoval = cancelRemoval
         cellularSetting = defaults.bool(forKey: MapsSettings.cellularKey)
         self.library = library
         manifestService = manifest
@@ -362,7 +388,10 @@ final class MapsModel {
     /// Previews and tests: fixed values.
     init(status: RoadPackLibrary.Status, notice: String? = nil, manifest: PackManifest? = nil,
          downloads: PackDownloader.Snapshot = .init(), refresh: PackManifestService.Refresh = .idle,
+         runActive: Bool = false,
          preferredLanguages: @escaping @Sendable () -> [String] = { Locale.preferredLanguages }) {
+        runActiveCheck = { runActive }
+        cancelRemoval = nil
         self.status = status
         self.notice = notice
         self.manifest = manifest
@@ -376,11 +405,14 @@ final class MapsModel {
         rebuild()
     }
 
+    /// A run is active: Remove only marks the pack, and the run loses it (B5).
+    var runActive: Bool { runActiveCheck() }
+
     var listNote: String? { MapsText.listNote(listRefresh, connection: downloads.connection, hasManifest: manifest != nil) }
 
     private func rebuild() {
         let next = MapsText.rows(manifest: manifest, installed: status.installedPacks, downloads: downloads,
-                                 preferredLanguages: preferredLanguages())
+                                 preferredLanguages: preferredLanguages(), canRestore: cancelRemoval != nil)
         if next != rows { rows = next }
     }
 
@@ -438,9 +470,14 @@ final class MapsModel {
     }
 
     func perform(_ action: MapsRow.Action, on row: MapsRow) async {
+        if action == .downloadAgain, let cancelRemoval {
+            _ = await cancelRemoval(row.id)
+            await refreshAll()
+            return
+        }
         guard let downloader else { return }
         switch action {
-        case .download, .update:
+        case .download, .update, .downloadAgain:
             guard let pack = row.pack else { return }
             await downloader.start(pack, isUpdate: action == .update)
         case .cancel:
@@ -492,9 +529,17 @@ struct MapsScreen: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: { row in
-            Text(MapsText.confirmationMessage(row))
+            Text(MapsText.confirmationMessage(row, runActive: model.runActive))
         }
         .task { await model.run() }
+        #if DEBUG
+        // `-uiFakeRemoveConfirm 1`: opens the Remove confirmation on the first removable row (screenshots).
+        .onAppear {
+            if UserDefaults.standard.bool(forKey: "uiFakeRemoveConfirm"), confirming == nil {
+                confirming = model.rows.all.first(where: \.canRemove)
+            }
+        }
+        #endif
     }
 }
 
@@ -677,14 +722,24 @@ struct MapsContent: View {
             }
             Spacer(minLength: 4)
             if let action = item.action {
-                Button { onAction(action, item) } label: {
-                    Image(systemName: Self.icon(action))
-                        .font(.title2)
-                        .frame(width: 44, height: 44)
-                        .contentShape(Rectangle())
+                if action == .downloadAgain {
+                    Button { onAction(action, item) } label: {
+                        Text(MapsText.downloadAgain)
+                            .font(.callout.weight(.semibold))
+                            .frame(minHeight: 44)
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityLabel(MapsText.actionLabel(action, title: item.title))
+                } else {
+                    Button { onAction(action, item) } label: {
+                        Image(systemName: Self.icon(action))
+                            .font(.title2)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel(MapsText.actionLabel(action, title: item.title))
                 }
-                .buttonStyle(.borderless)
-                .accessibilityLabel(MapsText.actionLabel(action, title: item.title))
             }
         }
         .padding(.vertical, 2)
@@ -695,6 +750,7 @@ struct MapsContent: View {
         case .download: "arrow.down.circle"
         case .cancel: "xmark.circle"
         case .update: "arrow.triangle.2.circlepath.circle"
+        case .downloadAgain: "arrow.counterclockwise.circle"
         }
     }
 }

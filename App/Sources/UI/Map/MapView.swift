@@ -98,10 +98,13 @@ struct MapScreen: View {
             manual: marking,
             run: model.runKey,
             cachedLocation: cachedLocation,
-            navigation: fake.debugStrip ? NavigationFeed(display: nil, stats: MapPreviewData.navStats) : navigation,
-            showsEstimate: status.showsEstimate,
+            navigation: fake.nav.map(MapPreviewData.fakeNav)
+                ?? (fake.debugStrip ? NavigationFeed(display: nil, stats: MapPreviewData.navStats) : navigation),
+            showsEstimate: status.showsEstimate || fake.nav != nil,
             showNavStats: fake.debugStrip ? .constant(true) : $showNavStats,
-            roadsWarning: roadsWarning?.message,
+            roadsWarning: warningText,
+            roadsWarningDownload: warningDownload,
+            onRoadsWarningDownload: { offers?.download() },
             onRoadsWarningTap: onOpenMaps,
             onOpenSettings: onOpenSettings,
             roadsAttribution: (roadsWarning?.attribution ?? false) || demo != nil,
@@ -141,6 +144,27 @@ struct MapScreen: View {
 extension MapScreen {
     private var offerIsShown: Bool { offers.map { PackOfferCard.current(for: $0) != nil } ?? false }
 
+    /// The roads warning line: the model's, or the DEBUG fake
+    /// (`-uiFakeRoadsWarning none|packs`, screenshots).
+    private var warningText: String? {
+        #if DEBUG
+        switch UserDefaults.standard.string(forKey: "uiFakeRoadsWarning") {
+        case "none": return RoadsWarning.noneCovering
+        case "packs": return RoadsWarning.noPacks
+        default: break
+        }
+        #endif
+        return roadsWarning?.message
+    }
+
+    /// B3: the warning's Download, from the at-a-stop offer.
+    private var warningDownload: RoadsWarningDownload? {
+        guard let offers else { return nil }
+        return RoadsWarningOffer.make(
+            message: warningText, offer: PackOfferCard.current(for: offers), downloadingTitle: offers.downloadingTitle,
+            recording: MapRecordingControl.isActive(session.state))
+    }
+
     /// The in-car mount card shows only when no pack offer is up: one card at a
     /// time in the offer's slot, so the two never overlap and the road-ahead
     /// area stays as with an offer (`offerShown` lifts the car for either).
@@ -152,6 +176,8 @@ extension MapScreen {
             return AnyView(MountConfirmationCardView(onConfirm: { mountConfirmation.confirm() })
                 .transition(.move(edge: .bottom).combined(with: .opacity)))
         }
+        // The roads banner hosts the offer while it says "no pack covers this area" (B3).
+        if RoadsWarningOffer.hostsOffer(warningDownload) { return nil }
         return offers.map { AnyView(PackOfferCard(monitor: $0)) }
     }
 
@@ -321,6 +347,9 @@ struct GPSMapView: View {
     @Binding var showNavStats: Bool
     /// One line when roads are off for a fixable reason (`RoadsWarning`).
     var roadsWarning: String?
+    /// The Download on that line (B3), when the manifest has a region here.
+    var roadsWarningDownload: RoadsWarningDownload?
+    var onRoadsWarningDownload: () -> Void = {}
     var onRoadsWarningTap: () -> Void
     /// The gear at the bottom of the right rail (UX-14, UX-32).
     var onOpenSettings: () -> Void = {}
@@ -361,6 +390,13 @@ struct GPSMapView: View {
     /// otherwise see the props from when it started.
     @State private var inputs = HeadingInputs()
     @State private var cameraHeading = 0.0
+    /// The map's size and bottom safe area, for the ellipse fit (C8).
+    @State private var mapGeometry = MapGeometry()
+
+    struct MapGeometry: Equatable {
+        var size = CGSize.zero
+        var safeBottom = 0.0
+    }
 
     @MainActor
     final class HeadingState {
@@ -398,6 +434,8 @@ struct GPSMapView: View {
         showsEstimate: Bool = true,
         showNavStats: Binding<Bool> = .constant(false),
         roadsWarning: String? = nil,
+        roadsWarningDownload: RoadsWarningDownload? = nil,
+        onRoadsWarningDownload: @escaping () -> Void = {},
         onRoadsWarningTap: @escaping () -> Void = {},
         onOpenSettings: @escaping () -> Void = {},
         roadsAttribution: Bool = false,
@@ -429,6 +467,8 @@ struct GPSMapView: View {
         self.showsEstimate = showsEstimate
         self._showNavStats = showNavStats
         self.roadsWarning = roadsWarning
+        self.roadsWarningDownload = roadsWarningDownload
+        self.onRoadsWarningDownload = onRoadsWarningDownload
         self.onRoadsWarningTap = onRoadsWarningTap
         self.onOpenSettings = onOpenSettings
         self.roadsAttribution = roadsAttribution
@@ -441,8 +481,21 @@ struct GPSMapView: View {
         self._toast = State(initialValue: initialToast)
     }
 
+    /// Hands the ellipse fit the map's size and what covers it.
+    private func applyViewport() {
+        guard mapGeometry.size.width > 0, mapGeometry.size.height > 0 else { return }
+        headingState.zoom.viewport = EllipseFit.Viewport.make(
+            size: mapGeometry.size, safeBottom: mapGeometry.safeBottom, offerShown: offerShown)
+    }
+
     var body: some View {
         content
+            .onGeometryChange(for: MapGeometry.self) { proxy in
+                MapGeometry(size: proxy.size, safeBottom: proxy.safeAreaInsets.bottom)
+            } action: { geometry in
+                mapGeometry = geometry
+                applyViewport()
+            }
             .onChange(of: latest) { old, fix in
                 guard isLive, let fix else { return }
                 if old == nil {
@@ -486,6 +539,7 @@ struct GPSMapView: View {
             // and back when it goes (heading-up only; north-up is centred).
             .onChange(of: offerShown, initial: true) { _, shown in
                 headingState.zoom.carFromTop = CarPlacement.carFromTop(headingUp: true, offerShown: shown)
+                applyViewport()
                 guard headingUp, isLive, follow.isFollowing, let center = followCenter else { return }
                 withAnimation(.easeInOut(duration: 0.4)) { recenter(center: center) }
             }
@@ -657,7 +711,7 @@ struct GPSMapView: View {
     private var bottomItems: [MapBottomItem] {
         MapBottomZone.items(
             offer: offerCard != nil, toast: toast != nil, status: statusLine != nil,
-            roadsWarning: roadsWarning != nil, resumeHint: follow.resumeDeadline != nil,
+            positionStatus: estimate != nil, roadsWarning: roadsWarning != nil, resumeHint: follow.resumeDeadline != nil,
             debugSetting: showNavStats)
     }
 
@@ -679,6 +733,7 @@ struct GPSMapView: View {
         case .offerCard: offerCard
         case .toast: if let toast { toastView(toast) }
         case .statusLine: statusLine
+        case .positionStatus: if let estimate { PositionStatusLine(feed: estimate) }
         case .roadsWarning: if let roadsWarning { roadsWarningView(roadsWarning) }
         case .resumeHint: resumeHint
         case .debugStrip: MapDebugStrip(lines: DebugStrip.lines(stats: navigation?.stats))
@@ -724,7 +779,9 @@ struct GPSMapView: View {
                 if let demo { DemoRoadsOverlay(roads: demo.roads, dark: scheme == .dark) }
                 TrackOverlay(track: track)
                 if let estimate {
-                    NavOverlay(feed: estimate, headingUp: headingUp, cameraHeading: cameraHeading, showEdge: showNavStats)
+                    NavOverlay(
+                        feed: estimate, headingUp: headingUp, cameraHeading: cameraHeading, showEdge: showNavStats,
+                        dark: scheme == .dark)
                 }
                 if let latest, let band = AccuracyBand(accuracy: latest.horizontalAccuracy) {
                     let c = color(band, stale: stale)
@@ -817,6 +874,36 @@ struct GPSMapView: View {
     /// Same look as the other toasts (material capsule, headline weight), one
     /// line; tap opens Settings → Maps, which lists the packs.
     private func roadsWarningView(_ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            roadsWarningLine(text)
+            if let download = roadsWarningDownload {
+                // B3: the offer of the at-a-stop card, hosted by the banner.
+                switch download.state {
+                case .offer:
+                    Button(action: onRoadsWarningDownload) {
+                        Text(download.buttonText)
+                            .font(.headline).lineLimit(2).minimumScaleFactor(0.8)
+                            .multilineTextAlignment(.center)
+                            .foregroundStyle(Color("AccentForeground"))
+                            .padding(.horizontal, 16)
+                            .frame(maxWidth: .infinity, minHeight: 52)
+                            .background(Color.accentColor, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(download.buttonText)
+                case .queued:
+                    Label(download.queuedText, systemImage: "arrow.down.circle")
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, 16)
+                        .frame(minHeight: 44)
+                        .hudSurface(Capsule())
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func roadsWarningLine(_ text: String) -> some View {
         Button(action: onRoadsWarningTap) {
             Label(text, systemImage: "road.lanes")
                 .font(.subheadline.weight(.semibold))
@@ -916,17 +1003,18 @@ struct GPSMapView: View {
         CameraHeading.choose(headingUp: headingUp, bearing: effectiveBearing, smoothed: headingState.smoother.heading)
     }
 
-    /// Camera distance for a write: the driver's zoom; in heading-up with an
-    /// estimate, widened to fit its ellipse (`FollowZoom`).
-    private func followDistance(_ nav: NavDisplay?) -> Double {
-        headingState.zoom.autoFollowDistance(headingUp: headingUp, semiMajorM: nav?.semiMajorM)
+    /// Camera distance for a write: the driver's zoom or the speed-based one,
+    /// widened with an estimate to fit its whole ellipse (`FollowZoom`).
+    private func followDistance(_ nav: NavDisplay?, heading: Double) -> Double {
+        headingState.zoom.autoFollowDistance(
+            headingUp: headingUp, ellipse: nav.map(FitEllipse.init), cameraHeading: heading)
     }
 
     /// Recentres, keeping the user's current zoom and mode.
     fileprivate func recenter(center: CLLocationCoordinate2D) {
         let heading = targetHeading
         headingState.gate.noteWrite(heading, at: ContinuousClock.now)
-        let d = followDistance(estimate?.latest)
+        let d = followDistance(estimate?.latest, heading: heading)
         position = .camera(MapCamera(
             centerCoordinate: Self.cameraCenter(
                 car: center, distance: d, heading: heading, headingUp: headingUp,
@@ -1006,14 +1094,16 @@ struct GPSMapView: View {
             let target = CameraHeading.targetBearing(
                 drHeading: nav?.headingDeg, converged: nav?.converged ?? false, gpsBearing: inputs.bearing
             )
-            headingState.zoom.step(speedKmh: inputs.speedKmh.map(Double.init), dt: dt)
+            headingState.zoom.step(
+                speedKmh: inputs.speedKmh.map(Double.init), dt: dt, ellipse: nav.map(FitEllipse.init),
+                headingUp: inputs.headingUp, cameraHeading: headingState.smoother.heading ?? 0)
             guard inputs.following else { continue }
             let center = FollowTarget.center(dr: nav?.position, gps: inputs.fix?.geo)
             guard let camera = FollowCameraTick.decide(
                 smoother: &headingState.smoother, gate: &headingState.gate, zoom: &headingState.zoom,
                 publishPending: &headingState.publishPending,
                 published: published, headingUp: inputs.headingUp, frozen: inputs.frozen, target: target,
-                hasEstimate: nav != nil, hasCenter: center != nil, semiMajorM: nav?.semiMajorM,
+                hasEstimate: nav != nil, hasCenter: center != nil, ellipse: nav.map(FitEllipse.init),
                 dt: dt, now: now
             ), let center else { continue }
             withAnimation(.linear(duration: 0.25)) {
@@ -1091,11 +1181,18 @@ private struct NavOverlay: MapContent {
     var cameraHeading: Double
     /// The roads debug switch (`RoadDebugOverlay`).
     var showEdge: Bool
+    /// Explicit colours per scheme: MapKit overlays ignore dynamic ones.
+    var dark: Bool
 
     var body: some MapContent {
         if let edge = RoadDebugOverlay.edge(enabled: showEdge, points: feed.matchedEdge) {
             MapPolyline(coordinates: edge.map(\.coordinate))
                 .stroke(Color.orange, lineWidth: 6)
+        } else if let edge = MatchedRoadLine.edge(points: feed.matchedEdge, onRoadShare: feed.stats?.onRoadShare) {
+            // C7: always on in Release: thin and quiet, under the arrow.
+            MapPolyline(coordinates: edge.map(\.coordinate))
+                .stroke(MatchedRoadLine.color(dark: dark), style: StrokeStyle(
+                    lineWidth: MatchedRoadLine.lineWidth, lineCap: .round, lineJoin: .round))
         }
         if let nav = feed.display {
             if NavLayers.showEllipse(nav) {
@@ -1183,6 +1280,37 @@ private extension CLLocationCoordinate2D {
 // MARK: - Previews (synthetic offsets around (0, 0); no real places)
 
 enum MapPreviewData {
+    /// The synthetic estimate of `-uiFakeHUD navFinding|navEllipse|navRoad`
+    /// (screenshots, near (0, 0): no real place). Heading 40 degrees.
+    @MainActor
+    static func fakeNav(_ mode: HUDFakes.FakeNav) -> NavigationFeed {
+        let position = GeoPoint(latitude: 0.0004, longitude: 0.0004)
+        switch mode {
+        case .finding:
+            return NavigationFeed(display: NavDisplay(
+                position: position, semiMajorM: 2_400, semiMinorM: 1_800, orientationDeg: 20, converged: false))
+        case .ellipse:
+            // 90 x 20 m, its long axis across a 40-degree heading.
+            return NavigationFeed(display: NavDisplay(
+                position: position, semiMajorM: 90, semiMinorM: 20, orientationDeg: 130, headingDeg: 40,
+                headingStdDeg: 3, converged: true))
+        case .road:
+            let along = 150.0 / NavGeometry.metersPerDegree
+            let (s, c) = (sin(40 * Double.pi / 180), cos(40 * Double.pi / 180))
+            let edge = [
+                GeoPoint(latitude: position.latitude - along * c, longitude: position.longitude - along * s),
+                GeoPoint(latitude: position.latitude + along * c, longitude: position.longitude + along * s),
+            ]
+            var stats = navStats
+            stats.onRoadShare = 0.98
+            return NavigationFeed(
+                display: NavDisplay(
+                    position: position, semiMajorM: 8, semiMinorM: 4, orientationDeg: 40, headingDeg: 40,
+                    headingStdDeg: 2, converged: true),
+                stats: stats, matchedEdge: edge)
+        }
+    }
+
     static func fix(_ i: Int, accuracy: Double, gapAfter: Double = 0) -> LocationSample {
         let t = Double(i) * 2 + gapAfter
         return LocationSample(

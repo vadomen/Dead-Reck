@@ -141,7 +141,8 @@ final class AppServices {
                 guard status.showsEstimate else { return nil }
                 return NavDisplay(await navigation.snapshot()).map(PackOfferRule.Estimate.init)
             },
-            speedKmh: speedKmh)
+            speedKmh: speedKmh,
+            roadPackNames: { await navigation.roadsStatus().packNames })
     }
 }
 

@@ -142,13 +142,14 @@ enum FollowCameraTick {
         smoother: inout HeadingSmoother, gate: inout HeadingWriteGate, zoom: inout FollowZoom,
         publishPending: inout Bool,
         published: Bool, headingUp: Bool, frozen: Bool, target: Double?,
-        hasEstimate: Bool, hasCenter: Bool, semiMajorM: Double?, dt: Double,
+        hasEstimate: Bool, hasCenter: Bool, ellipse: FitEllipse?, dt: Double,
         now: ContinuousClock.Instant
     ) -> FollowCameraWrite? {
         let due = gate.isDue(at: now)
         var heading = 0.0
         var write = published || publishPending
-        let zoomWrite = zoom.autoWantsWrite(headingUp: headingUp, semiMajorM: semiMajorM)
+        let zoomWrite = zoom.autoWantsWrite(
+            headingUp: headingUp, ellipse: ellipse, cameraHeading: headingUp ? smoother.heading ?? 0 : 0)
         if headingUp {
             if target == nil {
                 smoother = HeadingSmoother()
@@ -169,7 +170,7 @@ enum FollowCameraTick {
             return nil
         }
         publishPending = false
-        let distance = zoom.autoFollowDistance(headingUp: headingUp, semiMajorM: semiMajorM)
+        let distance = zoom.autoFollowDistance(headingUp: headingUp, ellipse: ellipse, cameraHeading: heading)
         gate.noteWrite(heading, at: now)
         return FollowCameraWrite(heading: heading, distance: distance)
     }

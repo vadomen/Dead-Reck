@@ -41,7 +41,10 @@ struct RootView: View {
         _console = State(initialValue: ConsoleViewModel(services: services))
         _roads = State(initialValue: RoadsDiagnosticsModel(library: services.roadPacks, service: service))
         let library = services.roadPacks
-        var mapsModel = MapsModel(library: library, manifest: services.manifest, downloader: services.downloader)
+        let session = services.session
+        var mapsModel = MapsModel(
+            library: library, manifest: services.manifest, downloader: services.downloader,
+            runActive: { session.hasActiveRun })
         #if DEBUG
         // `-uiFakeMaps 1`: two synthetic installed packs and one pending removal
         // (simulator screenshots; the simulator has no packs).
@@ -56,6 +59,7 @@ struct RootView: View {
                 cellularAllowed: UserDefaults.standard.bool(forKey: MapsSettings.cellularKey))
         }
         if UserDefaults.standard.bool(forKey: "uiFakeMapsShort") { mapsModel = DebugFakes.shortMapsModel }
+        if UserDefaults.standard.bool(forKey: "uiFakeRemovalPending") { mapsModel = DebugFakes.removalModel }
         #endif
         _maps = State(initialValue: mapsModel)
         var developerGate = DeveloperGate()

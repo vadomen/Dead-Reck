@@ -238,25 +238,6 @@ enum FollowTarget {
     static func center(dr: GeoPoint?, gps: GeoPoint?) -> GeoPoint? { dr ?? gps }
 }
 
-enum FollowSpan {
-    static let maxFitM = 1000.0
-    static let ellipseFactor = 2.2
-
-    /// Span that fits the ellipse:
-    /// `min(1000, 2.2 × semi-major) × 0.5 / (1 − carFromTop)`, but never below
-    /// `minimum` (the driver's zoom, which is not inflated). The last factor
-    /// keeps the ellipse's rear half inside the part of the screen below the
-    /// car: 1 with the car centred (north-up, the default), 1.5 at 2/3
-    /// (`CarPlacement.carFromTop`). It applies after the 1000 m cap, so a large
-    /// ellipse gets at most 1500 m. A `minimum` already above that (the driver
-    /// zoomed out) is kept: the fit never zooms *in* past what the driver chose.
-    static func span(minimum: Double, semiMajorM: Double, carFromTop: Double = 0.5) -> Double {
-        let fit = semiMajorM.isFinite ? ellipseFactor * max(semiMajorM, 0) : 0
-        let rear = carFromTop > 0.5 && carFromTop < 1 ? 0.5 / (1 - carFromTop) : 1
-        return max(minimum, min(maxFitM, fit) * rear)
-    }
-}
-
 /// A double tap records a manual fix only on a zoomed-in map, so the point
 /// under the finger is precise.
 enum PinPrecision {
@@ -275,10 +256,11 @@ enum PinPrecision {
 ///
 /// `chosen` is the zoom the driver wants: set only by a driver gesture (a
 /// camera report that is not our own write) and by `frame()`. `writtenDistance`
-/// is the distance of our latest camera write. Heading-up widens the written
-/// distance to fit the ellipse (`FollowSpan`), always from `chosen`, so a
+/// is the distance of our latest camera write. The written distance is widened
+/// to fit the ellipse (`EllipseFit`, heading-up and north-up), always from the
+/// driver's or the automatic distance and never narrower than it, so a
 /// widening is never read back as the driver's choice and the distance
-/// returns to `chosen` when the ellipse shrinks.
+/// returns to that base when the ellipse shrinks (after `EllipseFitHold`'s dwell).
 struct FollowZoom: Equatable, Sendable {
     /// A report within this fraction of `writtenDistance` is our own write.
     static let ownWriteTolerance = 0.03
@@ -290,8 +272,14 @@ struct FollowZoom: Equatable, Sendable {
     /// `autoFollowDistance` uses `chosen`; otherwise the speed-based `auto`.
     private(set) var driverOverride = false
     /// Where the car sits (`CarPlacement.carFromTop(headingUp:offerShown:)`)
-    /// when heading-up: the ellipse fit keeps its rear half below it.
+    /// when heading-up: the ellipse fit keeps the ellipse inside the room
+    /// above and below it. North-up the car is centred.
     var carFromTop = CarPlacement.carFromTop
+    /// The map's size and what covers it (the view sets it); the ellipse fit
+    /// divides by the room that is left.
+    var viewport = EllipseFit.Viewport.reference
+    /// The widest recent fit, held for a dwell before the camera comes back.
+    private(set) var fitHold = EllipseFitHold()
     /// Speed-dependent distance, advanced by `step`.
     private(set) var auto = AutoZoom()
     /// The last few distances we wrote: with a moving automatic distance a
@@ -333,14 +321,14 @@ struct FollowZoom: Equatable, Sendable {
     }
 
     /// True when the distance we would write now (the automatic one, widened
-    /// by the ellipse in heading-up like `autoFollowDistance`) has drifted
+    /// by the ellipse like `autoFollowDistance`) has drifted
     /// enough from our last write to be worth a camera write; false while
     /// the driver's zoom holds. Compares like with like: `writtenDistance`
     /// is the widened distance, so a constant ellipse is not a drift (R26.1-1).
-    func autoWantsWrite(headingUp: Bool, semiMajorM: Double?) -> Bool {
+    func autoWantsWrite(headingUp: Bool, ellipse: FitEllipse?, cameraHeading: Double = 0) -> Bool {
         guard !driverOverride, writtenDistance > 0 else { return false }
-        let wanted = Self.distance(
-            chosen: auto.distance, headingUp: headingUp, semiMajorM: semiMajorM, carFromTop: carFromTop)
+        let wanted = widened(
+            base: auto.distance, headingUp: headingUp, ellipse: ellipse, cameraHeading: cameraHeading)
         return abs(log(wanted / writtenDistance)) > Self.autoWriteThreshold
     }
     private static let autoWriteThreshold = 0.02
@@ -348,29 +336,60 @@ struct FollowZoom: Equatable, Sendable {
     /// Re-centre (Follow tap, auto-resume): back to the automatic distance.
     mutating func recentre() { driverOverride = false }
 
-    /// Advances the automatic distance; call each tick with the time since
-    /// the last one.
-    mutating func step(speedKmh: Double?, dt: Double) { auto.step(speedKmh: speedKmh, dt: dt) }
+    /// Advances the automatic distance and the fit hold; call each tick with
+    /// the time since the last one. `ellipse` nil (no estimate) drops the hold.
+    mutating func step(
+        speedKmh: Double?, dt: Double, ellipse: FitEllipse? = nil, headingUp: Bool = false, cameraHeading: Double = 0
+    ) {
+        auto.step(speedKmh: speedKmh, dt: dt)
+        fitHold.step(
+            requiredSpanM: requiredSpanM(ellipse: ellipse, headingUp: headingUp, cameraHeading: cameraHeading), dt: dt)
+    }
 
     /// The distance for a follow write with speed-dependent zoom: the
-    /// driver's zoom while it holds, else `auto`; in heading-up with an
-    /// estimate widened to fit its ellipse. Records it as written.
-    mutating func autoFollowDistance(headingUp: Bool, semiMajorM: Double?) -> Double {
+    /// driver's zoom while it holds, else `auto`; widened to fit the ellipse.
+    /// Records it as written.
+    mutating func autoFollowDistance(headingUp: Bool, ellipse: FitEllipse?, cameraHeading: Double = 0) -> Double {
         let base = driverOverride ? chosen : auto.distance
-        let distance = Self.distance(chosen: base, headingUp: headingUp, semiMajorM: semiMajorM, carFromTop: carFromTop)
+        let distance = widened(base: base, headingUp: headingUp, ellipse: ellipse, cameraHeading: cameraHeading)
         writtenDistance = distance
         recentWrites.append(distance)
         if recentWrites.count > Self.recentWriteCount { recentWrites.removeFirst() }
         return distance
     }
 
+    /// The visible height (m) the ellipse needs now; 0 without one.
+    func requiredSpanM(ellipse: FitEllipse?, headingUp: Bool, cameraHeading: Double) -> Double {
+        guard let ellipse else { return 0 }
+        return EllipseFit.requiredSpanM(
+            ellipse: ellipse, cameraHeadingDeg: headingUp ? cameraHeading : 0,
+            carFromTop: headingUp ? carFromTop : 0.5, viewport: viewport)
+    }
+
+    private func widened(base: Double, headingUp: Bool, ellipse: FitEllipse?, cameraHeading: Double) -> Double {
+        guard ellipse != nil else { return base }
+        let span = max(requiredSpanM(ellipse: ellipse, headingUp: headingUp, cameraHeading: cameraHeading), fitHold.spanM)
+        return Self.distance(chosen: base, fitSpanM: span)
+    }
+
+    /// `chosen` widened to show a view `fitSpanM` tall (EllipseFit); never
+    /// narrower than `chosen`: the fit does not zoom in past the driver's
+    /// zoom or the speed-based one. Non-finite or 0: `chosen`.
+    static func distance(chosen: Double, fitSpanM: Double) -> Double {
+        guard fitSpanM.isFinite, fitSpanM > 0 else { return chosen }
+        return max(chosen, EllipseFit.distance(forSpanM: fitSpanM))
+    }
+
+    /// The fit for one ellipse with no hold: pure, for tests and previews.
     static func distance(
-        chosen: Double, headingUp: Bool, semiMajorM: Double?, carFromTop: Double = CarPlacement.carFromTop
+        chosen: Double, headingUp: Bool, ellipse: FitEllipse?, cameraHeading: Double = 0,
+        carFromTop: Double = CarPlacement.carFromTop, viewport: EllipseFit.Viewport = .reference
     ) -> Double {
-        guard headingUp, let semiMajorM else { return chosen }
-        let span = FollowSpan.span(
-            minimum: chosen / MapFraming.distancePerSpan, semiMajorM: semiMajorM, carFromTop: carFromTop)
-        return MapFraming.cameraDistance(spanMeters: span)
+        guard let ellipse else { return chosen }
+        let span = EllipseFit.requiredSpanM(
+            ellipse: ellipse, cameraHeadingDeg: headingUp ? cameraHeading : 0,
+            carFromTop: headingUp ? carFromTop : 0.5, viewport: viewport)
+        return distance(chosen: chosen, fitSpanM: span)
     }
 }
 

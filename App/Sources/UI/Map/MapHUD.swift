@@ -129,6 +129,8 @@ enum MapBottomItem: Hashable, Sendable, CaseIterable {
     case toast
     /// Calibration and OBD-lost banners (`NavigateStatus`).
     case statusLine
+    /// "Finding your position... keep driving" while the estimate is unconverged or km-wide (C6).
+    case positionStatus
     case roadsWarning
     /// "Re-centre in N s".
     case resumeHint
@@ -142,12 +144,14 @@ enum MapBottomZone {
     /// order, so items never overlap whatever combination is present. The
     /// strip is gated by the setting alone; with it off nothing takes its place.
     static func items(
-        offer: Bool, toast: Bool, status: Bool, roadsWarning: Bool, resumeHint: Bool, debugSetting: Bool
+        offer: Bool, toast: Bool, status: Bool, positionStatus: Bool = false, roadsWarning: Bool,
+        resumeHint: Bool, debugSetting: Bool
     ) -> [MapBottomItem] {
         var out: [MapBottomItem] = []
         if offer { out.append(.offerCard) }
         if toast { out.append(.toast) }
         if status { out.append(.statusLine) }
+        if positionStatus { out.append(.positionStatus) }
         if roadsWarning { out.append(.roadsWarning) }
         if resumeHint { out.append(.resumeHint) }
         if debugSetting { out.append(.debugStrip) }
@@ -187,6 +191,13 @@ enum MapLayout {
     static func bottomInset(slot: Double = bottomSlotHeight) -> Double {
         attributionBand + 8 + slot
     }
+
+    /// Height from the top of the map covered by the safe area and the HUD
+    /// card (speed, indicators): the ellipse fit keeps clear of it.
+    static let hudReserved: Double = 150
+    /// Height above the bottom inset covered by the offer card (the compact
+    /// card, its three actions in one row): the fit keeps clear of it.
+    static let offerCardReserved: Double = 140
 
     /// Width kept free on the right for the rail: the bottom-left zone ends here.
     static var railReserved: Double { edgeInset + controlSize + edgeInset }
@@ -288,6 +299,12 @@ struct HUDFakes: Equatable, Sendable {
     var calibrating = false
     /// OBD speed 0 km/h (a stop).
     var stopped = false
+    /// A synthetic estimate on the map (screenshots; `MapPreviewData.fakeNav`).
+    var nav: FakeNav?
+
+    /// `navFinding`: not converged, a km-wide ellipse. `navEllipse`: converged,
+    /// 90 x 20 m across the track. `navRoad`: converged on a road, with the matched edge.
+    enum FakeNav: String, Equatable, Sendable { case finding = "navFinding", ellipse = "navEllipse", road = "navRoad" }
 
     static func parse(_ value: String?) -> HUDFakes {
         var out = HUDFakes()
@@ -304,6 +321,9 @@ struct HUDFakes: Equatable, Sendable {
             case "scatter": out.isActive = true; out.scatter = true
             case "calibrating": out.isActive = true; out.calibrating = true
             case "stopped": out.isActive = true; out.stopped = true
+            case "navFinding", "navEllipse", "navRoad":
+                out.isActive = true
+                out.nav = FakeNav(rawValue: token)
             default: break
             }
         }
