@@ -31,6 +31,10 @@ final class AppServices {
     /// The at-a-stop road-pack offer (UX-8 (2)); the UI runs its loop
     /// (`run(live: packOfferInputs(speedKmh:))`) and shows `offer`.
     let packOffers: PackOfferMonitor
+    /// The demo drive (REL-DEMO): Navigate on a simulated car with the
+    /// bundled demo pack, on its own session, link and navigation service;
+    /// holds `session` and `link` while it runs. Writes nothing.
+    let demo: DemoDriveController
     private let network = PackNetworkMonitor()
     private let recordActivity: RecordActivityRelay
     /// Path changes, in order, to the downloader (R66.1-8).
@@ -114,6 +118,16 @@ final class AppServices {
         // UX-1: Navigate runs whenever the link polls and Record doesn't.
         // After the feed hook is set, so the first session's feed is seen.
         session.enableNavigate()
+        demo = DemoDriveController(session: session, link: link, packURL: DemoRoadPack.url(in: .main))
+    }
+
+    /// The navigation the map follows (REL-DEMO): the demo's while it has a
+    /// run, else the app's. For `NavigationFeed(source:)`.
+    nonisolated static func liveSnapshot(app: NavigationService, demo: NavigationService) -> NavigationFeed.Source {
+        {
+            if await demo.currentGeneration != nil { return await demo.snapshot() }
+            return await app.snapshot()
+        }
     }
 
     /// The path monitor's relay to the downloader (R66.1-8).

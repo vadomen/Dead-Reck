@@ -27,6 +27,8 @@ struct DriveLoggerApp: App {
         // `initial`: the display location starts at launch when active.
         .onChange(of: scenePhase, initial: true) { _, phase in
             services.session.handleScenePhase(phase)
+            // REL-DEMO: backgrounding stops the demo drive.
+            services.demo.handleScenePhase(phase)
         }
     }
 }

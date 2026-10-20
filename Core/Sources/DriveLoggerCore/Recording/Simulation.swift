@@ -35,16 +35,21 @@ final class SimulatedTicker: Sendable {
     private let events: @Sendable (_ index: Int, _ t: MonotonicTimestamp) -> [LogEvent]
     private let queue: DispatchQueue
 
+    /// - Parameter start: sample 0's timestamp; nil = `clock.now()`. The
+    ///   demo drive's sources pass `.zero`, so sample `n` is at exactly
+    ///   `n × period` on the session clock (REL-DEMO); samples already due
+    ///   at `begin()` come in the first tick, never one in the future.
     init(
         label: String,
         clock: SessionClock,
         sink: LogSink,
         period: Duration,
+        start: MonotonicTimestamp? = nil,
         events: @escaping @Sendable (_ index: Int, _ t: MonotonicTimestamp) -> [LogEvent]
     ) {
         self.clock = clock
         self.sink = sink
-        self.start = clock.now()
+        self.start = start ?? clock.now()
         let (seconds, attoseconds) = period.components
         self.periodNanoseconds = max(1, seconds * 1_000_000_000 + attoseconds / 1_000_000_000)
         self.events = events

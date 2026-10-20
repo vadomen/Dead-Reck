@@ -22,6 +22,7 @@
 		1B778626CF8504BCD4128FC4 /* MapViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79BD174ED6261D2946AA43BC /* MapViewModel.swift */; };
 		1C31445913116014F08A1FAC /* LogStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3A91D607CBA7DFAE670A9FE /* LogStore.swift */; };
 		1E10FF50156F19D743D0F031 /* RoadsWarningTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8C885A8DFC8441B8E214685 /* RoadsWarningTests.swift */; };
+		206E29D1B2EEBB3D47577172 /* DemoDriveControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 054AB9B8349026BCEF63B093 /* DemoDriveControllerTests.swift */; };
 		20EB2EBDE0909FEA9FE836CC /* CoarseLocation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 643E7FC974BA1114F3B6BC99 /* CoarseLocation.swift */; };
 		250F9B70ECECAAB8BC4AD034 /* MapsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 818DD019604FE1043C22CDB1 /* MapsView.swift */; };
 		25DB6730376216ACCED36E70 /* PackTransfer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22A2CA69CDA2A571F37D1F1F /* PackTransfer.swift */; };
@@ -41,6 +42,7 @@
 		42C065C0343165371FE680A9 /* OnboardingCardsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0F801C06E56DF16827FE54 /* OnboardingCardsView.swift */; };
 		4A3FA45863189D79A351ED2C /* CachedLocation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D3719D9A3A53C5D01BA7E8 /* CachedLocation.swift */; };
 		4E301479F940B6C5F374BAC0 /* AppInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7085FAEE943E57E7A189FF74 /* AppInfo.swift */; };
+		4EFA06850D4879F2AA5A47D3 /* DemoDriveController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 323BED0E6A42941CB1657F82 /* DemoDriveController.swift */; };
 		4F71B0F0ADCE5D937CA974DF /* RoadsDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 369422FC35F7985CA58DE03E /* RoadsDiagnostics.swift */; };
 		5095CEAAD63123E6EF2ABE42 /* MemoryFootprint.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6FC5A0B513688F9143F40EC /* MemoryFootprint.swift */; };
 		50CE5600479330B230E3E883 /* RecordingSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFF4735ED2E6C7340B224408 /* RecordingSession.swift */; };
@@ -152,6 +154,7 @@
 /* Begin PBXFileReference section */
 		01370C4D8D9BD4CE0A34454F /* CachedLocationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CachedLocationTests.swift; sourceTree = "<group>"; };
 		01C7240C90AC580E17CB5B05 /* DebugAutoRecord.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugAutoRecord.swift; sourceTree = "<group>"; };
+		054AB9B8349026BCEF63B093 /* DemoDriveControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoDriveControllerTests.swift; sourceTree = "<group>"; };
 		054B04838405BB2A03DF2023 /* RecordingSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingSessionTests.swift; sourceTree = "<group>"; };
 		05B11049AF172AA337D91426 /* RoadPackLibraryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoadPackLibraryTests.swift; sourceTree = "<group>"; };
 		07EA13BD5483E3DC54ACC561 /* PackDownloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PackDownloader.swift; sourceTree = "<group>"; };
@@ -177,6 +180,7 @@
 		3089DBFC9B71EC32E3E4289A /* FirstLaunchMapsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FirstLaunchMapsView.swift; sourceTree = "<group>"; };
 		30E9DD9FFEA6CE59A3398921 /* MapRecordingControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapRecordingControl.swift; sourceTree = "<group>"; };
 		31D1C917B449CDA56A0254E5 /* MountConfirmationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MountConfirmationTests.swift; sourceTree = "<group>"; };
+		323BED0E6A42941CB1657F82 /* DemoDriveController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoDriveController.swift; sourceTree = "<group>"; };
 		34003681B191F41CE9CCAF3E /* Core */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Core; path = Core; sourceTree = SOURCE_ROOT; };
 		369422FC35F7985CA58DE03E /* RoadsDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoadsDiagnostics.swift; sourceTree = "<group>"; };
 		377D8FCE4EF2F5BD5BAB89D0 /* DashboardState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardState.swift; sourceTree = "<group>"; };
@@ -319,6 +323,7 @@
 				3AE6CA7AB92C3C3EF8393920 /* AppNavigationTests.swift */,
 				18315FE7C7FFF70B0B2850DD /* BLECentralTests.swift */,
 				01370C4D8D9BD4CE0A34454F /* CachedLocationTests.swift */,
+				054AB9B8349026BCEF63B093 /* DemoDriveControllerTests.swift */,
 				BCD521716BBEBF31BBC559E1 /* DisplayLocationTests.swift */,
 				6BB1485F07DF5CC618778091 /* FirstLaunchAndTestDriveTests.swift */,
 				EC98513BB0C9D09F650C0359 /* FirstLaunchMapsTests.swift */,
@@ -528,6 +533,7 @@
 				01C7240C90AC580E17CB5B05 /* DebugAutoRecord.swift */,
 				50DD7E63551468B4F1B00A04 /* DebugFakes.swift */,
 				68532F1F7B6D758060507475 /* DebugNavigate.swift */,
+				323BED0E6A42941CB1657F82 /* DemoDriveController.swift */,
 				C3A91D607CBA7DFAE670A9FE /* LogStore.swift */,
 				DAA6C950B9BF3ACB32852B74 /* NavigateMode.swift */,
 				FFF4735ED2E6C7340B224408 /* RecordingSession.swift */,
@@ -710,6 +716,7 @@
 				41471897531591CB1EB8A66D /* AppNavigationTests.swift in Sources */,
 				80920D5FFE9F6525692A73C6 /* BLECentralTests.swift in Sources */,
 				AFA018AAF84C69E379155858 /* CachedLocationTests.swift in Sources */,
+				206E29D1B2EEBB3D47577172 /* DemoDriveControllerTests.swift in Sources */,
 				A8DBF8EFF2EB225A0BBCBE4D /* DisplayLocationTests.swift in Sources */,
 				280FFA7B9D83AB2E555CAE7C /* FirstLaunchAndTestDriveTests.swift in Sources */,
 				2A9BF7106741830C942C8E9E /* FirstLaunchMapsTests.swift in Sources */,
@@ -774,6 +781,7 @@
 				BD669916C0B963DBAE025373 /* DebugAutoRecord.swift in Sources */,
 				660184961A25F86EC77FCB0A /* DebugFakes.swift in Sources */,
 				B2F6649ED59BBF9D793043E7 /* DebugNavigate.swift in Sources */,
+				4EFA06850D4879F2AA5A47D3 /* DemoDriveController.swift in Sources */,
 				871718535B66E899906E77B8 /* DeveloperGate.swift in Sources */,
 				7DD66338B59A7A207D14CEA0 /* DisplayFormat.swift in Sources */,
 				EE49B1BFB78A8DAA2C67FCA1 /* DisplayLocationSource.swift in Sources */,

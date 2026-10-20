@@ -81,7 +81,7 @@ struct ReconnectBackoff: Hashable, Sendable {
 ///   lifetime and the recorder's dedup contract).
 @MainActor
 @Observable
-class OBDLinkService: OBDLinkServicing {
+class OBDLinkService: OBDLinkServicing, OBDLinkHolding {
     static let restoreIdentifier = "DriveLogger.OBDLink"
     static let rememberedAdapterKey = "OBDLink.rememberedAdapterID"
     static let rememberedAdapterNameKey = "OBDLink.rememberedAdapterName"
@@ -101,6 +101,10 @@ class OBDLinkService: OBDLinkServicing {
     private(set) var console: [ConsoleLine] = []
     /// The BLE layer's state, as written in `link` rows.
     private(set) var bleState: LinkSample.BLEState = .idle
+    /// REL-DEMO: the demo drive runs, so this link stays down
+    /// (`holdForDemo()`); nothing connects, reconnects or autoconnects until
+    /// `releaseDemoHold()`. Memory only.
+    private(set) var isHeldForDemo = false
 
     /// See `OBDLinkServicing.lastInitEvents`. Empty unless BLE is
     /// `connected` (M6.1-1).
@@ -165,6 +169,10 @@ class OBDLinkService: OBDLinkServicing {
     @ObservationIgnored private var lastInfo: ELMAdapterInfo?
     @ObservationIgnored private var nextConsoleID = 0
     @ObservationIgnored private var initCapture: InitCapture
+    /// The adapter to connect to when the demo hold ends: the target when
+    /// the hold began, or one picked during it; nil after a `disconnect()`
+    /// or `forget()` during it.
+    @ObservationIgnored private var demoHeldTarget: UUID?
 
     /// - Parameters:
     ///   - central: nil creates the CoreBluetooth `BLECentral` with
@@ -233,6 +241,13 @@ class OBDLinkService: OBDLinkServicing {
 
     func connect(to id: UUID) {
         stopScan()
+        if isHeldForDemo {
+            // Picked while the demo drive runs: remembered now, connected
+            // when the hold ends.
+            remember(id)
+            demoHeldTarget = id
+            return
+        }
         if let target, target != id { disconnect() }
         remember(id)
         let busy: Set<LinkSample.BLEState> = [.connecting, .discovering, .connected, .reconnecting, .restoring]
@@ -244,6 +259,8 @@ class OBDLinkService: OBDLinkServicing {
     }
 
     func disconnect() {
+        // The user's choice outlasts the demo: nothing reconnects after it.
+        demoHeldTarget = nil
         reconnectTask?.cancel()
         reconnectTask = nil
         attempt = 0
@@ -255,6 +272,44 @@ class OBDLinkService: OBDLinkServicing {
             transition(to: .idle, reason: "disconnected by the user")
             state = .idle
         }
+    }
+
+    /// REL-DEMO: takes the link down for the demo drive and holds it there.
+    /// Like `disconnect()` (session dropped, connection cancelled, backoff
+    /// cancelled, the adapter stays remembered), but the adapter it was
+    /// connected or connecting to is kept for `releaseDemoHold()`, and
+    /// while held nothing connects: no autoconnect on Bluetooth on or state
+    /// restoration (they need a target), no reconnect, and `connect(to:)`
+    /// only remembers its pick for later. Idempotent.
+    func holdForDemo() {
+        guard !isHeldForDemo else { return }
+        isHeldForDemo = true
+        demoHeldTarget = target
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        attempt = 0
+        target = nil
+        dropLink()
+        if let id = demoHeldTarget { central.cancelConnection(id) }
+        if ![.idle, .scanning, .unavailable].contains(bleState) {
+            transition(to: .idle, reason: "held for the demo drive")
+            state = .idle
+        }
+    }
+
+    /// REL-DEMO: ends the hold; the adapter held (or picked during the
+    /// hold) is connected again as at launch, now or on Bluetooth on.
+    /// Nothing happens without one (none was wanted, or the user
+    /// disconnected or forgot it during the hold). Idempotent.
+    func releaseDemoHold() {
+        guard isHeldForDemo else { return }
+        isHeldForDemo = false
+        guard let id = demoHeldTarget else { return }
+        demoHeldTarget = nil
+        target = id
+        attempt = 0
+        guard available, [.idle, .scanning].contains(bleState) else { return }   // connects on poweredOn
+        connectNow(id, reason: "demo drive ended")
     }
 
     func forget() {

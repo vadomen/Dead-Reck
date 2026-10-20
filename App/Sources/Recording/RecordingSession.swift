@@ -39,6 +39,9 @@ enum RecordingStartBlocker: Error, Hashable, Sendable {
     /// The link is not polling and the user has not chosen to record without
     /// OBD (docs/PLAN.md §3.3).
     case obdNotReady
+    /// The demo drive (REL-DEMO) is running: stop it first. The session is
+    /// held for it (`RecordingSession.holdForDemo()`).
+    case demoDriveRunning
 }
 
 /// Live numbers for the dashboard. Display only — never written to the log.
@@ -399,6 +402,11 @@ final class RecordingSession {
     /// only: never written, never an input, no sink, no tap. nil when the
     /// feed does not run, and from its start until its first fix.
     private(set) var displayFix: LocationSample?
+    /// REL-DEMO: the demo drive runs on its own session, so this one is held
+    /// (`holdForDemo()`): no Navigate session, no map-only position feed
+    /// (none of this session's sensors run), and Start refused with
+    /// `.demoDriveRunning`. Memory only; `releaseDemoHold()` ends it.
+    private(set) var isHeldForDemo = false
     /// The file being written, nil when no recording is active.
     private(set) var currentFile: URL?
     /// How the last recording ended through `stop`, for the UI ("Stopped:
@@ -628,6 +636,7 @@ final class RecordingSession {
     /// query; an unknown reading does not block.
     var startBlocker: RecordingStartBlocker? {
         if isStarting || recording != nil { return .recordingInProgress }
+        if isHeldForDemo { return .demoDriveRunning }
         if let available = availableDiskBytes,
            !DiskSpacePolicy.canStart(availableBytes: available, warningFreeBytes: warningFreeBytes) {
             return .lowDiskSpace(availableBytes: available, requiredBytes: warningFreeBytes)
@@ -658,6 +667,9 @@ final class RecordingSession {
         calibration: Duration = .seconds(5)
     ) async throws {
         guard !isStarting, recording == nil, ending == nil else { throw RecordingStartBlocker.recordingInProgress }
+        // REL-DEMO: before anything changes; a hold cannot begin later (it
+        // needs `isRecordActive` false, which is set on the next line).
+        guard !isHeldForDemo else { throw RecordingStartBlocker.demoDriveRunning }
         isStarting = true
         // UX-8: downloads pause before the first suspension, so before the
         // clock, file, writer and sources below exist.
@@ -1434,7 +1446,7 @@ final class RecordingSession {
     /// called at every transition (scene phase, Record start and end,
     /// Navigate start and end, authorisation change).
     private var wantsDisplayLocation: Bool {
-        lastScenePhase == .active && navigate == nil && recording == nil && !isStarting
+        lastScenePhase == .active && navigate == nil && recording == nil && !isStarting && !isHeldForDemo
     }
 
     private func updateDisplayLocation() {
@@ -1618,6 +1630,35 @@ final class RecordingSession {
         }
     }
 
+    // MARK: - Demo drive hold (REL-DEMO)
+
+    /// Holds this session for the demo drive, which runs on its own session
+    /// (`DemoDriveController`): a running Navigate session ends now (its
+    /// sources stop), the map-only position feed stops, and until
+    /// `releaseDemoHold()` no Navigate session starts and Start throws
+    /// `.demoDriveRunning`. Navigate stays enabled with its configuration.
+    /// Refused (returns false, nothing changes) while Record is active
+    /// (`isRecordActive`: starting, running or ending). Idempotent.
+    @discardableResult
+    func holdForDemo() -> Bool {
+        guard !isRecordActive else { return false }
+        guard !isHeldForDemo else { return true }
+        isHeldForDemo = true
+        if let nav = navigate { endNavigate(nav) }
+        updateIdleTimer()
+        updateDisplayLocation()
+        return true
+    }
+
+    /// Ends the hold: exactly the state without it. Navigate starts again if
+    /// it is enabled and the link polls, and the position feed runs if the
+    /// app is active. Idempotent.
+    func releaseDemoHold() {
+        guard isHeldForDemo else { return }
+        isHeldForDemo = false
+        resumeNavigate()
+    }
+
     /// Read-only, for the map: the generation of the run that is live now
     /// (the recording, else the Navigate session); nil when none. One
     /// counter, so Navigate, Record, Navigate each give a different value.
@@ -1700,7 +1741,7 @@ final class RecordingSession {
     /// the idle timer.
     private func startNavigateIfPossible() {
         guard let configuration = navigateConfiguration, navigate == nil, recording == nil, !isStarting,
-              isLinkPolling else { return }
+              !isHeldForDemo, isLinkPolling else { return }
         // Rule (a): the speed the session had before this start.
         let speedAtConnect = live.obdSpeedKmh
         let clock = SessionClock(source: uptime, wallClockStart: Date())

@@ -204,3 +204,15 @@ protocol OBDLinkServicing: AnyObject, Observable {
     /// call). For the dedup step in `lastInitEvents`.
     var deliveredLinkEventCount: Int { get }
 }
+
+/// A link the demo drive (REL-DEMO) can take down and hold down while it
+/// runs, so a real adapter reconnecting or autoconnecting cannot take over
+/// the session, and bring back afterwards. `OBDLinkService` (and so
+/// `SimulatedOBDLink`) implements it.
+@MainActor
+protocol OBDLinkHolding: AnyObject {
+    /// Held: nothing connects until `releaseDemoHold()`.
+    var isHeldForDemo: Bool { get }
+    func holdForDemo()
+    func releaseDemoHold()
+}

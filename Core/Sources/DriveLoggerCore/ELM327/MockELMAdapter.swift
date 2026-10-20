@@ -71,6 +71,7 @@ public actor MockELMAdapter: ELMTransport {
     private let continuation: AsyncStream<ELMChunk>.Continuation
     private let uptime: any UptimeSource
     private let clock: any Clock<Duration>
+    private let replyTransform: ReplyTransform?
     private var rules: [Rule]
     private var received: [String] = []
     private var connected = true
@@ -94,18 +95,30 @@ public actor MockELMAdapter: ELMTransport {
     /// level of the last `ATATn` answered `OK`.
     public private(set) var adaptiveTiming = 1
 
+    /// Rewrites a scripted reply when its command arrives: `(command wire
+    /// text, scripted reply, request uptime) -> reply`. Lets a script carry
+    /// a value that changes over time (the demo drive's vehicle speed,
+    /// REL-DEMO) while the rules still decide whether and when a command is
+    /// answered, and addressing still follows the scripted reply. Called
+    /// for every reply sent (an unmatched command's `?` included), never
+    /// for a rule that does not answer; must not block.
+    public typealias ReplyTransform = @Sendable (_ command: String, _ reply: String, _ requestUptime: Double) -> String
+
     /// - Parameters:
     ///   - rules: first match wins; unmatched commands get `?\r\r>`.
     ///   - uptime: stamps sends and chunks, like the real transport.
     ///   - clock: drives reply delays.
+    ///   - replyTransform: nil = replies exactly as scripted.
     public init(
         rules: [Rule],
         uptime: any UptimeSource = SystemUptimeSource(),
-        clock: any Clock<Duration> = ContinuousClock()
+        clock: any Clock<Duration> = ContinuousClock(),
+        replyTransform: ReplyTransform? = nil
     ) {
         self.rules = rules
         self.uptime = uptime
         self.clock = clock
+        self.replyTransform = replyTransform
         (incoming, continuation) = AsyncStream.makeStream(of: ELMChunk.self)
     }
 
@@ -121,7 +134,8 @@ public actor MockELMAdapter: ELMTransport {
 
         let rule = takeRule(for: command.wire)
         updateAddressing(command.wire, reply: rule.reply)
-        guard let reply = rule.reply else { return requestUptime }
+        guard let scripted = rule.reply else { return requestUptime }
+        let reply = replyTransform?(command.wire, scripted, requestUptime) ?? scripted
         let fragments = Self.fragments(of: Data(reply.utf8), sizes: rule.fragmentSizes)
 
         if rule.delay <= .zero, deliveries.isEmpty {
