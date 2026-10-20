@@ -9,6 +9,10 @@ enum MapRecordingControl: Equatable {
     /// Recording (or calibrating): red dot, `m:ss`. Tapping asks to stop.
     case indicator(elapsed: String)
 
+    /// A recording is calibrating, running or stopping: the HUD card ends in
+    /// the recording row (R68.1-2).
+    static func isActive(_ state: RecordingState) -> Bool { make(state: state, elapsed: 0) != .none }
+
     /// `elapsed` is the session clock's `live.elapsed`; no per-second `Date()`.
     static func make(state: RecordingState, elapsed: TimeInterval) -> MapRecordingControl {
         switch state {

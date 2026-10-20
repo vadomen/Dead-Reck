@@ -246,6 +246,50 @@ struct CarPlacementTests {
         #expect(FollowZoom.distance(chosen: 500, headingUp: true, semiMajorM: nil) == 500)
     }
 
+    @Test("R68.1-3: the car is centred while the offer card is up (heading-up), unchanged otherwise")
+    func carFromTopWithOffer() {
+        #expect(CarPlacement.carFromTop(headingUp: true, offerShown: false) == CarPlacement.carFromTop)
+        #expect(CarPlacement.carFromTop(headingUp: true, offerShown: true) == 0.5)
+        #expect(CarPlacement.carFromTop(headingUp: false, offerShown: false) == 0.5)
+        #expect(CarPlacement.carFromTop(headingUp: false, offerShown: true) == 0.5)
+        // Centred: no camera offset, and the ellipse fit is the north-up one (no 1.5 factor).
+        #expect(CarPlacement.aheadMetres(cameraDistance: 800, headingUp: true, carFromTop: 0.5) == 0)
+        let centred = FollowZoom.distance(chosen: 100, headingUp: true, semiMajorM: 300, carFromTop: 0.5)
+        #expect(abs(centred - MapFraming.cameraDistance(spanMeters: 660)) < 1e-9)
+        let lowered = FollowZoom.distance(chosen: 100, headingUp: true, semiMajorM: 300)
+        #expect(lowered > centred, "the lower-third fit needs a wider view")
+        // The zoom state uses its own placement for the fit.
+        var zoom = FollowZoom()
+        let before = zoom.autoFollowDistance(headingUp: true, semiMajorM: 300)
+        zoom.carFromTop = 0.5
+        #expect(zoom.autoFollowDistance(headingUp: true, semiMajorM: 300) < before)
+    }
+
+    @Test("R68.1-3: the offer card never covers the car on the smallest iPhone, heading-up and north-up")
+    func offerCardClearsCar() {
+        let se = CGSize(width: 375, height: 667)
+        // Compact card at default type (~120 pt) up to its stacked worst case at accessibility2 (~250 pt).
+        for height in [120.0, 160, 250] {
+            let card = CarPlacement.offerCardFrame(size: se, height: height)
+            for headingUp in [true, false] {
+                let from = CarPlacement.carFromTop(headingUp: headingUp, offerShown: true)
+                #expect(CarPlacement.clears(card: card, size: se, carFromTop: from),
+                        "headingUp \(headingUp), card \(height) pt")
+            }
+        }
+        // The old placement did collide with the old ~210 pt card: the test can fail.
+        let old = CarPlacement.offerCardFrame(size: se, height: 210)
+        #expect(!CarPlacement.clears(card: old, size: se, carFromTop: CarPlacement.carFromTop))
+    }
+
+    @Test("R68.1-2: the HUD card ends in the recording row only while a recording is active")
+    func hasRecordingRow() {
+        #expect(MapRecordingControl.isActive(.calibrating) && MapRecordingControl.isActive(.recording)
+            && MapRecordingControl.isActive(.stopping))
+        #expect(!MapRecordingControl.isActive(.idle))
+        #expect(!MapRecordingControl.isActive(.failed(reason: "disk full", unwrittenEvents: 0)))
+    }
+
     @Test("Heading-up puts the camera centre ahead so the car lands at two thirds; north-up does not")
     func ahead() {
         let d = 1000.0

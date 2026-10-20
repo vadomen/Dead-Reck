@@ -528,8 +528,10 @@ struct FirstLaunchMapsTextTests {
 
     @Test("Offer question and Never-list titles (manifest title where known, else the name)")
     func offerAndNever() {
-        #expect(PackOfferText.question(title: "Region A", sizeBytes: 35_000_000)
-            == "You are in Region A, no road map. Download 35.0 MB?")
+        #expect(PackOfferText.summary(sizeBytes: 35_000_000) == "No road map here · 35.0 MB")
+        #expect(PackOfferText.summary(title: "Region A", sizeBytes: 35_000_000)
+            == "No road map here · 35.0 MB · Region A")
+        #expect([PackOfferText.download, PackOfferText.notNow, PackOfferText.never] == ["Download", "Not now", "Never"])
         let rows = MapsText.neverRows(names: ["region-a", "zz-unlisted"], manifest: MapsPreviewData.manifest,
                                       preferredLanguages: ["en"])
         #expect(rows.map(\.title) == ["Region A", "zz-unlisted"])

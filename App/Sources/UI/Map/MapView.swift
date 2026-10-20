@@ -98,10 +98,12 @@ struct MapScreen: View {
             onOpenSettings: onOpenSettings,
             roadsAttribution: roadsWarning?.attribution ?? false,
             offerCard: offers.map { AnyView(PackOfferCard(monitor: $0)) },
+            offerShown: offers.map { PackOfferCard.current(for: $0) != nil } ?? false,
             recordingControl: fake.recording
                 ? AnyView(MapRecordingIndicatorLabel(elapsed: "12:34"))
                 : AnyView(MapRecordingButton(
                     session: session, offers: offers, onStop: { [session] in await session.stop() })),
+            hasActiveRecording: fake.isActive ? fake.recording : MapRecordingControl.isActive(session.state),
             statusLine: fake.isActive
                 ? (fake.banner ? AnyView(NavigateStatusLabel(status: .waitingForOBD(secondsLeft: 272))) : nil)
                 : (status.text == nil ? nil : AnyView(MapNavigateStatusLine(session: session)))
@@ -289,9 +291,16 @@ struct GPSMapView: View {
     /// The at-a-stop road-pack offer (UX-8), top of the bottom-left zone; its own
     /// view, so this one stays plain values.
     var offerCard: AnyView?
+    /// The offer is actually showing (not just wired): while it is, the car is
+    /// centred instead of sitting in the lower third under the card (R68.1-3).
+    var offerShown = false
     /// The recording row in the top-left card. A view of its own (it reads
     /// the recorder's 16 Hz status), so this view stays plain values.
     var recordingControl: AnyView?
+    /// A recording is calibrating, running or stopping, so the recording row
+    /// ends the HUD card (R68.1-2). `recordingControl` is always non-nil in the
+    /// app (empty while idle), so it cannot tell.
+    var hasActiveRecording = false
     /// Navigate's calibration / OBD-lost banner (UX-1), in the bottom-left zone; nil when it has no text.
     var statusLine: AnyView?
 
@@ -351,7 +360,9 @@ struct GPSMapView: View {
         onOpenSettings: @escaping () -> Void = {},
         roadsAttribution: Bool = false,
         offerCard: AnyView? = nil,
+        offerShown: Bool = false,
         recordingControl: AnyView? = nil,
+        hasActiveRecording: Bool = false,
         statusLine: AnyView? = nil
     ) {
         self.track = track
@@ -379,7 +390,9 @@ struct GPSMapView: View {
         self.onOpenSettings = onOpenSettings
         self.roadsAttribution = roadsAttribution
         self.offerCard = offerCard
+        self.offerShown = offerShown
         self.recordingControl = recordingControl
+        self.hasActiveRecording = hasActiveRecording
         self.statusLine = statusLine
         self._toast = State(initialValue: initialToast)
     }
@@ -424,6 +437,13 @@ struct GPSMapView: View {
             .task(id: MapLoopKey(isLive: isLive, showsEstimate: showsEstimate)) {
                 await frameOnOpen()
                 await runLoop()
+            }
+            // R68.1-3: the car moves to the middle while the offer card is up
+            // and back when it goes (heading-up only; north-up is centred).
+            .onChange(of: offerShown, initial: true) { _, shown in
+                headingState.zoom.carFromTop = CarPlacement.carFromTop(headingUp: true, offerShown: shown)
+                guard headingUp, isLive, follow.isFollowing, let center = followCenter else { return }
+                withAnimation(.easeInOut(duration: 0.4)) { recenter(center: center) }
             }
             // Fires on reselect/foreground too.
             .onChange(of: isLive, initial: true) { _, live in
@@ -526,7 +546,9 @@ struct GPSMapView: View {
     private var placeholder: some View {
         #if DEBUG
         if Self.hidesTiles && isLive {
-            SyntheticBasemap(headingUp: headingUp && follow.isFollowing)
+            SyntheticBasemap(
+                carFromTop: headingUp && follow.isFollowing
+                    ? CarPlacement.carFromTop(headingUp: true, offerShown: offerShown) : 0.5)
         } else {
             Color(.secondarySystemBackground).ignoresSafeArea()
         }
@@ -547,7 +569,7 @@ struct GPSMapView: View {
     private var hudCard: some View {
         MapHUDCard(
             state: hudState,
-            hasRecording: recordingControl != nil,
+            hasRecording: hasActiveRecording,
             onSpeedLongPress: { showNavStats.toggle() },
             extra: {
                 if let estimate { NavCalibratingIcon(feed: estimate) }
@@ -802,7 +824,9 @@ struct GPSMapView: View {
             let framed = MapFraming.cameraDistance(spanMeters: span)
             headingState.zoom.frame(distance: framed)
             position = .camera(MapCamera(
-                centerCoordinate: Self.cameraCenter(car: center, distance: framed, heading: targetHeading, headingUp: true),
+                centerCoordinate: Self.cameraCenter(
+                    car: center, distance: framed, heading: targetHeading, headingUp: true,
+                    carFromTop: headingState.zoom.carFromTop),
                 distance: framed, heading: targetHeading, pitch: 0
             ))
             return
@@ -816,9 +840,9 @@ struct GPSMapView: View {
     /// The camera centre that puts the car in the lower third in heading-up
     /// (`CarPlacement`); the car itself in north-up.
     private static func cameraCenter(
-        car: CLLocationCoordinate2D, distance: Double, heading: Double, headingUp: Bool
+        car: CLLocationCoordinate2D, distance: Double, heading: Double, headingUp: Bool, carFromTop: Double
     ) -> CLLocationCoordinate2D {
-        let ahead = CarPlacement.aheadMetres(cameraDistance: distance, headingUp: headingUp)
+        let ahead = CarPlacement.aheadMetres(cameraDistance: distance, headingUp: headingUp, carFromTop: carFromTop)
         let c = CarPlacement.cameraCenter(
             latitude: car.latitude, longitude: car.longitude, headingDegrees: heading, aheadMetres: ahead)
         return CLLocationCoordinate2D(latitude: c.latitude, longitude: c.longitude)
@@ -841,7 +865,9 @@ struct GPSMapView: View {
         headingState.gate.noteWrite(heading, at: ContinuousClock.now)
         let d = followDistance(estimate?.latest)
         position = .camera(MapCamera(
-            centerCoordinate: Self.cameraCenter(car: center, distance: d, heading: heading, headingUp: headingUp),
+            centerCoordinate: Self.cameraCenter(
+                car: center, distance: d, heading: heading, headingUp: headingUp,
+                carFromTop: headingState.zoom.carFromTop),
             distance: d, heading: heading, pitch: 0
         ))
     }
@@ -921,7 +947,7 @@ struct GPSMapView: View {
                 position = .camera(MapCamera(
                     centerCoordinate: Self.cameraCenter(
                         car: center.coordinate, distance: camera.distance, heading: camera.heading,
-                        headingUp: inputs.headingUp),
+                        headingUp: inputs.headingUp, carFromTop: headingState.zoom.carFromTop),
                     distance: camera.distance, heading: camera.heading, pitch: 0
                 ))
             }
@@ -1309,7 +1335,8 @@ extension MapPreviewData {
         lastFixInstant: .now, isReceiving: true, thermal: .nominal,
         speed: MapSpeedReadout(source: .obd, kmh: 54, quality: .good), isLive: true,
         follow: .constant(FollowController(following: true)),
-        recordingControl: AnyView(MapRecordingIndicatorLabel(elapsed: "12:34"))
+        recordingControl: AnyView(MapRecordingIndicatorLabel(elapsed: "12:34")),
+        hasActiveRecording: true
     )
 }
 
@@ -1397,6 +1424,8 @@ extension MapPreviewData {
         navigation: NavigationFeed(display: MapPreviewData.nav(converged: true), stats: MapPreviewData.navStats),
         showNavStats: .constant(true), roadsAttribution: true,
         offerCard: AnyView(PackOfferCardView(offer: .init(name: "zz-01", title: "Region A", sizeBytes: 35_000_000))),
-        recordingControl: AnyView(MapRecordingIndicatorLabel(elapsed: "12:34"))
+        offerShown: true,
+        recordingControl: AnyView(MapRecordingIndicatorLabel(elapsed: "12:34")),
+        hasActiveRecording: true
     )
 }

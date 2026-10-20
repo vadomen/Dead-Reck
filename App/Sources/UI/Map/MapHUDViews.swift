@@ -177,13 +177,14 @@ struct MapAttributionLine: View {
 /// `-uiNoMapTiles 1`: a plain synthetic basemap (no real place) with a road and
 /// the car marker where the follow camera puts it, for screenshots.
 struct SyntheticBasemap: View {
-    var headingUp: Bool
+    /// Car's distance from the top as a fraction of the height (`CarPlacement`).
+    var carFromTop: Double
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         GeometryReader { geo in
             let dark = scheme == .dark
-            let carY = geo.size.height * (headingUp ? CarPlacement.carFromTop : 0.5)
+            let carY = geo.size.height * carFromTop
             ZStack {
                 (dark ? Color(red: 0.11, green: 0.13, blue: 0.18) : Color(red: 0.93, green: 0.94, blue: 0.95))
                 Path { p in

@@ -289,6 +289,9 @@ struct FollowZoom: Equatable, Sendable {
     /// UX-6: true after a driver zoom, until the next re-centre. While true,
     /// `autoFollowDistance` uses `chosen`; otherwise the speed-based `auto`.
     private(set) var driverOverride = false
+    /// Where the car sits (`CarPlacement.carFromTop(headingUp:offerShown:)`)
+    /// when heading-up: the ellipse fit keeps its rear half below it.
+    var carFromTop = CarPlacement.carFromTop
     /// Speed-dependent distance, advanced by `step`.
     private(set) var auto = AutoZoom()
     /// The last few distances we wrote: with a moving automatic distance a
@@ -336,7 +339,8 @@ struct FollowZoom: Equatable, Sendable {
     /// is the widened distance, so a constant ellipse is not a drift (R26.1-1).
     func autoWantsWrite(headingUp: Bool, semiMajorM: Double?) -> Bool {
         guard !driverOverride, writtenDistance > 0 else { return false }
-        let wanted = Self.distance(chosen: auto.distance, headingUp: headingUp, semiMajorM: semiMajorM)
+        let wanted = Self.distance(
+            chosen: auto.distance, headingUp: headingUp, semiMajorM: semiMajorM, carFromTop: carFromTop)
         return abs(log(wanted / writtenDistance)) > Self.autoWriteThreshold
     }
     private static let autoWriteThreshold = 0.02
@@ -353,17 +357,19 @@ struct FollowZoom: Equatable, Sendable {
     /// estimate widened to fit its ellipse. Records it as written.
     mutating func autoFollowDistance(headingUp: Bool, semiMajorM: Double?) -> Double {
         let base = driverOverride ? chosen : auto.distance
-        let distance = Self.distance(chosen: base, headingUp: headingUp, semiMajorM: semiMajorM)
+        let distance = Self.distance(chosen: base, headingUp: headingUp, semiMajorM: semiMajorM, carFromTop: carFromTop)
         writtenDistance = distance
         recentWrites.append(distance)
         if recentWrites.count > Self.recentWriteCount { recentWrites.removeFirst() }
         return distance
     }
 
-    static func distance(chosen: Double, headingUp: Bool, semiMajorM: Double?) -> Double {
+    static func distance(
+        chosen: Double, headingUp: Bool, semiMajorM: Double?, carFromTop: Double = CarPlacement.carFromTop
+    ) -> Double {
         guard headingUp, let semiMajorM else { return chosen }
         let span = FollowSpan.span(
-            minimum: chosen / MapFraming.distancePerSpan, semiMajorM: semiMajorM, carFromTop: CarPlacement.carFromTop)
+            minimum: chosen / MapFraming.distancePerSpan, semiMajorM: semiMajorM, carFromTop: carFromTop)
         return MapFraming.cameraDistance(spanMeters: span)
     }
 }
