@@ -18,9 +18,10 @@ import Foundation
 ///   `Content-Range` checks (start = the requested offset, total = the
 ///   manifest size) and by comparing a returned `ETag` with the stored one;
 ///   `If-Range` is still sent, which is right on a compliant server.
-/// - **An unsatisfiable range gets `500`, not `416`.** So no range is ever
-///   requested at or past the expected size (`plan`), which leaves a `5xx`
-///   to a ranged request meaning what it says: a server error. It fails the
+/// - **An unsatisfiable range gets `416`** (GET and HEAD; the server used to
+///   answer `500`). Still, no range is ever requested at or past the
+///   expected size (`plan`), which leaves a `5xx` to a ranged request
+///   meaning what it says: a server error. It fails the
 ///   attempt and KEEPS the partial (R66.1-6): URLs are immutable and `plan`
 ///   never asks past the size, so a transient `502`/`503` must not throw
 ///   away e.g. 100 MB of a 120 MB pack; the next attempt resumes. Only a
