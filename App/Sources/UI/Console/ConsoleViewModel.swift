@@ -214,13 +214,28 @@ final class ConsoleViewModel {
     }
 
     var state: OBDLinkState { link.state }
-    /// The connected adapter's name, else the remembered one's (UX-34).
-    var adapterName: String? { link.adapter?.name ?? link.rememberedAdapterName }
+    /// The adapter the link targets: its initialised record's name, else the
+    /// remembered (paired) one's (UX-34). The record is the last initialised
+    /// adapter's and outlives Forget and a switch to another adapter
+    /// (R68.1-4), so it counts only while it is the paired one.
+    var adapterName: String? { currentAdapter?.name ?? link.rememberedAdapterName }
     var status: AdapterStatus { AdapterStatus(link.state) }
     var discovered: [DiscoveredAdapter] { link.discovered }
     var remembered: UUID? { link.rememberedAdapterID }
     var lines: [ConsoleLine] { link.console }
-    var summary: String? { ConsoleText.adapterSummary(adapter: link.adapter, plan: link.plan, pollHz: link.pollHz) }
+    /// Without the previous adapter's record and plan once another adapter
+    /// (or none) is paired (R68.1-4).
+    var summary: String? {
+        let stale = link.adapter != nil && currentAdapter == nil
+        return ConsoleText.adapterSummary(
+            adapter: currentAdapter, plan: stale ? nil : link.plan, pollHz: link.pollHz)
+    }
+    /// `link.adapter` when it is the paired adapter's, else nil.
+    private var currentAdapter: AdapterRecord? {
+        guard let record = link.adapter, let paired = link.rememberedAdapterID,
+              UUID(uuidString: record.identifier) == paired else { return nil }
+        return record
+    }
     var isSimulated: Bool { link is SimulatedOBDLink }
     var canReinitialise: Bool { ConsoleText.canReinitialise(link.state) }
     var canSend: Bool { !isSending && !commandText.trimmingCharacters(in: .whitespaces).isEmpty }
