@@ -71,6 +71,25 @@ public struct DemoSensorModel: Sendable {
     public static let gyroBias = Vector3(x: 0.002, y: -0.001, z: 0.0015)
     /// Engine idle, rpm.
     public static let idleRPM = 760.0
+    /// The OBD poll grid the demo's navigation is fed (`obdInput(poll:)`,
+    /// `DemoFeedSequencer`): poll `k` is requested at `k × 61 ms` of demo
+    /// time and its `7E8` reply arrives 59 ms later, the bench's ~16.4 Hz
+    /// and p50 latency. In nanoseconds, so the grid is exact.
+    public static let obdPollIntervalNs: Int64 = 61_000_000
+    public static let obdReplyLatencyNs: Int64 = 59_000_000
+
+    /// Every demo run's session ID, so its navigation seed
+    /// (`NavigationSeed.derive(sessionID:)`, as for any run) is the same on
+    /// every start, every device: derived from the bundled pack's content
+    /// hash. The demo writes nothing, so the ID names no file.
+    public static let sessionID: UUID = {
+        let h = DemoRoadPack.contentHash
+        let hex = NavigationSeed.hex(h).uppercased()
+        return UUID(uuidString: "DE30D21E-0000-4000-8\(hex.prefix(3))-\(hex.suffix(12))")!
+    }()
+
+    /// The demo run's navigation seed.
+    public static var navigationSeed: UInt64 { NavigationSeed.derive(sessionID: sessionID) }
 
     static let standardGravity = 9.80665
 
@@ -303,6 +322,48 @@ public struct DemoSensorModel: Sendable {
             put(rpmHex, at: i)
         }
         return String(decoding: chars, as: UTF8.self)
+    }
+
+    // MARK: Navigation inputs on the canonical grid
+
+    /// Poll `k` of the OBD grid as the engine gets it: the primary ECU's
+    /// vehicle speed at the request time, stamped with the reply's arrival.
+    public func obdInput(poll k: Int) -> NavigationInput {
+        let requestNs = Int64(k) * Self.obdPollIntervalNs
+        let arrival = MonotonicTimestamp(nanoseconds: requestNs + Self.obdReplyLatencyNs)
+        let kmh = obdSpeedKmh(at: Double(requestNs) / 1e9)
+        let sample = OBDSample(
+            pid: .vehicleSpeed, value: Double(kmh), unit: .kilometersPerHour,
+            raw: String(format: "7E806410D%02X0C%04X", kmh, min(0xFFFF, Int((obdRPM(at: Double(requestNs) / 1e9) * 4).rounded()))),
+            requestT: MonotonicTimestamp(nanoseconds: requestNs), command: "010D0C1", ecu: "7E8", seq: k
+        )
+        return .obd(sample, at: arrival)
+    }
+
+    /// Second `second`'s fix as the engine gets it (`t` = `receivedT` =
+    /// the second, age 0, `simulated`), as `DemoLocationSource` records it
+    /// but without `fixTime` (wall clock; the engine never reads it).
+    public func locationInput(second: Int) -> NavigationInput? {
+        guard var fix = locationFix(second: second) else { return nil }
+        let t = MonotonicTimestamp(nanoseconds: Int64(second) * 1_000_000_000)
+        fix.receivedT = t
+        fix.ageS = 0
+        fix.simulated = true
+        return .location(fix, at: t)
+    }
+
+    /// The demo's navigation inputs from 0 to `end` seconds in the order
+    /// `DemoFeedSequencer` releases them: what the demo's engine is fed,
+    /// whatever the live delivery did.
+    public func canonicalInputs(until end: Double, motionRateHz: Double = 100) -> [NavigationInput] {
+        var sequencer = DemoFeedSequencer(model: self)
+        let periodNs = Int64((1e9 / motionRateHz).rounded())
+        var out: [NavigationInput] = []
+        for n in 0...Int(end * motionRateHz) {
+            let t = MonotonicTimestamp(nanoseconds: Int64(n) * periodNs)
+            out += sequencer.accept(.motion(motion(at: Double(n) / motionRateHz).motion, at: t))
+        }
+        return out
     }
 
     /// The bench car's script (`MockELMAdapter.Rule.benchCar`) with the poll

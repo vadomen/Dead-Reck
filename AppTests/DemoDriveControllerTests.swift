@@ -1,5 +1,6 @@
 import DriveLoggerCore
 import Foundation
+import os
 import Testing
 
 @testable import DriveLogger
@@ -24,18 +25,22 @@ struct DemoDriveControllerTests {
         let demoIdle = IdleTimerSpy()
         let demo: DemoDriveController
 
+        /// Every sequenced input the demo's navigation got, by run.
+        let sequenced = SequencedLog()
+
         init(_ label: String = #function) throws {
             appLink = LinkTestSupport.service(central)
             scratch = try ScratchStore(label)
             appSession = RecordingFixtures.session(link: appLink, sources: [FakeSource()], store: scratch.store, idle: appIdle)
             appSession.enableNavigate(NavigateConfiguration(stillCalibration: .milliseconds(50)))
-            let demoIdle = demoIdle
+            let demoIdle = demoIdle, sequenced = sequenced
             demo = DemoDriveController(
                 session: appSession, link: appLink, packURL: DemoRoadPack.url(in: .main),
                 options: DemoDriveController.Options(
                     linkLatency: .milliseconds(20),
                     navigate: NavigateConfiguration(stillCalibration: .milliseconds(200)),
-                    setIdleTimerDisabled: { demoIdle.set($0) }))
+                    setIdleTimerDisabled: { demoIdle.set($0) },
+                    observeSequencedInput: { generation, input in sequenced.append(generation, input) }))
         }
 
         /// The app's adapter connected and polling, its Navigate running.
@@ -270,6 +275,38 @@ struct DemoDriveControllerTests {
         #expect(display.isRunning)
     }
 
+    // MARK: Determinism
+
+    @Test("Deterministic: two demo starts feed their navigation the same session ID (so seed) and, over the first 8 s of live scheduling, exactly the canonical inputs; roads attach inline from the demo pack")
+    func twoStartsAreIdentical() async throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        let horizon = MonotonicTimestamp(seconds: 8)
+        var generations: [Int] = []
+        for _ in 0..<2 {
+            try rig.demo.start()
+            let session = try #require(rig.demo.session)
+            #expect(await eventually(15) { session.navigateGeneration != nil })
+            let generation = try #require(session.navigateGeneration)
+            generations.append(generation)
+            #expect(await eventually(20) { (rig.sequenced.inputs(generation).last?.timestamp ?? .zero) > horizon })
+            #expect(await until(10) { await rig.demo.navigation.roadsStatus().packNames == ["demo.roadpack"] })
+            rig.demo.stop()
+            #expect(await until(10) { await !rig.demo.navigation.hasActiveRun })
+        }
+        let finished = await rig.demo.navigation.finished
+        #expect(finished.count == 2)
+        #expect(finished.allSatisfy { $0.sessionID == DemoSensorModel.sessionID })
+        #expect(finished.allSatisfy { $0.roadPackNames == ["demo.roadpack"] })
+        let model = try #require(rig.demo.pipeline?.model)
+        let canonical = model.canonicalInputs(until: 8)
+        let first = rig.sequenced.inputs(generations[0]).filter { $0.timestamp <= horizon }
+        let second = rig.sequenced.inputs(generations[1]).filter { $0.timestamp <= horizon }
+        #expect(first.count == canonical.count)
+        #expect(first == canonical)
+        #expect(second == canonical)
+    }
+
     // MARK: Lifecycle
 
     @Test("Backgrounding stops the demo and releases the app's pipeline; inactive and active change nothing")
@@ -302,5 +339,18 @@ struct DemoDriveControllerTests {
         }
         #expect(!demo.isRunning && !session.isHeldForDemo)
         #expect(demo.startBlocker == .unavailable(reason: DemoDrivePipeline.Failure.packMissing.description))
+    }
+}
+
+/// Sequenced inputs by run generation, appended from the demo's relay task.
+final class SequencedLog: Sendable {
+    private let state = OSAllocatedUnfairLock<[Int: [NavigationInput]]>(initialState: [:])
+
+    func append(_ generation: Int, _ input: NavigationInput) {
+        state.withLock { $0[generation, default: []].append(input) }
+    }
+
+    func inputs(_ generation: Int) -> [NavigationInput] {
+        state.withLock { $0[generation] ?? [] }
     }
 }

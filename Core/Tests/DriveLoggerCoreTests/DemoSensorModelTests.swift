@@ -284,37 +284,96 @@ struct DemoSensorModelTests {
 
     // MARK: End to end
 
-    /// The demo stream as the app's Navigate feeds it: device motion at
-    /// 100 Hz, fixes at their second, and OBD speed polled every 61 ms
-    /// (~16.4 Hz, the bench rate) answered 59 ms later by ECU `7E8` with the
-    /// speed at the request; arrival order, as the tap delivers it.
-    static func inputs(_ model: DemoSensorModel, until end: Double) -> [NavigationInput] {
-        var out: [(Int64, Int, NavigationInput)] = []
-        let rate = 100.0
-        for n in 0...Int(end * rate) {
-            let t = MonotonicTimestamp(nanoseconds: Int64(n) * 10_000_000)
-            out.append((t.nanoseconds, 0, .motion(model.motion(at: Double(n) / rate).motion, at: t)))
+    /// The demo's inputs as live delivery might hand them to the
+    /// sequencer, with `seed` choosing the jitter: motion in late batches
+    /// of 1–6 samples, each fix 0–40 ms late and interleaved anywhere in a
+    /// batch, the adapter's replies at jittered times with the speed of a
+    /// jittered request time.
+    static func liveArrival(_ model: DemoSensorModel, until end: Double, seed: UInt64) -> [NavigationInput] {
+        var rng = NavigationRandom(seed: seed)
+        var motion: [NavigationInput] = []
+        for n in 0...Int(end * 100) {
+            motion.append(.motion(model.motion(at: Double(n) / 100).motion, at: MonotonicTimestamp(nanoseconds: Int64(n) * 10_000_000)))
         }
-        var k = 0
-        while Double(k) * 0.061 + 0.059 <= end {
-            let request = Double(k) * 0.061
-            let arrival = MonotonicTimestamp(seconds: request + 0.059)
-            let kmh = model.obdSpeedKmh(at: request)
-            let sample = OBDSample(pid: .vehicleSpeed, value: Double(kmh), unit: .kilometersPerHour,
-                                   raw: String(format: "7E803410D%02X", kmh), requestT: MonotonicTimestamp(seconds: request),
-                                   command: "010D1", ecu: "7E8", seq: k)
-            out.append((arrival.nanoseconds, 1, .obd(sample, at: arrival)))
-            k += 1
-        }
+        // Everything that is not motion, at its live delivery time.
+        var others: [(Double, NavigationInput)] = []
         for second in 0...Int(end) {
             guard var fix = model.locationFix(second: second) else { continue }
-            let t = MonotonicTimestamp(nanoseconds: Int64(second) * 1_000_000_000)
+            let t = MonotonicTimestamp(seconds: Double(second))
             fix.receivedT = t
             fix.ageS = 0
             fix.simulated = true
-            out.append((t.nanoseconds, 2, .location(fix, at: t)))
+            fix.fixTime = "\(rng.next())"   // wall clock: differs per run
+            others.append((Double(second) + 0.04 * rng.nextUniform(), .location(fix, at: t)))
         }
-        return out.sorted { ($0.0, $0.1) < ($1.0, $1.1) }.map(\.2)
+        var request = 0.03 * rng.nextUniform()
+        var k = 0
+        while request < end {
+            let arrival = request + 0.045 + 0.03 * rng.nextUniform()
+            let sample = OBDSample(pid: .vehicleSpeed, value: Double(model.obdSpeedKmh(at: request)), unit: .kilometersPerHour,
+                                   requestT: MonotonicTimestamp(seconds: request), command: "010D0C1", ecu: "7E8", seq: k)
+            others.append((arrival, .obd(sample, at: MonotonicTimestamp(seconds: arrival))))
+            request = arrival + 0.002 * rng.nextUniform()
+            k += 1
+        }
+        others.sort { $0.0 < $1.0 }
+        // Batches of motion delivered when their last sample is up to 40 ms
+        // old; the others slotted in by their delivery time.
+        var out: [NavigationInput] = []
+        var i = 0, j = 0
+        while i < motion.count {
+            let batch = 1 + Int(rng.next() % 6)
+            let last = min(i + batch, motion.count) - 1
+            let delivered = motion[last].timestamp.seconds + 0.04 * rng.nextUniform()
+            while j < others.count, others[j].0 < delivered {
+                out.append(others[j].1)
+                j += 1
+            }
+            out += motion[i...last]
+            i = last + 1
+        }
+        return out + others[j...].map(\.1)
+    }
+
+    @Test("Deterministic navigation: the demo's session ID (and so seed) is fixed; whatever the live interleaving, batching, fix lateness and adapter poll timing, the sequencer releases exactly the canonical inputs, and two runs give bit-identical estimates")
+    func deterministicNavigation() throws {
+        let fixture = try DemoDriveTests.fixture()
+        let model = DemoSensorModel(drive: fixture.drive)
+        #expect(DemoSensorModel.sessionID == DemoSensorModel.sessionID)
+        #expect(DemoSensorModel.navigationSeed == NavigationSeed.derive(sessionID: DemoSensorModel.sessionID))
+        #expect(DemoSensorModel.sessionID.uuidString.hasSuffix(String(NavigationSeed.hex(DemoRoadPack.contentHash).suffix(12)).uppercased()))
+        let end = 150.0
+        let canonical = model.canonicalInputs(until: end)
+        // Canonical order: arrival never goes backwards; ~16.4 OBD polls a second.
+        #expect(zip(canonical, canonical.dropFirst()).allSatisfy { $0.arrival <= $1.arrival })
+        let obd = canonical.filter { if case .obd = $0 { true } else { false } }
+        #expect(abs(Double(obd.count) / end - 1 / 0.061) < 0.1)
+        var outputs: [[NavigationInput]] = []
+        for seed in [1, 2, 3] as [UInt64] {
+            var sequencer = DemoFeedSequencer(model: model)
+            var out: [NavigationInput] = []
+            for input in Self.liveArrival(model, until: end, seed: seed) { out += sequencer.accept(input) }
+            outputs.append(out)
+        }
+        #expect(outputs.allSatisfy { $0 == canonical })
+        // A manual fix passes at once.
+        var sequencer = DemoFeedSequencer(model: model)
+        let pin = NavigationInput.manualFix(ManualFixSample(latitude: 0, longitude: 0, pressedT: .zero, speedSource: "obd"), at: .zero)
+        #expect(sequencer.accept(pin) == [pin])
+
+        // Two runs with the demo seed: identical estimates.
+        var estimates: [[NavigationEstimate?]] = []
+        for _ in 0..<2 {
+            var selector = RoadPackSelector(candidates: [try RoadPackSelection.Candidate(name: "demo.roadpack", pack: fixture.pack)])
+            var run = LiveNavigationRun(sessionID: DemoSensorModel.sessionID,
+                                        config: NavigationConfig(seed: DemoSensorModel.navigationSeed), appBuild: "test")
+            var lines: [NavSidecar.Line] = []
+            for input in outputs[estimates.count % outputs.count] { run.ingest(input, selector: &selector) { lines.append($0) } }
+            #expect(run.roads != nil)
+            estimates.append([20, 61, 100, 149].map { run.engine.estimate(at: MonotonicTimestamp(seconds: $0)) })
+        }
+        #expect(estimates[0].allSatisfy { $0 != nil })
+        #expect(estimates[0] == estimates[1])
     }
 
     @Test("End to end: two laps of the demo stream through LiveNavigationRun with the demo pack as the only road candidate stay near the route (network fixes only after 60 s)")
@@ -322,10 +381,11 @@ struct DemoSensorModelTests {
         let fixture = try DemoDriveTests.fixture()
         let model = DemoSensorModel(drive: fixture.drive)
         let end = 2 * fixture.drive.lapDurationS
-        let inputs = Self.inputs(model, until: end)
+        let inputs = model.canonicalInputs(until: end)
         var selector = RoadPackSelector(candidates: [try RoadPackSelection.Candidate(name: "demo.roadpack", pack: fixture.pack)])
-        var run = LiveNavigationRun(sessionID: UUID(uuidString: "DE30D21E-0000-4000-8000-000000000002")!,
-                                    config: NavigationConfig(seed: 7), appBuild: "test")
+        // The app's demo run: its fixed session ID and seed.
+        var run = LiveNavigationRun(sessionID: DemoSensorModel.sessionID,
+                                    config: NavigationConfig(seed: DemoSensorModel.navigationSeed), appBuild: "test")
         var errors: [(t: Double, m: Double)] = []
         var headingErrors: [Double] = []
         var nextCheck = 1.0
@@ -353,8 +413,8 @@ struct DemoSensorModelTests {
         let final = errors.last?.m ?? .infinity
         print("REL-DEMO e2e: GNSS max \(maxGNSS) m; network-only max \(maxNetwork) m, RMS \(rms) m, final \(final) m; on-road \(run.engine.estimate(at: MonotonicTimestamp(seconds: end))?.onRoadShare ?? -1); network fixes used \(run.engine.counters.networkFixesUsed); heading max \(headingErrors.max() ?? -1)°")
         #expect(errors.count > Int(end) - 5)
-        // Measured (seed 7): GNSS max 1.9 m; network-only max 8.2 m, RMS 2.9 m,
-        // final 0.4 m; heading while moving (after 30 s) max 0.2°. The bounds are a lane-to-a-block margin over that, so
+        // Measured (the demo seed): GNSS max 1.9 m; network-only max 9.0 m,
+        // RMS 3.3 m, final 0.4 m; heading while moving (after 30 s) max 0.22°. The bounds are a lane-to-a-block margin over that, so
         // a sign or unit slip in the streams (yaw, speed, fix shape) fails.
         #expect(maxGNSS < 20)
         #expect(maxNetwork < 50)

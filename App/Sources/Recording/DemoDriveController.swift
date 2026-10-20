@@ -24,11 +24,20 @@ enum DemoDriveStartBlocker: Error, Hashable, Sendable {
 /// fed by the simulated adapter (`SimulatedOBDLink` over the bench-car
 /// script, its speed written in from `DemoSensorModel`) and the demo
 /// sources (`DemoMotionSource`, `DemoLocationSource`), into its own
-/// `NavigationService` (the same `LiveNavigationRun` and engine) whose road
-/// library is the bundled demo pack alone: `RoadPackLibrary(source: [the
-/// bundle's demo.roadpack], cacheURL: nil)`, opened read-only from the
+/// `NavigationService` (the same `LiveNavigationRun` and engine) whose only
+/// road candidate is the bundled demo pack, opened read-only from the
 /// bundle, never installed, never listed in Maps, never merged with the
 /// user's packs (and it has its own grid, so it couldn't be).
+///
+/// **Deterministic** (App Store screenshots must reproduce): every demo
+/// run has the same session ID (`DemoSensorModel.sessionID`), so the same
+/// seed through the usual `NavigationSeed.derive`; the feed goes through
+/// `DemoFeedSequencer`, so the engine gets the same inputs in the same
+/// order whatever the live scheduling (motion from the source, OBD on the
+/// model's 61 ms grid, fixes from the model); and roads are selected
+/// inline (`NavigationService.useInlineRoads`), so they attach after the
+/// same input every run. The engine's state at a given demo time is then
+/// identical on every run. What still varies: see `DemoDrivePipeline`.
 ///
 /// **The app's own pipeline is held meanwhile**: the app's session is held
 /// (`RecordingSession.holdForDemo()`: its Navigate session ends, so its
@@ -68,6 +77,9 @@ final class DemoDriveController {
         /// screen stays on while the demo runs).
         var setIdleTimerDisabled: @MainActor (Bool) -> Void = { UIApplication.shared.isIdleTimerDisabled = $0 }
         var uptime: any UptimeSource = SystemUptimeSource()
+        /// Tests: sees every sequenced input (run generation, input) just
+        /// before the demo's navigation does. nil in the app.
+        var observeSequencedInput: (@Sendable (Int, NavigationInput) -> Void)?
     }
 
     /// The demo is running (from `start()` until `stop()`).
@@ -100,10 +112,12 @@ final class DemoDriveController {
     /// running.
     var roads: DemoDriveRoads? { isRunning ? pipeline?.roads : nil }
 
-    /// The demo's navigation (its own service, demo pack only). Exists from
-    /// init, idle until the first start.
+    /// The demo's navigation (its own service, demo pack only, selected
+    /// inline). Exists from init, idle until the first start.
     let navigation: NavigationService
-    /// The demo's pack library: the bundled pack only, in memory.
+    /// The demo pack as a library (in memory, the bundled pack only), for
+    /// the map's roads warning (`RoadsWarning.current(service:library:)`)
+    /// only: navigation selects from the opened pack itself.
     let roadPacks: RoadPackLibrary?
 
     @ObservationIgnored private let appSession: RecordingSession
@@ -124,9 +138,8 @@ final class DemoDriveController {
         appLink = link
         self.packURL = packURL
         self.options = options
-        let library = packURL.map { url in RoadPackLibrary(source: { [url] }, cacheURL: nil) }
-        roadPacks = library
-        navigation = NavigationService(library: library)
+        roadPacks = packURL.map { url in RoadPackLibrary(source: { [url] }, cacheURL: nil) }
+        navigation = NavigationService(library: nil)
     }
 
     /// Seconds since the running demo's time origin (its session clock's
@@ -145,7 +158,8 @@ final class DemoDriveController {
         if let blocker = startBlocker { throw blocker }
         let pipeline: DemoDrivePipeline
         do {
-            pipeline = try self.pipeline ?? DemoDrivePipeline(packURL: packURL, navigation: navigation, options: options)
+            pipeline = try self.pipeline ?? DemoDrivePipeline(packURL: packURL, navigation: navigation, library: roadPacks,
+                                                              options: options)
         } catch {
             unavailableReason = String(describing: error)
             throw .unavailable(reason: String(describing: error))
@@ -214,6 +228,22 @@ struct DemoDriveRoads: Sendable {
 }
 
 /// What the demo runs on, built once from the bundled pack.
+///
+/// Run-to-run variation left after the fixes in `DemoDriveController`'s
+/// doc (none of it reaches the engine's inputs, seed or road attach):
+/// - The map draws `snapshot()` at the frame's own time: the estimate is
+///   extrapolated to that instant, so two runs agree at equal demo times,
+///   and a screenshot taken a few ms apart moves the arrow by speed × Δt
+///   (0.2 m per 16 ms at 50 km/h).
+/// - What the HUD shows from the live streams: the OBD speed is the
+///   adapter's last reply (polled on real time, so near a km/h boundary it
+///   can read 1 km/h apart), the GPS chip and dot the source's fix (the
+///   same values, shown within a tick of its second), the calibrating
+///   countdown (wall clock), and the debug stats' timings.
+/// - Manual fixes (a double tap is the driver's, at the driver's time).
+/// - If the engine fell more than the taps' buffers behind (4096 live
+///   inputs, then 65 536 sequenced ones) inputs would be dropped
+///   (`droppedInputs`); never seen on the simulator.
 @MainActor
 final class DemoDrivePipeline {
     enum Failure: Error, CustomStringConvertible {
@@ -232,9 +262,11 @@ final class DemoDrivePipeline {
     /// nothing).
     nonisolated static let note = "Demo drive (REL-DEMO): simulated car, adapter and sensors; nothing is recorded."
 
-    init(packURL: URL?, navigation: NavigationService, options: DemoDriveController.Options) throws {
+    init(packURL: URL?, navigation: NavigationService, library: RoadPackLibrary?,
+         options: DemoDriveController.Options) throws {
         guard let packURL else { throw Failure.packMissing }
         let pack = try DemoRoadPack.open(at: packURL)
+        let candidates = [try RoadPackSelection.Candidate(name: packURL.lastPathComponent, pack: pack)]
         let drive = try DemoDrive(pack: pack)
         let model = DemoSensorModel(drive: drive)
         let timeline = DemoTimeline()
@@ -264,9 +296,43 @@ final class DemoDrivePipeline {
             sensorConfiguration: SensorSuite.configuration,
             notes: Self.note,
             setIdleTimerDisabled: options.setIdleTimerDisabled,
-            beginBackgroundTask: { _ in {} }
+            beginBackgroundTask: { _ in {} },
+            // One ID for every demo run: one seed (`DemoSensorModel.navigationSeed`).
+            makeSessionID: { DemoSensorModel.sessionID }
         )
-        session.onNavigationFeed = { feed in navigation.start(feed) }
+        let observe = options.observeSequencedInput
+        session.onNavigationFeed = { feed in
+            Self.navigate(feed, model: model, candidates: candidates, on: navigation, observe: observe)
+        }
+        // The roads warning's library status (in memory, writes nothing).
+        if let library { Task(priority: .utility) { await library.rescan() } }
+    }
+
+    /// Hands `feed` to `navigation` through `DemoFeedSequencer`: a relay
+    /// task reads the session's tap, sequences, and records into a new tap
+    /// that the service consumes; the inline road candidates are set before
+    /// the run begins. Returns at once, like `NavigationService.start`.
+    nonisolated static func navigate(_ feed: RecordingNavigationFeed, model: DemoSensorModel,
+                                     candidates: [RoadPackSelection.Candidate], on navigation: NavigationService,
+                                     observe: (@Sendable (Int, NavigationInput) -> Void)? = nil) {
+        let tap = NavigationTap(bufferLimit: 1 << 16)
+        let sequenced = RecordingNavigationFeed(generation: feed.generation, header: feed.header, clock: feed.clock,
+                                                output: .navigateOnly, tap: tap)
+        let generation = feed.generation
+        Task.detached(priority: .userInitiated) {
+            var sequencer = DemoFeedSequencer(model: model)
+            for await input in feed.inputs {
+                for out in sequencer.accept(input) {
+                    observe?(generation, out)
+                    tap.record(out.event)
+                }
+            }
+            tap.finish()
+        }
+        Task(priority: .userInitiated) {
+            await navigation.useInlineRoads(candidates)
+            await navigation.consume(sequenced)
+        }
     }
 }
 
