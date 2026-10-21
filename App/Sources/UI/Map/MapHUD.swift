@@ -129,10 +129,32 @@ struct MapHUDState: Equatable, Sendable {
     ///   (network-only, or spoofed ones it rejects) are "No GPS".
     /// - Without one (no run, no estimate shown, e.g. Navigate without OBD):
     ///   the map's own freshness (`stale`).
-    static func gpsState(stale: Bool, switchedOff: Bool = false, engine: EngineGPS? = nil) -> HUDGPS {
+    /// - An engine state tagged with another run than `currentRun` (the
+    ///   previous run's, still held for a frame) is ignored (R76.2-1): the
+    ///   stale logic answers, which is "No GPS" before the new run has a fix.
+    static func gpsState(
+        stale: Bool, switchedOff: Bool = false, engine: EngineGPS? = nil, currentRun: Int? = nil
+    ) -> HUDGPS {
         if switchedOff { return .off }
-        if let engine { return engine.inUse ? .ok : .none }
+        if let engine, belongs(engine, to: currentRun) { return engine.inUse ? .ok : .none }
         return stale ? .none : .ok
+    }
+
+    /// The engine state is the live run's (or untagged: the demo's feed).
+    static func belongs(_ engine: EngineGPS, to currentRun: Int?) -> Bool {
+        engine.run == nil || engine.run == currentRun
+    }
+
+    /// The run the voice may take a baseline for (R76.2-1): nil until the HUD
+    /// state comes from the live run's own engine, so a run starts silent
+    /// whatever the previous run left behind. nil without a run. When the
+    /// estimate is not shown (Navigate without OBD) the stale logic is the
+    /// only source, so the run counts at once.
+    static func voiceRun(current: Int?, engine: EngineGPS?, estimateShown: Bool) -> Int? {
+        guard let current else { return nil }
+        guard estimateShown else { return current }
+        guard let engine, belongs(engine, to: current) else { return nil }
+        return current
     }
 }
 

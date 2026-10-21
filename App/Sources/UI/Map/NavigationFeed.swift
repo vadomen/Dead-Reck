@@ -36,12 +36,17 @@ final class NavigationFeed {
 
     @ObservationIgnored private(set) var latest: NavDisplay?
     @ObservationIgnored private let source: Source?
+    /// The generation the source's snapshots follow (the service's current
+    /// run). Read before and after each snapshot: a poll across a run change
+    /// is dropped, so `gps` is never tagged with the wrong run (R76.2-1).
+    @ObservationIgnored private let generation: (@Sendable () async -> Int?)?
     @ObservationIgnored private var gate = NavWriteGate()
     @ObservationIgnored private var edgeKey: EdgeKey?
     @ObservationIgnored private var lastStatsWrite: ContinuousClock.Instant?
 
-    init(source: @escaping Source) {
+    init(source: @escaping Source, generation: (@Sendable () async -> Int?)? = nil) {
         self.source = source
+        self.generation = generation
     }
 
     /// Previews and tests: fixed values, no service behind them unless a
@@ -51,6 +56,7 @@ final class NavigationFeed {
         source: Source? = nil
     ) {
         self.source = source
+        self.generation = nil
         self.gps = gps
         self.matchedEdge = matchedEdge
         self.display = display
@@ -63,9 +69,17 @@ final class NavigationFeed {
     @discardableResult
     func poll(at now: ContinuousClock.Instant = .now) async -> Bool {
         guard let source else { return false }
+        let before = await generation?()
         let snapshot = await source()
-        guard !Task.isCancelled else { return false }
-        return apply(snapshot, at: now)
+        let after = await generation?()
+        guard !Task.isCancelled, before == after else { return false }
+        return apply(snapshot, run: after, at: now)
+    }
+
+    /// Forgets the engine's GPS state: the map's run changed, and the next
+    /// state must come from the new run's own snapshots (R76.2-1).
+    func clearGPS() {
+        if gps != nil { gps = nil }
     }
 
     /// Polls once and returns the estimate as of now, for framing the camera
@@ -80,9 +94,10 @@ final class NavigationFeed {
     }
 
     /// Applies one snapshot (split from `poll` so tests need no service).
-    func apply(_ snapshot: NavigationSnapshot, at now: ContinuousClock.Instant) -> Bool {
+    /// `run` is the generation the snapshot belongs to (nil: untagged, the demo's feed).
+    func apply(_ snapshot: NavigationSnapshot, run: Int? = nil, at now: ContinuousClock.Instant) -> Bool {
         let nextGPS = snapshot.sessionID == nil
-            ? nil : EngineGPS(inUse: snapshot.gnssInUse, switchedOff: snapshot.gpsSwitchedOff)
+            ? nil : EngineGPS(inUse: snapshot.gnssInUse, switchedOff: snapshot.gpsSwitchedOff, run: run)
         if nextGPS != gps { gps = nextGPS }
         let next = NavDisplay(snapshot)
         latest = next
@@ -127,4 +142,7 @@ struct EngineGPS: Hashable, Sendable {
     var inUse: Bool
     /// The engine has the driver's switch off. Lags the tap by the tap buffer.
     var switchedOff: Bool
+    /// The run generation this state came from (R76.2-1); nil when the feed
+    /// is untagged. The HUD ignores a state from any other run than the live one.
+    var run: Int? = nil
 }
