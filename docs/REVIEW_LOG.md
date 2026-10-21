@@ -968,3 +968,20 @@ Tests at round 2: Core 1111 tests in 140 suites passed; AppTests 691 tests in 10
 ### Run 75 summary
 
 2 rounds; 4 fixed (R75.1-1..4); 0 rejected; 5 deferred (R75.1-5..7, R75.2-1, R75.2-2). R75.1-8 wording applied (user decision 2026-10-21, after the review). The ellipse-fit span ceiling is resolved: `EllipseFit.maxSpanM = 8000` by user decision, with test `largeEllipseIsCutOff`.
+
+## Run 76: Prompt 37 UX-9 (a) GPS off switch (log v4 gpsSwitch, engine gate, replay_nav), UX-22 GPS state + voice, map without POIs, R74 leftovers (main..ux9a-gps-off: a9103dd..935791c), started 2026-10-21
+
+### Round 1
+
+Reviewers: three opus reviewers in parallel: A engine/replay, B log format/recording/docs/site, C app UI. Result: 0 BLOCKER, 2 MAJOR (both CONFIRMED, fixed), 4 MINOR (DEFERRED). A verified bit-identity: clean drive, mask-after 230, seed 1, roads national + ua-30, base a9103dd vs 935791c; GeoJSON byte-identical, metrics differ only in msPerStep / maxIngestMs. The author's runs (roads off, as-live, live-roads drive `--as-live --compare` exact PASS) were identical too. Mutations: A 3 (one survived, R76.1-4); B 3, all killed.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R76.1-1 | MAJOR | `GPSVoice.swift` `GPSPhraseTracker.note(_:runActive:)` reset only when no run; Record start/stop switch the run generation directly (never nil), so with "Speak GPS changes" on, every Record start/stop said "GPS lost" then "GPS back". | CONFIRMED, FIXED (9b0e223) | Tracker keyed by run generation (`note(_:run:)`); a new run takes its state as baseline silently; MapView also notes on run change. Tests `trackerRunSwap` (fails on the old logic, by reasoning), `trackerLossWithinRun`. |
+| R76.1-2 | MAJOR | `RecordingSessionNavigateTests.swift` `gpsSwitchNavigate` never asserted the switch reaches the navigation feed; a `setGPSSwitch` that skipped tap-only sinks passed every test (Navigate's GPS off would do nothing). | CONFIRMED, FIXED (4cf9b19) | `gpsSwitchNavigate` asserts the feed inputs and engine `gpsSwitchedOff` for off / on; new `gpsSwitchRecordFeed` (feed and file carry identical switches). Mutation "skip sink.record when tap-only" fails `gpsSwitchNavigate`. |
+| R76.1-3 | MINOR | `NavigationTap.swift:42`: a `gpsSwitch` input can be dropped by the tap's newest-4096 buffer when the engine lags ~30 s, and the effect persists (the engine keeps using GPS while the HUD says GPS off). | DEFERRED | BACKLOG. Reviewer A accepted the risk (same as pins; droppedInputs visible). |
+| R76.1-4 | MINOR | `NavigationReplay.swift:986`: the `attachIfDue()` before a gpsSwitch input in the scored replay is untested (a mutation removing it survived 87 tests). | DEFERRED | BACKLOG. |
+| R76.1-5 | MINOR | `MapView.swift:536-541`: "Use GPS" (or Stop while off) re-frames the camera as a first fix (`latest` nil to non-nil), discarding the driver's zoom and pan. | DEFERRED | BACKLOG. |
+| R76.1-6 | MINOR | `docs/RELEASE_PLAN.md:173`: the Review Notes "only network use is downloading road maps" omits Apple Maps tiles (the map is MapKit). The wording was the user's, verbatim. | DEFERRED | User's decision; BACKLOG. |
+
+Tests at round 1: Core 1131 tests in 142 suites passed (36 known issues) at 935791c (round 1 changes no Core code). App: 719 tests in 104 suites passed at 4cf9b19. `PackNetworkPolicyTests` "Turning the switch on restarts a transfer…" failed once in a fixer's run and passed on rerun with no change (flaky, unrelated).
