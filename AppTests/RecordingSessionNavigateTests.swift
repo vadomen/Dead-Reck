@@ -276,6 +276,22 @@ final class NavigateRig {
         return false
     }
 
+    /// The `gpsSwitch` inputs the tee passed on for `generation`, in order.
+    func gpsSwitchInputs(_ generation: Int) -> [NavigationInput] {
+        (tee.inputs[generation] ?? []).filter { if case .gpsSwitch = $0 { true } else { false } }
+    }
+
+    /// Waits until the service's current run reports `gpsSwitchedOff ==
+    /// expected` (the engine has consumed the switch).
+    func engineGPSSwitchedOff(_ expected: Bool) async -> Bool {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+        while ContinuousClock.now < deadline {
+            if await tee.service.snapshot(at: .zero).gpsSwitchedOff == expected { return true }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return false
+    }
+
     func snapshots(at times: [Double]) async -> [NavigationSnapshot] {
         await NavigationServiceNavigateTests.snapshots(tee.service, at: times)
     }
@@ -503,15 +519,40 @@ struct RecordingSessionNavigateTests {
         #expect(rig.session.setGPSSwitch(on: false) == nil, "no run yet")
         #expect(rig.session.isGPSSwitchOn)
         rig.session.enableNavigate(Self.quick)
-        _ = try #require(rig.session.navigateGeneration)
-        _ = try #require(rig.session.setGPSSwitch(on: false), "recorded into Navigate's tap-only sink")
+        let generation = try #require(rig.session.navigateGeneration)
+        #expect(rig.tee.feed(generation)?.output == .navigateOnly)
+        #expect(await rig.engineGPSSwitchedOff(false), "a Navigate run starts with GPS on")
+
+        // Each switch goes through Navigate's tap-only sink to the
+        // navigation feed, at the time setGPSSwitch returned, and the
+        // engine takes it (R76.1-2).
+        rig.uptime.set(NavigateRig.base + 1)
+        let offT = try #require(rig.session.setGPSSwitch(on: false), "recorded into Navigate's tap-only sink")
         #expect(!rig.session.isGPSSwitchOn)
+        let off = NavigationInput.gpsSwitch(GPSSwitchSample(on: false, source: .driver), at: offT)
+        #expect(await eventually(10) { rig.gpsSwitchInputs(generation) == [off] }, "\(rig.gpsSwitchInputs(generation))")
+        #expect(await rig.engineGPSSwitchedOff(true), "the engine consumed GPS off")
+
+        rig.uptime.set(NavigateRig.base + 2)
+        let onT = try #require(rig.session.setGPSSwitch(on: true))
+        #expect(onT > offT)
+        #expect(rig.session.isGPSSwitchOn)
+        let on = NavigationInput.gpsSwitch(GPSSwitchSample(on: true, source: .driver), at: onT)
+        #expect(await eventually(10) { rig.gpsSwitchInputs(generation) == [off, on] }, "\(rig.gpsSwitchInputs(generation))")
+        #expect(await rig.engineGPSSwitchedOff(false), "the engine consumed GPS on")
+
+        // Off again: Record must still start with GPS on.
+        _ = try #require(rig.session.setGPSSwitch(on: false))
+        #expect(!rig.session.isGPSSwitchOn)
+        #expect(await eventually(10) { rig.gpsSwitchInputs(generation).count == 3 })
 
         rig.uptime.set(NavigateRig.base + 50)
         try await rig.session.start(mount: "m", vehicle: "v", allowWithoutOBD: false, calibration: .zero)
         #expect(rig.session.isGPSSwitchOn, "a recording starts with GPS on")
         let url = try #require(rig.session.currentFile)
+        let recordGeneration = try #require(rig.session.currentGeneration)
         await rig.session.stop()
+        #expect(rig.gpsSwitchInputs(recordGeneration).isEmpty, "Navigate's switch is not in Record's feed")
         _ = try #require(rig.session.navigateGeneration, "back to Navigate")
         #expect(rig.session.isGPSSwitchOn, "a new Navigate session starts with GPS on")
 
@@ -519,6 +560,41 @@ struct RecordingSessionNavigateTests {
         #expect(RecordingFixtures.kinds(events, .gpsSwitch).isEmpty, "Navigate's switch is not in the recording")
         rig.session.disableNavigate()
         #expect(rig.session.isGPSSwitchOn)
+    }
+
+    @Test("GPS switch in Record (UX-9a, R76.1-2): each switch reaches the navigation feed and the engine as well as the file, at the same t")
+    func gpsSwitchRecordFeed() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let rig = NavigateRig(store: scratch.store)
+        await rig.connect(speed: 0)
+        try await rig.session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
+        let generation = try #require(rig.session.currentGeneration)
+        let url = try #require(rig.session.currentFile)
+        let feed = try #require(rig.tee.feed(generation))
+        #expect(feed.output == .recording(recordingURL: url, sidecarURL: LogStore.navSidecarURL(for: url)))
+
+        rig.uptime.set(NavigateRig.base + 1)
+        let offT = try #require(rig.session.setGPSSwitch(on: false))
+        let off = NavigationInput.gpsSwitch(GPSSwitchSample(on: false, source: .driver), at: offT)
+        #expect(await eventually(10) { rig.gpsSwitchInputs(generation) == [off] }, "\(rig.gpsSwitchInputs(generation))")
+        #expect(await rig.engineGPSSwitchedOff(true), "the engine consumed GPS off")
+
+        rig.uptime.set(NavigateRig.base + 2)
+        let onT = try #require(rig.session.setGPSSwitch(on: true))
+        #expect(onT > offT)
+        let on = NavigationInput.gpsSwitch(GPSSwitchSample(on: true, source: .driver), at: onT)
+        #expect(await eventually(10) { rig.gpsSwitchInputs(generation) == [off, on] }, "\(rig.gpsSwitchInputs(generation))")
+        #expect(await rig.engineGPSSwitchedOff(false), "the engine consumed GPS on")
+
+        await rig.session.stop()
+        #expect(await eventually(10) { rig.tee.ended.contains(generation) })
+        let (_, events, _) = try RecordingFixtures.read(url)
+        let rows = events.compactMap { event -> NavigationInput? in
+            if case .gpsSwitch(let sample) = event.payload { .gpsSwitch(sample, at: event.timestamp) } else { nil }
+        }
+        #expect(rows == [off, on], "the file holds the same switches the feed got")
+        rig.session.disableNavigate()
     }
 
     @Test("currentRunGeneration follows the live run; the run clock ages in Navigate while live.elapsed does not tick")
