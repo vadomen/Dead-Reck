@@ -501,6 +501,66 @@ else the fix's own Doppler speed when valid, else 0. A 4 s old fix at
 the ellipse. A prompt fix (0.05 s) is within 1 % of its own σ. A fix older
 than `staleFixAgeS` also has the stale growth (1 m/s × age) in σ_fix.
 
+### Restored prior (UX-20)
+
+A Navigate run can start from the estimate an earlier run saved (killed
+mid-drive, or Navigate started again after parking; Record never does: a
+recording replays from its own start). Code: `NavigationRestore.swift`;
+the numbers are `NavigationRestoreModel`, not config keys, so a run
+without a prior writes byte-identical sidecars and replay results.
+
+- **Saved** (`NavigationRestoreState`, versioned JSON; the decoder refuses
+  an unknown version, a non-finite or out-of-range field): wall clock
+  (`SessionClock.wallClock(for:)`), boot session, uptime, position and its
+  covariance (from the 95 % ellipse), heading and its std, `converged`,
+  speed, the last OBD speed and its age, the road packs' hash prefixes
+  (diagnostics only), and the class (`NavigationEngine.restoreClass`):
+  `parked` (last OBD 0 and the engine stale-parked, or the app says the
+  engine is off), `standingStop` (a fresh OBD 0 held ≥ 3 s), else
+  `moving` (no OBD, a moving last reply even if the link was lost).
+- **Age**: same boot max(wall Δ, uptime Δ), else wall Δ; below 0 or over
+  24 h: no restore.
+- **Seed** (`NavigationEngine(config:roads:prior:)`): at the first input,
+  through the same `initialize` as a first fix, the same random draws (one
+  heading, Gaussian or stratified uniform, one scale per particle), every
+  particle at the saved mean with the grown covariance. No prior: that code
+  never runs. Growth for the gap since the save (`NavigationPrior.seed`):
+
+  | class | position, per axis (quadrature) | heading |
+  |---|---|---|
+  | parked | + 10 m | + 3° |
+  | standing stop | + 50 m (a guess: no recording measures it) | + 3° |
+  | moving | + max(v_last, 11.1 m/s) × gap, mean not shifted | uniform for a gap > 5 s, else + 3° and 6°/s × gap (a guess) |
+
+  A grown heading σ over 30° seeds uniform headings; a major-axis σ over
+  1.5 km is no prior at all (`.none`, `tooUncertain`): the run starts
+  fresh. A parked or standing-stop prior holds the cloud parked until OBD
+  or the IMU says otherwise, and its first OBD reply decides: moving
+  regrows it as moving for the gap up to that reply, or rejects it
+  (`movingAtStart`) when that is over 1.5 km. The arrow shows at once when
+  the grown heading σ is under the converged threshold (10°: a saved σ up
+  to about 9.5° after parking).
+- **Disagreeing fix or pin** wins, never the prior. While unconfirmed,
+  every fix and pin is tested first: d² = rᵀ (Σ_cloud + σ² I)⁻¹ r,
+  untempered, r = the fix (shifted to now) minus the cloud's mean, σ the
+  fix's usual per-axis σ (stale growth included). d² > 9.21 (χ² 2 dof,
+  99 %): rejected, the engine returns to its uninitialised state (clock,
+  OBD, motion and counters kept) and the same fix or pin initialises it
+  exactly as a first fix or first pin does (a pin: uniform heading). An
+  agreeing pin confirms; an agreeing fix confirms when σ ≤ max(the cloud's
+  major-axis σ, 50 m) and it is not a tower fix: a network fix with an
+  accuracy over 400 m never confirms (the replay set's network fixes are
+  bimodal, Wi-Fi under ~300 m, towers from ~500 m), though it can reject.
+  An agreeing fix is then used as usual.
+- **A cached fix older than the save** is ignored
+  (`restore.fixesOlderThanSave`): the state is newer. A younger one is an
+  ordinary fix through the test.
+- **Status** (`NavigationRestore` on the engine and on
+  `NavigationSnapshot.restore`, never in the sidecar): `none`,
+  `unconfirmed`, `confirmed`, `rejected`, with the reason, the decision's
+  time and the save time (`ageS(at:)` for "Restored · n min ago · not yet
+  confirmed").
+
 ### Estimate
 
 `estimate(at:)` returns nil before initialisation. Otherwise it returns the

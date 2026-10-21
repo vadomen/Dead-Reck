@@ -96,16 +96,21 @@ public struct LiveNavigationRun: Sendable {
     /// recording's header. `buildConfiguration` goes into the sidecar
     /// header (`NavSidecar.Header.buildConfiguration`).
     /// `roads`: attached before the first input (`afterInputs` 0), or
-    /// refused (`roadsRefusal`).
-    public init(header: LogHeader, appBuild: String, buildConfiguration: String? = nil, roads: RoadNetwork? = nil) {
+    /// refused (`roadsRefusal`). `prior` (UX-20, Navigate only): a restored
+    /// estimate the engine seeds from at the first input
+    /// (`NavigationEngine(config:roads:prior:)`); nil: exactly as before.
+    /// It changes no sidecar line's format; the restore's status is in
+    /// `snapshot(at:droppedInputs:)`.
+    public init(header: LogHeader, appBuild: String, buildConfiguration: String? = nil, roads: RoadNetwork? = nil,
+                prior: NavigationPrior? = nil) {
         self.init(sessionID: header.sessionID,
                   config: NavigationConfig(seed: NavigationSeed.derive(header: header)),
-                  appBuild: appBuild, buildConfiguration: buildConfiguration, roads: roads)
+                  appBuild: appBuild, buildConfiguration: buildConfiguration, roads: roads, prior: prior)
     }
 
     public init(sessionID: UUID, config: NavigationConfig, appBuild: String,
-                buildConfiguration: String? = nil, roads: RoadNetwork? = nil) {
-        engine = NavigationEngine(config: config)
+                buildConfiguration: String? = nil, roads: RoadNetwork? = nil, prior: NavigationPrior? = nil) {
+        engine = NavigationEngine(config: config, prior: prior)
         self.sessionID = sessionID
         header = NavSidecar.Header(sessionID: sessionID, config: engine.config, appBuild: appBuild,
                                    buildConfiguration: buildConfiguration)
@@ -363,8 +368,16 @@ public struct LiveNavigationRun: Sendable {
                 onRoadShare: estimate?.onRoadShare
             ),
             gnssInUse: engine.gnssInUse(at: t),
-            gpsSwitchedOff: !engine.gpsOn
+            gpsSwitchedOff: !engine.gpsOn,
+            restore: engine.restore
         )
+    }
+
+    /// The state to persist at `t` (UX-20,
+    /// `NavigationRestoreState.capture`); nil before initialisation.
+    public func restoreState(at t: MonotonicTimestamp, clock: SessionClock, bootSessionID: String?,
+                             engineOff: Bool) -> NavigationRestoreState? {
+        NavigationRestoreState.capture(engine, at: t, clock: clock, bootSessionID: bootSessionID, engineOff: engineOff)
     }
 
     /// `snapshot(at:droppedInputs:)` plus the matched edge's shape
@@ -473,9 +486,15 @@ public struct NavigationSnapshot: Hashable, Sendable {
     /// UX-9 a: the driver switched GPS off (`NavigationEngine.gpsOn` false);
     /// then `gnssInUse` is false. False without a run.
     public var gpsSwitchedOff: Bool
+    /// UX-20: the restored prior's status and save time
+    /// (`NavigationEngine.restore`); `.none` without one. The map shows
+    /// "Restored · <n> min ago · not yet confirmed" while `.unconfirmed`
+    /// (`restore.ageS(at: t)`).
+    public var restore: NavigationRestore
 
     public init(t: MonotonicTimestamp, sessionID: UUID?, estimate: NavigationEstimate?, stats: Stats,
-                matchedEdgeGeometry: MatchedEdgeGeometry? = nil, gnssInUse: Bool = false, gpsSwitchedOff: Bool = false) {
+                matchedEdgeGeometry: MatchedEdgeGeometry? = nil, gnssInUse: Bool = false, gpsSwitchedOff: Bool = false,
+                restore: NavigationRestore = NavigationRestore()) {
         self.t = t
         self.sessionID = sessionID
         self.estimate = estimate
@@ -483,6 +502,7 @@ public struct NavigationSnapshot: Hashable, Sendable {
         self.matchedEdgeGeometry = matchedEdgeGeometry
         self.gnssInUse = gnssInUse
         self.gpsSwitchedOff = gpsSwitchedOff
+        self.restore = restore
     }
 
     /// No recording is navigating.
