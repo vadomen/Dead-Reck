@@ -1328,7 +1328,7 @@ public struct NavigationEngine: Sendable {
         let network = !sample.hasValidSpeed
         let sigma = max(accuracy * config.fixSigmaPerAccuracy, config.fixSigmaFloorM)
             * (network ? config.networkFixInflation : 1)
-            + Self.staleGrowth(fixNs: fixNs, age: age, config: config)
+            + Self.staleGrowth(fixNs: fixNs, age: age, config: config, sample: sample)
         if restore.status == .unconfirmed {
             // May reject the prior: the engine is then uninitialised and
             // this fix initialises it below, as a fresh engine's first fix.
@@ -1532,13 +1532,19 @@ public struct NavigationEngine: Sendable {
         }
     }
 
-    /// Extra σ of a stale fix: `staleFixSigmaGrowthMps × age` when the fix
-    /// is older than `staleFixAgeS` at ingest (a pre-session fix from minutes
-    /// ago, or a relaunch mid-drive); 0 otherwise. A pre-session fix only a
-    /// fraction of a second old is not stale.
-    static func staleGrowth(fixNs: Int64, age: Double, config: NavigationConfig) -> Double {
-        guard age > config.staleFixAgeS else { return 0 }
-        return max(0, config.staleFixSigmaGrowthMps) * age
+    /// Extra σ of a stale fix: max(`staleFixSigmaGrowthMps`, the fix's own
+    /// valid Doppler speed) × age when the fix is older than `staleFixAgeS`
+    /// at ingest (a pre-session fix from minutes ago, or a relaunch
+    /// mid-drive); 0 otherwise, and 0 while `staleFixSigmaGrowthMps` ≤ 0
+    /// (disabled). A pre-session fix only a fraction of a second old is not
+    /// stale. NAV-INITSTALE: a cached fix taken at 13 km/h 46 s before the
+    /// session was 223 m off at the first pin; at 1 m/s × age its σ was a
+    /// quarter of that. The car drove on at about its fix speed for an
+    /// unknown part of the age, so that speed bounds the distance.
+    static func staleGrowth(fixNs: Int64, age: Double, config: NavigationConfig, sample: LocationSample) -> Double {
+        guard age > config.staleFixAgeS, config.staleFixSigmaGrowthMps > 0 else { return 0 }
+        let fixSpeed = sample.hasValidSpeed && sample.speed.isFinite ? sample.speed : 0
+        return max(config.staleFixSigmaGrowthMps, fixSpeed) * age
     }
 
     /// Speed for the age allowance of a fix that initialises the engine,

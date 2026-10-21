@@ -499,7 +499,14 @@ v the fresh OBD speed at arrival (truncation offset added; 0 when stopped),
 else the fix's own Doppler speed when valid, else 0. A 4 s old fix at
 20 m/s starts at σ ≈ 82 m instead of 5 m, so the truth 80 m ahead is inside
 the ellipse. A prompt fix (0.05 s) is within 1 % of its own σ. A fix older
-than `staleFixAgeS` also has the stale growth (1 m/s × age) in σ_fix.
+than `staleFixAgeS` also has the stale growth in σ_fix: max(1 m/s, the
+fix's own valid Doppler speed) × age (NAV-INITSTALE, 2026-10-21). A cached
+fix taken at 13 km/h 46 s before a session was 223 m off at the first pin,
+outside its 130 m 95 % ellipse at 1 m/s × age; at the fix's speed the
+ellipse is 430 m and holds it (the 2026-10-20 morning drive, as live,
+report only). Adopted with no acceptance cell changed: no acceptance drive
+has a stale fix with a valid speed above 1 m/s (matrix below, "NAV-INITSTALE
+adoption").
 
 ### Restored prior (UX-20)
 
@@ -654,7 +661,7 @@ default 100 (was 30 until 2026-10-14; N3.2 decision, below).
 | networkFixCorrelationS | 60 | network-fix tempering window |
 | maxFixAgeS | 10 | older fixes ignored unless stopped |
 | heldFixTimeoutS | 5 | a stale fix arriving before OBD can say "stopped" is held this long for the first fresh OBD reply (0: used, moving: dropped); 0 disables holding (N4-B1) |
-| staleFixSigmaGrowthMps / staleFixAgeS | 1.0 / 5 | a fix older than staleFixAgeS at ingest gets σ += k × age (adopted in N2.3) |
+| staleFixSigmaGrowthMps / staleFixAgeS | 1.0 / 5 | a fix older than staleFixAgeS at ingest gets σ += max(k, its valid speed) × age (k adopted in N2.3, the fix speed in NAV-INITSTALE); k 0 disables |
 | courseMinSpeedMps | 3 | course needs this GNSS and OBD speed |
 | courseSigmaFloorDeg | 2 | course σ floor |
 | speedUpdateMinKmh | 10.8 | GNSS speed updates the scale only above this OBD speed (and with valid speedAccuracy) |
@@ -2228,6 +2235,48 @@ Without roads:
   - The cost when off, had it been merged: the sidecar header's config, and
     so its `configHash`, gains the five keys. `--as-live --compare` on an older
     sidecar names them as config differences.
+
+### NAV-INITSTALE adoption (2026-10-21)
+
+Change: a stale fix's σ grows by max(`staleFixSigmaGrowthMps`, its valid
+Doppler speed) × age instead of `staleFixSigmaGrowthMps` × age
+(Initialisation above). Baseline: the full matrix on `main` at the commit
+before UX-20 (the default config; its roads leg equals the "N3.2 decision"
+table to the printed digits), which the UX-20 seed API reproduces byte for
+byte (110 cells: 9 runs + manual-3 × seeds 1–5 × no roads / roads, and one
+`--as-live` with roads per run; every GeoJSON identical, `metrics.json`
+equal but for timing). Candidate: the same 110 cells.
+
+| run | leg | gated mean (min–max) | baseline mean | Δ (allowed) | every seed ≤ criterion | consistency + truth σ | verdict |
+|---|---|---|---|---|---|---|---|
+| clean-long | no roads | 19.4 (18.1–20.3) m | 19.4 m | +0.000 (≤ 2.00) | yes | 100.0 → 100.0 % | PASS |
+| clean-long | roads | 19.4 (19.2–19.5) m | 19.4 m | +0.000 (≤ 2.00) | yes | 100.0 → 100.0 % | PASS |
+| clean | no roads | 13.0 (10.7–16.5) m | 13.0 m | +0.000 (≤ 2.00) | yes | 100.0 → 100.0 % | PASS |
+| clean | roads | 14.4 (11.8–18.8) m | 14.4 m | +0.000 (≤ 2.00) | yes | 100.0 → 100.0 % | PASS |
+| manual | no roads | 50.5 (47.4–57.5) m | 50.5 m | +0.000 (≤ 2.53) | yes | 100.0 → 100.0 % | PASS |
+| manual | roads | 7.2 (5.8–10.0) m | 7.2 m | +0.000 (≤ 2.00) | yes | 100.0 → 100.0 % | PASS |
+| jammed-A | no roads | 1.137 (1.012–1.259) % | 1.137 % | +0.000 (≤ 0.1) | yes | 100.0 → 100.0 % | PASS |
+| jammed-A | roads | 0.177 (0.170–0.182) % | 0.177 % | +0.000 (≤ 0.1) | yes | 100.0 → 100.0 % | PASS |
+| jammed-B | no roads | 1.068 (0.940–1.374) % | 1.068 % | +0.000 (≤ 0.1) | yes | 100.0 → 100.0 % | PASS |
+| jammed-B | roads | 0.201 (0.171–0.245) % | 0.201 % | +0.000 (≤ 0.1) | yes | 100.0 → 100.0 % | PASS |
+| drive-7 | no roads | 1.128 (1.073–1.231) % | 1.128 % | +0.000 (≤ 0.1) | yes | 99.6 → 99.6 % | PASS |
+| drive-7 | roads | 0.130 (0.123–0.148) % | 0.130 % | +0.000 (≤ 0.1) | yes | 96.3 → 96.3 % | PASS (accepted baseline) |
+| drive-8 | no roads | 1.482 (1.371–1.596) % | 1.482 % | +0.000 (≤ 0.1) | yes | 100.0 → 100.0 % | PASS |
+| drive-8 | roads | 0.186 (0.184–0.188) % | 0.186 % | +0.000 (≤ 0.1) | yes | 100.0 → 100.0 % | PASS |
+| drive-9 (1) | no roads | 10.212 (10.022–10.373) % | 10.212 % | +0.000 (≤ 0.1) | not gated | 75.0 → 75.0 % | PASS |
+| drive-9 (1) | roads | 0.042 (0.033–0.051) % | 0.042 % | +0.000 (≤ 0.1) | yes | 100.0 → 100.0 % | PASS |
+| drive-9 (2) | no roads | 8.380 (8.278–8.513) % | 8.380 % | +0.000 (≤ 0.1) | not gated | 75.0 → 75.0 % | PASS |
+| drive-9 (2) | roads | 0.043 (0.033–0.054) % | 0.043 % | +0.000 (≤ 0.1) | yes | 100.0 → 100.0 % | PASS |
+| manual-3 (not gated) | no roads / roads | 462.4 / 97.3 m max | same | 0 | — | 66.7 → 66.7 % | report |
+
+**PASS** (18 gated cells). No cell changed at all: every candidate GeoJSON
+and `metrics.json` (timing aside) is byte-identical to the baseline's, the
+`--as-live` runs included (each meets its criterion as before). No
+acceptance drive has a stale fix with a valid speed above 1 m/s; the rule
+acts on cached pre-session fixes taken while moving, like the 2026-10-20
+morning drive's (as live, report only: pin 1 inside the 95 % ellipse now,
+130 → 430 m semi-major; consistency 1/2 → 2/2). Manual's convergence
+distance (reported): unchanged.
 
 ## Known limitations and options
 
