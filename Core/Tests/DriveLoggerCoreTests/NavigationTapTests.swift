@@ -169,7 +169,7 @@ struct NavigationTapTests {
         #expect(try WriterFixtures.read(b.url, recovery: .strict).events == events)
     }
 
-    @Test("Only motion, location, obd and manualFix are tapped; every other kind, unknown kinds included, never is")
+    @Test("Only motion, location, obd, manualFix and gpsSwitch are tapped; every other kind, unknown kinds included, never is")
     func onlyNavigationKindsAreTapped() async throws {
         let scratch = try ScratchDirectory()
         defer { scratch.remove() }
