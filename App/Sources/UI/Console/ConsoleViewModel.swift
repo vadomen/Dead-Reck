@@ -237,6 +237,8 @@ final class ConsoleViewModel {
         return record
     }
     var isSimulated: Bool { link is SimulatedOBDLink }
+    /// The demo drive holds the link down (R74.1-6): the adapter screen says so.
+    var isHeldForDemo: Bool { (link as? any OBDLinkHolding)?.isHeldForDemo ?? false }
     var canReinitialise: Bool { ConsoleText.canReinitialise(link.state) }
     var canSend: Bool { !isSending && !commandText.trimmingCharacters(in: .whitespaces).isEmpty }
 

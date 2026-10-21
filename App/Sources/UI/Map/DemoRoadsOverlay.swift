@@ -178,7 +178,7 @@ struct DemoControls: View {
                     .shadow(color: .black.opacity(0.3), radius: 5, y: 2)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Stop the demo drive")
+            // The visible text is the accessibility label (Voice Control "Tap Stop demo", R74.1-5).
         }
     }
 }

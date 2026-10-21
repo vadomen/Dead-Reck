@@ -65,6 +65,7 @@ extension LogEvent {
         case .obd(let sample, let t): self.init(timestamp: t, payload: .obd(sample))
         case .location(let sample, let t): self.init(timestamp: t, payload: .location(sample))
         case .manualFix(let sample, let t): self.init(timestamp: t, payload: .manualFix(sample))
+        case .gpsSwitch(let sample, let t): self.init(timestamp: t, payload: .gpsSwitch(sample))
         }
     }
 }

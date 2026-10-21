@@ -20,9 +20,11 @@ struct AdapterSettingsScreen: View {
         AdapterSettingsContent(
             state: state,
             status: AdapterSettingsText.status(
-                link: state, adapterName: model.adapterName, hasRemembered: remembered != nil,
-                foundAdapter: model.discovered.contains(where: OBDLinkService.isLikelyAdapter),
-                waitedLong: waitedLong),
+                AdapterSettingsText.status(
+                    link: state, adapterName: model.adapterName, hasRemembered: remembered != nil,
+                    foundAdapter: model.discovered.contains(where: OBDLinkService.isLikelyAdapter),
+                    waitedLong: waitedLong),
+                heldForDemo: model.isHeldForDemo),
             controls: AdapterSettingsText.controls(link: state, recording: model.isRecording, remembered: remembered),
             adapterName: model.adapterName,
             hasRemembered: remembered != nil,

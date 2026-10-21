@@ -98,10 +98,12 @@ struct HUDIndicatorLabel: View {
     var indicator: HUDIndicator
     var symbol: String
     var slashedSymbol: String
+    /// The glyph for the driver's switch being off (GPS only).
+    var switchedOffSymbol = "location.slash.circle"
 
     var body: some View {
         HStack(spacing: 4) {
-            Image(systemName: indicator.slashed ? slashedSymbol : symbol)
+            Image(systemName: indicator.switchedOff ? switchedOffSymbol : (indicator.slashed ? slashedSymbol : symbol))
                 .font(.system(size: 12, weight: indicator.emphasised ? .heavy : .medium))
                 .frame(width: 16)
             Text(indicator.label)
@@ -118,21 +120,50 @@ struct HUDRailButton: View {
     var symbol: String
     var label: String
     var active: Bool
+    /// Visible text under the button (the GPS switch); nil for the others.
+    var caption: String?
+    /// Voice Control names; empty keeps the system default (the label).
+    var inputLabels: [String]
     var action: () -> Void
+
+    init(
+        symbol: String, label: String, active: Bool, caption: String? = nil, inputLabels: [String] = [],
+        action: @escaping () -> Void
+    ) {
+        self.symbol = symbol
+        self.label = label
+        self.active = active
+        self.caption = caption
+        self.inputLabels = inputLabels
+        self.action = action
+    }
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 24, weight: active ? .bold : .regular))
-                .foregroundStyle(active ? HUDColors.onAccent : HUDColors.text)
-                .frame(width: MapLayout.controlSize, height: MapLayout.controlSize)
-                .background(active ? HUDColors.accent : HUDColors.button, in: Circle())
-                .overlay(Circle().strokeBorder(active ? HUDColors.onAccent : HUDColors.muted, lineWidth: active ? 3 : 1.5)
-                    .padding(active ? 3 : 0))
-                .shadow(color: .black.opacity(0.25), radius: 5, y: 2)
+            VStack(spacing: 2) {
+                Image(systemName: symbol)
+                    .font(.system(size: 24, weight: active ? .bold : .regular))
+                    .foregroundStyle(active ? HUDColors.onAccent : HUDColors.text)
+                    .frame(width: MapLayout.controlSize, height: MapLayout.controlSize)
+                    .background(active ? HUDColors.accent : HUDColors.button, in: Circle())
+                    .overlay(Circle().strokeBorder(active ? HUDColors.onAccent : HUDColors.muted, lineWidth: active ? 3 : 1.5)
+                        .padding(active ? 3 : 0))
+                    .shadow(color: .black.opacity(0.25), radius: 5, y: 2)
+                if let caption {
+                    Text(caption)
+                        .font(.system(size: 11, weight: .bold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .foregroundStyle(HUDColors.text)
+                        .padding(.horizontal, 6)
+                        .frame(height: MapLayout.railCaptionHeight - 2)
+                        .background(HUDColors.card, in: Capsule())
+                }
+            }
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
+        .accessibilityInputLabels(inputLabels.isEmpty ? [label] : inputLabels)
         .accessibilityAddTraits(active ? .isSelected : [])
     }
 }
