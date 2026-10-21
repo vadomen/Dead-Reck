@@ -322,7 +322,7 @@ public enum NavigationReplay {
     /// misses it: a known source of `--compare` differences.
     public static func encodingFailures<S: Sequence>(in events: S) -> [(t: MonotonicTimestamp, kind: String)]
         where S.Element == LogEvent {
-        let kinds: Set<String> = ["motion", "location", "obd", "manualFix"]
+        let kinds: Set<String> = ["motion", "location", "obd", "manualFix", "gpsSwitch"]
         return events.compactMap { event in
             guard case .lifecycle(let sample) = event.payload, sample.event == LifecycleSample.Event.error.rawValue,
                   let detail = sample.detail, detail.hasPrefix("encodingFailed ") else { return nil }
@@ -719,6 +719,52 @@ public struct ReplayResult: Hashable, Sendable, Codable {
         /// Given to the engine and ignored as off-road (the road fix gate,
         /// `fixesRejectedOffRoad`); nil otherwise.
         public var rejectedOffRoad: Bool? = nil
+        /// Given to the engine while the driver's GPS switch was off and
+        /// withheld by it (UX-9 a, `NavigationEngine.fixesWithheldByGPSSwitch`);
+        /// nil otherwise. Not a checkpoint: `withheld` is the replay's own
+        /// choice, this is the recording's.
+        public var withheldByGPSSwitch: Bool? = nil
+    }
+
+    /// The driver's GPS switch in a recording (UX-9 a, log v4): when GPS
+    /// was off and how many fixes the engine withheld because of it.
+    public struct GPSSwitchReport: Hashable, Sendable, Codable {
+        public struct Interval: Hashable, Sendable, Codable {
+            /// The switch-off input's `t`, s.
+            public var offT: Double
+            /// The switch-on input's `t`, s; nil: still off at the end.
+            public var onT: Double?
+
+            public init(offT: Double, onT: Double? = nil) {
+                self.offT = offT
+                self.onT = onT
+            }
+        }
+
+        /// Off intervals, in order (a repeat of the current state is not a
+        /// change).
+        public var offIntervals: [Interval]
+        /// `NavigationEngine.fixesWithheldByGPSSwitch` at the end.
+        public var fixesWithheld: Int
+        /// Switch inputs given to the engine, repeats included.
+        public var switches: Int
+
+        public init(offIntervals: [Interval] = [], fixesWithheld: Int = 0, switches: Int = 0) {
+            self.offIntervals = offIntervals
+            self.fixesWithheld = fixesWithheld
+            self.switches = switches
+        }
+
+        /// "GPS off 2 interval(s): t 120.0 … 180.5 s, t 300.0 s … end; 57 fixes withheld by the switch (not checkpoints); 3 switch inputs".
+        public var text: String {
+            let intervals = offIntervals.map {
+                String(format: "t %.1f", $0.offT) + ($0.onT.map { String(format: " … %.1f s", $0) } ?? " s … end")
+            }
+            return "GPS off \(offIntervals.count) interval\(offIntervals.count == 1 ? "" : "s")"
+                + (intervals.isEmpty ? "" : ": " + intervals.joined(separator: ", "))
+                + "; \(fixesWithheld) fix\(fixesWithheld == 1 ? "" : "es") withheld by the switch (not checkpoints)"
+                + "; \(switches) switch input\(switches == 1 ? "" : "s")"
+        }
     }
 
     public var logName: String
@@ -806,6 +852,8 @@ public struct ReplayResult: Hashable, Sendable, Codable {
     /// network (`attachedRoadSetHash` is then the final set's); empty when
     /// it was never extended.
     public var roadsExtendedAfterInputs: [Int] = []
+    /// UX-9 a: the recording's GPS switch; nil without a `gpsSwitch` input.
+    public var gpsSwitch: GPSSwitchReport? = nil
 
     public var heldOutFixes: [Fix] { fixes.filter { $0.withheld == .heldOut } }
 }
@@ -888,6 +936,8 @@ private struct ReplayRun {
     var attachPoints: [ReplayRoadAttachPoint] = []
     /// `.live`: injections not yet due (`ReplayOptions.roadInjections`).
     var pendingInjections: [ReplayRoadInjection] = []
+    /// UX-9 a: the GPS switch as given; nil until the first switch input.
+    var gpsSwitch: ReplayResult.GPSSwitchReport?
 
     init(logName: String, inputs: [NavigationInput], options: ReplayOptions, truth: TruthFile.Entry?) {
         self.logName = logName
@@ -913,8 +963,9 @@ private struct ReplayRun {
     }
 
     mutating func execute() -> ReplayResult {
-        let firstNs = inputs.first?.arrival.nanoseconds ?? 0
-        let lastNs = inputs.last?.arrival.nanoseconds ?? 0
+        // The timeline is the measurements': a GPS switch moves no clock.
+        let firstNs = inputs.first { !$0.isGPSSwitch }?.arrival.nanoseconds ?? 0
+        let lastNs = inputs.last { !$0.isGPSSwitch }?.arrival.nanoseconds ?? 0
         var schedule = buildSchedule(lastNs: lastNs)
         schedule.sort { $0.t < $1.t }
         var nextCheckpoint = 0
@@ -928,6 +979,16 @@ private struct ReplayRun {
         var endNs = firstNs
 
         for (index, input) in inputs.enumerated() {
+            if case .gpsSwitch(_, let t) = input {
+                // As `LiveNavigationRun.ingest`: handed to the engine only,
+                // after the roads due before it (`runLive`); nothing is
+                // scored, sampled or selected at it.
+                attachIfDue()
+                injectIfDue(arrival: input.arrival)
+                applyGPSSwitch(input, at: t)
+                givenInputs += 1
+                continue
+            }
             let arrival = input.arrival.nanoseconds
             var reason: WithholdReason?
             if case .location(let sample, let t) = input {
@@ -986,6 +1047,7 @@ private struct ReplayRun {
                                  offsetKmh: options.config.obdSpeedOffsetKmh)
             }
             let rejectedBefore = engine.counters.fixesRejectedOffRoad
+            let switchWithheldBefore = engine.fixesWithheldByGPSSwitch
             attachIfDue()
             injectIfDue(arrival: input.arrival)
             let before = RoadSelectionRule.Before(engine)
@@ -996,6 +1058,9 @@ private struct ReplayRun {
             selectLive(before: before)
             if engine.counters.fixesRejectedOffRoad != rejectedBefore, case .location = input {
                 fixes[fixes.count - 1].rejectedOffRoad = true
+            }
+            if engine.fixesWithheldByGPSSwitch != switchWithheldBefore, case .location = input {
+                fixes[fixes.count - 1].withheldByGPSSwitch = true
             }
             if let pinIndex { pins[pinIndex].fixPin = engine.lastFixPinDecision }
             let ns = elapsed.components.seconds * 1_000_000_000 + elapsed.components.attoseconds / 1_000_000_000
@@ -1014,6 +1079,20 @@ private struct ReplayRun {
         sampleTrack(at: endNs, withEllipse: true)
 
         return finish(firstNs: firstNs, lastNs: endNs)
+    }
+
+    /// A GPS switch input given to the engine, and the off intervals.
+    mutating func applyGPSSwitch(_ input: NavigationInput, at t: MonotonicTimestamp) {
+        let wasOn = engine.gpsOn
+        engine.ingest(input)
+        var report = gpsSwitch ?? ReplayResult.GPSSwitchReport()
+        report.switches += 1
+        if wasOn && !engine.gpsOn {
+            report.offIntervals.append(.init(offT: t.seconds))
+        } else if !wasOn && engine.gpsOn, !report.offIntervals.isEmpty {
+            report.offIntervals[report.offIntervals.count - 1].onT = t.seconds
+        }
+        gpsSwitch = report
     }
 
     /// `.afterInputs(k)`, `.schedule`: each point's packs, before the
@@ -1451,6 +1530,10 @@ private struct ReplayRun {
             pinScoring: pinScoring
         )
         result.fixesExcludedByTruth = fixExclusion()
+        if var report = gpsSwitch {
+            report.fixesWithheld = engine.fixesWithheldByGPSSwitch
+            result.gpsSwitch = report
+        }
         result.maxErrorByKind = KindMaxError.byKind(checkpoints)
         if let scoreUntilT = truth?.scoreUntilT {
             result.scoreUntilT = scoreUntilT

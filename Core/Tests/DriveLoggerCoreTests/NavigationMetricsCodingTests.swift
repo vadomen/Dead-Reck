@@ -57,6 +57,9 @@ struct NavigationMetricsCodingTests {
                             road: .init(fixes: 30, pathM: 298, asGivenM: 40.5, shiftedM: 1.9, verdict: .pin),
                             twoPin: .init(previousT: 1, chi2: 0.5, pathM: 500, turnDeg: 90, verdict: nil),
                             downweighted: true, sourceChi2: nil, restored: false)])]
+        // The GPS switch key (UX-9 a) filled too.
+        metrics.gpsSwitch = .init(offIntervals: [.init(offT: 20.5, onT: 50.5), .init(offT: 70)], fixesWithheld: 31,
+                                  switches: 3)
         return metrics
     }
 
@@ -180,7 +183,7 @@ struct NavigationMetricsCodingTests {
             == ["consistency", "consistencyWithTruthSigma", "motionStartT", "pinScoring", "pins",
                 "checkpointsAfterScoreUntil", "roadMetrics", "roadSetHash", "roads", "scoreUntilT",
                 "roadsAttachedAfterInputs", "attachedRoadSetHash", "roadsExtendedAfterInputs", "fixesExcludedByTruth", "fixPinDecisions",
-                "maxErrorByKind"].sorted())
+                "maxErrorByKind", "gpsSwitch"].sorted())
         for key in later {
             var old = row
             old.removeValue(forKey: key.stringValue)
@@ -204,6 +207,7 @@ struct NavigationMetricsCodingTests {
             case .fixesExcludedByTruth: #expect(decoded.fixesExcludedByTruth == nil)
             case .fixPinDecisions: #expect(decoded.fixPinDecisions == nil)
             case .maxErrorByKind: #expect(decoded.maxErrorByKind == nil)
+            case .gpsSwitch: #expect(decoded.gpsSwitch == nil)
             default: Issue.record("unexpected later key \(key)")
             }
         }

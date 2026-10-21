@@ -78,6 +78,20 @@ import Foundation
 /// replaces it. Live, the pre-session fix is written before the first OBD
 /// 0, whose row lands up to 0.27 s after its own `t`; holding makes file
 /// order and arrival order agree.
+///
+/// **GPS off switch** (UX-9 a, log v4 `gpsSwitch`): the driver's switch,
+/// on at the start. While it is off, a location fix with a valid speed
+/// (`LocationSample.hasValidSpeed`: GNSS, the complement of the network
+/// rule below) never reaches the filter: `ingest` counts it
+/// (`fixesWithheldByGPSSwitch`) and returns before anything else, the
+/// time-jump check, the grid, the held fix and the OBD-zero evidence
+/// included, so the state is the one a run without those fixes would
+/// have. Network fixes, manual fixes, OBD, motion and roads are used as
+/// before. The switch input itself is always taken, moves no clock and
+/// runs no step: it sets `gpsOn` and, when it turns GPS off, drops a held
+/// stale fix that has a valid speed (counted as withheld), so a fix from
+/// before the tap is never applied after it. Without a switch input
+/// nothing changes.
 public struct NavigationEngine: Sendable {
     public let config: NavigationConfig
 
@@ -161,6 +175,19 @@ public struct NavigationEngine: Sendable {
     private var preInitSteps: PreInitSteps
 
     private var lastNetworkFixNs: Int64?
+
+    /// The driver's GPS switch (UX-9 a): false from an off `gpsSwitch`
+    /// input until an on one. Starts on.
+    public private(set) var gpsOn = true
+    /// Fixes with a valid speed not used because GPS was switched off:
+    /// withheld on arrival, and a held stale fix dropped at the switch.
+    /// Kept outside `counters` so a run without a switch codes exactly as
+    /// before.
+    public private(set) var fixesWithheldByGPSSwitch = 0
+    /// Arrival of the latest fix with a valid speed the filter used (it
+    /// initialised the engine or updated it), ns; nil if none
+    /// (`gnssInUse(at:)`).
+    private var lastGNSSFixUsedNs: Int64?
     /// End of the latest grid step since initialisation in which the cloud
     /// moved (not a ZUPT or parked step); nil if none (R11.1-5). A stale
     /// fix accepted while stopped must be no older than this: then every
@@ -358,8 +385,19 @@ public struct NavigationEngine: Sendable {
     // MARK: Ingest
 
     /// Ingests one input, in arrival order. An implausible forward time jump
-    /// is rejected and counted instead (`accepts(_:)`).
+    /// is rejected and counted instead (`accepts(_:)`). A GPS switch and a
+    /// fix it withholds are handled first ("GPS off switch" above).
     public mutating func ingest(_ input: NavigationInput) {
+        switch input {
+        case .gpsSwitch(let sample, _):
+            setGPSSwitch(on: sample.on)
+            return
+        case .location(let sample, _) where !gpsOn && sample.hasValidSpeed:
+            fixesWithheldByGPSSwitch += 1
+            return
+        default:
+            break
+        }
         let arrival = input.arrival.nanoseconds
         guard accepts(input) else {
             counters.inputsRejectedTimeJump += 1
@@ -384,7 +422,35 @@ public struct NavigationEngine: Sendable {
         case .manualFix(let sample, let t):
             advance(to: t.nanoseconds)
             ingestManualFix(sample, at: t.nanoseconds)
+        case .gpsSwitch:
+            break
         }
+    }
+
+    /// The driver's GPS switch (UX-9 a). Only the flag, and at off the held
+    /// stale fix if it has a valid speed: no step, no clock, no time-jump
+    /// bookkeeping, so a switch between two inputs changes nothing else. A
+    /// repeat of the current state does nothing.
+    private mutating func setGPSSwitch(on: Bool) {
+        guard on != gpsOn else { return }
+        gpsOn = on
+        if !on, let held = heldFix, held.sample.hasValidSpeed {
+            heldFix = nil
+            fixesWithheldByGPSSwitch += 1
+        }
+    }
+
+    /// Seconds a used GNSS fix keeps `gnssInUse(at:)` true: five 1 Hz fixes.
+    public static let gnssInUseWindowS = 5.0
+
+    /// Whether GNSS is in use at `t` (UX-22, the map's GPS state): GPS is
+    /// switched on and a fix with a valid speed that arrived no more than
+    /// `gnssInUseWindowS` before `t` was used (it initialised or updated
+    /// the filter). Withheld, stale, invalid and off-road-rejected fixes do
+    /// not count; network fixes are not GNSS.
+    public func gnssInUse(at t: MonotonicTimestamp) -> Bool {
+        guard gpsOn, let last = lastGNSSFixUsedNs else { return false }
+        return Double(t.nanoseconds) - Double(last) <= Self.gnssInUseWindowS * 1e9
     }
 
     /// Whether `ingest` would take `input` rather than reject it as an
@@ -394,9 +460,14 @@ public struct NavigationEngine: Sendable {
     /// later input would be in the past. Accepted anyway: the second of two
     /// such inputs within `forwardJumpConfirmS` of each other, which is a
     /// real resume after a long silence, not one corrupt value. The first
-    /// input of all is always accepted (nothing to compare it with). Does
-    /// not change the engine.
+    /// input of all is always accepted (nothing to compare it with), and
+    /// so is a GPS switch, which moves no clock. Does not change the engine.
+    /// A fix the GPS switch withholds is judged like any fix here; `ingest`
+    /// withholds it either way, before this check.
     public func accepts(_ input: NavigationInput) -> Bool {
+        // The GPS switch moves no clock: always taken (a lost switch would
+        // leave GPS in use against the driver's choice).
+        if case .gpsSwitch = input { return true }
         let arrival = input.arrival.nanoseconds
         guard let last = lastInputNs else { return true }
         let limitNs = config.maxForwardJumpS * 1e9
@@ -1071,6 +1142,7 @@ public struct NavigationEngine: Sendable {
                 heading: clean ? (sample.course * .pi / 180, courseSigma) : nil, at: fixNs
             )
             counters.fixesUsed += 1
+            if !network { lastGNSSFixUsedNs = max(lastGNSSFixUsedNs ?? arrivalNs, arrivalNs) }
             if network {
                 counters.networkFixesUsed += 1
                 lastNetworkFixNs = fixNs
@@ -1147,6 +1219,7 @@ public struct NavigationEngine: Sendable {
             fixPin[k].lastPositionNs = max(fixPin[k].lastPositionNs ?? fixNs, fixNs)
         }
         counters.fixesUsed += 1
+        if !network { lastGNSSFixUsedNs = max(lastGNSSFixUsedNs ?? arrivalNs, arrivalNs) }
 
         // Tempering a Gaussian likelihood by w is the same as dividing its
         // precision by w: R = σ² / w.

@@ -520,9 +520,11 @@ actor NavigationService {
     // MARK: Reading
 
     /// The newest run's estimate at `t` (on that run's session clock,
-    /// `clock`), the run's statistics (`stats.onRoadShare` included) and,
-    /// with roads, the matched edge's shape (`matchedEdgeGeometry`, for the
-    /// map's debug drawing). `.idle` when no run is navigating. Cost: one
+    /// `clock`), the run's statistics (`stats.onRoadShare` included), the
+    /// GPS state for the HUD (UX-22: `gnssInUse`, `gpsSwitchedOff`, from the
+    /// engine) and, with roads, the matched edge's shape
+    /// (`matchedEdgeGeometry`, for the map's debug drawing). `.idle` when no
+    /// run is navigating (both GPS flags false). Cost: one
     /// pass over the particles; the edge shape is rebuilt only when the
     /// matched edge changes.
     func snapshot(at t: MonotonicTimestamp) -> NavigationSnapshot {

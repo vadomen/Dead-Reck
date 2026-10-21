@@ -205,6 +205,29 @@ updates reweight only by what heading and scale actually predict.
     does not. That last gate rejects glitch fixes (the clean
     drive has one reporting 25 m/s at 10 m/s with a "good" course) and slow
     manoeuvres. Wrapped Gaussian with σ = max(courseAccuracy, 2°).
+  - **GPS off switch (UX-9 a)**: the driver's switch, logged as a v4
+    `gpsSwitch` row (`docs/LOG_FORMAT.md`), on at the start of every run.
+    While it is off, a fix **with** a valid speed (GNSS: the complement of
+    the network rule above, `LocationSample.hasValidSpeed`) never reaches
+    the filter. `NavigationEngine.ingest` counts it
+    (`fixesWithheldByGPSSwitch`, outside `counters`) and returns before
+    anything else: no time-jump check, no grid step, no held fix, no
+    OBD-zero evidence. The state is bit-identical to a run without those
+    fixes, in arrival and in file order (`NavigationGPSSwitchTests`).
+    Network fixes, pins, OBD, motion and roads are used as before. The
+    switch input moves no clock and runs no step. It is always accepted,
+    even with a corrupt `t`, because a lost switch would keep GPS in use
+    against the driver's choice. It sets `gpsOn`, and at off it drops a
+    held stale fix with a valid speed (counted as withheld), so a fix
+    from before the tap is never applied after it. `LiveNavigationRun`
+    hands it to the engine and does nothing else: no estimate line, no
+    selection request. The app and `replay_nav` (every order, `--compare`)
+    run it the same way. The sidecar format does not change, because the
+    recording holds the switch. HUD state (UX-22): `NavigationSnapshot.gnssInUse`
+    (GPS on, and a fix with a valid speed used, that is initialised or
+    updated, arriving at most `NavigationEngine.gnssInUseWindowS` = 5 s
+    before the snapshot's `t`) and `gpsSwitchedOff`. Without a switch row
+    every run is bit-identical to before.
   - The course of a fix **without a valid speed** (a network fix that
     reports a course) is not used. Using it was measured and rejected: see
     "N3 candidate: speedless course" below.
@@ -637,9 +660,22 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   are refused with `--fix-offset` (status 2, R35.2-3): it would ignore them.
   Results: "Constant-offset GNSS check" below.
 
-- Inputs: motion, OBD, location and manualFix from any v1–v3 recording, fed in
-  arrival order: by `t`, a location fix by `max(receivedT, t)`, ties in file
-  order.
+- Inputs: motion, OBD, location, manualFix and (v4) gpsSwitch from any v1–v4
+  recording, fed in arrival order: by `t`, a location fix by
+  `max(receivedT, t)`, ties in file order.
+- **GPS off switch** (UX-9 a): the recording's `gpsSwitch` rows reach the
+  engine in every order (`--as-live`, `--file-order`, `--compare`,
+  `--write-sidecar`), and the engine withholds the GNSS fixes while it is
+  off ("GPS off switch" under Location fix). The switch is the recording's
+  choice, not the replay's. Those fixes are given to the engine, are not
+  checkpoints, and are not in `withheld`. GeoJSON marks them
+  `fixWithheldByGPSSwitch`. `--gps`/`--hold-out-acc` still apply first. No
+  switch input is a point of the replay's timeline: nothing is scored or
+  sampled at one, and the run starts and ends at the first and last
+  measurement. The summary's `GPS switch` line, `metrics.md` and
+  `metrics.json` (`gpsSwitch`, absent without a switch) give the off
+  intervals (an open one: "… end"), the fixes withheld by the switch and
+  the number of switch inputs.
 - **Rejected inputs** (N3.0, R14.2-3): an input the engine rejects as an
   implausible forward time jump (`maxForwardJumpS`, B0-1) is off the
   replay's timeline. Nothing is scored or sampled up to its arrival. Its fix,
