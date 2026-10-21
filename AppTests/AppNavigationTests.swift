@@ -52,15 +52,15 @@ struct AppNavigationTests {
 
     @Test("Groups: OBD adapter, Maps, Mount, How FuGPS works; then Developer with recording, Sessions, Console (UX-34, prompt 31)")
     func groups() {
-        #expect(SettingsRows.driver(adapterAvailable: true) == [.route(.adapter), .route(.maps), .mountAndOrientation, .howItWorks])
-        #expect(SettingsRows.driver(adapterAvailable: false) == [.route(.maps), .mountAndOrientation, .howItWorks])
+        #expect(SettingsRows.driver(adapterAvailable: true) == [.route(.adapter), .route(.maps), .mountAndOrientation, .speakGPSChanges, .howItWorks])
+        #expect(SettingsRows.driver(adapterAvailable: false) == [.route(.maps), .mountAndOrientation, .speakGPSChanges, .howItWorks])
         #expect(SettingsRoute.adapterRowAvailable, "UX-34: the screen exists, so the row shows")
         #expect(SettingsRows.developer(showsConsole: true) == [.route(.recording), .route(.sessions), .route(.console)])
         #expect(SettingsRows.developer(showsConsole: false) == [.route(.recording), .route(.sessions)],
                 "Release without the Diagnostics gate: recording and Sessions stay, no Console")
         #expect(SettingsRows.developerFooter == "For test drives and diagnostics")
         let all = SettingsRows.driver() + SettingsRows.developer(showsConsole: true)
-        #expect(Set(all) == Set(SettingsRoute.allCases.filter { $0 != .about }.map(SettingsRow.route) + [.mountAndOrientation, .howItWorks]),
+        #expect(Set(all) == Set(SettingsRoute.allCases.filter { $0 != .about }.map(SettingsRow.route) + [.mountAndOrientation, .speakGPSChanges, .howItWorks]),
                 "every route except About (its own section) is in exactly one group")
     }
 

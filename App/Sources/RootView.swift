@@ -34,7 +34,8 @@ struct RootView: View {
         self.services = services
         _map = State(initialValue: MapViewModel())
         let service = services.navigation
-        _navigation = State(initialValue: NavigationFeed(source: { await service.snapshot() }))
+        _navigation = State(initialValue: NavigationFeed(
+            source: { await service.snapshot() }, generation: { await service.currentGeneration }))
         _demoFeed = State(initialValue: Self.makeDemoFeed(services))
         _demoWarning = State(initialValue: Self.makeDemoWarning(services))
         _sessions = State(initialValue: SessionsViewModel(services: services))

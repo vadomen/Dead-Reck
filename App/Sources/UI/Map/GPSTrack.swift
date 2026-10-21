@@ -80,6 +80,13 @@ struct GPSTrack: Sendable, Equatable {
 
     /// Time of the last fix seen, accepted or not, for dedupe by fix time.
     private var lastSeenT: Double?
+    /// The next accepted point starts a new segment (GPS switched off and
+    /// back on: no chord across the gap, whatever its length).
+    private var breakPending = false
+
+    /// The next accepted point starts a new segment, so no line joins it to
+    /// the last one. Idempotent.
+    mutating func breakSegment() { breakPending = true }
 
     init() {}
 
@@ -113,6 +120,10 @@ struct GPSTrack: Sendable, Equatable {
             segmentStart = dt > gapThreshold
         } else {
             segmentStart = true
+        }
+        if breakPending {
+            segmentStart = true
+            breakPending = false
         }
         points.append(TrackPoint(
             latitude: fix.latitude, longitude: fix.longitude,

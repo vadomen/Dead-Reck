@@ -34,6 +34,11 @@ final class MapViewModel {
     private(set) var obdEverConnected = false
     /// The adapter the up link was to (the paired one at the time).
     private var obdConnectedAdapter: UUID?
+    /// The driver switched GPS off for this run (UX-9 (a)): the position
+    /// marker and circle are not shown, the track does not grow, and the
+    /// speed does not fall back to GPS. The fixes themselves still arrive
+    /// (they are recorded), so the HUD's other state is unchanged.
+    private(set) var gpsOff = false
     private let bearingSource: any MapBearingSource
     /// The recording the track belongs to.
     private(set) var currentFile: URL?
@@ -64,6 +69,16 @@ final class MapViewModel {
         self.track = track
         self.latest = latest
         self.manualFixes = manualFixes
+    }
+
+    /// The driver's GPS switch (`RecordingSession.isGPSSwitchOn`). Off: the
+    /// track stops growing and the speed ignores GPS; on: the track resumes
+    /// from the next fix, in a new segment (no line across the gap).
+    func setGPSSwitch(on: Bool) {
+        guard gpsOff == on else { return }
+        gpsOff = !on
+        track.breakSegment()
+        refreshSpeed()
     }
 
     /// Feeds `obdEverConnected` from the link state and the paired adapter
@@ -131,7 +146,7 @@ final class MapViewModel {
             refreshSpeed()
         }
         isReceiving = true
-        track.append(fix)
+        if !gpsOff { track.append(fix) }
     }
 
     /// The plain GPS position while no run is live (R61.1-4,
@@ -177,7 +192,7 @@ final class MapViewModel {
             return Double(d.seconds) + Double(d.attoseconds) / 1e18
         }
         let next = MapSpeedRule.resolve(
-            obdKmh: obdInput?.kmh, obdAgeS: obdInput?.ageS, fix: latest, fixAgeS: fixAge
+            obdKmh: obdInput?.kmh, obdAgeS: obdInput?.ageS, fix: gpsOff ? nil : latest, fixAgeS: fixAge
         )
         if next != speed { speed = next }
     }
@@ -208,10 +223,10 @@ final class MapViewModel {
         refreshSpeed()
     }
 
-    /// The data the map may draw and frame on while the demo is `demoOn`: nil
+    /// No position marker while GPS is off. The data the map may draw and frame on while the demo is `demoOn`: nil
     /// track and fix when the model still holds the other source's.
     func shown(whileDemo demoOn: Bool) -> (track: GPSTrack, latest: LocationSample?) {
-        isDemoSource == demoOn ? (track, latest) : (GPSTrack(), nil)
+        isDemoSource == demoOn ? (track, gpsOff ? nil : latest) : (GPSTrack(), nil)
     }
 
     /// Remembers a fix the recorder staged so the map can show it. `id` is the
@@ -224,6 +239,12 @@ final class MapViewModel {
     /// What the map draws: never a fix the session dropped without writing it.
     func drawnManualFixes(excluding dropped: Set<Int>) -> [ConfirmedFix] {
         dropped.isEmpty ? manualFixes : manualFixes.filter { !dropped.contains($0.id) }
+    }
+
+    /// As `drawnManualFixes(excluding:)`, but none while the model still holds
+    /// the other source's data (R74.2-1: the render of the switch itself).
+    func drawnManualFixes(excluding dropped: Set<Int>, whileDemo demoOn: Bool) -> [ConfirmedFix] {
+        isDemoSource == demoOn ? drawnManualFixes(excluding: dropped) : []
     }
 
     /// Undo: the fix is not drawn any more.

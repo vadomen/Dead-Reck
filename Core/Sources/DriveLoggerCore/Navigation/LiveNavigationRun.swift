@@ -19,6 +19,9 @@ import Foundation
 /// 3. for a manual fix, emits a `pin` line with the estimate at its `t`,
 ///    the prior just before the engine ingests it;
 /// 4. ingests it, timing the engine call with `ContinuousClock`;
+///    a GPS switch (UX-9 a) is only handed to the engine: it emits
+///    nothing, moves no grid and raises no selection request (steps 2, 3,
+///    5 skipped), since it changes nothing an estimate reads;
 /// 5. updates the road selection rule (`RoadSelectionRule`): while no
 ///    network is attached, an ingest at which the engine first initialises
 ///    or uses a position raises a `RoadSelectionRequest`
@@ -291,7 +294,7 @@ public struct LiveNavigationRun: Sendable {
     ) {
         inputs += 1
         newSelectionRequest = nil
-        guard engine.accepts(input) else {
+        guard engine.accepts(input), !input.isGPSSwitch else {
             engine.ingest(input)
             return
         }
@@ -358,7 +361,9 @@ public struct LiveNavigationRun: Sendable {
                 steps: engine.counters.steps,
                 rejectedInputs: engine.counters.inputsRejectedTimeJump,
                 onRoadShare: estimate?.onRoadShare
-            )
+            ),
+            gnssInUse: engine.gnssInUse(at: t),
+            gpsSwitchedOff: !engine.gpsOn
         )
     }
 
@@ -461,14 +466,23 @@ public struct NavigationSnapshot: Hashable, Sendable {
     /// `LiveNavigationRun.snapshot(at:droppedInputs:)`. Filled by the
     /// overload that takes a `MatchedEdgeGeometry.Cache`.
     public var matchedEdgeGeometry: MatchedEdgeGeometry?
+    /// UX-22: GNSS fixes are in use at `t` (`NavigationEngine.gnssInUse(at:)`:
+    /// GPS switched on and a fix with a valid speed used within the last
+    /// `NavigationEngine.gnssInUseWindowS` seconds). False without a run.
+    public var gnssInUse: Bool
+    /// UX-9 a: the driver switched GPS off (`NavigationEngine.gpsOn` false);
+    /// then `gnssInUse` is false. False without a run.
+    public var gpsSwitchedOff: Bool
 
     public init(t: MonotonicTimestamp, sessionID: UUID?, estimate: NavigationEstimate?, stats: Stats,
-                matchedEdgeGeometry: MatchedEdgeGeometry? = nil) {
+                matchedEdgeGeometry: MatchedEdgeGeometry? = nil, gnssInUse: Bool = false, gpsSwitchedOff: Bool = false) {
         self.t = t
         self.sessionID = sessionID
         self.estimate = estimate
         self.stats = stats
         self.matchedEdgeGeometry = matchedEdgeGeometry
+        self.gnssInUse = gnssInUse
+        self.gpsSwitchedOff = gpsSwitchedOff
     }
 
     /// No recording is navigating.

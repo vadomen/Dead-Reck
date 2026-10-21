@@ -4,7 +4,7 @@ Field-by-field reference for DriveLogger recordings. The code in
 `Core/Sources/DriveLoggerCore/Log/` is authoritative; this file must be updated
 in the same commit as any change to it.
 
-Current version: **3** (`LogFormatVersion.current`). Readable: **1, 2, 3**.
+Current version: **4** (`LogFormatVersion.current`). Readable: **1, 2, 3, 4**.
 
 ## File
 
@@ -87,7 +87,7 @@ Current version: **3** (`LogFormatVersion.current`). Readable: **1, 2, 3**.
 
 | Field | Type | Since | Meaning |
 |---|---|---|---|
-| `formatVersion` | int | 1 | `1` or `2`. A reader refuses versions newer than it knows. |
+| `formatVersion` | int | 1 | `1` to `4` (current: `4`). A reader refuses versions newer than it knows. |
 | `sessionID` | UUID string | 1 | Unique per recording. |
 | `startedAt` | ISO 8601 string | 1 | Wall clock at start, whole seconds, UTC. The only wall-clock anchor. |
 | `referenceUptimeSeconds` | double, s | 1 | Seconds since boot at start; `t = 0` here. |
@@ -153,6 +153,7 @@ verbatim (`LogEvent.Payload.unrecognized`) instead of dropping it.
 | `lifecycle` | 2 | occurrence | rare |
 | `stats` | 2 | end of 10 s window | 0.1 Hz |
 | `manualFix` | 3 | driver double-tapped a position | user |
+| `gpsSwitch` | 4 | driver tapped the GPS switch | user |
 
 ### `motion`
 
@@ -611,6 +612,38 @@ was more than 2 s old at the tap.
 
 `speedSource` values are frozen strings (`ManualFixSample.SpeedSource`).
 
+### `gpsSwitch`
+
+The driver's "GPS off" switch (UX-9a): whether the live navigator may use the
+GNSS fixes from `t` on. Core type: `GPSSwitchSample`.
+
+```json
+{"data":{"on":false,"source":"driver"},"kind":"gpsSwitch","t":2000000000}
+```
+
+**`t` = the tap** on the session clock (`clock.now()`). Rows are written at
+the tap, in tap order.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `on` | bool | `false`: the driver turned GPS off; `true`: back on. Always present. |
+| `source` | string | Who set it. `driver` (the switch on the map). An open set: a later build may add a value (an automatic detector, for example) without a version bump; a reader keeps an unknown value verbatim and should treat the row like any other switch row. Always present. |
+
+Every recording starts with the switch **on and no row**; the state is not
+carried over from an earlier recording or a Navigate session. So a file's
+first `gpsSwitch` row, if any, is normally `on: false`, and a file without
+one had GPS on throughout. The recorder writes a row only on a change; a
+reader must still accept a row that repeats the current state (it changes
+nothing).
+
+The switch never changes what is recorded: `location` rows keep being
+written while it is off, exactly as before, so an analysis can compare the
+estimate with the fixes the navigator was not given. The rows are written
+in Record only; in Navigate the switch reaches the live navigator through the
+session's tap and nothing is stored.
+
+`source` values are frozen strings (`GPSSwitchSample.Source`).
+
 ## Versions
 
 | Version | Changes |
@@ -618,6 +651,7 @@ was more than 2 s old at the tap.
 | 1 | Header (`formatVersion`, `sessionID`, `startedAt`, `referenceUptimeSeconds`, `app`, `device`, `notes`); kinds `motion`, `location`, `obd`, `marker`. |
 | 2 | Header `adapter`, `polling`, `sensors`, `mount`, `vehicle`, `timeZone`. `motion.magneticAccuracy`. `location` `receivedT`, `fixTime`, `ageS`, `ellipsoidalAltitude`, `simulated`, `accessory`; `t` defined as fix time. `obd` `requestT`, `command`, `ecu`, `seq`; `raw` becomes the full header-on reply. New kinds `accel`, `gyro`, `mag`, `baro`, `elm`, `adapter`, `link`, `lifecycle`, `stats`. |
 | 3 | New kind `manualFix` (`speedSource` vocabulary `obd`, `gps`, `unknown`). Nothing else changed: every v2 row is written and read exactly as before. A v2 reader refuses a v3 file rather than keep the new rows as unrecognized. |
+| 4 | New kind `gpsSwitch` (`on`, `source`; `source` vocabulary `driver`, open). Nothing else changed: every v3 row is written and read exactly as before. A v3 reader refuses a v4 file rather than keep the switch rows as unrecognized and replay the drive as if GPS had stayed on. |
 
 Within v2, without a version bump (both read unchanged by every v2 reader):
 M4 added the `lifecycle` value `locationAuthorization` (`event` is an open
@@ -631,8 +665,8 @@ Within v3, without a version bump (read unchanged by every v3 reader): the
 per recording.
 
 Every version stays readable. v2 only adds optional fields, so DriveLogger
-decodes a v1 file into the same types with those fields absent. v3 only adds a
-kind. Frozen fixtures for all three versions are in
+decodes a v1 file into the same types with those fields absent. v3 and v4
+each only add a kind. Frozen fixtures for all four versions are in
 `LogFormatCompatibilityTests`.
 
 ## Reading recordings outside DriveLogger
@@ -662,8 +696,11 @@ cd Core && swift run -c release inspect_log <file.jsonl.gz|file.jsonl> [--csv <d
 Prints the header, events per kind, rates, gaps over 50 ms, OBD latency
 (`t − requestT`) percentiles, `elm` outcome counts and a damage/truncation
 report, and lists every `manualFix` (`t`, `speedSource`, gate speed,
-press-to-confirm delay, coordinates, note). `--csv` writes one CSV per kind
-(`manualFix.csv` has every field): `t` in integer nanoseconds, empty cell
+press-to-confirm delay, coordinates, note) and every `gpsSwitch` change
+(`GPS switch` line: `t`, off/on, source; a v4 file without one says
+`none (GPS on throughout)`). `--csv` writes one CSV per kind
+(`manualFix.csv` has every field; `gpsSwitch.csv` is `t,on,source` with
+`on` as `true`/`false`): `t` in integer nanoseconds, empty cell
 for an absent field, RFC 4180 quoting, compact JSON for `stats.counts` and for
 unknown kinds. `--strict` stops at the first damaged member or malformed line.
 

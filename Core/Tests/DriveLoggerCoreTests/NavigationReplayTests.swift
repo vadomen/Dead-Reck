@@ -66,6 +66,7 @@ struct NavigationReplayTests {
             case .obd: "obd"
             case .location: "location"
             case .manualFix: "manualFix"
+            case .gpsSwitch: "gpsSwitch"
             }
         }
         #expect(kinds == ["motion", "motion", "location", "location", "obd", "motion"])

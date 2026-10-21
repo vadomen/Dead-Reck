@@ -399,7 +399,7 @@ The simulator and AppTests cover the logic (`DemoDriveControllerTests`, Core `De
 
 ### Added by REL-DEMO part 3 (demo UI) and REL-EXPORT, with the UX-18 follow-up (prompt 36) — not verified on a device
 Items 1-7 above (demo pipeline) and the airplane-mode check (item 1) cover the demo itself; these cover the UI and the gate.
-1. **Gate closed in Release:** on a fresh Release install, Settings → Developer shows only "Demo drive (simulated car)". Test drive recording, Sessions and Console are absent, and the settings route guard refuses them while the gate is closed. After 7 taps on Version in About they appear (all three); 7 more taps hide them again. Existing recordings from an earlier build are still reachable through Files (On My iPhone → DriveLogger). A Debug build is unchanged (everything visible).
+1. **Gate closed in Release:** on a fresh Release install, Settings → Developer shows only "Demo drive (simulated car)". Test drive recording, Sessions and Console are absent, and the settings route guard refuses them while the gate is closed. After 7 taps on Version in About they appear (all three); 7 more taps hide them again. Existing recordings from an earlier build are still reachable through Files (On My iPhone → FuGPS). A Debug build is unchanged (everything visible).
 2. **Demo UI:** the DEMO badge and "Stop demo" are on the map only while the demo runs; the camera is on the demo area (not on the last cached position of the phone, also on a phone that has never had a fix); the demo roads show under the arrow with no service roads; no pack offer card and no mount card appear during the demo. Settings → About → Data and services credits the demo map data (OpenStreetMap, ODbL). Record start during the demo says "The demo drive is running. Stop it to record." and, while Record runs, the demo cannot be started.
 3. **Mount card after calibration (UX-18 follow-up):** on the first Navigate start on OBD with the car stopped, "Hold still — calibrating" counts down first with no mount card; the "Phone mounted and won't move?" card appears only after the calibrating line has gone (still OBD speed 0), and hides at OBD speed above 0. The last onboarding card ("Getting the arrow fast") has no Skip.
 
@@ -412,6 +412,16 @@ Items 1-7 above (demo pipeline) and the airplane-mode check (item 1) cover the d
 6. **Matched road line (UX-41):** visible in a Release build in light and dark while on a road; absent when not matched.
 7. **Finding your position (UX-40):** shown while the estimate is not converged or wide, hidden once it narrows.
 8. **Replay after a mid-run attach:** `replay_nav --as-live --compare` against the v3 sidecar of that session reproduces the live estimates (docs/NAV_SIDECAR.md, docs/NAVIGATION.md).
+
+### Added by UX-9 (a) "GPS off" and UX-22 GPS state and voice (prompt 37, branch `ux9a-gps-off`) — not verified on a device; none of this is claimed
+1. **GPS off under a spoofed or jammed fix:** at a stop with a spoofed or jammed fix, tap "GPS off" in the right rail. The estimate stops following the fix; pins, network fixes (no valid speed) and roads are still used; Record writes a `gpsSwitch` row (`on` false, `source` driver); `replay_nav --as-live --compare` on that recording is an exact PASS.
+2. **Use GPS:** tap "Use GPS": fixes are used again with no stale fix applied (nothing from the off period is replayed into the engine); the GPS track resumes as a new segment, without a chord drawn across the gap.
+3. **HUD states:** "GPS" / "No GPS" / "GPS off" each show their own glyph and agree with what the engine does with fixes (jammed drive, spoofed fix, switch off).
+4. **Speed while off:** with GPS off and OBD lost, the HUD speed shows "—" and does not fall back to GPS speed.
+5. **Map while off:** the grey GPS marker and accuracy circle are hidden and the GPS track does not grow.
+6. **Voice:** off by default ("Speak GPS changes" in Settings). Switched on: "GPS lost", "GPS back" and "GPS off" are spoken on the change, each phrase at most once per 5 min; music is ducked while it speaks and resumes after. The voice speaks only during a run, Navigate or Record (user decision 2026-10-21). Without OBD there is no run, so it stays silent: check that no phrase is spoken then.
+7. **Not persisted:** every new Navigate or Record starts with GPS on, also after a relaunch with the switch off.
+8. **Map POIs:** the map (and the demo) shows no Apple Maps points of interest; street names stay.
 
 ### Added by run 60, push_packs.sh app guard (not verified on a device)
 1. **Process list shape:** with the phone connected and unlocked and the app open, save `xcrun devicectl device info processes --device <id> --json-output -` and check that `result.runningProcesses[].executable` holds a `file:///…/DriveLogger.app/DriveLogger` URL (the parser's shape was inferred from devicectl's strings, never seen in real output). If the shape differs, the guard refuses ("cannot tell whether the app is running"); fix the parser rather than using `--force` by habit.

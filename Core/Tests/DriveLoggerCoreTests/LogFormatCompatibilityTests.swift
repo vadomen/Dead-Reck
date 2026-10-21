@@ -495,3 +495,104 @@ struct LogFormatCompatibilityV3Tests {
         #expect(LifecycleSample.Event.roadPacks.rawValue == "roadPacks")
     }
 }
+
+/// Format v4 counterpart. Same rule: frozen when v4 was introduced (UX-9a)
+/// and never edited to fit a later change. v4 = v3 + the kind `gpsSwitch`;
+/// the fixture has the driver's switch off, a `location` row written while
+/// off (the switch never stops recording), the switch back on, and a row
+/// whose `source` this build does not know, kept verbatim. Coordinates are
+/// small offsets from (0, 0): no real place.
+@Suite("Log format compatibility v4")
+struct LogFormatCompatibilityV4Tests {
+    let codec = LogCodec()
+
+    static let version4Recording = #"""
+        {"app":{"build":"40","name":"DriveLogger","version":"0.4.0"},"device":{"model":"iPhone16,1","systemName":"iOS","systemVersion":"18.6"},"formatVersion":4,"mount":"windscreen, portrait","polling":{"adaptiveTiming":1,"command":"010D0C1","multiPID":true,"pids":[13,12],"requestHeader":"7E0","responseCount":1,"rpmEvery":1,"timeoutMs":200},"referenceUptimeSeconds":3600.25,"sessionID":"8E1D4C2B-3A5F-4D7E-9B6C-2E3F4A5B6C7D","startedAt":"2026-02-01T00:00:00Z","timeZone":"UTC","vehicle":"test vehicle"}
+        {"data":{"event":"start"},"kind":"lifecycle","t":0}
+        {"data":{"ageS":0.25,"altitude":10,"course":90,"courseAccuracy":5,"horizontalAccuracy":8,"latitude":0.0125,"longitude":-0.025,"receivedT":1250000000,"speed":12.5,"speedAccuracy":0.5,"verticalAccuracy":6},"kind":"location","t":1000000000}
+        {"data":{"on":false,"source":"driver"},"kind":"gpsSwitch","t":2000000000}
+        {"data":{"ageS":0.25,"altitude":10,"course":180,"courseAccuracy":5,"horizontalAccuracy":8,"latitude":0.0375,"longitude":-0.025,"receivedT":3250000000,"speed":30,"speedAccuracy":0.5,"verticalAccuracy":6},"kind":"location","t":3000000000}
+        {"data":{"on":true,"source":"driver"},"kind":"gpsSwitch","t":6500000000}
+        {"data":{"on":false,"source":"auto"},"kind":"gpsSwitch","t":8000000000}
+        {"data":{"bytesWritten":2048,"counts":{"gpsSwitch":3,"lifecycle":1,"location":2},"dropped":0,"gaps":{"accel":0,"gyro":0,"motion":0},"maxGapMs":{},"motionHz":0,"obdHz":0,"queueDepthMax":1,"timeouts":0,"windowS":10},"kind":"stats","t":10000000000}
+        {"data":{"detail":"user","event":"stop"},"kind":"lifecycle","t":10500000000}
+        """#
+
+    var document: LogDocument {
+        get throws { try codec.document(from: Data(Self.version4Recording.utf8)) }
+    }
+
+    static func ms(_ value: Int64) -> MonotonicTimestamp {
+        MonotonicTimestamp(nanoseconds: value * 1_000_000)
+    }
+
+    @Test("A v4 recording parses")
+    func readsVersion4Header() throws {
+        let header = try document.header
+        #expect(header.formatVersion == .v4)
+        #expect(header.startedAt == Date(timeIntervalSince1970: 1_769_904_000))
+        #expect(header.referenceUptimeSeconds == 3_600.25)
+        #expect(header.polling?.requestHeader == "7E0")
+        #expect(header.timeZone == "UTC")
+    }
+
+    @Test("Every v4 row decodes to its own payload, none as unrecognized")
+    func readsEveryRow() throws {
+        let events = try document.events
+        #expect(events.count == 8)
+        #expect(events.map(\.payload.kind) == [
+            "lifecycle", "location", "gpsSwitch", "location", "gpsSwitch", "gpsSwitch", "stats", "lifecycle",
+        ])
+        for event in events {
+            if case .unrecognized(let kind, _) = event.payload {
+                Issue.record("\(kind) decoded as unrecognized")
+            }
+        }
+    }
+
+    @Test("gpsSwitch rows keep on, source and t; an unknown source is kept verbatim")
+    func readsGPSSwitches() throws {
+        let events = try document.events
+        let switches = events.compactMap { event -> (MonotonicTimestamp, GPSSwitchSample)? in
+            guard case .gpsSwitch(let sample) = event.payload else { return nil }
+            return (event.timestamp, sample)
+        }
+        #expect(switches.count == 3)
+        #expect(switches[0].0 == Self.ms(2_000))
+        #expect(switches[0].1 == GPSSwitchSample(on: false, source: "driver"))
+        #expect(switches[1].0 == Self.ms(6_500))
+        #expect(switches[1].1 == GPSSwitchSample(on: true, source: "driver"))
+        #expect(switches[2].0 == Self.ms(8_000))
+        #expect(switches[2].1 == GPSSwitchSample(on: false, source: "auto"))
+
+        // A location row written while the switch was off is an ordinary row.
+        guard case .location(let fix) = events[3].payload else {
+            Issue.record("row 3 is not a location")
+            return
+        }
+        #expect(events[3].timestamp == Self.ms(3_000))
+        #expect(fix.latitude == 0.0375 && fix.speed == 30)
+    }
+
+    @Test("Rewriting a v4 recording reproduces it unchanged")
+    func rewritesVersion4Identically() throws {
+        let original = Data(Self.version4Recording.utf8)
+        let rewritten = try codec.encode(try document)
+        #expect(rewritten == original + Data("\n".utf8))
+    }
+
+    @Test("v4 is a declared, readable version")
+    func version4IsDeclared() {
+        #expect(LogFormatVersion(rawValue: 4) == .v4)
+        #expect(LogFormatVersion.v4 <= .current)
+    }
+
+    @Test("The v4 kind, its keys and the source vocabulary are stable on-disk strings")
+    func stringsAreStable() throws {
+        #expect(LogEventKind.gpsSwitch.rawValue == "gpsSwitch")
+        #expect(GPSSwitchSample.Source.driver.rawValue == "driver")
+        #expect(GPSSwitchSample(on: false, source: .driver) == GPSSwitchSample(on: false, source: "driver"))
+        let line = try codec.line(for: LogEvent(timestamp: Self.ms(2_000), payload: .gpsSwitch(GPSSwitchSample(on: false, source: .driver))))
+        #expect(String(decoding: line, as: UTF8.self) == #"{"data":{"on":false,"source":"driver"},"kind":"gpsSwitch","t":2000000000}"# + "\n")
+    }
+}

@@ -70,6 +70,9 @@ struct MapScreen: View {
     var demo: MapDemo?
     @Environment(\.scenePhase) private var scenePhase
     @State private var thermal = ProcessInfo.processInfo.thermalState
+    /// Settings → "Speak GPS changes" (UX-22); off by default.
+    @AppStorage(GPSVoiceSetting.key) private var speaksGPSChanges = false
+    @State private var voice = GPSVoiceAnnouncer()
 
     var body: some View {
         // Without OBD, Navigate shows the plain GPS position only (UX-1 (d)):
@@ -82,7 +85,7 @@ struct MapScreen: View {
         let shown = model.shown(whileDemo: demo != nil)
         GPSMapView(
             track: fake.scatter ? MapPreviewData.stopTrack : shown.track,
-            latest: fake.scatter ? MapPreviewData.stopFixes.last : shown.latest,
+            latest: fake.scatter ? MapPreviewData.stopFixes.last : (fake.gpsOff ? nil : shown.latest),
             lastFixInstant: fake.scatter ? .now : model.lastFixInstant,
             isReceiving: fake.isActive ? !fake.gpsLost : model.isReceiving,
             thermal: fake.thermal ? .fair : thermal,
@@ -93,10 +96,11 @@ struct MapScreen: View {
             headingUp: $headingUp,
             bearing: model.bearing,
             isStationary: model.isStationary,
-            manualFixes: model.drawnManualFixes(excluding: session.droppedManualFixIDs),
+            manualFixes: model.drawnManualFixes(excluding: session.droppedManualFixIDs, whileDemo: demo != nil),
             pendingFixIDs: Set(session.pendingManualFixes.map(\.id)),
             manual: marking,
             run: model.runKey,
+            runGeneration: session.currentRunGeneration,
             cachedLocation: cachedLocation,
             navigation: fake.nav.map(MapPreviewData.fakeNav)
                 ?? (fake.debugStrip ? NavigationFeed(display: nil, stats: MapPreviewData.navStats) : navigation),
@@ -109,6 +113,13 @@ struct MapScreen: View {
             onRoadsWarningNever: { offerActions?.never() },
             onRoadsWarningTap: onOpenMaps,
             onOpenSettings: onOpenSettings,
+            gpsSwitchOn: fake.isActive ? !fake.gpsOff : session.isGPSSwitchOn,
+            // The switch belongs to a run (Navigate or Record); the demo has none.
+            gpsSwitchEnabled: fake.isActive || (session.currentRunGeneration != nil && demo == nil),
+            onGPSSwitch: { [session] on in session.setGPSSwitch(on: on) },
+            onGPSState: { [voice] state, run in
+                voice.note(state, run: run, enabled: speaksGPSChanges)
+            },
             roadsAttribution: (roadsWarning?.attribution ?? false) || demo != nil,
             demo: demo,
             offerCard: bottomCard,
@@ -127,6 +138,7 @@ struct MapScreen: View {
             thermal = ProcessInfo.processInfo.thermalState
         }
         .onAppear { thermal = ProcessInfo.processInfo.thermalState }
+        .onChange(of: session.isGPSSwitchOn, initial: true) { _, on in model.setGPSSwitch(on: on) }
         .onChange(of: link?.state, initial: true) { _, state in model.noteLink(state, adapter: link?.rememberedAdapterID) }
         .onChange(of: link?.rememberedAdapterID) { _, id in model.noteLink(link?.state, adapter: id) }
         // The demo starts or stops: nothing of the other source stays on the
@@ -342,6 +354,9 @@ struct GPSMapView: View {
     /// The recording the map shows.
     /// The run (recording or Navigate session) the track belongs to.
     var run: MapRunKey?
+    /// The live run's generation straight from the session (R76.2-1); nil without a run.
+    /// `run.run` can lag or outlive it, so the GPS HUD and voice use this.
+    var runGeneration: Int?
     /// Last known system position, read when the tab opens with no fix.
     var cachedLocation: @MainActor () -> CachedLocation? = { nil }
     /// Live dead reckoning; nil in previews of the plain reference map.
@@ -361,6 +376,13 @@ struct GPSMapView: View {
     var onRoadsWarningTap: () -> Void
     /// The gear at the bottom of the right rail (UX-14, UX-32).
     var onOpenSettings: () -> Void = {}
+    /// The driver's GPS switch (UX-9 (a)): true = GPS in use. The rail's top
+    /// button shows and flips it (`onGPSSwitch(new)`), enabled while a run is live.
+    var gpsSwitchOn = true
+    var gpsSwitchEnabled = false
+    var onGPSSwitch: (Bool) -> Void = { _ in }
+    /// The HUD's GPS state changed (UX-22 voice); the map owns the staleness, so it reports it.
+    var onGPSState: (HUDGPS, Int?) -> Void = { _, _ in }
     /// A road pack is attached to the run (`MapAttribution.visible`): the
     /// OSM credit is shown.
     var roadsAttribution = false
@@ -436,6 +458,7 @@ struct GPSMapView: View {
         pendingFixIDs: Set<Int> = [],
         manual: ManualFixMarking = .unavailable,
         run: MapRunKey? = nil,
+        runGeneration: Int? = nil,
         cachedLocation: @escaping @MainActor () -> CachedLocation? = { nil },
         initialToast: MapToast? = nil,
         navigation: NavigationFeed? = nil,
@@ -448,6 +471,10 @@ struct GPSMapView: View {
         onRoadsWarningNever: @escaping () -> Void = {},
         onRoadsWarningTap: @escaping () -> Void = {},
         onOpenSettings: @escaping () -> Void = {},
+        gpsSwitchOn: Bool = true,
+        gpsSwitchEnabled: Bool = false,
+        onGPSSwitch: @escaping (Bool) -> Void = { _ in },
+        onGPSState: @escaping (HUDGPS, Int?) -> Void = { _, _ in },
         roadsAttribution: Bool = false,
         demo: MapDemo? = nil,
         offerCard: AnyView? = nil,
@@ -472,6 +499,7 @@ struct GPSMapView: View {
         self.pendingFixIDs = pendingFixIDs
         self.manual = manual
         self.run = run
+        self.runGeneration = runGeneration
         self.cachedLocation = cachedLocation
         self.navigation = navigation
         self.showsEstimate = showsEstimate
@@ -483,6 +511,10 @@ struct GPSMapView: View {
         self.onRoadsWarningNever = onRoadsWarningNever
         self.onRoadsWarningTap = onRoadsWarningTap
         self.onOpenSettings = onOpenSettings
+        self.gpsSwitchOn = gpsSwitchOn
+        self.gpsSwitchEnabled = gpsSwitchEnabled
+        self.onGPSSwitch = onGPSSwitch
+        self.onGPSState = onGPSState
         self.roadsAttribution = roadsAttribution
         self.demo = demo
         self.offerCard = offerCard
@@ -523,6 +555,12 @@ struct GPSMapView: View {
                 headingUp: headingUp, following: follow.isFollowing, speedKmh: speed.kmh
             ), initial: true) { _, new in
                 inputs = new
+            }
+            // R74.2-1: the demo's region goes in the moment the demo starts,
+            // not after `frameOnOpen`'s actor hop, so the cover's first frames
+            // never show the last real camera.
+            .onChange(of: demo != nil) { _, on in
+                if on, let demo { position = .region(demo.region) }
             }
             .onChange(of: headingUp) {
                 // Mode switch while following: swing the camera to the new heading.
@@ -642,6 +680,11 @@ struct GPSMapView: View {
         }
         // Top-left card (UX-32): the only thing at the top.
         .overlay(alignment: .topLeading) { hudCard }
+        .onChange(of: gpsHUD, initial: true) { _, state in onGPSState(state, gpsVoiceRun) }
+        // R76.2-1: the voice takes a run's baseline only once the state is that run's own.
+        .onChange(of: gpsVoiceRun) { _, _ in onGPSState(gpsHUD, gpsVoiceRun) }
+        // A new run: the previous run's engine state must not show for even one frame.
+        .onChange(of: run) { _, _ in navigation?.clearGPS() }
         // Right rail: North up / Heading up, Following, Settings.
         .overlay(alignment: .bottomTrailing) { rail }
         // REL-DEMO: the badge and Stop demo, top right, only while it runs.
@@ -679,8 +722,17 @@ struct GPSMapView: View {
 
     private var hudState: MapHUDState {
         MapHUDState.make(
-            speed: speed, gps: MapHUDState.gpsState(stale: stale), obd: obd,
+            speed: speed, gps: gpsHUD, obd: obd,
             thermal: thermal)
+    }
+
+    private var gpsHUD: HUDGPS {
+        MapHUDState.gpsState(
+            stale: stale, switchedOff: !gpsSwitchOn, engine: estimate?.gps, currentRun: runGeneration)
+    }
+
+    private var gpsVoiceRun: Int? {
+        MapHUDState.voiceRun(current: runGeneration, engine: estimate?.gps)
     }
 
     /// Speed, GPS and OBD indicators, thermal when not nominal, recording row.
@@ -701,7 +753,14 @@ struct GPSMapView: View {
     }
 
     private var rail: some View {
-        VStack(spacing: MapLayout.railGap) {
+        let gps = GPSSwitchControl.make(switchOn: gpsSwitchOn, runActive: gpsSwitchEnabled)
+        return VStack(spacing: MapLayout.railGap) {
+            HUDRailButton(
+                symbol: gps.symbol, label: gps.accessibilityLabel, active: gps.active,
+                caption: gps.caption, inputLabels: gps.inputLabels
+            ) { onGPSSwitch(!gpsSwitchOn) }
+            .disabled(!gps.enabled)
+            .opacity(gps.enabled ? 1 : 0.45)
             HUDRailButton(
                 symbol: headingUp ? "location.north.line.fill" : "n.circle",
                 label: headingUp ? "Heading up" : "North up", active: headingUp
@@ -768,7 +827,8 @@ struct GPSMapView: View {
         #if DEBUG
         if UserDefaults.standard.bool(forKey: "uiBlankMap") { return .imagery }
         #endif
-        return .standard
+        // No points of interest (UX-9 (a) decision 2026-10-20); street names stay.
+        return .standard(pointsOfInterest: .excludingAll)
     }
 
     private func color(_ band: AccuracyBand, stale: Bool) -> Color {
@@ -1674,6 +1734,24 @@ extension MapPreviewData {
     GPSMapView(
         track: MapPreviewData.track, latest: nil, lastFixInstant: nil, isReceiving: false, thermal: .nominal,
         speed: MapSpeedReadout(source: .obd, kmh: 54, quality: .unknown), isLive: true,
+        follow: .constant(FollowController(following: true)), headingUp: .constant(true)
+    )
+}
+
+#Preview("HUD: GPS off (switch on the rail), speed dash") {
+    GPSMapView(
+        track: MapPreviewData.track, latest: nil, lastFixInstant: .now, isReceiving: true, thermal: .nominal,
+        speed: .none, obd: .lost, isLive: true,
+        follow: .constant(FollowController(following: true)), headingUp: .constant(true),
+        gpsSwitchOn: false, gpsSwitchEnabled: true
+    )
+}
+
+#Preview("Rail: GPS switch on, no run (disabled)") {
+    GPSMapView(
+        track: MapPreviewData.track, latest: MapPreviewData.fix(59, accuracy: 8, gapAfter: 60),
+        lastFixInstant: .now, isReceiving: true, thermal: .nominal,
+        speed: MapSpeedReadout(source: .obd, kmh: 54, quality: .good), isLive: true,
         follow: .constant(FollowController(following: true)), headingUp: .constant(true)
     )
 }

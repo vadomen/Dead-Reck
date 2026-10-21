@@ -9,6 +9,8 @@ enum SettingsRow: Hashable {
     case howItWorks
     /// REL-DEMO: "Demo drive (simulated car)", visible in Release without the gate.
     case demoDrive
+    /// UX-22: Toggle "Speak GPS changes" (off by default).
+    case speakGPSChanges
 }
 
 /// Which rows show, in order (UX-14, grouped for the driver in prompt 31):
@@ -22,9 +24,12 @@ enum SettingsRows {
     static func driver(adapterAvailable: Bool = SettingsRoute.adapterRowAvailable) -> [SettingsRow] {
         var rows: [SettingsRow] = []
         if adapterAvailable { rows.append(.route(.adapter)) }
-        rows += [.route(.maps), .mountAndOrientation, .howItWorks]
+        rows += [.route(.maps), .mountAndOrientation, .speakGPSChanges, .howItWorks]
         return rows
     }
+
+    static let speakGPSTitle = "Speak GPS changes"
+    static let speakGPSFootnote = "While navigating or recording, says \"GPS lost\", \"GPS back\" or \"GPS off\", at most once every 5 minutes each."
 
     static let demoDriveTitle = "Demo drive (simulated car)"
 
@@ -124,6 +129,7 @@ struct SettingsContent<Recording: View, Console: View, Maps: View, Sessions: Vie
     /// "How FuGPS works": the info cards again, read only (UX-18 (3)).
     @State private var cards = OnboardingModel(mode: .review)
     @State private var showsMount = false
+    @AppStorage(GPSVoiceSetting.key) private var speaksGPSChanges = false
 
     private var roadsSection: some View {
         Section("Roads") {
@@ -197,6 +203,13 @@ struct SettingsContent<Recording: View, Console: View, Maps: View, Sessions: Vie
                     if case .blocked(let reason) = demoRow {
                         Text(reason).font(.footnote).foregroundStyle(.secondary)
                     }
+                }
+            case .speakGPSChanges:
+                VStack(alignment: .leading, spacing: 2) {
+                    Toggle(SettingsRows.speakGPSTitle, isOn: $speaksGPSChanges)
+                        .font(.title3)
+                        .frame(minHeight: 44)
+                    Text(SettingsRows.speakGPSFootnote).font(.footnote).foregroundStyle(.secondary)
                 }
             case .howItWorks:
                 Button { cards.show() } label: {

@@ -141,6 +141,14 @@ enum AdapterSettingsText {
         }
     }
 
+    /// While the demo drive holds the link down (R74.1-6) the state line says
+    /// why nothing connects; the real status comes back when the demo stops.
+    static func status(_ status: AdapterScreenStatus, heldForDemo: Bool) -> AdapterScreenStatus {
+        guard heldForDemo else { return status }
+        return .init(phase: status.phase, title: "Held for the demo drive", detail: "Connects when you stop it.",
+                     tone: .neutral, symbol: "pause.circle", showsHelp: false)
+    }
+
     /// The fake inputs (screenshots) through the same mapping.
     static func status(for fake: AdapterFake) -> AdapterScreenStatus {
         status(link: fake.link, adapterName: fake.name, hasRemembered: fake.hasRemembered,

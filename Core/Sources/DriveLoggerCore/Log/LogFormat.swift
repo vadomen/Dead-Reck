@@ -26,8 +26,15 @@ public enum LogFormatVersion: Int, Hashable, Sendable, Codable, CaseIterable, Co
     /// the new rows only as `unrecognized`.
     case v3 = 3
 
+    /// v3 plus the kind `gpsSwitch`: the driver's "GPS off" switch
+    /// (`GPSSwitchSample`), so a replay applies what the driver chose.
+    /// Nothing else changed, so v1–v3 files decode exactly as before. A v3
+    /// reader refuses a v4 header rather than keep the switch rows only as
+    /// `unrecognized` and replay the drive as if GPS had stayed on.
+    case v4 = 4
+
     /// The version new recordings are written in.
-    public static let current: LogFormatVersion = .v3
+    public static let current: LogFormatVersion = .v4
 
     public static func < (lhs: LogFormatVersion, rhs: LogFormatVersion) -> Bool {
         lhs.rawValue < rhs.rawValue

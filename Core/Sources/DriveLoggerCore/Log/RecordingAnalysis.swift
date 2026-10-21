@@ -26,6 +26,7 @@ public struct RecordingAnalyzer {
     private var errors: [String] = []
     private var markers: [RecordingSummary.Marker] = []
     private var manualFixes: [RecordingSummary.ManualFix] = []
+    private var gpsSwitches: [RecordingSummary.GPSSwitch] = []
     private var stats = StatsAccumulation()
 
     public init(header: LogHeader) {
@@ -68,6 +69,8 @@ public struct RecordingAnalyzer {
             stats.observe(sample)
         case .manualFix(let sample):
             manualFixes.append(RecordingSummary.ManualFix(t: event.timestamp, sample: sample))
+        case .gpsSwitch(let sample):
+            gpsSwitches.append(RecordingSummary.GPSSwitch(t: event.timestamp, sample: sample))
         default:
             break
         }
@@ -101,6 +104,7 @@ public struct RecordingAnalyzer {
             errors: errors,
             markers: markers,
             manualFixes: manualFixes,
+            gpsSwitches: gpsSwitches,
             stats: stats.summary
         )
     }
@@ -293,6 +297,17 @@ public struct RecordingSummary: Hashable, Sendable {
         }
     }
 
+    /// A `gpsSwitch` row (v4): the driver's "GPS off" switch.
+    public struct GPSSwitch: Hashable, Sendable {
+        public var t: MonotonicTimestamp
+        public var sample: GPSSwitchSample
+
+        public init(t: MonotonicTimestamp, sample: GPSSwitchSample) {
+            self.t = t
+            self.sample = sample
+        }
+    }
+
     public var header: LogHeader
     public var report: LogReadReport
     public var eventCount: Int
@@ -315,6 +330,8 @@ public struct RecordingSummary: Hashable, Sendable {
     public var markers: [Marker]
     /// Every `manualFix` row, in file order.
     public var manualFixes: [ManualFix]
+    /// Every `gpsSwitch` row, in file order.
+    public var gpsSwitches: [GPSSwitch]
     /// Aggregate of the recorder's own `stats` rows.
     public var stats: Stats?
 
@@ -458,6 +475,11 @@ public struct RecordingSummary: Hashable, Sendable {
         } else if header.formatVersion >= .v3 {
             out.append("Manual fixes  none")
         }
+        if !gpsSwitches.isEmpty {
+            out.append("GPS switch    \(gpsSwitches.count): " + gpsSwitches.map(Self.describe).joined(separator: "; "))
+        } else if header.formatVersion >= .v4 {
+            out.append("GPS switch    none (GPS on throughout)")
+        }
         if let stats {
             let gaps = Self.counts(stats.totalGaps, order: StatsAccumulator.gapKinds.map(\.rawValue))
             out.append("Stats rows    \(stats.rows): motionHz min \(Self.format(stats.minMotionHz, 1)) mean \(Self.format(stats.meanMotionHz, 1)); obdHz min \(Self.format(stats.minObdHz, 1)) mean \(Self.format(stats.meanObdHz, 1)); queue depth max \(stats.maxQueueDepth); dropped \(stats.totalDropped); timeouts \(stats.totalTimeouts); gaps \(gaps.isEmpty ? "none" : gaps); \(stats.lastBytesWritten) bytes")
@@ -487,6 +509,11 @@ public struct RecordingSummary: Hashable, Sendable {
         line += "  \(format(sample.latitude, 7)), \(format(sample.longitude, 7))"
         if let note = sample.note { line += "  note: \(note)" }
         return line
+    }
+
+    /// `<t> s off|on (<source>)`.
+    static func describe(_ change: GPSSwitch) -> String {
+        "\(format(change.t.seconds, 1)) s \(change.sample.on ? "on" : "off") (\(change.sample.source))"
     }
 
     static func format(_ value: Double, _ decimals: Int) -> String {

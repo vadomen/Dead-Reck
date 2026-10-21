@@ -70,6 +70,10 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
     /// nil (absent) in a run without a scored checkpoint with an error and
     /// in files written before it.
     public var maxErrorByKind: [String: KindMaxError]?
+    /// UX-9 a: the recording's GPS switch (off intervals, fixes withheld by
+    /// it). nil (absent) without a `gpsSwitch` input, and in files written
+    /// before it.
+    public var gpsSwitch: ReplayResult.GPSSwitchReport?
 
     public init(_ result: ReplayResult) {
         logName = result.logName
@@ -110,6 +114,7 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
         let decisions = result.pins.compactMap(\.fixPin)
         fixPinDecisions = decisions.isEmpty ? nil : decisions
         maxErrorByKind = result.maxErrorByKind.isEmpty ? nil : result.maxErrorByKind
+        gpsSwitch = result.gpsSwitch
     }
 
     /// `metrics.json` key: one row per log and mode.
@@ -130,6 +135,7 @@ extension ReplayMetrics {
         case fixesExcludedByTruth
         case fixPinDecisions
         case maxErrorByKind
+        case gpsSwitch
     }
 
     /// Keys every `metrics.json` row has had since the first one (N2). A row
@@ -146,7 +152,7 @@ extension ReplayMetrics {
     ///   `motionStartT`, `consistency`, `consistencyWithTruthSigma`, `pins`,
     ///   `pinScoring`, `roads`, `roadSetHash`, `roadMetrics`, `scoreUntilT`,
     ///   `checkpointsAfterScoreUntil`, `roadsAttachedAfterInputs`,
-    ///   `attachedRoadSetHash`, `roadsExtendedAfterInputs`, `fixesExcludedByTruth`, `fixPinDecisions`, `maxErrorByKind` (and any key a
+    ///   `attachedRoadSetHash`, `roadsExtendedAfterInputs`, `fixesExcludedByTruth`, `fixPinDecisions`, `maxErrorByKind`, `gpsSwitch` (and any key a
     ///   later build adds, which must be optional or take a default here).
     /// - `config` and `counters` decode tolerantly themselves: a config key
     ///   or counter added later takes its default (0 for a counter).
@@ -191,6 +197,7 @@ extension ReplayMetrics {
         fixesExcludedByTruth = try c.decodeIfPresent(ReplayResult.FixExclusion.self, forKey: .fixesExcludedByTruth)
         fixPinDecisions = try c.decodeIfPresent([FixPinDecision].self, forKey: .fixPinDecisions)
         maxErrorByKind = try c.decodeIfPresent([String: KindMaxError].self, forKey: .maxErrorByKind)
+        gpsSwitch = try c.decodeIfPresent(ReplayResult.GPSSwitchReport.self, forKey: .gpsSwitch)
     }
 }
 
@@ -335,6 +342,9 @@ public enum ReplayReport {
         }
         if let exclusion = result.fixesExcludedByTruth {
             lines.append("Fixes excl.   by truth excludeFixes " + exclusion.text)
+        }
+        if let report = result.gpsSwitch {
+            lines.append("GPS switch    " + report.text)
         }
         lines.append("Consistency   " + consistencyText(result.consistency) + " (engine ellipse)")
         lines.append("  + truth σ   " + consistencyText(result.consistencyWithTruthSigma) + " (engine covariance + truth σ²; gated)")
@@ -534,6 +544,9 @@ public enum ReplayReport {
             if let exclusion = r.fixesExcludedByTruth {
                 out += "Fixes excluded by truth (excludeFixes): \(exclusion.text).\n\n"
             }
+            if let report = r.gpsSwitch {
+                out += "GPS switch (the recording's, UX-9 a): \(report.text).\n\n"
+            }
             out += "| kind | t s | distance m | error m | % of distance | σ heading ° | inside 95 % | + truth σ | truth σ m | 95 % ellipse |\n|---|---:|---:|---:|---:|---:|---|---|---:|---|\n"
             for cp in r.checkpoints where cp.kind != .cleanFix {
                 out += "| \(cp.kind.rawValue)\(cp.notScoredText.map { " (\($0))" } ?? "") | \(String(format: "%.1f", cp.t)) | \(m(cp.distanceM)) | \(m(cp.errorM)) | \(pct(cp.errorPercent)) | \(cp.headingStdDeg.map { String(format: "%.1f", $0) } ?? "n/a") | \(cp.inside95.map { $0 ? "yes" : "no" } ?? "n/a") | \(cp.inside95WithTruthSigma.map { $0 ? "yes" : "no" } ?? "n/a") | \(m(cp.truthSigmaM)) | \(ellipse(cp)) |\n"
@@ -712,6 +725,11 @@ public enum ReplayReport {
             if fix.rejectedOffRoad == true {
                 properties["kind"] = "fixRejectedOffRoad"
                 properties["rejectedOffRoad"] = true
+            }
+            // UX-9 a: withheld by the recording's GPS switch, not by the replay.
+            if fix.withheldByGPSSwitch == true {
+                properties["kind"] = "fixWithheldByGPSSwitch"
+                properties["withheldByGPSSwitch"] = true
             }
             features.append([
                 "type": "Feature",

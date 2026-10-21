@@ -968,3 +968,49 @@ Tests at round 2: Core 1111 tests in 140 suites passed; AppTests 691 tests in 10
 ### Run 75 summary
 
 2 rounds; 4 fixed (R75.1-1..4); 0 rejected; 5 deferred (R75.1-5..7, R75.2-1, R75.2-2). R75.1-8 wording applied (user decision 2026-10-21, after the review). The ellipse-fit span ceiling is resolved: `EllipseFit.maxSpanM = 8000` by user decision, with test `largeEllipseIsCutOff`.
+
+## Run 76: Prompt 37 UX-9 (a) GPS off switch (log v4 gpsSwitch, engine gate, replay_nav), UX-22 GPS state + voice, map without POIs, R74 leftovers (main..ux9a-gps-off: a9103dd..935791c), started 2026-10-21
+
+### Round 1
+
+Reviewers: three opus reviewers in parallel: A engine/replay, B log format/recording/docs/site, C app UI. Result: 0 BLOCKER, 2 MAJOR (both CONFIRMED, fixed), 4 MINOR (DEFERRED). A verified bit-identity: clean drive, mask-after 230, seed 1, roads national + ua-30, base a9103dd vs 935791c; GeoJSON byte-identical, metrics differ only in msPerStep / maxIngestMs. The author's runs (roads off, as-live, live-roads drive `--as-live --compare` exact PASS) were identical too. Mutations: A 3 (one survived, R76.1-4); B 3, all killed.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R76.1-1 | MAJOR | `GPSVoice.swift` `GPSPhraseTracker.note(_:runActive:)` reset only when no run; Record start/stop switch the run generation directly (never nil), so with "Speak GPS changes" on, every Record start/stop said "GPS lost" then "GPS back". | CONFIRMED, FIXED (9b0e223) | Tracker keyed by run generation (`note(_:run:)`); a new run takes its state as baseline silently; MapView also notes on run change. Tests `trackerRunSwap` (fails on the old logic, by reasoning), `trackerLossWithinRun`. |
+| R76.1-2 | MAJOR | `RecordingSessionNavigateTests.swift` `gpsSwitchNavigate` never asserted the switch reaches the navigation feed; a `setGPSSwitch` that skipped tap-only sinks passed every test (Navigate's GPS off would do nothing). | CONFIRMED, FIXED (4cf9b19) | `gpsSwitchNavigate` asserts the feed inputs and engine `gpsSwitchedOff` for off / on; new `gpsSwitchRecordFeed` (feed and file carry identical switches). Mutation "skip sink.record when tap-only" fails `gpsSwitchNavigate`. |
+| R76.1-3 | MINOR | `NavigationTap.swift:42`: a `gpsSwitch` input can be dropped by the tap's newest-4096 buffer when the engine lags ~30 s, and the effect persists (the engine keeps using GPS while the HUD says GPS off). | DEFERRED | BACKLOG. Reviewer A accepted the risk (same as pins; droppedInputs visible). |
+| R76.1-4 | MINOR | `NavigationReplay.swift:986`: the `attachIfDue()` before a gpsSwitch input in the scored replay is untested (a mutation removing it survived 87 tests). | DEFERRED | BACKLOG. |
+| R76.1-5 | MINOR | `MapView.swift:536-541`: "Use GPS" (or Stop while off) re-frames the camera as a first fix (`latest` nil to non-nil), discarding the driver's zoom and pan. | DEFERRED | BACKLOG. |
+| R76.1-6 | MINOR | `docs/RELEASE_PLAN.md:173`: the Review Notes "only network use is downloading road maps" omits Apple Maps tiles (the map is MapKit). The wording was the user's, verbatim. | DEFERRED | User's decision; BACKLOG. |
+
+Tests at round 1: Core 1131 tests in 142 suites passed (36 known issues) at 935791c (round 1 changes no Core code). App: 719 tests in 104 suites passed at 4cf9b19. `PackNetworkPolicyTests` "Turning the switch on restarts a transfer…" failed once in a fixer's run and passed on rerun with no change (flaky, unrelated).
+
+### Round 2
+
+Reviewers: two fresh opus reviewers in parallel, A Core/recording/docs and B app UI. Result: 0 BLOCKER, 1 MAJOR (CONFIRMED, fixed), 1 MINOR (DEFERRED). A verified that round-1 fix 4cf9b19 is correct and not flaky. Core is unchanged since 842b276, so round 1's bit-identity covers HEAD. A ran 3 mutations: 2 killed, 1 survived (R76.2-2).
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R76.2-1 | MAJOR | `MapView.swift:679/721`, `NavigationFeed.swift:84-86`: R76.1-1 was incomplete. At Record stop/start the feed still held the previous run's `EngineGPS(inUse: true)`, so the new run's silent baseline was `.ok` and its first real state `.none` said "GPS lost", then "GPS back" at its first used fix. | CONFIRMED, FIXED (2415182) | Root cause: the engine GPS state was untagged. `EngineGPS.run` is stamped by the feed; a poll that straddles a run change is dropped; the HUD ignores another run's state (stale fallback); `voiceRun` gives the tracker a run only once the state is the run's own; `clearGPS()` on run change. Tests in `GPSRunHandoverTests` (recordStop, recordStop without clear, recordStart, real loss within the new run, hudIgnoresOtherRun, feedTagging). These fail with the fix neutralised in `MapHUD.swift`. The `.onChange` wiring in `MapView` is not exercised by tests. |
+| R76.2-2 | MINOR | `NavigationEngine.swift:1145`: the initialisation branch of `gnssInUse` (a GNSS fix that initialises the filter counts as used) is untested; a mutation removing it survived NavigationGPSSwitchTests. | DEFERRED | BACKLOG. |
+
+Tests at round 2: Core unchanged (1131 passed at 935791c); App 725 tests in 105 suites passed at 2415182.
+
+### Round 3
+
+Reviewers: one fresh opus reviewer (App focus; Core unchanged since round 2). Result: 0 BLOCKER, 1 MAJOR (CONFIRMED, fixed after a user decision). The reviewer found no remaining path where a run starts with a phrase: R76.1-1 and R76.2-1 verified. Note: `clearGPS()` in 2415182 is a redundant guard; the round-2 mapping "clearGPS → recordStop" was wrong (recordStop passes without it).
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R76.3-1 | MAJOR | `MapHUD.swift:154`, `GPSVoice.swift:43`: with no run (no OBD; Navigate needs the link polling, and the 5 min OBD-lost auto-stop ends the run), voiceRun is nil and the tracker resets on every note, so "GPS lost"/"GPS back" is never spoken, while the Settings footnote promised it unconditionally; the `estimateShown == false` branch of voiceRun was unreachable. | CONFIRMED, FIXED (162afbf) | User decision 2026-10-21: the voice speaks only during a run (like the GPS off button). Footnote says so; dead branch removed; test for silence without a run; PLAN §6 item 6 updated. |
+
+Tests at round 3: Core unchanged (1131 passed); App 727 tests in 105 suites passed at 162afbf. clearGPS() kept for untagged (demo) state, test `clearGPSAlone`.
+
+### Round 4
+
+Reviewer: one fresh opus reviewer (App focus plus a cross-cutting pass of the full range; Core unchanged since f67a3c8). Result: 0 BLOCKER, 0 MAJOR, 0 MINOR. Ready to merge. R76.2-1 and R76.3-1 verified: one run counter shared by the service and the session; the service's current run only moves forward or to nil, so the poll bracket is sound; every run handover and the demo start silent; the "only during a run" rule matches the Settings footnote and PLAN §6 item 6. The round 2–3 logic → test mappings were checked by reading (no App mutations without a specific finding). Privacy clean.
+
+### Run 76 summary
+
+4 rounds; 4 fixed (R76.1-1, R76.1-2, R76.2-1, R76.3-1; R76.3-1 after a user decision 2026-10-21: the GPS voice speaks only during a run); 0 rejected; 6 deferred (R76.1-3..6, R76.2-2). Engine output bit-identical to a9103dd without a switch event (clean drive, seed 1, roads on / off / as-live; a live-roads drive `--as-live --compare` exact PASS). Final tests: Core 1131 tests in 142 suites passed (36 known issues); App 727 tests in 105 suites passed at 162afbf.

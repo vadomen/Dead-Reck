@@ -5,14 +5,15 @@ import Foundation
 // their contrast. No SwiftUI, so every rule is unit-testable
 // (`MapHUDTests`). The views are in `MapHUDViews.swift`.
 
-/// GPS indicator state. `.off` is reserved for UX-9 (a), "GPS off, dead
-/// reckoning only": nothing sets it yet.
+/// GPS indicator state. `.off` is the driver's switch (UX-9 (a)), "GPS off,
+/// dead reckoning only"; its glyph (`location.slash.circle`) differs from
+/// `.none`'s (`location.slash.fill`), so the two never rest on colour.
 enum HUDGPS: Hashable, Sendable {
     /// A fix arrived recently.
     case ok
     /// No fix (not receiving, or the last one is stale).
     case none
-    /// The driver switched GPS off (UX-9 (a)); reserved.
+    /// The driver switched GPS off (UX-9 (a)).
     case off
 
     var label: String {
@@ -84,6 +85,9 @@ struct HUDIndicator: Equatable, Sendable {
     var absent = false
 
     var slashed: Bool { failed || absent }
+
+    /// The driver's GPS switch is off: drawn with its own glyph, not the "No GPS" one.
+    var switchedOff = false
 }
 
 /// What the top-left card shows, derived from plain values. The recording row
@@ -101,7 +105,8 @@ struct MapHUDState: Equatable, Sendable {
     static func make(
         speed: MapSpeedReadout, gps: HUDGPS, obd: HUDOBD, thermal: ProcessInfo.ThermalState
     ) -> MapHUDState {
-        let gpsIndicator = HUDIndicator(label: gps.label, failed: gps.isFailed, emphasised: speed.source == .gps)
+        let gpsIndicator = HUDIndicator(
+            label: gps.label, failed: gps.isFailed, emphasised: speed.source == .gps, switchedOff: gps == .off)
         let obdIndicator = HUDIndicator(
             label: obd.label, failed: obd.isFailed, emphasised: speed.source == .obd, absent: obd == .none)
         let thermalText: String? = thermal == .nominal ? nil : "Thermal " + ThermalText.label(thermal)
@@ -113,11 +118,70 @@ struct MapHUDState: Equatable, Sendable {
             accessibilitySummary: parts.joined(separator: ", "))
     }
 
-    /// GPS state from the map's own freshness (`GPSMapView.stale`) and the
-    /// reserved UX-9 switch.
-    static func gpsState(stale: Bool, switchedOff: Bool = false) -> HUDGPS {
+    /// GPS state for the HUD (UX-9 (a), UX-22).
+    /// - The driver's switch (`switchedOff`, read from the session at the tap)
+    ///   wins: immediate, and the engine's own flag lags it by the tap buffer
+    ///   (OR-ing the engine's flag in would show "GPS off" for a moment after
+    ///   Use GPS), so the engine's `switchedOff` is deliberately not used here.
+    /// - With an engine state (a navigating session whose estimate is shown):
+    ///   "GPS" only while the engine used a valid-speed fix in the last 5 s,
+    ///   else "No GPS". Fixes arriving that the engine does not use
+    ///   (network-only, or spoofed ones it rejects) are "No GPS".
+    /// - Without one (no run, no estimate shown, e.g. Navigate without OBD):
+    ///   the map's own freshness (`stale`).
+    /// - An engine state tagged with another run than `currentRun` (the
+    ///   previous run's, still held for a frame) is ignored (R76.2-1): the
+    ///   stale logic answers, which is "No GPS" before the new run has a fix.
+    static func gpsState(
+        stale: Bool, switchedOff: Bool = false, engine: EngineGPS? = nil, currentRun: Int? = nil
+    ) -> HUDGPS {
         if switchedOff { return .off }
+        if let engine, belongs(engine, to: currentRun) { return engine.inUse ? .ok : .none }
         return stale ? .none : .ok
+    }
+
+    /// The engine state is the live run's (or untagged: the demo's feed).
+    static func belongs(_ engine: EngineGPS, to currentRun: Int?) -> Bool {
+        engine.run == nil || engine.run == currentRun
+    }
+
+    /// The run the voice may take a baseline for (R76.2-1, R76.3-1): nil until
+    /// the HUD state comes from the live run's own engine, so a run starts
+    /// silent whatever the previous run left behind. Rule (user decision):
+    /// no run (`current` nil, e.g. Navigate without OBD) -> no voice baseline
+    /// and silence, the same condition as the GPS off button. While a run
+    /// exists the estimate is always shown.
+    static func voiceRun(current: Int?, engine: EngineGPS?) -> Int? {
+        guard let current else { return nil }
+        guard let engine, belongs(engine, to: current) else { return nil }
+        return current
+    }
+}
+
+/// The rail's GPS switch (UX-9 (a)): what it shows and says for the switch and
+/// the run. Shown always, so the rail does not jump; without a run it is
+/// disabled (nothing to switch: the switch belongs to a run).
+struct GPSSwitchControl: Equatable, Sendable {
+    var symbol: String
+    /// The visible caption under the button.
+    var caption: String
+    var accessibilityLabel: String
+    /// Voice Control names: the visible text.
+    var inputLabels: [String]
+    /// Filled while GPS is off.
+    var active: Bool
+    var enabled: Bool
+
+    static func make(switchOn: Bool, runActive: Bool) -> GPSSwitchControl {
+        switchOn
+            ? GPSSwitchControl(
+                symbol: "location.circle", caption: "GPS off",
+                accessibilityLabel: "Turn GPS off, dead reckoning only", inputLabels: ["GPS off"],
+                active: false, enabled: runActive)
+            : GPSSwitchControl(
+                symbol: "location.slash.circle", caption: "Use GPS",
+                accessibilityLabel: "Turn GPS back on", inputLabels: ["Use GPS"],
+                active: true, enabled: runActive)
     }
 }
 
@@ -199,6 +263,13 @@ enum MapLayout {
     /// card, its three actions in one row): the fit keeps clear of it.
     static let offerCardReserved: Double = 140
 
+    /// Rail: four 56 pt buttons (GPS switch, North up, Following, Settings), gaps, and the GPS caption.
+    static let railButtonCount = 4
+    static let railCaptionHeight: Double = 18
+    static var railHeight: Double {
+        Double(railButtonCount) * controlSize + Double(railButtonCount - 1) * railGap + railCaptionHeight
+    }
+
     /// Width kept free on the right for the rail: the bottom-left zone ends here.
     static var railReserved: Double { edgeInset + controlSize + edgeInset }
 }
@@ -277,7 +348,7 @@ struct HUDScheme: Equatable, Sendable {
 
 // MARK: - DEBUG fakes (screenshots)
 
-/// `-uiFakeHUD ok,gpsLost,obdLost,obdNone,recording,debug,thermal,banner,calibrating,stopped`: synthetic HUD
+/// `-uiFakeHUD ok,gpsLost,gpsOff,obdLost,obdNone,recording,debug,thermal,banner,calibrating,stopped`: synthetic HUD
 /// inputs for simulator screenshots (the simulator has no OBD and a real
 /// position). Parsed here so the parsing is testable; applied by `MapScreen`
 /// in DEBUG builds only. Comma-separated, unknown tokens ignored; an empty or
@@ -285,6 +356,8 @@ struct HUDScheme: Equatable, Sendable {
 struct HUDFakes: Equatable, Sendable {
     var isActive = false
     var gpsLost = false
+    /// The driver's GPS switch off (UX-9 (a)); the rail button is enabled.
+    var gpsOff = false
     var obdLost = false
     var obdNone = false
     var recording = false
@@ -312,6 +385,7 @@ struct HUDFakes: Equatable, Sendable {
             switch token {
             case "ok": out.isActive = true
             case "gpsLost": out.isActive = true; out.gpsLost = true
+            case "gpsOff": out.isActive = true; out.gpsOff = true
             case "obdLost": out.isActive = true; out.obdLost = true
             case "obdNone": out.isActive = true; out.obdNone = true
             case "recording": out.isActive = true; out.recording = true
@@ -335,6 +409,8 @@ struct HUDFakes: Equatable, Sendable {
 
     /// The speed shown: 27 km/h from OBD, or from GPS when OBD is "lost".
     var speed: MapSpeedReadout {
-        MapSpeedReadout(source: (obdLost || obdNone) ? .gps : .obd, kmh: stopped ? 0 : 27, quality: .good)
+        // GPS off and no OBD: no fallback to GPS speed, a dash (the model's rule).
+        if gpsOff && (obdLost || obdNone) { return .none }
+        return MapSpeedReadout(source: (obdLost || obdNone) ? .gps : .obd, kmh: stopped ? 0 : 27, quality: .good)
     }
 }

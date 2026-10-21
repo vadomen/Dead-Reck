@@ -16,8 +16,8 @@ import Foundation
 /// (`locationInput(second:)`) that arrives at or before `t`, sorted by
 /// arrival, a motion sample first on a tie, then OBD, then location. The
 /// adapter's own `obd` inputs and the location source's own fixes are
-/// dropped (the same values, at live times); a manual fix (the driver's
-/// tap) passes at once. Same motion samples in, same inputs out, however
+/// dropped (the same values, at live times); a manual fix and the GPS
+/// switch (the driver's taps) pass at once. Same motion samples in, same inputs out, however
 /// the live inputs were interleaved or batched.
 public struct DemoFeedSequencer: Sendable {
     public let model: DemoSensorModel
@@ -46,7 +46,7 @@ public struct DemoFeedSequencer: Sendable {
             return due.sorted { ($0.ns, $0.rank) < ($1.ns, $1.rank) }.map(\.input)
         case .obd, .location:
             return []
-        case .manualFix:
+        case .manualFix, .gpsSwitch:
             return [input]
         }
     }
@@ -61,6 +61,7 @@ extension NavigationInput {
         case .obd(let sample, let t): LogEvent(timestamp: t, payload: .obd(sample))
         case .location(let sample, let t): LogEvent(timestamp: t, payload: .location(sample))
         case .manualFix(let sample, let t): LogEvent(timestamp: t, payload: .manualFix(sample))
+        case .gpsSwitch(let sample, let t): LogEvent(timestamp: t, payload: .gpsSwitch(sample))
         }
     }
 }

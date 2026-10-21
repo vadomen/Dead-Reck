@@ -72,13 +72,17 @@ are written as the strings `"inf"`, `"-inf"` and `"nan"`.
     inputs). The network is used from the next input on. A set is never
     removed or replaced mid-run. A v1 or v2 sidecar has at most one line.
   - `afterInputs`: the number of navigation inputs the run had been handed
-    (`LiveNavigationRun.inputs`, a rejected time jump included) before the
+    (`LiveNavigationRun.inputs`, a rejected time jump included, and so are
+    a v4 `gpsSwitch` row and a fix the switch withholds) before the
     attach; the network is used from the next input on. 0: before the
     first input.
   - `t`: the engine's latest accepted arrival at the attach
     (`NavigationEngine.latestArrival`, session-clock ns): the arrival of
     the last input before it, unless that input was rejected as an
-    implausible time jump. Omitted when `afterInputs` is 0.
+    implausible time jump, was a GPS switch, or was a fix the switch
+    withheld (neither moves the engine's clock: `docs/NAVIGATION.md`,
+    "GPS off switch"). Omitted when no input has moved it yet
+    (`afterInputs` 0, or only switch rows and withheld fixes so far).
   - `roads`: the packs in canonical order (ascending content hash), as
     `replay_nav` results record them: `contentHash` and `gridID` as 16
     lowercase hex digits, `formatVersion` an integer, `osmTimestamp` Unix

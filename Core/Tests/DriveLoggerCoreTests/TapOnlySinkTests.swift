@@ -39,7 +39,7 @@ struct TapOnlySinkTests {
         #expect(sink.isTapOnly && !writer.sink.isTapOnly)
         #expect(viaTapOnly.events == viaWriter.events)
         #expect(viaTapOnly.events == events.filter { LogSink.isTapped($0.payload) })
-        #expect(viaTapOnly.events.count == 404, "4 kinds of the 14 + 400 of the 700 mixed")
+        #expect(viaTapOnly.events.count == 405, "5 kinds of the 15 + 400 of the 700 mixed")
         // The writer's side is untouched by the other sink: every row written.
         #expect(summary.eventCount == events.count)
         #expect(try WriterFixtures.read(summary.url, recovery: .strict).events == events)
