@@ -49,6 +49,8 @@ public enum RecordingCSV {
         case .manualFix:
             ["t", "latitude", "longitude", "pressedT", "mapSpanM", "obdSpeedKmh", "obdSpeedT",
              "gpsSpeedKmh", "speedSource", "gateSpeedKmh", "note"]
+        case .gpsSwitch:
+            ["t", "on", "source"]
         case nil:
             ["t", "data"]
         }
@@ -99,6 +101,8 @@ public enum RecordingCSV {
         case .manualFix(let f):
             return [t, d(f.latitude), d(f.longitude), ts(f.pressedT), d(f.mapSpanM), d(f.obdSpeedKmh), ts(f.obdSpeedT),
                     d(f.gpsSpeedKmh), f.speedSource, d(f.gateSpeedKmh), f.note ?? ""]
+        case .gpsSwitch(let g):
+            return [t, b(g.on), g.source]
         case .unrecognized(_, let data):
             return [t, data.map(json) ?? ""]
         }

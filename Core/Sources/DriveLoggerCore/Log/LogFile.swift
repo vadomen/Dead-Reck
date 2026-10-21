@@ -64,10 +64,10 @@ public enum LogFileName {
 /// counter update and an enqueue — no I/O, no waiting on the writer.
 ///
 /// **Tap (N4 A).** An optional `tap`, fixed when the writer is created, sees
-/// every `motion`, `location`, `obd` and `manualFix` event that was accepted
-/// into the writer's queue (`isTapped`), right after the enqueue and still
-/// under `lock`. So the tap sees exactly the events the writer will take, in
-/// exactly the order it takes them: live order is file order. An event the
+/// every `motion`, `location`, `obd`, `manualFix` and `gpsSwitch` event that
+/// was accepted into the writer's queue (`isTapped`), right after the enqueue
+/// and still under `lock`. So the tap sees exactly the events the writer will
+/// take, in exactly the order it takes them: live order is file order. An event the
 /// sink refuses (after `finish()`) is never tapped. The tap runs inside the
 /// critical section, and sensor callbacks call `record` while holding
 /// `SampleGate`'s lock, so it must never block, never wait on anything and
@@ -123,8 +123,8 @@ public final class LogSink: Sendable {
     }
 
     /// A sink with no writer behind it (UX-1 Navigate): `tap` sees every
-    /// `motion`, `location`, `obd` and `manualFix` event recorded before
-    /// `finish()`, in record order, and nothing is kept. The tap's rules are
+    /// `motion`, `location`, `obd`, `manualFix` and `gpsSwitch` event
+    /// recorded before `finish()`, in record order, and nothing is kept. The tap's rules are
     /// the type's ("Tap"): it runs under the sink's lock and must never
     /// block or call back into the sink.
     public static func tapOnly(_ tap: @escaping @Sendable (LogEvent) -> Void) -> LogSink {
@@ -135,10 +135,12 @@ public final class LogSink: Sendable {
     public var isTapOnly: Bool { !keepsEvents }
 
     /// Whether `tap` sees events of this kind: the navigation inputs
-    /// `motion`, `location`, `obd` and `manualFix`, and nothing else.
+    /// `motion`, `location`, `obd`, `manualFix`, and `gpsSwitch` (v4: the
+    /// driver's switch gates which fixes navigation may use), and nothing
+    /// else.
     public static func isTapped(_ payload: LogEvent.Payload) -> Bool {
         switch payload {
-        case .motion, .location, .obd, .manualFix: true
+        case .motion, .location, .obd, .manualFix, .gpsSwitch: true
         default: false
         }
     }
@@ -477,8 +479,9 @@ public actor LogFileWriter {
     ///   `.critical`, leaving room for a clean stop.
     /// - Parameter diskSpace: free-space source; injectable for tests.
     /// - Parameter tap: handed to `sink` (`LogSink`'s doc, "Tap"): sees every
-    ///   `motion`, `location`, `obd` and `manualFix` event the sink accepts,
-    ///   in write order. Must never block. nil (the default) changes nothing.
+    ///   `motion`, `location`, `obd`, `manualFix` and `gpsSwitch` event the
+    ///   sink accepts, in write order. Must never block. nil (the default)
+    ///   changes nothing.
     /// - Precondition: `stopFreeBytes < warningFreeBytes` (checked by
     ///   `DiskSpacePolicy.init`).
     public init(

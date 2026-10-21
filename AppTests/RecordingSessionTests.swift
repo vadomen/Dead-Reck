@@ -736,6 +736,53 @@ struct RecordingSessionManualFixTests {
         events.compactMap { if case .manualFix(let sample) = $0.payload { ($0.timestamp, sample) } else { nil } }
     }
 
+    static func gpsSwitches(_ events: [LogEvent]) -> [(t: MonotonicTimestamp, sample: GPSSwitchSample)] {
+        events.compactMap { if case .gpsSwitch(let sample) = $0.payload { ($0.timestamp, sample) } else { nil } }
+    }
+
+    @Test("GPS switch (UX-9a): off and on write gpsSwitch rows at the tap on the session clock; a repeat or no run writes nothing; the next recording starts on")
+    func gpsSwitchRows() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let (session, _, url) = try await Self.started(window: .seconds(1), scratch: scratch)
+        #expect(session.isGPSSwitchOn, "a recording starts with GPS on")
+        #expect(session.setGPSSwitch(on: true) == nil, "already on: no row")
+
+        let before = try #require(session.manualFixTapTime())
+        let offT = try #require(session.setGPSSwitch(on: false))
+        #expect(offT >= before, "stamped on the session clock at the tap")
+        #expect(!session.isGPSSwitchOn)
+        #expect(session.setGPSSwitch(on: false) == nil, "already off: no row")
+        try await Task.sleep(for: .milliseconds(20))
+        let onT = try #require(session.setGPSSwitch(on: true))
+        #expect(onT > offT)
+        #expect(session.isGPSSwitchOn)
+        let lastOffT = try #require(session.setGPSSwitch(on: false))
+        await session.stop()
+        #expect(session.isGPSSwitchOn, "no run: on")
+        #expect(session.setGPSSwitch(on: false) == nil, "no run: nothing to record into")
+
+        let (header, events, report) = try RecordingFixtures.read(url)
+        #expect(report.failure == nil && !report.truncatedTail)
+        #expect(header.formatVersion == .v4)
+        let rows = Self.gpsSwitches(events)
+        #expect(rows.map(\.t) == [offT, onT, lastOffT])
+        #expect(rows.map(\.sample) == [
+            GPSSwitchSample(on: false, source: "driver"),
+            GPSSwitchSample(on: true, source: "driver"),
+            GPSSwitchSample(on: false, source: "driver"),
+        ])
+        let stopIndex = try #require(RecordingFixtures.lifecycle(events).last { $0.sample.event == "stop" }?.index)
+        #expect(RecordingFixtures.kinds(events, .gpsSwitch).allSatisfy { $0 < stopIndex }, "every row before the stop row")
+
+        // The last recording ended with GPS off; the next one starts on.
+        try await session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
+        #expect(session.isGPSSwitchOn)
+        let second = try #require(session.currentFile)
+        await session.stop()
+        #expect(RecordingFixtures.kinds(try RecordingFixtures.read(second).events, .gpsSwitch).isEmpty)
+    }
+
     /// Starts a recording on a fake link; the undo window is `window`.
     static func started(
         window: Duration, link: FakeLink = FakeLink(), sources: [any SensorSource]? = nil, scratch: ScratchStore
@@ -773,7 +820,7 @@ struct RecordingSessionManualFixTests {
         await session.stop()
 
         let (header, events, _) = try RecordingFixtures.read(url)
-        #expect(header.formatVersion == .v3)
+        #expect(header.formatVersion == .current)
         let fixes = Self.manualFixes(events)
         #expect(fixes.count == 1)
         let (t, fix) = try #require(fixes.first)

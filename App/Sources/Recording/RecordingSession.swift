@@ -784,6 +784,40 @@ final class RecordingSession {
         rec.sink.record(.marker(text, at: rec.clock.now()))
     }
 
+    // MARK: - GPS switch (UX-9a)
+
+    /// Generation of the run in which the driver turned GPS off; nil while
+    /// it is on. Keyed by run, so every recording and every Navigate session
+    /// starts with GPS on (not persisted, user decision 2026-10-20) without
+    /// a reset anywhere: a new run has a new generation.
+    private var gpsOffGeneration: Int?
+
+    /// The driver's "GPS off" switch for the current run (Record, else
+    /// Navigate). True with no run. Observed.
+    var isGPSSwitchOn: Bool {
+        guard let generation = currentRunGeneration else { return true }
+        return gpsOffGeneration != generation
+    }
+
+    /// Sets the driver's "GPS off" switch on the current run and records a
+    /// `gpsSwitch` row (format v4, `source` "driver") at `clock.now()`, the
+    /// tap, through the run's sink like a marker. In Record the row is
+    /// written to the file; in Navigate the sink is tap-only, so it reaches
+    /// navigation and nothing stores it. Location rows keep being recorded
+    /// while off: the switch only gates what navigation may use.
+    ///
+    /// Returns the row's `t`, or nil when nothing was recorded: no run, the
+    /// run takes no more rows (stop row queued, write failure, Navigate
+    /// ended), or `on` is already the current state.
+    @discardableResult
+    func setGPSSwitch(on: Bool) -> MonotonicTimestamp? {
+        guard let run = currentRun, run.isWritable, on != isGPSSwitchOn else { return nil }
+        let t = run.clock.now()
+        run.sink.record(LogEvent(timestamp: t, payload: .gpsSwitch(GPSSwitchSample(on: on, source: .driver))))
+        gpsOffGeneration = on ? nil : run.generation
+        return t
+    }
+
     // MARK: - Manual position fix (double tap)
 
     /// Manual fixes tapped and not yet written, in tap order. Observed: the

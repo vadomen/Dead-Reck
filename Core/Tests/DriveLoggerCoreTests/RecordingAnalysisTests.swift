@@ -208,6 +208,35 @@ struct RecordingAnalysisTests {
         v2.formatVersion = .v2
         #expect(!RecordingAnalyzer(header: v2).summary(report: empty).render().contains("Manual fixes"))
     }
+
+    @Test("GPS switch rows are collected in file order and listed with t, state and source")
+    func gpsSwitches() {
+        var analyzer = RecordingAnalyzer(header: F.header)
+        analyzer.observe(LogEvent(timestamp: F.ms(12_340), payload: .gpsSwitch(GPSSwitchSample(on: false, source: .driver))))
+        analyzer.observe(StatsFixtures.motion(at: 13_000))
+        analyzer.observe(LogEvent(timestamp: F.ms(45_600), payload: .gpsSwitch(GPSSwitchSample(on: true, source: .driver))))
+        analyzer.observe(LogEvent(timestamp: F.ms(50_000), payload: .gpsSwitch(GPSSwitchSample(on: false, source: "auto"))))
+        let summary = analyzer.summary(report: LogReadReport(members: 1, truncatedTail: false, skippedLineIndices: []))
+        #expect(summary.gpsSwitches.map(\.t) == [F.ms(12_340), F.ms(45_600), F.ms(50_000)])
+        #expect(summary.gpsSwitches.map(\.sample.on) == [false, true, false])
+        #expect(summary.gpsSwitches.map(\.sample.source) == ["driver", "driver", "auto"])
+        #expect(summary.kinds.first { $0.kind == "gpsSwitch" }?.count == 3)
+
+        let text = summary.render()
+        let needle = "GPS switch    3: 12.3 s off (driver); 45.6 s on (driver); 50.0 s off (auto)"
+        #expect(text.contains(needle), "missing \(needle) in\n\(text)")
+    }
+
+    @Test("No GPS switch: a v4 recording says GPS stayed on, an older one says nothing")
+    func noGPSSwitches() {
+        var v4 = F.header
+        v4.formatVersion = .v4
+        let empty = LogReadReport(members: 1, truncatedTail: false, skippedLineIndices: [])
+        #expect(RecordingAnalyzer(header: v4).summary(report: empty).render().contains("GPS switch    none (GPS on throughout)"))
+        var v3 = F.header
+        v3.formatVersion = .v3
+        #expect(!RecordingAnalyzer(header: v3).summary(report: empty).render().contains("GPS switch"))
+    }
 }
 
 @Suite("Recording CSV")
@@ -233,6 +262,7 @@ struct RecordingCSVTests {
             ))),
             LogEvent(timestamp: t, payload: .unrecognized(kind: "future/kind", data: .object(["a": .int(1)]))),
             LogEvent(timestamp: t, payload: .manualFix(ManualFixSample(latitude: 0, longitude: 0, pressedT: t, speedSource: "unknown"))),
+            LogEvent(timestamp: t, payload: .gpsSwitch(GPSSwitchSample(on: false, source: .driver))),
         ]
     }()
 
@@ -276,6 +306,16 @@ struct RecordingCSVTests {
         ))
         #expect(RecordingCSV.values(for: minimal) == ["0", "0.0", "0.0", "0", "", "", "", "", "unknown", "", ""])
         #expect(RecordingCSV.fileName(for: "manualFix") == "manualFix.csv")
+    }
+
+    @Test("gpsSwitch.csv has t, on and source; an unknown source is verbatim")
+    func gpsSwitchValues() {
+        #expect(RecordingCSV.columns(for: "gpsSwitch") == ["t", "on", "source"])
+        let off = LogEvent(timestamp: MonotonicTimestamp(nanoseconds: -7), payload: .gpsSwitch(GPSSwitchSample(on: false, source: .driver)))
+        #expect(RecordingCSV.values(for: off) == ["-7", "false", "driver"])
+        let on = LogEvent(timestamp: MonotonicTimestamp(nanoseconds: 2_000_000_000), payload: .gpsSwitch(GPSSwitchSample(on: true, source: "auto")))
+        #expect(RecordingCSV.values(for: on) == ["2000000000", "true", "auto"])
+        #expect(RecordingCSV.fileName(for: "gpsSwitch") == "gpsSwitch.csv")
     }
 
     @Test("The exporter writes one CSV per kind with a header row")

@@ -493,6 +493,33 @@ struct RecordingSessionNavigateTests {
         #expect(await eventually(10) { rig.tee.ended.contains(second) })
     }
 
+    @Test("GPS switch in Navigate (UX-9a): set on the Navigate run, never in the recording; Record and the next Navigate start with GPS on")
+    func gpsSwitchNavigate() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let rig = NavigateRig(store: scratch.store, undoWindow: .seconds(30))
+        await rig.connect(speed: 0)
+        #expect(rig.session.setGPSSwitch(on: false) == nil, "no run yet")
+        #expect(rig.session.isGPSSwitchOn)
+        rig.session.enableNavigate(Self.quick)
+        _ = try #require(rig.session.navigateGeneration)
+        _ = try #require(rig.session.setGPSSwitch(on: false), "recorded into Navigate's tap-only sink")
+        #expect(!rig.session.isGPSSwitchOn)
+
+        rig.uptime.set(NavigateRig.base + 50)
+        try await rig.session.start(mount: "m", vehicle: "v", allowWithoutOBD: false, calibration: .zero)
+        #expect(rig.session.isGPSSwitchOn, "a recording starts with GPS on")
+        let url = try #require(rig.session.currentFile)
+        await rig.session.stop()
+        _ = try #require(rig.session.navigateGeneration, "back to Navigate")
+        #expect(rig.session.isGPSSwitchOn, "a new Navigate session starts with GPS on")
+
+        let (_, events, _) = try RecordingFixtures.read(url)
+        #expect(RecordingFixtures.kinds(events, .gpsSwitch).isEmpty, "Navigate's switch is not in the recording")
+        rig.session.disableNavigate()
+        #expect(rig.session.isGPSSwitchOn)
+    }
+
     @Test("currentRunGeneration follows the live run; the run clock ages in Navigate while live.elapsed does not tick")
     func runGenerationAndClock() async throws {
         let scratch = try ScratchStore()

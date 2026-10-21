@@ -67,11 +67,14 @@ enum TapFixtures {
             windowS: 10, counts: [:], obdHz: 0, motionHz: 0, gaps: [:], maxGapMs: [:],
             timeouts: 0, queueDepthMax: 0, dropped: 0, bytesWritten: 0))
         case .manualFix: .manualFix(ManualFixSample(latitude: 0, longitude: 0, pressedT: t, speedSource: "unknown"))
+        case .gpsSwitch: .gpsSwitch(GPSSwitchSample(on: false, source: .driver))
         }
         return LogEvent(timestamp: t, payload: payload)
     }
 
-    static let navigationKinds: Set<LogEventKind> = [.motion, .location, .obd, .manualFix]
+    /// The kinds `LogSink` taps: the navigation inputs plus the v4 GPS
+    /// switch, which gates which fixes navigation may use.
+    static let navigationKinds: Set<LogEventKind> = [.motion, .location, .obd, .manualFix, .gpsSwitch]
 
     static func writer(
         _ scratch: ScratchDirectory,
@@ -177,7 +180,7 @@ struct NavigationTapTests {
         let summary = try await F.write(events, to: writer)
 
         let expected = events.filter { event in F.navigationKinds.contains { $0.rawValue == event.payload.kind } }
-        #expect(expected.count == 4)
+        #expect(expected.count == 5)
         #expect(recorder.events == expected)
         for event in events {
             let kind = event.payload.kind

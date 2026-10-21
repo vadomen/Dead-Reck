@@ -9,7 +9,7 @@ import Testing
 /// the reminder to add a frozen fixture and pin the new strings there.
 @Suite("Log format current state")
 struct LogFormatCurrentStateTests {
-    @Test("New recordings are written in the current version, v3")
+    @Test("New recordings are written in the current version, v4")
     func writesCurrentVersion() throws {
         let header = LogHeader(
             sessionID: LogFixtures.sessionID,
@@ -17,29 +17,30 @@ struct LogFormatCurrentStateTests {
             app: LogFixtures.app,
             device: LogFixtures.device
         )
-        #expect(LogFormatVersion.current == .v3)
+        #expect(LogFormatVersion.current == .v4)
         #expect(header.formatVersion == .current)
 
         let line = String(decoding: try LogCodec().line(for: header), as: UTF8.self)
-        #expect(line.contains("\"formatVersion\":3"))
+        #expect(line.contains("\"formatVersion\":4"))
     }
 
     @Test("Every declared format version has a frozen fixture")
     func allVersionsHaveFixtures() {
         // A version added to the enum without a reader and a fixture is the
         // failure mode the compatibility invariant exists to prevent.
-        #expect(LogFormatVersion.allCases == [.v1, .v2, .v3])
+        #expect(LogFormatVersion.allCases == [.v1, .v2, .v3, .v4])
         #expect(LogFormatVersion.current == LogFormatVersion.allCases.max())
         #expect(!LogFormatCompatibilityTests.version1Recording.isEmpty)
         #expect(!LogFormatCompatibilityV2Tests.version2Recording.isEmpty)
         #expect(!LogFormatCompatibilityV3Tests.version3Recording.isEmpty)
+        #expect(!LogFormatCompatibilityV4Tests.version4Recording.isEmpty)
     }
 
     @Test("Every kind and vocabulary value is pinned in a frozen suite")
     func everythingIsPinned() {
         // Raise these only after adding the new strings to the frozen suite of
         // the version that introduces them.
-        #expect(LogEventKind.allCases.count == 14)
+        #expect(LogEventKind.allCases.count == 15)
         #expect(LifecycleSample.Event.allCases.count == 15)
         // `stop` details; pinned with the low-disk prefixes in
         // `LifecycleDetailTests` (R3-4).
@@ -51,5 +52,7 @@ struct LogFormatCurrentStateTests {
         #expect(LinkSample.Layer.allCases.count == 2)
         // Pinned in `LogFormatCompatibilityV3Tests`.
         #expect(ManualFixSample.SpeedSource.allCases.count == 3)
+        // Pinned in `LogFormatCompatibilityV4Tests`.
+        #expect(GPSSwitchSample.Source.allCases.count == 1)
     }
 }
