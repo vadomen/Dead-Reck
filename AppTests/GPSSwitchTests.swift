@@ -199,7 +199,7 @@ struct GPSSwitchHUDTests {
 @Suite("GPS voice (UX-22)")
 struct GPSVoiceTests {
     private func allow(_ l: inout GPSPhraseLimiter, _ p: GPSPhrase, now: TimeInterval) -> Bool { l.allow(p, now: now) }
-    private func note(_ t: inout GPSPhraseTracker, _ s: HUDGPS, runActive: Bool) -> GPSPhrase? { t.note(s, runActive: runActive) }
+    private func note(_ t: inout GPSPhraseTracker, _ s: HUDGPS, runActive: Bool) -> GPSPhrase? { t.note(s, run: runActive ? 1 : nil) }
 
     @MainActor
     final class FakeSpeaker: GPSSpeaking {
@@ -246,28 +246,49 @@ struct GPSVoiceTests {
         #expect(note(&t, .ok, runActive: true) == nil)
     }
 
+    @Test("R76.1-1: run B straight after run A (no nil between) is a silent baseline, not lost/back")
+    func trackerRunSwap() {
+        var t = GPSPhraseTracker()
+        #expect(t.note(.ok, run: 1) == nil)
+        #expect(t.note(.none, run: 2) == nil, "Record start: the new engine has no fix yet")
+        #expect(t.note(.ok, run: 2) == nil, "first fix of run 2 is not back")
+        #expect(t.note(.ok, run: 3) == nil)
+        #expect(t.note(.ok, run: 4) == nil, "equal state, new run: still a reset")
+        #expect(t.note(.none, run: 5) == nil, "no .lost carried over from run 4's baseline")
+        #expect(t.note(.ok, run: 5) == nil)
+    }
+
+    @Test("R76.1-1: a real loss within one run still says lost, then back")
+    func trackerLossWithinRun() {
+        var t = GPSPhraseTracker()
+        #expect(t.note(.none, run: 5) == nil)
+        #expect(t.note(.ok, run: 5) == nil)
+        #expect(t.note(.none, run: 5) == .lost)
+        #expect(t.note(.ok, run: 5) == .back)
+    }
+
     @MainActor
     @Test("Announcer: off by default means silent; on speaks the phrase and applies the limit")
     func announcer() {
         let speaker = FakeSpeaker()
         var clock = 0.0
         let voice = GPSVoiceAnnouncer(speaker: speaker, now: { clock })
-        voice.note(.ok, runActive: true, enabled: false)
-        #expect(voice.note(.none, runActive: true, enabled: false) == nil)
+        voice.note(.ok, run: 1, enabled: false)
+        #expect(voice.note(.none, run: 1, enabled: false) == nil)
         #expect(speaker.said.isEmpty, "switch off: nothing, demo included")
-        #expect(voice.note(.ok, runActive: true, enabled: true) == .back, "the loss was real, the voice is on now")
+        #expect(voice.note(.ok, run: 1, enabled: true) == .back, "the loss was real, the voice is on now")
         clock = 10
-        #expect(voice.note(.none, runActive: true, enabled: true) == .lost)
+        #expect(voice.note(.none, run: 1, enabled: true) == .lost)
         #expect(speaker.said == ["GPS back", "GPS lost"])
         clock = 20
-        #expect(voice.note(.ok, runActive: true, enabled: true) == nil, "back again within 5 min")
+        #expect(voice.note(.ok, run: 1, enabled: true) == nil, "back again within 5 min")
         clock = 30
-        #expect(voice.note(.none, runActive: true, enabled: true) == nil, "lost again within 5 min")
+        #expect(voice.note(.none, run: 1, enabled: true) == nil, "lost again within 5 min")
         #expect(speaker.said.count == 2)
         clock = 311
-        #expect(voice.note(.ok, runActive: true, enabled: true) == .back)
+        #expect(voice.note(.ok, run: 1, enabled: true) == .back)
         clock = 320
-        #expect(voice.note(.none, runActive: true, enabled: true) == .lost)
+        #expect(voice.note(.none, run: 1, enabled: true) == .lost)
         #expect(speaker.said.count == 4)
     }
 }

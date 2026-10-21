@@ -117,7 +117,7 @@ struct MapScreen: View {
             gpsSwitchEnabled: fake.isActive || (session.currentRunGeneration != nil && demo == nil),
             onGPSSwitch: { [session] on in session.setGPSSwitch(on: on) },
             onGPSState: { [session, voice] state in
-                voice.note(state, runActive: session.currentRunGeneration != nil, enabled: speaksGPSChanges)
+                voice.note(state, run: session.currentRunGeneration, enabled: speaksGPSChanges)
             },
             roadsAttribution: (roadsWarning?.attribution ?? false) || demo != nil,
             demo: demo,
@@ -675,6 +675,8 @@ struct GPSMapView: View {
         // Top-left card (UX-32): the only thing at the top.
         .overlay(alignment: .topLeading) { hudCard }
         .onChange(of: gpsHUD, initial: true) { _, state in onGPSState(state) }
+        // R76.1-1: a new run with an equal HUD state still resets the voice baseline.
+        .onChange(of: run) { _, _ in onGPSState(gpsHUD) }
         // Right rail: North up / Heading up, Following, Settings.
         .overlay(alignment: .bottomTrailing) { rail }
         // REL-DEMO: the badge and Stop demo, top right, only while it runs.

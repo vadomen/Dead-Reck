@@ -27,6 +27,7 @@ enum GPSPhrase: String, CaseIterable, Hashable, Sendable {
 struct GPSPhraseTracker: Equatable, Sendable {
     private var previous: HUDGPS?
     private var lostSeen = false
+    private var run: Int?
 
     /// Feed every state (also while the voice is off, so switching it on
     /// later does not speak a stale change). Returns the phrase for this change.
@@ -34,10 +35,21 @@ struct GPSPhraseTracker: Equatable, Sendable {
     /// - Switch off (from GPS or No GPS): "GPS off".
     /// - Switch on again: nothing (the driver just tapped it). The state it lands in is the new baseline.
     /// - GPS to No GPS: "GPS lost". No GPS to GPS: "GPS back", only after a "lost".
-    mutating func note(_ state: HUDGPS, runActive: Bool) -> GPSPhrase? {
-        guard runActive else {
+    ///
+    /// `run` is the live run's generation, nil when none. A different run than the
+    /// last one noted (Record start/stop swap runs with no nil in between) resets
+    /// and takes this state as the silent baseline.
+    mutating func note(_ state: HUDGPS, run: Int?) -> GPSPhrase? {
+        guard let run else {
             previous = nil
             lostSeen = false
+            self.run = nil
+            return nil
+        }
+        if run != self.run {
+            self.run = run
+            lostSeen = false
+            previous = state
             return nil
         }
         defer { previous = state }
@@ -89,10 +101,10 @@ final class GPSVoiceAnnouncer {
         self.now = now
     }
 
-    /// The HUD's GPS state (and whether a run is live) as of now.
+    /// The HUD's GPS state (and the live run's generation, nil when none) as of now.
     @discardableResult
-    func note(_ state: HUDGPS, runActive: Bool, enabled: Bool) -> GPSPhrase? {
-        guard let phrase = tracker.note(state, runActive: runActive), enabled,
+    func note(_ state: HUDGPS, run: Int?, enabled: Bool) -> GPSPhrase? {
+        guard let phrase = tracker.note(state, run: run), enabled,
               limiter.allow(phrase, now: now()) else { return nil }
         speaker.speak(phrase.rawValue)
         return phrase
