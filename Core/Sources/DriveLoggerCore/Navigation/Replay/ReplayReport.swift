@@ -54,6 +54,10 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
     /// the start, when none was attached, and in files written before N3.3.
     public var roadsAttachedAfterInputs: Int?
     public var attachedRoadSetHash: String?
+    /// Prompt 38: inputs given before each extension of the attached
+    /// network to a larger set (`attachedRoadSetHash` is the final set's).
+    /// nil (absent) when it was never extended, and in files written before.
+    public var roadsExtendedAfterInputs: [Int]?
     /// The truth file's `excludeFixes` and how many fixes it kept from
     /// being truth. nil (absent) in a run without it and in files written
     /// before it.
@@ -101,6 +105,7 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
         checkpointsAfterScoreUntil = result.checkpointsAfterScoreUntil
         roadsAttachedAfterInputs = result.roadsAttachedAfterInputs
         attachedRoadSetHash = result.attachedRoadSetHash
+        roadsExtendedAfterInputs = result.roadsExtendedAfterInputs.isEmpty ? nil : result.roadsExtendedAfterInputs
         fixesExcludedByTruth = result.fixesExcludedByTruth
         let decisions = result.pins.compactMap(\.fixPin)
         fixPinDecisions = decisions.isEmpty ? nil : decisions
@@ -121,6 +126,7 @@ extension ReplayMetrics {
         case roads, roadSetHash, roadMetrics
         case scoreUntilT, checkpointsAfterScoreUntil
         case roadsAttachedAfterInputs, attachedRoadSetHash
+        case roadsExtendedAfterInputs
         case fixesExcludedByTruth
         case fixPinDecisions
         case maxErrorByKind
@@ -140,7 +146,7 @@ extension ReplayMetrics {
     ///   `motionStartT`, `consistency`, `consistencyWithTruthSigma`, `pins`,
     ///   `pinScoring`, `roads`, `roadSetHash`, `roadMetrics`, `scoreUntilT`,
     ///   `checkpointsAfterScoreUntil`, `roadsAttachedAfterInputs`,
-    ///   `attachedRoadSetHash`, `fixesExcludedByTruth`, `fixPinDecisions`, `maxErrorByKind` (and any key a
+    ///   `attachedRoadSetHash`, `roadsExtendedAfterInputs`, `fixesExcludedByTruth`, `fixPinDecisions`, `maxErrorByKind` (and any key a
     ///   later build adds, which must be optional or take a default here).
     /// - `config` and `counters` decode tolerantly themselves: a config key
     ///   or counter added later takes its default (0 for a counter).
@@ -181,6 +187,7 @@ extension ReplayMetrics {
         checkpointsAfterScoreUntil = try c.decodeIfPresent(Int.self, forKey: .checkpointsAfterScoreUntil)
         roadsAttachedAfterInputs = try c.decodeIfPresent(Int.self, forKey: .roadsAttachedAfterInputs)
         attachedRoadSetHash = try c.decodeIfPresent(String.self, forKey: .attachedRoadSetHash)
+        roadsExtendedAfterInputs = try c.decodeIfPresent([Int].self, forKey: .roadsExtendedAfterInputs)
         fixesExcludedByTruth = try c.decodeIfPresent(ReplayResult.FixExclusion.self, forKey: .fixesExcludedByTruth)
         fixPinDecisions = try c.decodeIfPresent([FixPinDecision].self, forKey: .fixPinDecisions)
         maxErrorByKind = try c.decodeIfPresent([String: KindMaxError].self, forKey: .maxErrorByKind)

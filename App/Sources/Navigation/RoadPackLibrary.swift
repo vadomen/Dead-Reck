@@ -29,6 +29,12 @@ import Foundation
 /// and `candidates()` answer at once between scans. A scan runs at launch,
 /// when a recording starts and when Diagnostics appears; a cache hit costs
 /// one `stat` per file. A trigger during a scan queues one more scan.
+///
+/// **Changes reach running sessions (prompt 38).** Each finished scan
+/// compares its verified candidates' content hashes with the previous
+/// scan's; when the set differs (a download, a removal, an inbox install)
+/// `candidatesRevision` goes up and every `observeCandidates` observer is
+/// told, so `NavigationService` offers the new set to each active run.
 actor RoadPackLibrary {
     /// The pack files to consider now, in the order they are to be used.
     typealias Source = @Sendable () -> [URL]
@@ -73,6 +79,10 @@ actor RoadPackLibrary {
         /// A file refused at launch and left in the developer inbox
         /// (`Documents/RoadPacks/`); not installed, never offered.
         var inInbox = false
+        /// Pending removal and attached to the run in progress, which keeps
+        /// it until the app restarts (a network is never detached mid-run).
+        /// Set by `RoadsDiagnosticsModel` from the run's roads, not by a scan.
+        var inUseUntilRestart = false
 
         /// In the store (active or pending removal), not an inbox refusal.
         var installed: Bool { !inInbox }
@@ -156,6 +166,14 @@ actor RoadPackLibrary {
     private(set) var scansStarted = 0
     /// Files verified, not found in the cache, over all scans (tests).
     private(set) var verifications = 0
+    /// Bumped when a finished scan's verified candidates (content hashes)
+    /// differ from the previous finished scan's; 0 after the first scan.
+    private(set) var candidatesRevision = 0
+    /// The latest finished scan's candidate hashes, sorted; nil before it.
+    private var candidateHashes: [String]?
+    /// Told (on this actor, between scans) when `candidatesRevision` goes up.
+    typealias CandidatesObserver = @Sendable () -> Void
+    private var candidateObservers: [CandidatesObserver] = []
 
     /// - Parameters:
     ///   - source: the pack files now.
@@ -255,6 +273,12 @@ actor RoadPackLibrary {
         latest = result
         cache = result.cache
         scansCompleted += 1
+        let hashes = result.candidates.candidates.map { NavigationSeed.hex($0.pack.contentHash) }.sorted()
+        if let previous = candidateHashes, previous != hashes {
+            candidatesRevision += 1
+            for observer in candidateObservers { observer() }
+        }
+        candidateHashes = hashes
         verifications += result.verifications
         scanTask = nil
         let ready = waiters.filter { $0.target <= scansCompleted }
@@ -343,6 +367,18 @@ actor RoadPackLibrary {
         return latest?.candidates ?? Candidates()
     }
 
+    /// `candidates()` and the `candidatesRevision` they belong to.
+    func candidatesWithRevision() async -> (candidates: Candidates, revision: Int) {
+        let set = await candidates()
+        return (set, candidatesRevision)
+    }
+
+    /// `observer` is called whenever `candidatesRevision` goes up. It must
+    /// return at once (start a task for any work).
+    func observeCandidates(_ observer: @escaping CandidatesObserver) {
+        candidateObservers.append(observer)
+    }
+
     /// The verified active packs' coverages, by pack name (the at-a-stop
     /// offer, UX-8: `PackOfferRule.Input.installed`). Built once per scan
     /// from the candidates that scan opened anyway (`COVR`, else the cached
@@ -404,6 +440,32 @@ actor RoadPackLibrary {
         }
         await rescan()
         return outcome
+    }
+
+    /// Brings back pack `name` marked for removal (Settings → Maps,
+    /// "Download again", B5): clears the mark of each of its marked files
+    /// (`RoadPackStore.unmark`) and rescans, so it is in the active set
+    /// again with no restart and no download. The rescan goes through
+    /// `candidatesRevision` like any change, so running sessions are
+    /// offered the pack again (one that still has it attached, as removal
+    /// never detaches, finds nothing new). Returns false, changing nothing,
+    /// without a store, when no file of that name is marked (it was deleted
+    /// already, or never marked), or when a mark cannot be cleared. Waits
+    /// for the first scan (launch maintenance).
+    @discardableResult
+    func cancelRemoval(name: String) async -> Bool {
+        guard let store else { return false }
+        await firstScanFinished()
+        let marked = RoadPackStoreRules.activeSet(store.list().installedFiles).markedForRemoval.filter { $0.name == name }
+        guard !marked.isEmpty else { return false }
+        do {
+            for file in marked { try store.unmark(file.fileName) }
+        } catch {
+            await rescan()
+            return false
+        }
+        await rescan()
+        return true
     }
 
     /// Installs a pack file from outside the store (a finished download,

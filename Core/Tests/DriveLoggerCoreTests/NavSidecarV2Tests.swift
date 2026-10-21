@@ -42,8 +42,8 @@ struct NavSidecarV2Tests {
             let data = try Data(contentsOf: writer.url)
             #expect(data == (try Live.encoded(lines)))
             let contents = try NavSidecar.read(data)
-            #expect(contents.header.sidecarVersion == 2 && NavSidecar.version == 2)
-            #expect(contents.roads == roads)
+            #expect(contents.header.sidecarVersion == 3 && NavSidecar.version == 3)
+            #expect(contents.roads == (roads.map { [$0] } ?? []))
             #expect(contents.estimates.count == 4 && contents.unrecognizedLines == 0)
             #expect(contents.estimates[0].onRoadShare == nil)
             #expect(contents.estimates[3].onRoadShare?.bitPattern == 0.734_000_000_000_1.bitPattern)
@@ -71,24 +71,34 @@ struct NavSidecarV2Tests {
 
             """
         let contents = try NavSidecar.read(Data(v1.utf8))
-        #expect(contents.header.sidecarVersion == 1 && contents.roads == nil)
+        #expect(contents.header.sidecarVersion == 1 && contents.roads.isEmpty)
         let estimate = try #require(contents.estimates.first)
         #expect(estimate.onRoadShare == nil)
         let reencoded = try NavSidecar.encode(.estimate(estimate), with: NavSidecar.makeEncoder())
         #expect(String(decoding: reencoded, as: UTF8.self) == String(v1.split(separator: "\n")[1]) + "\n")
     }
 
-    @Test("A reader that knows only v1 refuses v2; this reader refuses v3; a second roads line is refused")
+    /// `lines` with the header's version set to `version`.
+    static func versioned(_ lines: [NavSidecar.Line], _ version: Int) -> [NavSidecar.Line] {
+        var lines = lines
+        if case .header(var header) = lines[0] {
+            header.sidecarVersion = version
+            lines[0] = .header(header)
+        }
+        return lines
+    }
+
+    @Test("A reader that knows only v1 refuses v2, one that knows v2 refuses v3; this reader refuses v4; a second roads line is refused in v2")
     func versionsRefused() throws {
-        let data = try Live.encoded(Self.lines(roads: Self.roads))
-        #expect(throws: NavSidecar.ReadError.unsupportedVersion(2)) { try NavSidecar.read(data, maxVersion: 1) }
-        #expect(try NavSidecar.read(data, maxVersion: 2).roads == Self.roads)
-        var lines = Self.lines(roads: nil)
-        guard case .header(var header) = lines[0] else { return }
-        header.sidecarVersion = 3
-        lines[0] = .header(header)
-        #expect(throws: NavSidecar.ReadError.unsupportedVersion(3)) { try NavSidecar.read(Live.encoded(lines)) }
-        let twice = Self.lines(roads: Self.roads) + [.roads(Self.roads), .estimate(Live.estimate(9))]
+        let v2 = try Live.encoded(Self.versioned(Self.lines(roads: Self.roads), 2))
+        #expect(throws: NavSidecar.ReadError.unsupportedVersion(2)) { try NavSidecar.read(v2, maxVersion: 1) }
+        #expect(try NavSidecar.read(v2, maxVersion: 2).roads == [Self.roads])
+        #expect(try NavSidecar.read(v2).roads == [Self.roads])
+        let v3 = try Live.encoded(Self.lines(roads: Self.roads))
+        #expect(throws: NavSidecar.ReadError.unsupportedVersion(3)) { try NavSidecar.read(v3, maxVersion: 2) }
+        let v4 = Self.versioned(Self.lines(roads: nil), 4)
+        #expect(throws: NavSidecar.ReadError.unsupportedVersion(4)) { try NavSidecar.read(Live.encoded(v4)) }
+        let twice = Self.versioned(Self.lines(roads: Self.roads) + [.roads(Self.roads), .estimate(Live.estimate(9))], 2)
         #expect(throws: NavSidecar.ReadError.duplicateRoadsLine(number: 9)) { try NavSidecar.read(Live.encoded(twice)) }
     }
 
@@ -117,7 +127,7 @@ struct NavSidecarV2Tests {
         #expect(before.allSatisfy { $0.onRoadShare == nil })
         // The written file reads back with its roads line.
         let data = try Live.encoded(fromStart.openingLines + attached.lines.filter { if case .roads = $0 { false } else { true } })
-        #expect(try NavSidecar.read(data).roads == atInit)
+        #expect(try NavSidecar.read(data).roads == [atInit])
     }
 
     enum FixtureError: Error { case noHeader }

@@ -22,13 +22,21 @@ import Foundation
 /// 5. updates the road selection rule (`RoadSelectionRule`): while no
 ///    network is attached, an ingest at which the engine first initialises
 ///    or uses a position raises a `RoadSelectionRequest`
-///    (`newSelectionRequest`).
+///    (`newSelectionRequest`); with or without one, so does the estimate's
+///    circle entering a watched pack that is not attached
+///    (`RoadCoverageWatch`, prompt 38).
 ///
 /// **Roads (N3.3).** A network given at init is attached before the first
 /// input; `attachRoads(_:emit:)` attaches one between two inputs, once. The
 /// config never changes: a network that would change the validated config
 /// is refused (`roadsRefusal`) and the run goes on without roads. Until the
-/// attach every line is the no-roads run's. `ingest(_:droppedInputs:selectRoads:emit:)`
+/// attach every line is the no-roads run's. **Prompt 38:** a run with roads
+/// can extend them to a strict superset (`extendRoads(_:emit:)`, the same
+/// open packs plus new ones; never a removal or a replacement), each
+/// attach and extension writing a `roads` line with the whole set;
+/// `libraryChanged(_:)` raises a request when the verified packs change,
+/// and the watched packs (`setWatchedPacks(_:)`) drive the coverage
+/// trigger. `ingest(_:droppedInputs:selectRoads:emit:)`
 /// runs a synchronous selector at each request and attaches its network at
 /// once: the rule `replay_nav --as-live --roads` uses.
 /// `ingest(_:droppedInputs:selector:emit:)` does the same through a
@@ -58,15 +66,22 @@ public struct LiveNavigationRun: Sendable {
     public private(set) var selectionRule = RoadSelectionRule()
     /// The request the latest `ingest` raised; nil if it raised none.
     public private(set) var newSelectionRequest: RoadSelectionRequest?
-    /// The attached network and when; nil without roads.
+    /// The attached network (the latest, after any extension) and when it
+    /// became active; nil without roads.
     public private(set) var roads: RoadAttachment?
+    /// Every attach and extension, in order (`roads` is the last).
+    public private(set) var attachments: [RoadAttachment] = []
+    /// The attached packs' names as the selection named them (candidate
+    /// order, the whole set); empty for a network attached without a
+    /// selection.
+    public private(set) var roadPackNames: [String] = []
     /// The latest refused attach, if any.
     public private(set) var roadsRefusal: RoadAttachRefusal?
     /// Which `roadsSelection` lines were written, and the repeats pending.
     public private(set) var selectionLog = NavSidecar.RoadsSelectionLog()
 
-    /// The latest selection request; nil before the first and once a
-    /// network is attached.
+    /// The latest selection request; nil before the first, and after an
+    /// attach or extension until the next one.
     public var selectionRequest: RoadSelectionRequest? { selectionRule.request }
 
     /// Spacing of the estimate grid, ns (1 s).
@@ -118,23 +133,76 @@ public struct LiveNavigationRun: Sendable {
             roadsRefusal = error
             throw error
         }
+        recordAttachment(network, emit: emit)
+    }
+
+    /// Extends the attached network to `network`, a strict superset built
+    /// from the same open packs plus new ones, now, between two inputs
+    /// (`NavigationEngine.extendRoads`: road state cleared, nothing else
+    /// changes). Refused, run unchanged, with no network attached, when it
+    /// is not a strict superset, or when the config would change; the
+    /// refusal is kept in `roadsRefusal`. `emit` receives the `roads` line
+    /// with the whole set.
+    public mutating func extendRoads(_ network: RoadNetwork, emit: (NavSidecar.Line) -> Void) throws(RoadAttachRefusal) {
+        do {
+            try engine.extendRoads(network)
+        } catch {
+            roadsRefusal = error
+            throw error
+        }
+        recordAttachment(network, emit: emit)
+    }
+
+    private mutating func recordAttachment(_ network: RoadNetwork, emit: (NavSidecar.Line) -> Void) {
         let attachment = RoadAttachment(network: network, afterInputs: inputs, t: inputs > 0 ? engine.latestArrival : nil)
         roads = attachment
+        attachments.append(attachment)
         selectionRule.attached()
         newSelectionRequest = nil
         emit(.roads(NavSidecar.Roads(attachment)))
     }
 
+    /// Attaches `network` (`attachRoads`), or, with roads attached,
+    /// extends them to it (`extendRoads`).
+    public mutating func attachOrExtendRoads(_ network: RoadNetwork, emit: (NavSidecar.Line) -> Void) throws(RoadAttachRefusal) {
+        if roads == nil {
+            try attachRoads(network, emit: emit)
+        } else {
+            try extendRoads(network, emit: emit)
+        }
+    }
+
+    /// The packs the coverage trigger watches from now on (the library's
+    /// verified packs at the run's start), with no request; those the
+    /// estimate's circle intersects now count as seen
+    /// (`RoadSelectionRule.setWatchedPacks(_:engine:)`).
+    public mutating func setWatchedPacks(_ packs: [RoadCoverageWatch.Pack]) {
+        selectionRule.setWatchedPacks(packs, engine: engine)
+    }
+
+    /// The verified packs changed (a download or a removal), between two
+    /// inputs: they are watched from now on, and a `libraryChanged` request
+    /// is raised now (`newSelectionRequest`, `afterInputs` = `inputs`);
+    /// nil before initialisation.
+    @discardableResult
+    public mutating func libraryChanged(_ packs: [RoadCoverageWatch.Pack]) -> RoadSelectionRequest? {
+        newSelectionRequest = selectionRule.libraryChanged(packs, engine: engine, inputs: inputs)
+        return newSelectionRequest
+    }
+
     /// Records a finished road selection attempt, between two inputs: a
-    /// `selected` attempt's network is attached now (`attachRoads`). Then
+    /// `selected` attempt's network is attached now (`attachRoads`), or,
+    /// with roads attached, replaces them as an extension (`extendRoads`).
+    /// Then
     /// `emit` gets the `roadsSelection` lines `selectionLog` writes for it
     /// (recorded after `inputs` inputs): none for a repeat of the last line
     /// written, else the pending repeats' line and then the attempt's; and,
     /// after a successful attach, whose line is always written, the `roads`
     /// line right after it. An attach the run refuses (`RoadAttachRefusal`)
     /// is recorded as `refused` with the attempt's packs and the refusal's
-    /// description. Returns the attempt's line, written or not: its
-    /// `refusal` is the set to remember so it is not built again.
+    /// description, except an extension refused as not a strict superset,
+    /// recorded as `notSuperset`. Returns the attempt's line, written or
+    /// not: its `refusal` is the set to remember so it is not built again.
     @discardableResult
     public mutating func finishSelection(_ attempt: RoadSelectionAttempt,
                                          emit: (NavSidecar.Line) -> Void) -> NavSidecar.RoadsSelection {
@@ -142,9 +210,10 @@ public struct LiveNavigationRun: Sendable {
         var roadsLines: [NavSidecar.Line] = []
         if let network = attempt.network {
             do {
-                try attachRoads(network) { roadsLines.append($0) }
+                try attachOrExtendRoads(network) { roadsLines.append($0) }
+                roadPackNames = attempt.packs ?? []
             } catch {
-                record.outcome = .refused
+                if case .notSuperset = error { record.outcome = .notSuperset } else { record.outcome = .refused }
                 record.reason = error.description
             }
         }
@@ -172,24 +241,36 @@ public struct LiveNavigationRun: Sendable {
     /// `ingest(_:droppedInputs:emit:)`, then, if it raised a selection
     /// request, `selector` is asked at once and the attempt is finished
     /// before the next input (`finishSelection`): its `roadsSelection`
-    /// lines, and the `roads` line if its network attached. An attach the
-    /// run refuses is remembered by the selector. The rule `replay_nav
-    /// --as-live --roads` and `--write-sidecar` use; end with
-    /// `closingLines(inFlight: nil)`.
+    /// lines, and the `roads` line if its network attached or extended the
+    /// attached one. An attach the run refuses is remembered by the
+    /// selector. The selector's candidates are the watched packs (set
+    /// before the first input, and whenever they change: the selector is
+    /// the replay's library). The rule `replay_nav --as-live --roads` and
+    /// `--write-sidecar` use; end with `closingLines(inFlight: nil)`.
     public mutating func ingest(
         _ input: NavigationInput, droppedInputs: Int = 0, selector: inout RoadPackSelector,
         emit: (NavSidecar.Line) -> Void
     ) {
+        let watched = selector.candidates.map(\.pack.contentHash)
+        if selectionRule.watch.packs.map(\.contentHash) != watched { setWatchedPacks(selector.watchedPacks) }
         ingest(input, droppedInputs: droppedInputs, emit: emit)
+        select(with: &selector, emit: emit)
+    }
+
+    /// The selection a synchronous selector makes for `newSelectionRequest`,
+    /// if any, finished at once (`ingest(_:droppedInputs:selector:emit:)`).
+    /// Also after `libraryChanged(_:)` in a replay.
+    public mutating func select(with selector: inout RoadPackSelector, emit: (NavSidecar.Line) -> Void) {
         guard let request = newSelectionRequest else { return }
-        let attempt = selector.attempt(for: request)
+        let attempt = selector.attempt(for: request, attached: roads?.network, attachedNames: roadPackNames)
         let record = finishSelection(attempt, emit: emit)
         if attempt.network != nil, let refusal = record.refusal { selector.remember(refusal) }
     }
 
     /// `ingest(_:droppedInputs:emit:)`, then, if it raised a selection
     /// request, `selectRoads` is asked at once and the network it returns
-    /// (if any) is attached before the next input. A refused attach leaves
+    /// (if any) is attached before the next input (with roads attached: an
+    /// extension, which must be a strict superset). A refused attach leaves
     /// the run without roads; later requests ask again. Writes no
     /// `roadsSelection` line (the closure tells no outcome): see
     /// `ingest(_:droppedInputs:selector:emit:)`.
@@ -199,7 +280,7 @@ public struct LiveNavigationRun: Sendable {
     ) {
         ingest(input, droppedInputs: droppedInputs, emit: emit)
         if let request = newSelectionRequest, let network = selectRoads(request) {
-            try? attachRoads(network, emit: emit)
+            try? attachOrExtendRoads(network, emit: emit)
         }
     }
 

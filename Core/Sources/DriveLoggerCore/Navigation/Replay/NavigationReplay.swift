@@ -88,6 +88,12 @@ public struct ReplayOptions: Hashable, Sendable {
     /// many metres of it (parallel geometry of one road, junction stubs).
     /// Scoring only, used only with `roads`.
     public var wrongRoadToleranceM = NavigationReplay.defaultWrongRoadToleranceM
+    /// `replay_nav --inject-roads` (prompt 38, replay only): packs of
+    /// `roads` that the live rule cannot select until the given input or
+    /// time, when they arrive as a library change (`ReplayRoadInjection`).
+    /// Used only with `roadAttach` `.live`; empty: every pack is ready at
+    /// the start, as before.
+    public var roadInjections: [ReplayRoadInjection] = []
 
     public init(gps: GPSMode, holdOutAccuracyM: Double? = nil, config: NavigationConfig = NavigationConfig()) {
         self.gps = gps
@@ -107,6 +113,7 @@ public struct ReplayOptions: Hashable, Sendable {
     ///   `--as-live` (`--compare` with a sidecar that used no roads), so
     ///   neither overwrites the from-start or `--as-live` row (R32.1-5).
     ///   `--as-live` already names the live rule.
+    /// - `-inject-<hash>-<when>` per `roadInjections` entry (prompt 38).
     public var label: String {
         var label = gps.label
         if let holdOutAccuracyM { label += "-holdout-\(GPSMode.format(holdOutAccuracyM))" }
@@ -119,7 +126,10 @@ public struct ReplayOptions: Hashable, Sendable {
             switch roadAttach {
             case .fromStart: break
             case .live: if !asLive { label += "-attach-live" }
-            case .afterInputs: label += "-attach-sidecar"
+            case .afterInputs, .schedule: label += "-attach-sidecar"
+            }
+            if roadAttach == .live {
+                for injection in roadInjections { label += "-" + injection.label }
             }
         }
         return label
@@ -138,8 +148,89 @@ public enum ReplayRoadAttach: Hashable, Sendable {
     /// once, at that input boundary.
     case live
     /// The whole given set, attached after this many inputs given to the
-    /// engine (a sidecar's `roads` line, `replay_nav --compare`).
+    /// engine (one `roads` line of the whole set).
     case afterInputs(Int)
+    /// A sidecar's `roads` lines (`replay_nav --compare`, prompt 38): each
+    /// point's packs, taken from the given set (the same open instances),
+    /// attached after that many inputs, the first by `attachRoads`, each
+    /// later one by `extendRoads`. A point whose packs are not all given is
+    /// skipped.
+    case schedule([ReplayRoadAttachPoint])
+
+    /// The attach points this mode follows; nil for `.fromStart` and
+    /// `.live`. `.afterInputs(k)` is one point of the whole given set.
+    func points(given: ReplayRoadSet?) -> [ReplayRoadAttachPoint]? {
+        switch self {
+        case .fromStart, .live: nil
+        case .afterInputs(let k): [ReplayRoadAttachPoint(afterInputs: k, contentHashes: given?.network.packs.map(\.contentHash) ?? [])]
+        case .schedule(let points): points
+        }
+    }
+}
+
+/// One `roads` line of a sidecar as a replay follows it: after how many
+/// inputs, and which packs (content hashes).
+public struct ReplayRoadAttachPoint: Hashable, Sendable {
+    public var afterInputs: Int
+    public var contentHashes: [UInt64]
+
+    public init(afterInputs: Int, contentHashes: [UInt64]) {
+        self.afterInputs = afterInputs
+        self.contentHashes = contentHashes
+    }
+
+    /// From a sidecar `roads` line; nil when a hash is not 16 hex digits.
+    public init?(_ line: NavSidecar.Roads) {
+        var hashes: [UInt64] = []
+        for pack in line.roads {
+            guard pack.contentHash.count == 16, let value = UInt64(pack.contentHash, radix: 16) else { return nil }
+            hashes.append(value)
+        }
+        self.init(afterInputs: line.afterInputs, contentHashes: hashes)
+    }
+}
+
+/// A pack that becomes selectable only during the run (`replay_nav
+/// --inject-roads`, prompt 38, replay only): the app's library change, at a
+/// given input or time. At that boundary the selector gets the packs, the
+/// run watches them and raises a `libraryChanged` request, which the live
+/// rule answers at once (an attach, or an extension of the attached set).
+public struct ReplayRoadInjection: Hashable, Sendable {
+    public enum When: Hashable, Sendable {
+        /// Before the first input (accepted by the engine) arriving at or
+        /// after this session time, seconds.
+        case time(seconds: Double)
+        /// Before input number n + 1 given to the engine (after n).
+        case afterInputs(Int)
+    }
+
+    public var when: When
+    /// The packs' content hashes; they must be in the given set.
+    public var contentHashes: [UInt64]
+
+    public init(when: When, contentHashes: [UInt64]) {
+        self.when = when
+        self.contentHashes = contentHashes
+    }
+
+    /// The mode label's part: `inject-<first 8 hex of the packs' road set
+    /// hash>-at-<s>s` or `-after-<n>`.
+    public var label: String {
+        let hash = String(NavigationSeed.hex(RoadPackFormat.roadSetHash(contentHashes.sorted())).prefix(8))
+        switch when {
+        case .time(let seconds): return "inject-\(hash)-at-\(GPSMode.format(seconds))s"
+        case .afterInputs(let n): return "inject-\(hash)-after-\(n)"
+        }
+    }
+
+    /// Whether it is due before an input arriving at `arrival` (accepted by
+    /// the engine), with `given` inputs given so far.
+    func isDue(given: Int, arrival: MonotonicTimestamp) -> Bool {
+        switch when {
+        case .time(let seconds): arrival.seconds >= seconds
+        case .afterInputs(let n): given == n
+        }
+    }
 }
 
 /// Why a fix was not given to the engine.
@@ -245,11 +336,11 @@ public enum NavigationReplay {
     /// reference for `--compare`. `roads`/`attach`: see `runLive`.
     public static func liveLines(
         inputs: [NavigationInput], sessionID: UUID, config: NavigationConfig, appBuild: String = "replay",
-        roads: ReplayRoadSet? = nil, attach: ReplayRoadAttach = .live
+        roads: ReplayRoadSet? = nil, attach: ReplayRoadAttach = .live, injections: [ReplayRoadInjection] = []
     ) -> [NavSidecar.Line] {
         var lines: [NavSidecar.Line] = []
         runLive(inputs: inputs, sessionID: sessionID, config: config, appBuild: appBuild, roads: roads,
-                attach: attach) { lines.append($0) }
+                attach: attach, injections: injections) { lines.append($0) }
         return lines
     }
 
@@ -258,13 +349,19 @@ public enum NavigationReplay {
     /// from them at each selection request (`RoadPackSelector`) and attaches
     /// at once, recording each attempt for the `roadsSelection` lines
     /// (repeats folded, the pending ones written last:
-    /// `LiveNavigationRun.closingLines(inFlight:)`, as the app at stop);
-    /// `.afterInputs(k)` attaches the whole set after k inputs; `.fromStart`
-    /// gives it at init. Returns the finished run.
+    /// `LiveNavigationRun.closingLines(inFlight:)`, as the app at stop),
+    /// the given packs watched by the coverage trigger, and `injections`
+    /// (packs held back until then, then a library change: watched, a
+    /// `libraryChanged` request answered at once);
+    /// `.afterInputs(k)` attaches the whole set after k inputs, and
+    /// `.schedule` each point's packs after its inputs (the first attached,
+    /// the later ones extending it); `.fromStart` gives it at init. Returns
+    /// the finished run.
     @discardableResult
     public static func runLive(
         inputs: [NavigationInput], sessionID: UUID, config: NavigationConfig, appBuild: String = "replay",
-        roads: ReplayRoadSet? = nil, attach: ReplayRoadAttach = .live, emit: (NavSidecar.Line) -> Void
+        roads: ReplayRoadSet? = nil, attach: ReplayRoadAttach = .live, injections: [ReplayRoadInjection] = [],
+        emit: (NavSidecar.Line) -> Void
     ) -> LiveNavigationRun {
         var run = LiveNavigationRun(sessionID: sessionID, config: config, appBuild: appBuild,
                                     roads: attach == .fromStart ? roads?.network : nil)
@@ -273,16 +370,36 @@ public enum NavigationReplay {
             for input in inputs { run.ingest(input, emit: emit) }
             return run
         }
-        if case .afterInputs(let k) = attach {
+        if let points = attach.points(given: roads) {
+            var next = 0
+            func attachIfDue() {
+                while next < points.count && points[next].afterInputs == run.inputs {
+                    if let network = roads.network(containing: points[next].contentHashes).network {
+                        try? run.attachOrExtendRoads(network, emit: emit)
+                    }
+                    next += 1
+                }
+                while next < points.count && points[next].afterInputs < run.inputs { next += 1 }
+            }
             for input in inputs {
-                if run.inputs == k { try? run.attachRoads(roads.network, emit: emit) }
+                attachIfDue()
                 run.ingest(input, emit: emit)
             }
-            if run.inputs == k { try? run.attachRoads(roads.network, emit: emit) }
+            attachIfDue()
             return run
         }
-        var selector = roads.selector
+        let held = Set(injections.flatMap(\.contentHashes))
+        var selector = roads.selector(excluding: held)
+        var pending = injections
         for input in inputs {
+            if !pending.isEmpty && run.engine.accepts(input) {
+                for injection in pending where injection.isDue(given: run.inputs, arrival: input.arrival) {
+                    selector.add(roads.candidates(for: Set(injection.contentHashes)), sortByName: roads.namedByFile)
+                    run.libraryChanged(selector.watchedPacks)
+                    run.select(with: &selector, emit: emit)
+                }
+                pending.removeAll { $0.isDue(given: run.inputs, arrival: input.arrival) }
+            }
             run.ingest(input, selector: &selector, emit: emit)
         }
         for line in run.closingLines(inFlight: nil) { emit(line) }
@@ -685,6 +802,10 @@ public struct ReplayResult: Hashable, Sendable, Codable {
     /// attached, and for `.fromStart`.
     public var roadsAttachedAfterInputs: Int? = nil
     public var attachedRoadSetHash: String? = nil
+    /// Prompt 38: the inputs given before each extension of the attached
+    /// network (`attachedRoadSetHash` is then the final set's); empty when
+    /// it was never extended.
+    public var roadsExtendedAfterInputs: [Int] = []
 
     public var heldOutFixes: [Fix] { fixes.filter { $0.withheld == .heldOut } }
 }
@@ -752,13 +873,21 @@ private struct ReplayRun {
     var onRoadShareSum = 0.0
     var matchedEdges: [ReplayResult.MatchedEdgeSample] = []
 
-    /// Roads attached as live (`ReplayRoadAttach.live`, `.afterInputs`):
-    /// inputs given to the engine so far (`LiveNavigationRun.inputs`), the
-    /// selection rule, the selector, and when the network was attached.
+    /// Roads attached as live (`ReplayRoadAttach.live`, `.afterInputs`,
+    /// `.schedule`): inputs given to the engine so far
+    /// (`LiveNavigationRun.inputs`), the selection rule, the selector, when
+    /// the network was attached and extended, and the attached packs'
+    /// names (`LiveNavigationRun.roadPackNames`).
     var givenInputs = 0
     var selectionRule = RoadSelectionRule()
     var selector: RoadPackSelector?
     var attachedAfterInputs: Int?
+    var extendedAfterInputs: [Int] = []
+    var attachedNames: [String] = []
+    /// `.afterInputs`, `.schedule`: the attach points not yet reached.
+    var attachPoints: [ReplayRoadAttachPoint] = []
+    /// `.live`: injections not yet due (`ReplayOptions.roadInjections`).
+    var pendingInjections: [ReplayRoadInjection] = []
 
     init(logName: String, inputs: [NavigationInput], options: ReplayOptions, truth: TruthFile.Entry?) {
         self.logName = logName
@@ -767,7 +896,16 @@ private struct ReplayRun {
         self.truth = truth
         let fromStart = options.roadAttach == .fromStart
         engine = NavigationEngine(config: options.config, roads: fromStart ? options.roads?.network : nil)
-        if options.roads != nil, options.roadAttach == .live { selector = options.roads?.selector }
+        if let roads = options.roads, options.roadAttach == .live {
+            // As `LiveNavigationRun.ingest(_:selector:emit:)`: the selector's
+            // packs are watched from the first input on.
+            let held = Set(options.roadInjections.flatMap(\.contentHashes))
+            let selector = roads.selector(excluding: held)
+            selectionRule.setWatchedPacks(selector.watchedPacks)
+            self.selector = selector
+            pendingInjections = options.roadInjections
+        }
+        attachPoints = options.roadAttach.points(given: options.roads) ?? []
         motionStart = NavigationReplay.motionStart(inputs)
         scoreUntilNs = truth?.scoreUntilT.map { MonotonicTimestamp(seconds: $0).nanoseconds }
         roadTruth = options.roads.map { RoadTruthMatcher(network: $0.network) }
@@ -849,6 +987,7 @@ private struct ReplayRun {
             }
             let rejectedBefore = engine.counters.fixesRejectedOffRoad
             attachIfDue()
+            injectIfDue(arrival: input.arrival)
             let before = RoadSelectionRule.Before(engine)
             let start = clock.now
             engine.ingest(input)
@@ -877,23 +1016,72 @@ private struct ReplayRun {
         return finish(firstNs: firstNs, lastNs: endNs)
     }
 
-    /// `.afterInputs(k)`: the given set, before the engine's input k + 1.
+    /// `.afterInputs(k)`, `.schedule`: each point's packs, before the
+    /// engine's input `afterInputs` + 1 (the first attached, later ones
+    /// extending it), as `NavigationReplay.runLive` does.
     mutating func attachIfDue() {
-        guard case .afterInputs(let k) = options.roadAttach, givenInputs == k, attachedAfterInputs == nil,
-              let network = options.roads?.network else { return }
-        if (try? engine.attachRoads(network)) != nil { attachedAfterInputs = k }
+        while let point = attachPoints.first, point.afterInputs <= givenInputs {
+            attachPoints.removeFirst()
+            guard point.afterInputs == givenInputs,
+                  let network = options.roads?.network(containing: point.contentHashes).network else { continue }
+            apply(network)
+        }
     }
 
-    /// `.live`: the rule `LiveNavigationRun.ingest(_:droppedInputs:selectRoads:emit:)`
+    /// Attaches `network`, or extends the attached one to it; records when.
+    /// Throws the engine's refusal.
+    @discardableResult
+    mutating func apply(_ network: RoadNetwork) -> RoadAttachRefusal? {
+        do {
+            if engine.roadNetwork == nil {
+                try engine.attachRoads(network)
+                attachedAfterInputs = givenInputs
+            } else {
+                try engine.extendRoads(network)
+                extendedAfterInputs.append(givenInputs)
+            }
+            selectionRule.attached()
+            return nil
+        } catch {
+            return error
+        }
+    }
+
+    /// `.live`: a pack injected now arrives as a library change, before the
+    /// next input (`LiveNavigationRun.libraryChanged` and `select(with:)`
+    /// in `NavigationReplay.runLive`, on the same inputs).
+    mutating func injectIfDue(arrival: MonotonicTimestamp) {
+        guard !pendingInjections.isEmpty, let roads = options.roads else { return }
+        let due = pendingInjections.filter { $0.isDue(given: givenInputs, arrival: arrival) }
+        guard !due.isEmpty else { return }
+        pendingInjections.removeAll { $0.isDue(given: givenInputs, arrival: arrival) }
+        for injection in due {
+            selector?.add(roads.candidates(for: Set(injection.contentHashes)), sortByName: roads.namedByFile)
+            guard let packs = selector?.watchedPacks,
+                  let request = selectionRule.libraryChanged(packs, engine: engine, inputs: givenInputs) else { continue }
+            select(request)
+        }
+    }
+
+    /// `.live`: the rule `LiveNavigationRun.ingest(_:droppedInputs:selector:emit:)`
     /// applies, on the same inputs.
     mutating func selectLive(before: RoadSelectionRule.Before) {
-        guard selector != nil, let request = selectionRule.observe(engine, before: before, inputs: givenInputs),
-              let attempt = selector?.attempt(for: request), let network = attempt.network else { return }
-        do {
-            try engine.attachRoads(network)
-            attachedAfterInputs = givenInputs
-        } catch {
-            selector?.remember(RoadPackSelection.Refusal(names: attempt.packs ?? [], reason: error.description))
+        guard selector != nil, let request = selectionRule.observe(engine, before: before, inputs: givenInputs) else {
+            return
+        }
+        select(request)
+    }
+
+    /// The selector's attempt for `request`, attached or extending at once;
+    /// a refused set is remembered (`LiveNavigationRun.select(with:)`).
+    mutating func select(_ request: RoadSelectionRequest) {
+        guard let attempt = selector?.attempt(for: request, attached: engine.roadNetwork, attachedNames: attachedNames),
+              let network = attempt.network else { return }
+        if let refusal = apply(network) {
+            if case .notSuperset = refusal { return }
+            selector?.remember(RoadPackSelection.Refusal(names: attempt.packs ?? [], reason: refusal.description))
+        } else {
+            attachedNames = attempt.packs ?? []
         }
     }
 
@@ -1275,6 +1463,7 @@ private struct ReplayRun {
             result.matchedEdges = matchedEdges
             result.roadsAttachedAfterInputs = attachedAfterInputs
             result.attachedRoadSetHash = attachedAfterInputs == nil ? nil : engine.roadNetwork?.roadSetHashHex
+            result.roadsExtendedAfterInputs = extendedAfterInputs
         }
         return result
     }

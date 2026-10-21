@@ -45,6 +45,7 @@ struct NavigationMetricsCodingTests {
         // The N3.3 attach keys filled too.
         metrics.roadsAttachedAfterInputs = 1234
         metrics.attachedRoadSetHash = "00112233445566ff"
+        metrics.roadsExtendedAfterInputs = [2345, 3456]
         metrics.checkpointsAfterScoreUntil = 2
         // The excludeFixes key filled too.
         metrics.fixesExcludedByTruth = .init(ranges: [.init(fromT: -1, toT: 251, reason: "r")], fixes: 3,
@@ -178,7 +179,7 @@ struct NavigationMetricsCodingTests {
         #expect(later.map(\.stringValue).sorted()
             == ["consistency", "consistencyWithTruthSigma", "motionStartT", "pinScoring", "pins",
                 "checkpointsAfterScoreUntil", "roadMetrics", "roadSetHash", "roads", "scoreUntilT",
-                "roadsAttachedAfterInputs", "attachedRoadSetHash", "fixesExcludedByTruth", "fixPinDecisions",
+                "roadsAttachedAfterInputs", "attachedRoadSetHash", "roadsExtendedAfterInputs", "fixesExcludedByTruth", "fixPinDecisions",
                 "maxErrorByKind"].sorted())
         for key in later {
             var old = row
@@ -199,6 +200,7 @@ struct NavigationMetricsCodingTests {
             case .checkpointsAfterScoreUntil: #expect(decoded.checkpointsAfterScoreUntil == nil)
             case .roadsAttachedAfterInputs: #expect(decoded.roadsAttachedAfterInputs == nil)
             case .attachedRoadSetHash: #expect(decoded.attachedRoadSetHash == nil)
+            case .roadsExtendedAfterInputs: #expect(decoded.roadsExtendedAfterInputs == nil)
             case .fixesExcludedByTruth: #expect(decoded.fixesExcludedByTruth == nil)
             case .fixPinDecisions: #expect(decoded.fixPinDecisions == nil)
             case .maxErrorByKind: #expect(decoded.maxErrorByKind == nil)

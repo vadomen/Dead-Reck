@@ -249,7 +249,10 @@ neighbouring packs and load together without duplicates.
   lists regions within ~20 km as "Nearby", not preselected. Nothing
   downloads until the user confirms; "Download maps later" is always there.
   The fix is never stored or sent.
-- **Settings → Maps**: add, remove and update any pack at any time.
+- **Settings → Maps**: add, remove and update any pack at any time. A pack
+  that finishes installing during a run is attached to it at once (the run's
+  roads extend). Removing one during a run asks first; the run keeps using it
+  until the app restarts, and "Download again" cancels the removal.
 - **On the road**: when the estimate is confident and has been outside every
   installed region pack for 30 s, its region is remembered and offered at the
   next stop (speed 0 for ≥ 3 s), never in motion. Shown again at later stops

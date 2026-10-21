@@ -9,8 +9,12 @@ enum RoadsDiagnosticsText {
     /// recording or Navigate).
     static func attributionVisible(packsInUse: Int) -> Bool { packsInUse > 0 }
 
+    /// A pack removed during a run stays attached to it: a network is never
+    /// detached mid-run (prompt 38).
+    static let inUseUntilRestart = "Removal pending \u{2014} in use until restart"
+
     static func state(_ pack: RoadPackLibrary.PackStatus) -> String {
-        if pack.pendingRemoval { return "Removal pending (after restart)" }
+        if pack.pendingRemoval { return pack.inUseUntilRestart ? inUseUntilRestart : "Removal pending (after restart)" }
         if pack.inInbox { return "Not installed: " + (pack.refusal ?? "refused") }
         return pack.verified ? "Verified" : "Refused: " + (pack.refusal ?? "not usable")
     }
@@ -47,12 +51,13 @@ enum RoadsDiagnosticsText {
         return String(format: "%.1f s", seconds)
     }
 
-    /// Which packs the current (else the last) run uses and since when,
-    /// else why none.
+    /// Which packs the current (else the last) run uses and since when
+    /// (and when the set last grew, prompt 38), else why none.
     static func usage(_ roads: NavigationService.RoadsStatus) -> String {
         if roads.inUse {
             let at = roads.activeAtSessionS.map { String(format: " from %.0f s", $0) } ?? ""
-            return roads.packNames.joined(separator: ", ") + at
+            let extended = roads.extendedAtSessionS.map { String(format: ", extended at %.0f s", $0) } ?? ""
+            return roads.packNames.joined(separator: ", ") + at + extended
         }
         if let refusal = roads.refusal { return "none (refused: \(refusal))" }
         return roads.selectionPending ? "none yet (looking for a pack)" : "none"
@@ -92,10 +97,23 @@ final class RoadsDiagnosticsModel {
 
     func refresh() async {
         guard let library, let service else { return }
-        let status = await library.status()
         let roads = await service.roadsStatus()
+        let status = Self.markInUse(await library.status(), roads: roads)
         let next = RoadsDiagnostics(library: status, roads: roads, footprintBytes: MemoryFootprint.currentBytes())
         if next != value { value = next }
+    }
+
+    /// `status` with each pack pending removal that the running run has
+    /// attached marked `inUseUntilRestart` (by file name).
+    nonisolated static func markInUse(_ status: RoadPackLibrary.Status,
+                                      roads: NavigationService.RoadsStatus) -> RoadPackLibrary.Status {
+        guard roads.active, roads.inUse else { return status }
+        let attached = Set(roads.packNames)
+        var marked = status
+        for i in marked.packs.indices where marked.packs[i].pendingRemoval && attached.contains(marked.packs[i].name) {
+            marked.packs[i].inUseUntilRestart = true
+        }
+        return marked
     }
 
     /// While Diagnostics is visible: rescan once, then refresh every 2 s.

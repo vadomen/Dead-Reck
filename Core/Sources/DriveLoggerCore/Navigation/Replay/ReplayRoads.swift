@@ -52,14 +52,45 @@ public struct ReplayRoadSet: Hashable, Sendable {
     /// lists them; else in canonical order. The order changes only the
     /// `roadsSelection` lines: the network is canonical either way. A pack
     /// whose coverage cannot be read covers nothing.
-    public var selector: RoadPackSelector {
-        var candidates = network.packs.map { pack in
+    public var selector: RoadPackSelector { selector(excluding: []) }
+
+    /// `selector` without the packs of these content hashes (packs injected
+    /// later: `ReplayRoadInjection`).
+    public func selector(excluding hashes: Set<UInt64>) -> RoadPackSelector {
+        RoadPackSelector(candidates: candidates(network.packs.filter { !hashes.contains($0.contentHash) }))
+    }
+
+    /// The candidates for the packs of these content hashes, in the
+    /// selector's order (`ReplayRoadInjection`).
+    public func candidates(for hashes: Set<UInt64>) -> [RoadPackSelection.Candidate] {
+        candidates(network.packs.filter { hashes.contains($0.contentHash) })
+    }
+
+    /// Every pack is named by file name: candidates are in name order.
+    public var namedByFile: Bool { network.packs.allSatisfy { names[$0.contentHash] != nil } }
+
+    private func candidates(_ packs: [RoadPack]) -> [RoadPackSelection.Candidate] {
+        var candidates = packs.map { pack in
             let name = names[pack.contentHash] ?? NavigationSeed.hex(pack.contentHash)
             let coverage = (try? RoadPackCoverage(pack: pack)) ?? RoadPackCoverage(rings: nil, bounds: nil)
             return RoadPackSelection.Candidate(name: name, pack: pack, coverage: coverage)
         }
-        if network.packs.allSatisfy({ names[$0.contentHash] != nil }) { candidates.sort { $0.name < $1.name } }
-        return RoadPackSelector(candidates: candidates)
+        if namedByFile { candidates.sort { $0.name < $1.name } }
+        return candidates
+    }
+
+    /// The network of the given packs with these content hashes (the same
+    /// open `RoadPack` instances, so a later, larger subset extends an
+    /// earlier one), and the hashes that are not given. The whole set is
+    /// `network` itself; nil when no hash is given or the packs cannot be
+    /// used together.
+    public func network(containing hashes: [UInt64]) -> (network: RoadNetwork?, missing: [UInt64]) {
+        let wanted = Set(hashes)
+        let packs = network.packs.filter { wanted.contains($0.contentHash) }
+        let missing = wanted.subtracting(packs.map(\.contentHash)).sorted()
+        if packs.count == network.packs.count { return (network, missing) }
+        guard !packs.isEmpty else { return (nil, missing) }
+        return ((try? RoadNetwork(packs: packs)), missing)
     }
 }
 

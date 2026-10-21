@@ -23,6 +23,13 @@ final class AppServices {
     /// from the developer inbox Documents/RoadPacks at launch), verified
     /// once each.
     let roadPacks: RoadPackLibrary
+    /// Settings → Maps "Download again" on a pack pending removal (B5):
+    /// clears the mark without a download (`RoadPackLibrary.cancelRemoval`);
+    /// false lets the caller fall back to downloading it.
+    var cancelRemoval: @Sendable (String) async -> Bool {
+        let library = roadPacks
+        return { await library.cancelRemoval(name: $0) }
+    }
     /// The road pack list (cached, fetched when Settings → Maps opens) and
     /// the downloads (UX-8). Record pauses downloads (Navigate does not):
     /// `RecordingSession.onRecordActiveChange` through `recordActivity`.
@@ -141,7 +148,8 @@ final class AppServices {
                 guard status.showsEstimate else { return nil }
                 return NavDisplay(await navigation.snapshot()).map(PackOfferRule.Estimate.init)
             },
-            speedKmh: speedKmh)
+            speedKmh: speedKmh,
+            roadPackNames: { await navigation.roadsStatus().packNames })
     }
 }
 

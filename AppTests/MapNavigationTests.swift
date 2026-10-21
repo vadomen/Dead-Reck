@@ -124,18 +124,6 @@ struct MapNavigationTests {
         #expect(stats.line.contains("ESS 900") && stats.line.contains("dropped 3") && stats.line.contains("1.016"))
     }
 
-    // MARK: framing span
-
-    @Test("Heading-up span fits the ellipse: min(1000, max(minimum, 2.2 x semi-major))")
-    func framingSpan() {
-        #expect(FollowSpan.span(minimum: 500, semiMajorM: 50) == 500)
-        #expect(abs(FollowSpan.span(minimum: 500, semiMajorM: 300) - 660) < 1e-9)
-        #expect(FollowSpan.span(minimum: 500, semiMajorM: 2000) == 1000)
-        #expect(FollowSpan.span(minimum: 500, semiMajorM: .nan) == 500)
-        // A driver who zoomed out beyond 1000 m is not zoomed in.
-        #expect(FollowSpan.span(minimum: 1500, semiMajorM: 2000) == 1500)
-    }
-
     // MARK: follow centre
 
     @Test("Follow centres on the estimate once initialised, otherwise the GPS fix")
@@ -299,8 +287,7 @@ struct MapNavigationTests {
         mutating func followDistance(headingUp: Bool, semiMajorM: Double?) -> Double {
             let base = userDistance ?? distance
             guard headingUp, let semiMajorM else { return base }
-            let span = FollowSpan.span(minimum: base / MapFraming.distancePerSpan, semiMajorM: semiMajorM)
-            return MapFraming.cameraDistance(spanMeters: span)
+            return max(base, 2.2 * semiMajorM * MapFraming.distancePerSpan)
         }
     }
 
@@ -312,15 +299,15 @@ struct MapNavigationTests {
         let pinched = framed * 0.8
         zoom.cameraReported(distance: pinched)       // the driver's zoom: held until re-centre
         #expect(zoom.driverOverride)
-        #expect(zoom.autoFollowDistance(headingUp: true, semiMajorM: 10) == pinched)
+        #expect(zoom.autoFollowDistance(headingUp: true, ellipse: FitEllipse(semiMajorM: 10)) == pinched)
 
-        let widened = zoom.autoFollowDistance(headingUp: true, semiMajorM: 400)
+        let widened = zoom.autoFollowDistance(headingUp: true, ellipse: FitEllipse(semiMajorM: 400))
         #expect(widened > pinched * 1.5, "880 m span: widened")
         zoom.cameraReported(distance: widened)       // our own write coming back
         #expect(zoom.chosen == pinched, "a widening is not the driver's choice")
-        #expect(zoom.autoFollowDistance(headingUp: true, semiMajorM: 400) == widened, "and does not grow further")
+        #expect(zoom.autoFollowDistance(headingUp: true, ellipse: FitEllipse(semiMajorM: 400)) == widened, "and does not grow further")
 
-        let shrunk = zoom.autoFollowDistance(headingUp: true, semiMajorM: 10)
+        let shrunk = zoom.autoFollowDistance(headingUp: true, ellipse: FitEllipse(semiMajorM: 10))
         #expect(shrunk == pinched)
 
         // The same sequence on the old logic stays wide.
@@ -341,10 +328,13 @@ struct MapNavigationTests {
         #expect(zoom.chosen == 1000)
         zoom.cameraReported(distance: 400)            // pinch
         #expect(zoom.chosen == 400)
-        #expect(zoom.autoFollowDistance(headingUp: false, semiMajorM: 400) == 400, "north-up never widens")
-        let d = zoom.autoFollowDistance(headingUp: true, semiMajorM: 400)
-        // 2.2 x 400 = 880 m, x1.5 so the rear half fits below the car in the lower third (R68.1-1).
-        #expect(abs(d - MapFraming.cameraDistance(spanMeters: 1320)) < 1e-9)
+        let ellipse = FitEllipse(semiMajorM: 400)
+        let northUp = zoom.autoFollowDistance(headingUp: false, ellipse: ellipse)
+        #expect(northUp > 400, "north-up widens too (C8)")
+        let d = zoom.autoFollowDistance(headingUp: true, ellipse: ellipse)
+        let span = EllipseFit.requiredSpanM(
+            ellipse: ellipse, cameraHeadingDeg: 0, carFromTop: zoom.carFromTop, viewport: zoom.viewport)
+        #expect(abs(d - EllipseFit.distance(forSpanM: span)) < 1e-9, "the written distance is the fit")
         zoom.cameraReported(distance: 300)            // pinches again, not matching the widened write
         #expect(zoom.chosen == 300)
     }

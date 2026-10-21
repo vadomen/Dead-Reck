@@ -29,6 +29,12 @@ import Foundation
 /// - selects and attaches road packs (N3.3) the same way in both: the
 ///   library rescan at the start, selection, mid-run attach. Only the
 ///   `roadPacks` row (`feed.recordRoadPacks`) has nowhere to go in Navigate;
+/// - offers each library change to every running run (prompt 38): the run
+///   watches the new verified packs and raises a `libraryChanged` request
+///   at once, and its coverage trigger raises `coverageEntered` requests;
+///   a selection with roads attached extends them to the larger covering
+///   set (`LiveNavigationRun.finishSelection` → `extendRoads`). A run never
+///   loses a pack it attached: a removal takes effect at the next start;
 /// - answers `snapshot(at:)` for the map and the debug overlay.
 ///
 /// The per-run loop is Core's `LiveNavigationRun`, the same code
@@ -58,6 +64,9 @@ actor NavigationService {
         var roadPackHashPrefixes: [String] = []
         var roadSetHashPrefix: String?
         var roadsActiveAtS: Double?
+        /// The latest extension to a larger set (session seconds); nil when
+        /// never extended.
+        var roadsExtendedAtS: Double?
         var roadsRefusal: String?
         /// Road selection attempts recorded (the `unfinished` one too), and
         /// the `roadsSelection` lines written for them: identical repeats
@@ -76,6 +85,7 @@ actor NavigationService {
         var inFlightRequest: RoadSelectionRequest?
         /// The latest request that arrived while one was in flight.
         var pending: RoadSelectionRequest?
+        /// The attached set's names, the whole set after an extension.
         var names: [String] = []
         var refusal: String?
         /// Covering sets (file names, in candidate order) already refused.
@@ -85,6 +95,9 @@ actor NavigationService {
         /// This run's own library rescan (started in `begin`) has returned
         /// (R34.1-3). Set with or without a sidecar.
         var libraryScanned = false
+        /// The library's `candidatesRevision` the run's watched packs come
+        /// from; nil until its first sync (after its own rescan).
+        var libraryRevision: Int?
     }
 
     /// What Diagnostics and the map's roads warning show about roads in the
@@ -97,6 +110,9 @@ actor NavigationService {
         var roadSetHashPrefix: String?
         /// Session time at which roads became active.
         var activeAtSessionS: Double?
+        /// Session time of the latest extension to a larger set; nil when
+        /// never extended.
+        var extendedAtSessionS: Double?
         var refusal: String?
         var selectionPending = false
         var onRoadShare: Double?
@@ -159,6 +175,13 @@ actor NavigationService {
     /// nil: the library's asynchronous selection (the app's runs).
     private var inlineCandidates: [RoadPackSelection.Candidate]?
     private var inlineSelectors: [Int: RoadPackSelector] = [:]
+    /// The library's change observer is registered (once, at the first run).
+    private var observingLibrary = false
+    /// Library syncs handed to runs (the first per run included), and the
+    /// library changes among them that raised a `libraryChanged` request,
+    /// all runs: counts for tests.
+    private(set) var librarySyncs = 0
+    private(set) var libraryChangesOffered = 0
 
     init(flushInterval: Duration = .seconds(10), library: RoadPackLibrary? = nil,
          libraryRescan: @escaping LibraryRescan = { await $0.rescan() }) {
@@ -229,11 +252,63 @@ actor NavigationService {
                 libraryRescanReturned(generation)
                 report(RoadPackLibrary.roadPacksDetail(packs))
             }
+            if !observingLibrary {
+                observingLibrary = true
+                Task(priority: .utility) { [weak self] in
+                    await library.observeCandidates { [weak self] in
+                        Task(priority: .utility) { await self?.libraryCandidatesChanged() }
+                    }
+                }
+            }
         }
     }
 
     private func libraryRescanReturned(_ generation: Int) {
         roadStates[generation]?.libraryScanned = true
+        syncLibrary(generation)
+    }
+
+    /// The library's verified packs changed: offered to every running run
+    /// that has synced once (the others sync after their own rescan).
+    private func libraryCandidatesChanged() {
+        for generation in runs.keys where inlineSelectors[generation] == nil
+            && roadStates[generation]?.libraryRevision != nil {
+            syncLibrary(generation)
+        }
+    }
+
+    /// Reads the library's candidates (off this actor) and hands them to
+    /// the run (`librarySynced`).
+    private func syncLibrary(_ generation: Int) {
+        guard let library, inlineSelectors[generation] == nil else { return }
+        Task(priority: .utility) { [self] in
+            let (set, revision) = await library.candidatesWithRevision()
+            let packs = set.candidates.map(RoadCoverageWatch.Pack.init)
+            librarySynced(packs, revision: revision, generation: generation)
+        }
+    }
+
+    /// Between two inputs: the run's first sync only sets the packs its
+    /// coverage trigger watches; a later revision is a library change, a
+    /// `libraryChanged` request at once (`LiveNavigationRun.libraryChanged`),
+    /// selected like any other. A revision already seen is ignored.
+    private func librarySynced(_ packs: [RoadCoverageWatch.Pack], revision: Int, generation: Int) {
+        guard var state = roadStates[generation], var run = runs[generation] else { return }
+        if let known = state.libraryRevision, known >= revision { return }
+        let first = state.libraryRevision == nil
+        state.libraryRevision = revision
+        librarySyncs += 1
+        runs[generation] = nil
+        var request: RoadSelectionRequest?
+        if first {
+            run.live.setWatchedPacks(packs)
+        } else {
+            request = run.live.libraryChanged(packs)
+            libraryChangesOffered += 1
+        }
+        runs[generation] = run
+        roadStates[generation] = state
+        if let request { requestRoads(request, generation: generation) }
     }
 
     private func ingest(_ input: NavigationInput, generation: Int) {
@@ -307,10 +382,11 @@ actor NavigationService {
 
     // MARK: Roads
 
-    /// The run raised a selection request (no network attached). One
-    /// selection at a time; a request during one replaces the pending one.
+    /// The run raised a selection request (with or without a network
+    /// attached). One selection at a time; a request during one replaces
+    /// the pending one.
     private func requestRoads(_ request: RoadSelectionRequest, generation: Int) {
-        guard library != nil, runs[generation]?.live.roads == nil, var state = roadStates[generation] else { return }
+        guard library != nil, runs[generation] != nil, var state = roadStates[generation] else { return }
         if state.inFlight != nil {
             state.pending = request
         } else {
@@ -323,6 +399,10 @@ actor NavigationService {
         guard let library else { return }
         state.token += 1
         let token = state.token, known = state.knownRefusals
+        // With roads attached the attempt is an extension of this set (the
+        // same open packs): one selection at a time, so it is still the
+        // attached one when the attempt comes back.
+        let attached = runs[generation]?.live.roads?.network, attachedNames = runs[generation]?.live.roadPackNames ?? []
         state.pending = nil
         state.inFlightRequest = request
         // Candidates (awaiting a scan), selection and the network build all
@@ -331,7 +411,8 @@ actor NavigationService {
             let set = await library.candidates()
             guard !Task.isCancelled else { return }
             let attempt = RoadPackSelection.attempt(set.candidates, refusedAtScan: set.refused, request: request,
-                                                    knownRefusals: known)
+                                                    knownRefusals: known, attached: attached,
+                                                    attachedNames: attachedNames)
             guard !Task.isCancelled else { return }
             await selectionFinished(attempt, generation: generation, token: token)
         }
@@ -340,9 +421,10 @@ actor NavigationService {
     /// Back on the actor, between two inputs: attach, or note why not, and
     /// record the attempt (`LiveNavigationRun.finishSelection`: its
     /// `roadsSelection` line unless it repeats the last one written, then
-    /// `roads` after a successful attach). A result for an ended run
-    /// or a superseded selection is dropped. The request pending behind
-    /// this one is not an attempt.
+    /// `roads` after a successful attach or extension). A result for an
+    /// ended run or a superseded selection is dropped. The request pending
+    /// behind this one is not an attempt; after an attach it is dropped
+    /// unless a library change or the coverage trigger raised it.
     private func selectionFinished(_ attempt: RoadSelectionAttempt, generation: Int, token: Int) {
         guard var state = roadStates[generation], state.token == token, var run = runs[generation] else { return }
         state.inFlight = nil
@@ -365,10 +447,10 @@ actor NavigationService {
             run.lastFlush = ContinuousClock.now
             state.names = record.packs ?? []
             state.refusal = nil
-            state.pending = nil
+            if state.pending?.trigger == nil { state.pending = nil }
         }
         runs[generation] = run
-        if run.live.roads == nil, let pending = state.pending {
+        if let pending = state.pending {
             startSelection(pending, generation: generation, state: &state)
         }
         roadStates[generation] = state
@@ -385,7 +467,8 @@ actor NavigationService {
                 status.packNames = state?.names ?? []
                 status.packHashPrefixes = roads.network.packs.map { String(NavigationSeed.hex($0.contentHash).prefix(8)) }
                 status.roadSetHashPrefix = String(roads.network.roadSetHashHex.prefix(8))
-                status.activeAtSessionS = roads.t?.seconds ?? 0
+                status.activeAtSessionS = run.live.attachments.first?.t?.seconds ?? 0
+                if run.live.attachments.count > 1 { status.extendedAtSessionS = roads.t?.seconds ?? 0 }
                 status.onRoadShare = run.live.engine.estimate(at: run.feed.clock.now())?.onRoadShare
             }
             return status
@@ -393,7 +476,7 @@ actor NavigationService {
         guard let last = finished.last else { return .none }
         return RoadsStatus(active: false, packNames: last.roadPackNames, packHashPrefixes: last.roadPackHashPrefixes,
                            roadSetHashPrefix: last.roadSetHashPrefix, activeAtSessionS: last.roadsActiveAtS,
-                           refusal: last.roadsRefusal)
+                           extendedAtSessionS: last.roadsExtendedAtS, refusal: last.roadsRefusal)
     }
 
     private func end(_ generation: Int) {
@@ -425,7 +508,8 @@ actor NavigationService {
             roadPackNames: roads == nil ? [] : state?.names ?? [],
             roadPackHashPrefixes: roads?.network.packs.map { String(NavigationSeed.hex($0.contentHash).prefix(8)) } ?? [],
             roadSetHashPrefix: roads.map { String($0.network.roadSetHashHex.prefix(8)) },
-            roadsActiveAtS: roads.map { $0.t?.seconds ?? 0 },
+            roadsActiveAtS: roads.map { _ in run.live.attachments.first?.t?.seconds ?? 0 },
+            roadsExtendedAtS: run.live.attachments.count > 1 ? (roads?.t?.seconds ?? 0) : nil,
             roadsRefusal: state?.refusal,
             selectionAttempts: run.live.selectionLog.attempts,
             selectionLines: run.live.selectionLog.lines

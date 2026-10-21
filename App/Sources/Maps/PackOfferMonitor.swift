@@ -52,11 +52,21 @@ struct PackOfferNeverStore {
 final class PackOfferMonitor {
     /// The card's content.
     struct Offer: Identifiable, Hashable, Sendable {
+        /// What the run has now, which decides the card's wording.
+        enum Context: Hashable, Sendable {
+            /// No road map for this place (none attached).
+            case noRoadMap
+            /// The run has only the national pack (main roads) and the
+            /// region's map is not installed (B4, prompt 38).
+            case onlyMainRoads
+        }
+
         var id: String { name }
         var name: String
         /// In the app language.
         var title: String
         var sizeBytes: Int64
+        var context: Context = .noRoadMap
     }
 
     /// The async inputs (the app's actors; tests pass their own).
@@ -79,9 +89,16 @@ final class PackOfferMonitor {
         var estimate: @MainActor () async -> PackOfferRule.Estimate?
         /// The map's speed readout (OBD first, then GPS), km/h.
         var speedKmh: @MainActor () -> Double?
+        /// The names of the road packs the run has attached ("roads in use");
+        /// empty without a run or roads.
+        var roadPackNames: @MainActor () async -> [String] = { [] }
     }
 
     private(set) var offer: Offer?
+    /// The region just queued from the card or the roads banner, while its
+    /// download is queued or running (the banner says so instead of offering
+    /// again); nil otherwise. Not the downloader's state: Settings -> Maps has that.
+    private(set) var downloadingTitle: String?
     /// The "Never" names, sorted (Settings → Maps).
     private(set) var neverNames: [String]
     /// The map is on screen and the scene active (the UI sets it): the card
@@ -103,6 +120,10 @@ final class PackOfferMonitor {
     @ObservationIgnored private var active: Set<String> = []
     /// Queued from the card in this drive (until the downloader lists it).
     @ObservationIgnored private var queuedHere: Set<String> = []
+    /// The road packs the run has attached (`LiveInputs.roadPackNames`).
+    @ObservationIgnored private var sessionPacks: [String] = []
+    /// The latest region answered with Download in this drive: name, title.
+    @ObservationIgnored private var downloadAnswered: (name: String, title: String)?
 
     init(sources: Sources, neverStore: PackOfferNeverStore = PackOfferNeverStore(),
          config: PackOfferRule.Config = .default,
@@ -146,7 +167,9 @@ final class PackOfferMonitor {
     func update(now: Double, runActive: Bool, estimate: PackOfferRule.Estimate?, speedKmh: Double?, dialogOpen: Bool) {
         guard runActive else {
             rule = nil
+            downloadAnswered = nil
             if offer != nil { offer = nil }
+            if downloadingTitle != nil { downloadingTitle = nil }
             return
         }
         if rule == nil {
@@ -158,9 +181,16 @@ final class PackOfferMonitor {
             now: now, estimate: estimate, speedKmh: speedKmh, dialogOpen: dialogOpen, installed: installed,
             manifestPacks: manifestPacks, excluded: excluded, never: neverStore.names)
         let pack = rule?.update(input)
-        let next = pack.map { Offer(name: $0.name, title: $0.title(preferredLanguages: preferredLanguages()), sizeBytes: $0.size) }
+        let context = PackOfferContext.make(sessionPackNames: sessionPacks, manifestPacks: manifestPacks)
+        let next = pack.map {
+            Offer(name: $0.name, title: $0.title(preferredLanguages: preferredLanguages()), sizeBytes: $0.size, context: context)
+        }
         if next != offer { offer = next }
+        let busy = downloadAnswered.flatMap { excluded.contains($0.name) && !installedNames.contains($0.name) ? $0.title : nil }
+        if busy != downloadingTitle { downloadingTitle = busy }
     }
+
+    private var installedNames: Set<String> { Set(installed.map(\.name)) }
 
     /// The loop: every `tick` (1 s; the rule's 3 s stop window needs
     /// ≥ 1 Hz) while the task lives, on any tab and in the background (the
@@ -173,6 +203,7 @@ final class PackOfferMonitor {
             var estimate: PackOfferRule.Estimate?
             if live.runActive() {
                 await refreshInputs()
+                sessionPacks = await live.roadPackNames()
                 estimate = await live.estimate()
             }
             let elapsed = origin.duration(to: clock.now).components
@@ -209,6 +240,8 @@ final class PackOfferMonitor {
         rule?.answer(.download, region: shown.name)
         offer = nil
         queuedHere.insert(shown.name)
+        downloadAnswered = (shown.name, shown.title)
+        downloadingTitle = shown.title
         let name = shown.name, sources = sources
         return Task {
             await sources.refreshManifest()
@@ -250,5 +283,18 @@ extension PackOfferRule.Estimate {
     /// The map's dead-reckoning estimate: centre and 95 % semi-major axis.
     init(_ nav: NavDisplay) {
         self.init(latitude: nav.position.latitude, longitude: nav.position.longitude, semiMajorM: nav.semiMajorM)
+    }
+}
+
+/// Which wording the offer gets (B4, prompt 38). Pure.
+enum PackOfferContext {
+    /// `.onlyMainRoads` when the run has roads and every pack in use is a
+    /// national one (main roads only); otherwise `.noRoadMap`.
+    static func make(sessionPackNames: [String], manifestPacks: [PackManifest.Pack]) -> PackOfferMonitor.Offer.Context {
+        guard !sessionPackNames.isEmpty else { return .noRoadMap }
+        let national = Set(manifestPacks.filter { $0.kind == .national }.map(\.name))
+        // The session reports store file names (`<name>-<hash>.roadpack`); the manifest lists bare names.
+        let names = sessionPackNames.map { RoadPackStoreRules.parseFileName($0)?.name ?? $0 }
+        return names.allSatisfy(national.contains) ? .onlyMainRoads : .noRoadMap
     }
 }

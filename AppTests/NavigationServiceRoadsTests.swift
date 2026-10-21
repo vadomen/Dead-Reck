@@ -79,12 +79,15 @@ struct NavigationServiceRoadsTests {
         if !packs.isEmpty {
             roads = ReplayRoadSet(try RoadNetwork(packs: packs.map { try RoadPack(contentsOf: $0) }))
         }
-        if let live = contents.roads { attach = .afterInputs(live.afterInputs) }
+        // `replay_nav --compare`: the sidecar's roads lines, each its own packs.
+        if !contents.roads.isEmpty { attach = .schedule(contents.roads.compactMap(ReplayRoadAttachPoint.init)) }
         let lines = NavigationReplay.liveLines(inputs: inputs, sessionID: header.sessionID, config: config,
                                                appBuild: header.app.build, roads: roads,
                                                attach: roads == nil ? .live : attach)
         return (SidecarComparison(sidecar: contents, replay: lines, replayConfig: config,
-                                  givenRoadSetHash: roads?.roadSetHashHex), contents)
+                                  givenRoadSetHash: roads?.roadSetHashHex,
+                                  givenPackHashes: roads.map { Set($0.network.packs.map { NavigationSeed.hex($0.contentHash) }) }),
+                contents)
     }
 
     @Test("A covering pack attaches mid-recording; the sidecar equals Core's loop with the pack attached at afterInputs")
@@ -111,7 +114,8 @@ struct NavigationServiceRoadsTests {
         await task.value
 
         let (comparison, contents) = try await comparison(feed: feed, events: early + late, packs: [pack])
-        let roads = try #require(contents.roads, "the sidecar has a roads line")
+        let roads = try #require(contents.roads.first, "the sidecar has a roads line")
+        #expect(contents.roads.count == 1)
         #expect(roads.afterInputs >= 1 && roads.afterInputs <= early.count + late.count)
         #expect(roads.roads.count == 1 && roads.roadSetHash.hasPrefix(status.roadSetHashPrefix ?? "?"))
         #expect(comparison.exact, "\(comparison.report(tolerance: .default))")
@@ -135,7 +139,7 @@ struct NavigationServiceRoadsTests {
         await task.value
 
         let (comparison, contents) = try await comparison(feed: feed, events: events, packs: [])
-        #expect(contents.roads == nil)
+        #expect(contents.roads.isEmpty)
         #expect(comparison.exact, "\(comparison.report(tolerance: .default))")
         #expect(await service.roadsStatus().inUse == false)
     }
@@ -163,7 +167,7 @@ struct NavigationServiceRoadsTests {
         let packs = await lib.status().packs
         #expect(packs.count == 2 && packs.allSatisfy { !$0.verified && $0.refusal != nil })
         let (comparison, contents) = try await comparison(feed: feed, events: events, packs: [])
-        #expect(contents.roads == nil)
+        #expect(contents.roads.isEmpty)
         #expect(comparison.exact, "\(comparison.report(tolerance: .default))")
     }
 
@@ -186,7 +190,7 @@ struct NavigationServiceRoadsTests {
         await task.value
 
         let (comparison, contents) = try await comparison(feed: feed, events: events, packs: [])
-        #expect(contents.roads == nil)
+        #expect(contents.roads.isEmpty)
         #expect(comparison.exact, "\(comparison.report(tolerance: .default))")
         let finished = try #require(await service.finished.first)
         #expect(finished.roadsRefusal?.contains("a.roadpack") == true)
@@ -219,7 +223,7 @@ struct NavigationServiceRoadsTests {
         try await Task.sleep(for: .milliseconds(100))
 
         let (_, contents) = try await comparison(feed: feed, events: events, packs: [])
-        #expect(contents.roads == nil)
+        #expect(contents.roads.isEmpty)
         #expect(await service.finished.first?.roadPackNames == [])
     }
 
@@ -250,7 +254,7 @@ struct NavigationServiceRoadsTests {
         let contents = try NavSidecar.read(contentsOf: feed.requiredSidecarURL)
         let line = try #require(contents.roadsSelections.first)
         #expect(line.packs == ["fixture.roadpack"] && line.candidates?.first?.covering == true)
-        #expect(contents.roads != nil)
+        #expect(contents.roads.count == 1)
         let text = try String(contentsOf: feed.requiredSidecarURL, encoding: .utf8)
         let kinds = text.split(separator: "\n").compactMap { $0.contains("\"roadsSelection\"") ? "s" : $0.contains("\"roads\"") ? "r" : nil }
         #expect(kinds.joined() == "sr", "roadsSelection is followed by roads")
@@ -274,7 +278,7 @@ struct NavigationServiceRoadsTests {
 
         let found = try outcomes(feed)
         #expect(found.first == .noneCovering && !found.contains(.selected))
-        #expect(try NavSidecar.read(contentsOf: feed.requiredSidecarURL).roads == nil)
+        #expect(try NavSidecar.read(contentsOf: feed.requiredSidecarURL).roads.isEmpty)
     }
 
     @Test("A refused set writes refused; the same set refused again is not rebuilt and, being a repeat, is counted and written at the end")
@@ -347,7 +351,7 @@ struct NavigationServiceRoadsTests {
         #expect(refused.allSatisfy { $0.outcome == .refused && $0.packs == ["narrow.roadpack"] })
         #expect(refused.allSatisfy { $0.reason?.contains("keys: roadSearchRadiusM") == true })
         let (comparison, contents) = try await comparison(feed: feed, events: events, packs: [])
-        #expect(contents.roads == nil)
+        #expect(contents.roads.isEmpty)
         #expect(comparison.exact, "\(comparison.report(tolerance: .default))")
         let finished = try #require(await service.finished.first)
         #expect(finished.roadsRefusal == refusal && finished.roadPackNames.isEmpty)
@@ -554,6 +558,6 @@ struct NavigationServiceRoadsTests {
         try await Task.sleep(for: .milliseconds(100))
 
         #expect(try outcomes(feed) == [.unfinished])
-        #expect(try NavSidecar.read(contentsOf: feed.requiredSidecarURL).roads == nil)
+        #expect(try NavSidecar.read(contentsOf: feed.requiredSidecarURL).roads.isEmpty)
     }
 }

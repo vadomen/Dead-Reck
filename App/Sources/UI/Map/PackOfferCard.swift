@@ -10,9 +10,39 @@ enum PackOfferText {
     static func summary(title: String, sizeBytes: Int64) -> String {
         summary(sizeBytes: sizeBytes) + " · " + title
     }
+    /// B4: the run has the national pack only.
+    static func summary(sizeBytes: Int64, context: PackOfferMonitor.Offer.Context) -> String {
+        switch context {
+        case .noRoadMap: summary(sizeBytes: sizeBytes)
+        case .onlyMainRoads: "Only main roads here \u{00B7} \(MapsText.size(sizeBytes))"
+        }
+    }
+    static func summary(title: String, sizeBytes: Int64, context: PackOfferMonitor.Offer.Context) -> String {
+        summary(sizeBytes: sizeBytes, context: context) + " \u{00B7} " + title
+    }
     static let download = "Download"
+    /// The primary action's label: the region is named where the line does not
+    /// carry the cost of the missing map (B4: "Download <region>").
+    static func downloadLabel(title: String, context: PackOfferMonitor.Offer.Context) -> String {
+        context == .onlyMainRoads ? "\(download) \(title)" : download
+    }
     static let notNow = "Not now"
     static let never = "Never"
+}
+
+/// The three answers to the offer, one wiring for the card and for the roads
+/// banner that hosts the offer (R75.1-4): both reach the same monitor paths.
+@MainActor
+struct PackOfferActions {
+    var download: () -> Void
+    var notNow: () -> Void
+    var never: () -> Void
+
+    init(monitor: PackOfferMonitor) {
+        download = { monitor.download() }
+        notNow = { monitor.notNow() }
+        never = { monitor.never() }
+    }
 }
 
 /// The card wired to the monitor. Its own view, so only it observes `offer`.
@@ -22,11 +52,9 @@ struct PackOfferCard: View {
     var body: some View {
         Group {
             if let offer = shown {
+                let actions = PackOfferActions(monitor: monitor)
                 PackOfferCardView(
-                    offer: offer,
-                    onDownload: { monitor.download() },
-                    onNotNow: { monitor.notNow() },
-                    onNever: { monitor.never() })
+                    offer: offer, onDownload: actions.download, onNotNow: actions.notNow, onNever: actions.never)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
@@ -40,8 +68,12 @@ struct PackOfferCard: View {
     static func current(for monitor: PackOfferMonitor) -> PackOfferMonitor.Offer? {
         #if DEBUG
         // `-uiFakeOffer 1`: a synthetic offer (screenshots; no real region).
-        if UserDefaults.standard.bool(forKey: "uiFakeOffer") {
-            return PackOfferMonitor.Offer(name: "zz-01", title: "Region A", sizeBytes: 35_000_000)
+        // 2: the run has only the national pack ("Only main roads here").
+        let fake = UserDefaults.standard.integer(forKey: "uiFakeOffer")
+        if fake > 0 {
+            return PackOfferMonitor.Offer(
+                name: "zz-01", title: "Region A", sizeBytes: 35_000_000,
+                context: fake == 2 ? .onlyMainRoads : .noRoadMap)
         }
         #endif
         return monitor.offer
@@ -61,11 +93,19 @@ struct PackOfferCardView: View {
         VStack(alignment: .leading, spacing: 8) {
             // One line; the region goes on a second line only when it does not fit.
             ViewThatFits(in: .horizontal) {
-                Text(PackOfferText.summary(title: offer.title, sizeBytes: offer.sizeBytes))
-                    .font(.headline).lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                if offer.context == .onlyMainRoads {
+                    // The region is the button's label; the line says what is missing.
+                    Text(PackOfferText.summary(sizeBytes: offer.sizeBytes, context: offer.context))
+                        .font(.headline).lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                } else {
+                    Text(PackOfferText.summary(title: offer.title, sizeBytes: offer.sizeBytes, context: offer.context))
+                        .font(.headline).lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(PackOfferText.summary(sizeBytes: offer.sizeBytes)).font(.headline)
-                    Text(offer.title).font(.subheadline).foregroundStyle(HUDColors.muted)
+                    Text(PackOfferText.summary(sizeBytes: offer.sizeBytes, context: offer.context)).font(.headline)
+                    if offer.context == .noRoadMap {
+                        Text(offer.title).font(.subheadline).foregroundStyle(HUDColors.muted)
+                    }
                 }
                 .fixedSize(horizontal: false, vertical: true)
             }
@@ -89,7 +129,8 @@ struct PackOfferCardView: View {
     private var actions: some View {
         let stacked = typeSize.isAccessibilitySize
         Button(action: onDownload) {
-            Text(PackOfferText.download).font(.callout.bold()).lineLimit(1)
+            Text(PackOfferText.downloadLabel(title: offer.title, context: offer.context)).font(.callout.bold())
+                .lineLimit(1).minimumScaleFactor(0.7)
                 .frame(maxWidth: .infinity, minHeight: 48)
         }
         .buttonStyle(OfferActionStyle(prominent: true))
@@ -132,6 +173,16 @@ private struct OfferActionStyle: ButtonStyle {
 #Preview("Offer card") {
     PackOfferCardView(offer: .init(name: "zz-01", title: "Region A", sizeBytes: 35_000_000))
         .padding(40).background(Color(.systemGray4))
+}
+
+#Preview("Offer card, only main roads") {
+    PackOfferCardView(offer: .init(name: "zz-01", title: "Region A", sizeBytes: 35_000_000, context: .onlyMainRoads))
+        .padding(40).background(Color(.systemGray4))
+}
+
+#Preview("Offer card, only main roads, dark") {
+    PackOfferCardView(offer: .init(name: "zz-01", title: "Region A", sizeBytes: 35_000_000, context: .onlyMainRoads))
+        .padding(40).background(Color(.systemGray4)).preferredColorScheme(.dark)
 }
 
 #Preview("Offer card, dark") {

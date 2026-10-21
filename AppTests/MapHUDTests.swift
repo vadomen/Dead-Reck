@@ -166,8 +166,9 @@ struct MapHUDTests {
     @Test("Bottom zone stacks offer, toast, banner, roads warning, hint, strip: top to bottom")
     func stackOrder() {
         let all = MapBottomZone.items(
-            offer: true, toast: true, status: true, roadsWarning: true, resumeHint: true, debugSetting: true)
-        #expect(all == [.offerCard, .toast, .statusLine, .roadsWarning, .resumeHint, .debugStrip])
+            offer: true, toast: true, status: true, positionStatus: true, roadsWarning: true, resumeHint: true,
+            debugSetting: true)
+        #expect(all == [.offerCard, .toast, .statusLine, .positionStatus, .roadsWarning, .resumeHint, .debugStrip])
         #expect(Set(all).count == all.count)
         #expect(Set(all) == Set(MapBottomItem.allCases))
     }
@@ -265,20 +266,21 @@ struct CarPlacementTests {
         (1 - CarPlacement.carFromTop) * d * CarPlacement.spanPerDistance
     }
 
-    @Test("R68.1-1: heading-up, the ellipse's rear half fits below the car; north-up and small ellipses unchanged")
+    @Test("R68.1-1: heading-up, an along-track ellipse's rear half fits in the room below the car")
     func ellipseFitBehindCar() {
+        let viewport = EllipseFit.Viewport.reference
         for semi in [100.0, 300, 450] {
-            let d = FollowZoom.distance(chosen: 100, headingUp: true, semiMajorM: semi)
-            let behind = visibleBehindCar(cameraDistance: d)
+            let ellipse = FitEllipse(semiMajorM: semi, semiMinorM: 5, orientationDeg: 0)
+            let d = FollowZoom.distance(chosen: 100, headingUp: true, ellipse: ellipse, viewport: viewport)
+            let visibleHeight = d * CarPlacement.spanPerDistance
+            let roomBelowPoints = viewport.height * (1 - CarPlacement.carFromTop) - viewport.bottom
+            let behind = roomBelowPoints / viewport.height * visibleHeight
             #expect(behind >= semi, "semi \(semi): \(behind) m behind the car")
-            #expect(behind <= semi * 1.15, "not inflated beyond the 2.2 margin")
+            #expect(behind <= semi * EllipseFit.margin * 1.001, "not inflated beyond the margin")
         }
-        // North-up: the old fit, car centred.
-        #expect(abs(FollowZoom.distance(chosen: 100, headingUp: false, semiMajorM: 300) - 100) < 1e-9)
-        #expect(abs(FollowSpan.span(minimum: 500, semiMajorM: 300) - 660) < 1e-9)
         // A small ellipse leaves the driver's zoom alone.
-        #expect(FollowZoom.distance(chosen: 500, headingUp: true, semiMajorM: 50) == 500)
-        #expect(FollowZoom.distance(chosen: 500, headingUp: true, semiMajorM: nil) == 500)
+        #expect(FollowZoom.distance(chosen: 500, headingUp: true, ellipse: FitEllipse(semiMajorM: 20)) == 500)
+        #expect(FollowZoom.distance(chosen: 500, headingUp: true, ellipse: nil) == 500)
     }
 
     @Test("R68.1-3: the car is centred while the offer card is up (heading-up), unchanged otherwise")
@@ -289,15 +291,15 @@ struct CarPlacementTests {
         #expect(CarPlacement.carFromTop(headingUp: false, offerShown: true) == 0.5)
         // Centred: no camera offset, and the ellipse fit is the north-up one (no 1.5 factor).
         #expect(CarPlacement.aheadMetres(cameraDistance: 800, headingUp: true, carFromTop: 0.5) == 0)
-        let centred = FollowZoom.distance(chosen: 100, headingUp: true, semiMajorM: 300, carFromTop: 0.5)
-        #expect(abs(centred - MapFraming.cameraDistance(spanMeters: 660)) < 1e-9)
-        let lowered = FollowZoom.distance(chosen: 100, headingUp: true, semiMajorM: 300)
+        let ahead = FitEllipse(semiMajorM: 300, semiMinorM: 10, orientationDeg: 0)
+        let centred = FollowZoom.distance(chosen: 100, headingUp: true, ellipse: ahead, carFromTop: 0.5)
+        let lowered = FollowZoom.distance(chosen: 100, headingUp: true, ellipse: ahead)
         #expect(lowered > centred, "the lower-third fit needs a wider view")
         // The zoom state uses its own placement for the fit.
         var zoom = FollowZoom()
-        let before = zoom.autoFollowDistance(headingUp: true, semiMajorM: 300)
+        let before = zoom.autoFollowDistance(headingUp: true, ellipse: ahead)
         zoom.carFromTop = 0.5
-        #expect(zoom.autoFollowDistance(headingUp: true, semiMajorM: 300) < before)
+        #expect(zoom.autoFollowDistance(headingUp: true, ellipse: ahead) < before)
     }
 
     @Test("R68.1-3: the offer card never covers the car on the smallest iPhone, heading-up and north-up")

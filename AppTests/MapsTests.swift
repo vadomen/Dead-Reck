@@ -257,7 +257,7 @@ struct MapsRowsTests {
         func action(_ id: String) -> MapsRow.Action? { rows.listed.first { $0.id == id }!.action }
         #expect(state("region-a") == .installed && action("region-a") == nil)
         #expect(state("region-b") == .updateAvailable && action("region-b") == .update)
-        #expect(state("region-c") == .removalPending && action("region-c") == nil)
+        #expect(state("region-c") == .removalPending && action("region-c") == .downloadAgain, "B5: bring it back")
         #expect(state("national") == .failed("truncated") && action("national") == nil)
         #expect(Self.rows().listed.allSatisfy { $0.status == .notInstalled && $0.action == .download })
         #expect(rows.listed.first { $0.id == "region-c" }?.canRemove == false)
