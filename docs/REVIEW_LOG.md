@@ -1006,3 +1006,11 @@ Reviewers: one fresh opus reviewer (App focus; Core unchanged since round 2). Re
 | R76.3-1 | MAJOR | `MapHUD.swift:154`, `GPSVoice.swift:43`: with no run (no OBD; Navigate needs the link polling, and the 5 min OBD-lost auto-stop ends the run), voiceRun is nil and the tracker resets on every note, so "GPS lost"/"GPS back" is never spoken, while the Settings footnote promised it unconditionally; the `estimateShown == false` branch of voiceRun was unreachable. | CONFIRMED, FIXED (162afbf) | User decision 2026-10-21: the voice speaks only during a run (like the GPS off button). Footnote says so; dead branch removed; test for silence without a run; PLAN §6 item 6 updated. |
 
 Tests at round 3: Core unchanged (1131 passed); App 727 tests in 105 suites passed at 162afbf. clearGPS() kept for untagged (demo) state, test `clearGPSAlone`.
+
+### Round 4
+
+Reviewer: one fresh opus reviewer (App focus plus a cross-cutting pass of the full range; Core unchanged since f67a3c8). Result: 0 BLOCKER, 0 MAJOR, 0 MINOR. Ready to merge. R76.2-1 and R76.3-1 verified: one run counter shared by the service and the session; the service's current run only moves forward or to nil, so the poll bracket is sound; every run handover and the demo start silent; the "only during a run" rule matches the Settings footnote and PLAN §6 item 6. The round 2–3 logic → test mappings were checked by reading (no App mutations without a specific finding). Privacy clean.
+
+### Run 76 summary
+
+4 rounds; 4 fixed (R76.1-1, R76.1-2, R76.2-1, R76.3-1; R76.3-1 after a user decision 2026-10-21: the GPS voice speaks only during a run); 0 rejected; 6 deferred (R76.1-3..6, R76.2-2). Engine output bit-identical to a9103dd without a switch event (clean drive, seed 1, roads on / off / as-live; a live-roads drive `--as-live --compare` exact PASS). Final tests: Core 1131 tests in 142 suites passed (36 known issues); App 727 tests in 105 suites passed at 162afbf.
