@@ -996,3 +996,13 @@ Reviewers: two fresh opus reviewers in parallel, A Core/recording/docs and B app
 | R76.2-2 | MINOR | `NavigationEngine.swift:1145`: the initialisation branch of `gnssInUse` (a GNSS fix that initialises the filter counts as used) is untested; a mutation removing it survived NavigationGPSSwitchTests. | DEFERRED | BACKLOG. |
 
 Tests at round 2: Core unchanged (1131 passed at 935791c); App 725 tests in 105 suites passed at 2415182.
+
+### Round 3
+
+Reviewers: one fresh opus reviewer (App focus; Core unchanged since round 2). Result: 0 BLOCKER, 1 MAJOR (CONFIRMED, fixed after a user decision). The reviewer found no remaining path where a run starts with a phrase: R76.1-1 and R76.2-1 verified. Note: `clearGPS()` in 2415182 is a redundant guard; the round-2 mapping "clearGPS → recordStop" was wrong (recordStop passes without it).
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R76.3-1 | MAJOR | `MapHUD.swift:154`, `GPSVoice.swift:43`: with no run (no OBD; Navigate needs the link polling, and the 5 min OBD-lost auto-stop ends the run), voiceRun is nil and the tracker resets on every note, so "GPS lost"/"GPS back" is never spoken, while the Settings footnote promised it unconditionally; the `estimateShown == false` branch of voiceRun was unreachable. | CONFIRMED, FIXED (162afbf) | User decision 2026-10-21: the voice speaks only during a run (like the GPS off button). Footnote says so; dead branch removed; test for silence without a run; PLAN §6 item 6 updated. |
+
+Tests at round 3: Core unchanged (1131 passed); App 727 tests in 105 suites passed at 162afbf. clearGPS() kept for untagged (demo) state, test `clearGPSAlone`.

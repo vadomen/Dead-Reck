@@ -419,7 +419,7 @@ Items 1-7 above (demo pipeline) and the airplane-mode check (item 1) cover the d
 3. **HUD states:** "GPS" / "No GPS" / "GPS off" each show their own glyph and agree with what the engine does with fixes (jammed drive, spoofed fix, switch off).
 4. **Speed while off:** with GPS off and OBD lost, the HUD speed shows "—" and does not fall back to GPS speed.
 5. **Map while off:** the grey GPS marker and accuracy circle are hidden and the GPS track does not grow.
-6. **Voice:** off by default ("Speak GPS changes" in Settings). Switched on: "GPS lost", "GPS back" and "GPS off" are spoken on the change, each phrase at most once per 5 min; music is ducked while it speaks and resumes after.
+6. **Voice:** off by default ("Speak GPS changes" in Settings). Switched on: "GPS lost", "GPS back" and "GPS off" are spoken on the change, each phrase at most once per 5 min; music is ducked while it speaks and resumes after. The voice speaks only during a run, Navigate or Record (user decision 2026-10-21). Without OBD there is no run, so it stays silent: check that no phrase is spoken then.
 7. **Not persisted:** every new Navigate or Record starts with GPS on, also after a relaunch with the switch off.
 8. **Map POIs:** the map (and the demo) shows no Apple Maps points of interest; street names stay.
 
