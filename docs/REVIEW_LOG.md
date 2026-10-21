@@ -982,7 +982,7 @@ Reviewers: three opus reviewers in parallel: A engine/replay, B log format/recor
 | R76.1-3 | MINOR | `NavigationTap.swift:42`: a `gpsSwitch` input can be dropped by the tap's newest-4096 buffer when the engine lags ~30 s, and the effect persists (the engine keeps using GPS while the HUD says GPS off). | DEFERRED | BACKLOG. Reviewer A accepted the risk (same as pins; droppedInputs visible). |
 | R76.1-4 | MINOR | `NavigationReplay.swift:986`: the `attachIfDue()` before a gpsSwitch input in the scored replay is untested (a mutation removing it survived 87 tests). | DEFERRED | BACKLOG. |
 | R76.1-5 | MINOR | `MapView.swift:536-541`: "Use GPS" (or Stop while off) re-frames the camera as a first fix (`latest` nil to non-nil), discarding the driver's zoom and pan. | DEFERRED | BACKLOG. |
-| R76.1-6 | MINOR | `docs/RELEASE_PLAN.md:173`: the Review Notes "only network use is downloading road maps" omits Apple Maps tiles (the map is MapKit). The wording was the user's, verbatim. | DEFERRED | User's decision; BACKLOG. |
+| R76.1-6 | MINOR | `docs/RELEASE_PLAN.md:173`: the Review Notes "only network use is downloading road maps" omits Apple Maps tiles (the map is MapKit). The wording was the user's, verbatim. | DONE (prompt 39) | User's decision (wording 2026-10-21); was BACKLOG, now closed in `docs/archive/BACKLOG-closed.md`. |
 
 Tests at round 1: Core 1131 tests in 142 suites passed (36 known issues) at 935791c (round 1 changes no Core code). App: 719 tests in 104 suites passed at 4cf9b19. `PackNetworkPolicyTests` "Turning the switch on restarts a transfer…" failed once in a fixer's run and passed on rerun with no change (flaky, unrelated).
 
