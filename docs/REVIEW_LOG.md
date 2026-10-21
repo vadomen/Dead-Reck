@@ -985,3 +985,14 @@ Reviewers: three opus reviewers in parallel: A engine/replay, B log format/recor
 | R76.1-6 | MINOR | `docs/RELEASE_PLAN.md:173`: the Review Notes "only network use is downloading road maps" omits Apple Maps tiles (the map is MapKit). The wording was the user's, verbatim. | DEFERRED | User's decision; BACKLOG. |
 
 Tests at round 1: Core 1131 tests in 142 suites passed (36 known issues) at 935791c (round 1 changes no Core code). App: 719 tests in 104 suites passed at 4cf9b19. `PackNetworkPolicyTests` "Turning the switch on restarts a transfer…" failed once in a fixer's run and passed on rerun with no change (flaky, unrelated).
+
+### Round 2
+
+Reviewers: two fresh opus reviewers in parallel, A Core/recording/docs and B app UI. Result: 0 BLOCKER, 1 MAJOR (CONFIRMED, fixed), 1 MINOR (DEFERRED). A verified that round-1 fix 4cf9b19 is correct and not flaky. Core is unchanged since 842b276, so round 1's bit-identity covers HEAD. A ran 3 mutations: 2 killed, 1 survived (R76.2-2).
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R76.2-1 | MAJOR | `MapView.swift:679/721`, `NavigationFeed.swift:84-86`: R76.1-1 was incomplete. At Record stop/start the feed still held the previous run's `EngineGPS(inUse: true)`, so the new run's silent baseline was `.ok` and its first real state `.none` said "GPS lost", then "GPS back" at its first used fix. | CONFIRMED, FIXED (2415182) | Root cause: the engine GPS state was untagged. `EngineGPS.run` is stamped by the feed; a poll that straddles a run change is dropped; the HUD ignores another run's state (stale fallback); `voiceRun` gives the tracker a run only once the state is the run's own; `clearGPS()` on run change. Tests in `GPSRunHandoverTests` (recordStop, recordStop without clear, recordStart, real loss within the new run, hudIgnoresOtherRun, feedTagging). These fail with the fix neutralised in `MapHUD.swift`. The `.onChange` wiring in `MapView` is not exercised by tests. |
+| R76.2-2 | MINOR | `NavigationEngine.swift:1145`: the initialisation branch of `gnssInUse` (a GNSS fix that initialises the filter counts as used) is untested; a mutation removing it survived NavigationGPSSwitchTests. | DEFERRED | BACKLOG. |
+
+Tests at round 2: Core unchanged (1131 passed at 935791c); App 725 tests in 105 suites passed at 2415182.
