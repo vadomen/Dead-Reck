@@ -29,7 +29,7 @@ enum SettingsRows {
     }
 
     static let speakGPSTitle = "Speak GPS changes"
-    static let speakGPSFootnote = "Says \"GPS lost\", \"GPS back\" or \"GPS off\", at most once every 5 minutes each."
+    static let speakGPSFootnote = "While navigating or recording, says \"GPS lost\", \"GPS back\" or \"GPS off\", at most once every 5 minutes each."
 
     static let demoDriveTitle = "Demo drive (simulated car)"
 

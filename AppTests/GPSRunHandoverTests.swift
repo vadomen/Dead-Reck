@@ -43,7 +43,7 @@ struct GPSRunHandoverTests {
         @discardableResult
         func render() -> HUDGPS {
             let hud = MapHUDState.gpsState(stale: stale, engine: feed.gps, currentRun: current)
-            let run = MapHUDState.voiceRun(current: current, engine: feed.gps, estimateShown: true)
+            let run = MapHUDState.voiceRun(current: current, engine: feed.gps)
             voice.note(hud, run: run, enabled: true)
             return hud
         }
@@ -130,10 +130,37 @@ struct GPSRunHandoverTests {
         #expect(MapHUDState.gpsState(stale: true, engine: old, currentRun: 1) == .ok)
         let untagged = EngineGPS(inUse: true, switchedOff: false)
         #expect(MapHUDState.gpsState(stale: true, engine: untagged, currentRun: nil) == .ok)
-        #expect(MapHUDState.voiceRun(current: 2, engine: old, estimateShown: true) == nil)
-        #expect(MapHUDState.voiceRun(current: 2, engine: nil, estimateShown: true) == nil)
-        #expect(MapHUDState.voiceRun(current: 2, engine: nil, estimateShown: false) == 2)
-        #expect(MapHUDState.voiceRun(current: nil, engine: old, estimateShown: true) == nil)
+        #expect(MapHUDState.voiceRun(current: 2, engine: old) == nil)
+        #expect(MapHUDState.voiceRun(current: 2, engine: nil) == nil)
+        #expect(MapHUDState.voiceRun(current: nil, engine: old) == nil)
+    }
+
+    @Test("No run (no OBD): a GPS to No GPS change speaks nothing (user decision R76.3-1)")
+    func noRunSilent() {
+        var m = Map()
+        m.current = nil
+        m.stale = false
+        m.render()
+        m.stale = true
+        #expect(m.render() == .none)
+        m.stale = false
+        m.render()
+        #expect(m.speaker.said.isEmpty)
+    }
+
+    @Test("clearGPS alone: an untagged engine state would otherwise count for the next run")
+    func clearGPSAlone() {
+        var m = Map()
+        _ = m.feed.apply(
+            NavigationSnapshot(
+                t: .zero, sessionID: UUID(), estimate: nil, stats: .init(), gnssInUse: true, gpsSwitchedOff: false),
+            run: nil, at: .now)
+        m.current = 5
+        m.stale = true
+        #expect(m.render() == .ok, "untagged state belongs to every run")
+        m.runChanged()
+        #expect(m.feed.gps == nil)
+        #expect(m.render() == .none)
     }
 
     @Test("The feed tags GPS with the service's generation and drops a poll that straddles a run change")

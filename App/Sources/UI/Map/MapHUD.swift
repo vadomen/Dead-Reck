@@ -145,14 +145,14 @@ struct MapHUDState: Equatable, Sendable {
         engine.run == nil || engine.run == currentRun
     }
 
-    /// The run the voice may take a baseline for (R76.2-1): nil until the HUD
-    /// state comes from the live run's own engine, so a run starts silent
-    /// whatever the previous run left behind. nil without a run. When the
-    /// estimate is not shown (Navigate without OBD) the stale logic is the
-    /// only source, so the run counts at once.
-    static func voiceRun(current: Int?, engine: EngineGPS?, estimateShown: Bool) -> Int? {
+    /// The run the voice may take a baseline for (R76.2-1, R76.3-1): nil until
+    /// the HUD state comes from the live run's own engine, so a run starts
+    /// silent whatever the previous run left behind. Rule (user decision):
+    /// no run (`current` nil, e.g. Navigate without OBD) -> no voice baseline
+    /// and silence, the same condition as the GPS off button. While a run
+    /// exists the estimate is always shown.
+    static func voiceRun(current: Int?, engine: EngineGPS?) -> Int? {
         guard let current else { return nil }
-        guard estimateShown else { return current }
         guard let engine, belongs(engine, to: current) else { return nil }
         return current
     }

@@ -732,7 +732,7 @@ struct GPSMapView: View {
     }
 
     private var gpsVoiceRun: Int? {
-        MapHUDState.voiceRun(current: runGeneration, engine: estimate?.gps, estimateShown: estimate != nil)
+        MapHUDState.voiceRun(current: runGeneration, engine: estimate?.gps)
     }
 
     /// Speed, GPS and OBD indicators, thermal when not nominal, recording row.
