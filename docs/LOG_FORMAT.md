@@ -4,7 +4,7 @@ Field-by-field reference for DriveLogger recordings. The code in
 `Core/Sources/DriveLoggerCore/Log/` is authoritative; this file must be updated
 in the same commit as any change to it.
 
-Current version: **3** (`LogFormatVersion.current`). Readable: **1, 2, 3**.
+Current version: **4** (`LogFormatVersion.current`). Readable: **1, 2, 3, 4**.
 
 ## File
 

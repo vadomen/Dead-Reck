@@ -564,7 +564,8 @@ Recordings are named `Drive_<yyyyMMdd-HHmmss>.jsonl.gz`, in the app's
 ## Log format
 
 Recordings are JSON Lines, one header line followed by one event per line,
-with a versioned format; every version ever written stays readable. See
+with a versioned format (current version 4: adds the driver's "GPS off"
+switch event); every version ever written stays readable. See
 [docs/LOG_FORMAT.md](docs/LOG_FORMAT.md). The navigation sidecar
 `Drive_<stamp>.nav.jsonl` sits next to its recording and is versioned on its
 own: [docs/NAV_SIDECAR.md](docs/NAV_SIDECAR.md).

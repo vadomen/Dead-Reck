@@ -413,6 +413,16 @@ Items 1-7 above (demo pipeline) and the airplane-mode check (item 1) cover the d
 7. **Finding your position (UX-40):** shown while the estimate is not converged or wide, hidden once it narrows.
 8. **Replay after a mid-run attach:** `replay_nav --as-live --compare` against the v3 sidecar of that session reproduces the live estimates (docs/NAV_SIDECAR.md, docs/NAVIGATION.md).
 
+### Added by UX-9 (a) "GPS off" and UX-22 GPS state and voice (prompt 37, branch `ux9a-gps-off`) — not verified on a device; none of this is claimed
+1. **GPS off under a spoofed or jammed fix:** at a stop with a spoofed or jammed fix, tap "GPS off" in the right rail. The estimate stops following the fix; pins, network fixes (no valid speed) and roads are still used; Record writes a `gpsSwitch` row (`on` false, `source` driver); `replay_nav --as-live --compare` on that recording is an exact PASS.
+2. **Use GPS:** tap "Use GPS": fixes are used again with no stale fix applied (nothing from the off period is replayed into the engine); the GPS track resumes as a new segment, without a chord drawn across the gap.
+3. **HUD states:** "GPS" / "No GPS" / "GPS off" each show their own glyph and agree with what the engine does with fixes (jammed drive, spoofed fix, switch off).
+4. **Speed while off:** with GPS off and OBD lost, the HUD speed shows "—" and does not fall back to GPS speed.
+5. **Map while off:** the grey GPS marker and accuracy circle are hidden and the GPS track does not grow.
+6. **Voice:** off by default ("Speak GPS changes" in Settings). Switched on: "GPS lost", "GPS back" and "GPS off" are spoken on the change, each phrase at most once per 5 min; music is ducked while it speaks and resumes after.
+7. **Not persisted:** every new Navigate or Record starts with GPS on, also after a relaunch with the switch off.
+8. **Map POIs:** the map (and the demo) shows no Apple Maps points of interest; street names stay.
+
 ### Added by run 60, push_packs.sh app guard (not verified on a device)
 1. **Process list shape:** with the phone connected and unlocked and the app open, save `xcrun devicectl device info processes --device <id> --json-output -` and check that `result.runningProcesses[].executable` holds a `file:///…/DriveLogger.app/DriveLogger` URL (the parser's shape was inferred from devicectl's strings, never seen in real output). If the shape differs, the guard refuses ("cannot tell whether the app is running"); fix the parser rather than using `--force` by habit.
 2. **Suspended app:** leave the app in the app switcher (not swiped away) and run `scripts/push_packs.sh --dry-run`: Guard 1 reports it would refuse. Swipe it away: Guard 1 is clear.
