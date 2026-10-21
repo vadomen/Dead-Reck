@@ -170,14 +170,14 @@ struct RemoveDuringRunTests {
         return (rows.listed + rows.other).first { $0.id == "region-a" }!
     }
 
-    @Test("The confirmation warns that navigation runs without the map, only while a run is active")
+    @Test("The confirmation says the map stays in use until restart, only while a run is active")
     func warning() {
         let r = row()
         #expect(MapsText.confirmationMessage(r, runActive: true)
-                == "Navigation will run without this map until you restart the app. Frees 48.0 MB. Recordings are not affected.")
+                == "This map stays in use until you restart the app, then it is removed. Frees 48.0 MB. Recordings are not affected.")
         #expect(MapsText.confirmationMessage(r, runActive: false) == "Frees 48.0 MB. Recordings are not affected.")
         #expect(MapsText.confirmationMessage(r) == MapsText.confirmationMessage(r, runActive: false))
-        #expect(MapsText.removeDuringRunWarning == "Navigation will run without this map until you restart the app.")
+        #expect(MapsText.removeDuringRunWarning == "This map stays in use until you restart the app, then it is removed.")
     }
 
     @Test("A pack in removal pending offers Download again instead of no action")

@@ -78,26 +78,79 @@ struct EllipseFitTests {
         #expect(north == north2)
     }
 
-    @Test("A 2 km start ellipse is shown whole: its width on the usable width")
-    func twoKilometres() {
-        let ellipse = FitEllipse(semiMajorM: 2_000, semiMinorM: 1_500, orientationDeg: 30)
+    @Test("An ellipse below the ceiling is shown whole: its extents on the usable room")
+    func belowCeilingFitsWhole() {
+        let ellipse = FitEllipse(semiMajorM: 1_000, semiMinorM: 700, orientationDeg: 30)
         let span = EllipseFit.requiredSpanM(
             ellipse: ellipse, cameraHeadingDeg: 0, carFromTop: CarPlacement.carFromTop, viewport: viewport)
-        let (ex, ey) = EllipseFit.halfExtents(semiMajorM: 2_000, semiMinorM: 1_500, orientationDeg: 30, cameraHeadingDeg: 0)
+        let (ex, ey) = EllipseFit.halfExtents(semiMajorM: 1_000, semiMinorM: 700, orientationDeg: 30, cameraHeadingDeg: 0)
         let mpp = metresPerPoint(span)
+        #expect(span > 0 && span < EllipseFit.maxSpanM)
         #expect(ex * EllipseFit.margin / mpp <= halfWidth + 1e-6)
         #expect(ey * EllipseFit.margin / mpp <= viewport.height * (1 - CarPlacement.carFromTop) - viewport.bottom + 1e-6)
-        #expect(span > 2 * 2_000, "far wider than the old 1000 m cap")
-        #expect(span < EllipseFit.maxSpanM)
+        #expect(span > 2 * 1_000, "far wider than the old 1000 m cap")
     }
 
-    @Test("Cap: a larger ellipse is fitted as 4 km; degenerate values are safe")
+    @Test("Just below the ceiling still fits whole; just above it is cut at the ceiling")
+    func justBelowCeiling() {
+        let down = viewport.height * (1 - CarPlacement.carFromTop) - viewport.bottom
+        let room = min(halfWidth, down)
+        // A circle needs a x margin x height / room metres of visible height.
+        let edge = EllipseFit.maxSpanM * room / (EllipseFit.margin * viewport.height)
+        let below = EllipseFit.requiredSpanM(
+            ellipse: FitEllipse(semiMajorM: edge * 0.98), cameraHeadingDeg: 0,
+            carFromTop: CarPlacement.carFromTop, viewport: viewport)
+        #expect(abs(below - EllipseFit.maxSpanM * 0.98) < 1e-6)
+        let above = EllipseFit.requiredSpanM(
+            ellipse: FitEllipse(semiMajorM: edge * 1.02), cameraHeadingDeg: 0,
+            carFromTop: CarPlacement.carFromTop, viewport: viewport)
+        #expect(above == EllipseFit.maxSpanM)
+    }
+
+    @Test("Ceiling: a 2 km and a 3 km circle in portrait heading-up are cut off at the sides, 8000 m exactly")
+    func largeEllipseIsCutOff() {
+        #expect(EllipseFit.maxSpanM == 8_000)
+        let up = viewport.height * CarPlacement.carFromTop - viewport.top
+        for a in [2_000.0, 3_000.0] {
+            let span = EllipseFit.requiredSpanM(
+                ellipse: FitEllipse(semiMajorM: a), cameraHeadingDeg: 0,
+                carFromTop: CarPlacement.carFromTop, viewport: viewport)
+            #expect(span == 8_000)
+            let mpp = metresPerPoint(span)
+            #expect(halfWidth * mpp < a, "the sides are cut off")
+            #expect(up * mpp >= a, "the ellipse above the car is still shown")
+        }
+    }
+
+    @Test("The ceiling holds with the offer card up, north-up, and every ellipse orientation")
+    func ceilingAfterEveryTerm() {
+        let card = EllipseFit.Viewport.make(size: CGSize(width: 393, height: 852), safeBottom: 34, offerShown: true)
+        for orientation in [0.0, 45, 90, 135] {
+            let e = FitEllipse(semiMajorM: 4_000, semiMinorM: 2_500, orientationDeg: orientation)
+            for (carFromTop, vp) in [(0.5, card), (CarPlacement.carFromTop, card), (0.5, viewport)] {
+                let span = EllipseFit.requiredSpanM(ellipse: e, cameraHeadingDeg: 10, carFromTop: carFromTop, viewport: vp)
+                #expect(span == EllipseFit.maxSpanM)
+            }
+        }
+    }
+
+    @Test("The ceiling never zooms in past the driver's zoom or the speed zoom")
+    func ceilingKeepsWiderDriverZoom() {
+        let ceiling = EllipseFit.distance(forSpanM: EllipseFit.maxSpanM)
+        let big = FitEllipse(semiMajorM: 3_000)
+        #expect(FollowZoom.distance(chosen: 100, headingUp: true, ellipse: big) == ceiling)
+        let wider = ceiling * 2   // a driver zoom beyond 8 km stays
+        #expect(FollowZoom.distance(chosen: wider, headingUp: true, ellipse: big) == wider)
+        #expect(FollowZoom.distance(chosen: wider, headingUp: false, ellipse: big) == wider)
+    }
+
+    @Test("Cap: a larger ellipse is fitted as 4 km (and stops at the ceiling); degenerate values are safe")
     func cap() {
         let capped = EllipseFit.requiredSpanM(
             ellipse: FitEllipse(semiMajorM: 4_000, semiMinorM: 4_000), cameraHeadingDeg: 0, carFromTop: 0.5, viewport: viewport)
         let huge = EllipseFit.requiredSpanM(
             ellipse: FitEllipse(semiMajorM: 90_000, semiMinorM: 90_000), cameraHeadingDeg: 0, carFromTop: 0.5, viewport: viewport)
-        #expect(capped > 0 && huge == capped)
+        #expect(capped > 0 && huge == capped && capped == EllipseFit.maxSpanM)
         // A minor axis longer than the major one, or negative, cannot widen the fit.
         let odd = FitEllipse(semiMajorM: 100, semiMinorM: 9_000, orientationDeg: 0)
         let circle = FitEllipse(semiMajorM: 100, semiMinorM: 100, orientationDeg: 0)
@@ -111,7 +164,7 @@ struct EllipseFitTests {
         }
         #expect(EllipseFit.requiredSpanM(
             ellipse: FitEllipse(semiMajorM: -5), cameraHeadingDeg: 0, carFromTop: 0.5, viewport: viewport) == 0)
-        // A broken viewport does not blow the zoom up beyond the hard ceiling, or divide by zero.
+        // A broken viewport does not blow the zoom up beyond the ceiling, or divide by zero.
         let tiny = EllipseFit.Viewport(width: 100, height: 100, top: 90, bottom: 90, leading: 60, trailing: 60)
         let guarded = EllipseFit.requiredSpanM(
             ellipse: FitEllipse(semiMajorM: 4_000), cameraHeadingDeg: 0, carFromTop: 0.5, viewport: tiny)
@@ -171,7 +224,7 @@ struct EllipseFitHoldTests {
     func shrinkBack() {
         var zoom = settled(at: 30)
         let normal = zoom.auto.distance
-        let big = FitEllipse(semiMajorM: 2_000, semiMinorM: 1_500, orientationDeg: 20)
+        let big = FitEllipse(semiMajorM: 1_000, semiMinorM: 700, orientationDeg: 20)
         zoom.step(speedKmh: 30, dt: 0.1, ellipse: big, headingUp: true, cameraHeading: 0)
         let wide = zoom.autoFollowDistance(headingUp: true, ellipse: big)
         #expect(wide > normal * 20)

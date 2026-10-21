@@ -950,7 +950,7 @@ Reviewers: three opus reviewers in parallel: A engine, B sidecar/replay/docs, C 
 | R75.1-5 | MINOR | `NavigationReplay.swift:376`: the `runLive` schedule has no test for two roads lines at equal `afterInputs`; mutating `while` to `if` survives. | DEFERRED | BACKLOG. |
 | R75.1-6 | MINOR | `SidecarComparison.swift:205`: the line-by-line roads comparison is untested when only the first of two lines differs; comparing only `.last` survives. | DEFERRED | BACKLOG. |
 | R75.1-7 | MINOR | `RoadsWarning.swift:93`, `PackOfferMonitor.swift:189`: after a banner Download, "Downloading <region>…" shows while the job is queued waiting for Wi-Fi (cellular off); the text should come from the downloader's state. | DEFERRED | BACKLOG. |
-| R75.1-8 | MINOR | `MapsView.swift:154`: the Remove-during-run confirmation "Navigation will run without this map until you restart the app." contradicts the behaviour: the pack stays in use until restart and is deleted at the next launch. | OPEN | User wording decision. Proposed: "This map stays in use until you restart the app, then it is removed." Not in BACKLOG. |
+| R75.1-8 | MINOR | `MapsView.swift:154`: the Remove-during-run confirmation "Navigation will run without this map until you restart the app." contradicts the behaviour: the pack stays in use until restart and is deleted at the next launch. | FIXED | User wording decision (2026-10-21, after the review): "This map stays in use until you restart the app, then it is removed." Not in BACKLOG. |
 
 Tests at round 1 start: Core 1110 tests in 140 suites passed; release perf gate 9 passed; AppTests 689 tests in 102 suites passed.
 
@@ -967,4 +967,4 @@ Tests at round 2: Core 1111 tests in 140 suites passed; AppTests 691 tests in 10
 
 ### Run 75 summary
 
-2 rounds; 4 fixed (R75.1-1..4); 0 rejected; 5 deferred (R75.1-5..7, R75.2-1, R75.2-2). R75.1-8 open pending the user's wording decision. The ellipse-fit span ceiling (`EllipseFit.maxSpanM`) is pending a user decision.
+2 rounds; 4 fixed (R75.1-1..4); 0 rejected; 5 deferred (R75.1-5..7, R75.2-1, R75.2-2). R75.1-8 wording applied (user decision 2026-10-21, after the review). The ellipse-fit span ceiling is resolved: `EllipseFit.maxSpanM = 8000` by user decision, with test `largeEllipseIsCutOff`.

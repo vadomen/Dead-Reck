@@ -36,10 +36,13 @@ enum EllipseFit {
     /// The semi-major axis is fitted up to here (decided with the user,
     /// 2026-10-20); a larger or degenerate ellipse is fitted as this one.
     static let maxSemiMajorM = 4_000.0
-    /// Guard for degenerate viewports: no fit asks for more than this
-    /// visible height, metres. A capped circle needs about 32 km on the
-    /// reference phone, so only a broken viewport reaches it.
-    static let maxSpanM = 40_000.0
+    /// The camera stops here: no fit asks for more than this visible height
+    /// (vertical span), metres (decided with the user, 2026-10-21). A larger
+    /// start ellipse is cut off at the sides; the "Finding your position"
+    /// line and the visible ellipse edges carry the uncertainty. Below it the
+    /// whole ellipse fits. A circle of about 1.3 km semi-major reaches it on
+    /// the reference phone.
+    static let maxSpanM = 8_000.0
     /// Smallest room (points) the fit divides by.
     static let minRoom = 40.0
 
@@ -84,8 +87,11 @@ enum EllipseFit {
         return ((a * a * s * s + b * b * c * c).squareRoot(), (a * a * c * c + b * b * s * s).squareRoot())
     }
 
-    /// The visible height in metres that shows the whole ellipse, or 0 when
-    /// there is nothing to fit (non-finite input, unusable viewport).
+    /// The visible height in metres that shows the whole ellipse, at most
+    /// `maxSpanM` (applied after the width, height, car placement and offer
+    /// card terms), or 0 when there is nothing to fit (non-finite input,
+    /// unusable viewport). Callers take the wider of this and the speed or
+    /// driver zoom, so the ceiling never zooms in past those.
     /// - Parameters:
     ///   - carFromTop: where the car sits, fraction of the map height from
     ///     the top (`CarPlacement.carFromTop(headingUp:offerShown:)`; 0.5

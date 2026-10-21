@@ -150,8 +150,9 @@ enum MapsText {
     static func confirmationTitle(_ row: MapsRow) -> String { "Remove \(row.title)?" }
 
     /// Shown in the confirmation while a Navigate or Record run is active: the
-    /// pack is only marked then, and the running session loses it (B5).
-    static let removeDuringRunWarning = "Navigation will run without this map until you restart the app."
+    /// pack is only marked then; the running session keeps using it until the
+    /// app restarts, and the file is deleted at the next launch (B5).
+    static let removeDuringRunWarning = "This map stays in use until you restart the app, then it is removed."
 
     static func confirmationMessage(_ row: MapsRow, runActive: Bool = false) -> String {
         let base = "Frees \(size(row.installed?.sizeBytes ?? row.sizeBytes)). Recordings are not affected."

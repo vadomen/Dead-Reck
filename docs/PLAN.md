@@ -406,9 +406,9 @@ Items 1-7 above (demo pipeline) and the airplane-mode check (item 1) cover the d
 ### Added by prompt 38, roads in a running session and map fixes (branch `roads-ux-fixes`) — not verified on a device
 1. **Download mid-session (UX-36):** with Navigate running and no region pack, download one in Settings → Maps. "Roads in use" in Diagnostics updates (with ", extended at <x> s" if a pack was already attached) and the "No road pack covers this area" banner hides. During Record the download stays paused and the banner offers "Download <region> after recording".
 2. **Coverage entered (UX-36):** drive from national-only coverage into a city pack's coverage with the pack installed: the session extends to the larger set while driving.
-3. **Remove during a session (UX-39):** removing a pack shows "Navigation will run without this map until you restart the app."; Diagnostics shows "Removal pending — in use until restart"; "Download again" restores it without a restart.
+3. **Remove during a session (UX-39):** removing a pack shows "This map stays in use until you restart the app, then it is removed."; Diagnostics shows "Removal pending — in use until restart"; "Download again" restores it without a restart.
 4. **Offers (UX-37, UX-38):** the banner shows "Download <region>" only at a stop; with only the national pack, "Only main roads here · Download <region>" shows at a stop and never in motion.
-5. **Ellipse fit (UX-42):** at 30 km/h under jamming the whole ellipse is visible in heading-up and north-up and when the map opens; the camera returns to the speed zoom after the dwell; no pumping.
+5. **Ellipse fit (UX-42):** at 30 km/h under jamming the whole ellipse is visible in heading-up and north-up and when the map opens (up to the 8 km height ceiling; larger start ellipses are cut off at the sides); the camera returns to the speed zoom after the dwell; no pumping.
 6. **Matched road line (UX-41):** visible in a Release build in light and dark while on a road; absent when not matched.
 7. **Finding your position (UX-40):** shown while the estimate is not converged or wide, hidden once it narrows.
 8. **Replay after a mid-run attach:** `replay_nav --as-live --compare` against the v3 sidecar of that session reproduces the live estimates (docs/NAV_SIDECAR.md, docs/NAVIGATION.md).
