@@ -118,10 +118,20 @@ struct MapHUDState: Equatable, Sendable {
             accessibilitySummary: parts.joined(separator: ", "))
     }
 
-    /// GPS state from the map's own freshness (`GPSMapView.stale`) and the
-    /// driver's switch (UX-9 (a)): the switch wins over staleness.
-    static func gpsState(stale: Bool, switchedOff: Bool = false) -> HUDGPS {
+    /// GPS state for the HUD (UX-9 (a), UX-22).
+    /// - The driver's switch (`switchedOff`, read from the session at the tap)
+    ///   wins: immediate, and the engine's own flag lags it by the tap buffer
+    ///   (OR-ing the engine's flag in would show "GPS off" for a moment after
+    ///   Use GPS), so the engine's `switchedOff` is deliberately not used here.
+    /// - With an engine state (a navigating session whose estimate is shown):
+    ///   "GPS" only while the engine used a valid-speed fix in the last 5 s,
+    ///   else "No GPS". Fixes arriving that the engine does not use
+    ///   (network-only, or spoofed ones it rejects) are "No GPS".
+    /// - Without one (no run, no estimate shown, e.g. Navigate without OBD):
+    ///   the map's own freshness (`stale`).
+    static func gpsState(stale: Bool, switchedOff: Bool = false, engine: EngineGPS? = nil) -> HUDGPS {
         if switchedOff { return .off }
+        if let engine { return engine.inUse ? .ok : .none }
         return stale ? .none : .ok
     }
 }

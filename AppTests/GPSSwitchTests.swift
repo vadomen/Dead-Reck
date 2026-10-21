@@ -23,6 +23,44 @@ struct GPSSwitchHUDTests {
         #expect(MapHUDState.gpsState(stale: false) == .ok)
     }
 
+    @Test("Engine state: in use is GPS, not in use is No GPS even with fixes arriving; the map's staleness is only the fallback")
+    func engineState() {
+        // Fixes arriving fresh (stale false) but the engine does not use them (network-only): No GPS.
+        #expect(MapHUDState.gpsState(stale: false, engine: EngineGPS(inUse: false, switchedOff: false)) == .none)
+        #expect(MapHUDState.gpsState(stale: true, engine: EngineGPS(inUse: true, switchedOff: false)) == .ok)
+        // No run / no estimate shown: the stale logic.
+        #expect(MapHUDState.gpsState(stale: false, engine: nil) == .ok)
+        #expect(MapHUDState.gpsState(stale: true, engine: nil) == .none)
+    }
+
+    @Test("The session's switch wins at the tap; the engine's lagging flag is not OR-ed in")
+    func switchWinsOverEngine() {
+        #expect(MapHUDState.gpsState(stale: false, switchedOff: true, engine: EngineGPS(inUse: true, switchedOff: false)) == .off)
+        #expect(MapHUDState.gpsState(stale: false, switchedOff: true, engine: EngineGPS(inUse: false, switchedOff: true)) == .off)
+        // After Use GPS the engine still says off for a moment: No GPS, not GPS off.
+        #expect(MapHUDState.gpsState(stale: false, switchedOff: false, engine: EngineGPS(inUse: false, switchedOff: true)) == .none)
+    }
+
+    @Test("The feed publishes the engine's GPS state from snapshots, nil without a session, only on change")
+    func feedGPS() {
+        let feed = NavigationFeed(display: nil)
+        let now = ContinuousClock.now
+        func snap(session: Bool, inUse: Bool, off: Bool) -> NavigationSnapshot {
+            NavigationSnapshot(
+                t: .zero, sessionID: session ? UUID() : nil, estimate: nil, stats: .init(),
+                gnssInUse: inUse, gpsSwitchedOff: off)
+        }
+        #expect(feed.gps == nil)
+        _ = feed.apply(snap(session: true, inUse: true, off: false), at: now)
+        #expect(feed.gps == EngineGPS(inUse: true, switchedOff: false))
+        _ = feed.apply(snap(session: true, inUse: false, off: false), at: now)
+        #expect(feed.gps == EngineGPS(inUse: false, switchedOff: false))
+        _ = feed.apply(snap(session: true, inUse: false, off: true), at: now)
+        #expect(feed.gps == EngineGPS(inUse: false, switchedOff: true))
+        _ = feed.apply(snap(session: false, inUse: false, off: false), at: now)
+        #expect(feed.gps == nil, "no run: the HUD falls back to its stale logic")
+    }
+
     @Test("GPS off has its own label and glyph flag, distinct from No GPS")
     func offIndicator() {
         let speed = MapSpeedReadout(source: .obd, kmh: 40, quality: .good)

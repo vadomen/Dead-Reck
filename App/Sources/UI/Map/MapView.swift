@@ -716,7 +716,7 @@ struct GPSMapView: View {
             thermal: thermal)
     }
 
-    private var gpsHUD: HUDGPS { MapHUDState.gpsState(stale: stale, switchedOff: !gpsSwitchOn) }
+    private var gpsHUD: HUDGPS { MapHUDState.gpsState(stale: stale, switchedOff: !gpsSwitchOn, engine: estimate?.gps) }
 
     /// Speed, GPS and OBD indicators, thermal when not nominal, recording row.
     private var hudCard: some View {

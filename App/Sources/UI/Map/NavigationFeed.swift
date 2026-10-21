@@ -29,6 +29,11 @@ final class NavigationFeed {
     /// service rebuilds the geometry on a change only), not per poll.
     private(set) var matchedEdge: [GeoPoint] = []
 
+    /// The engine's GPS state (UX-22) while a session is navigating, else nil.
+    /// Observed, written only when it changes (a few times per drive), so the
+    /// HUD follows it without the 10 Hz `display` writes.
+    private(set) var gps: EngineGPS?
+
     @ObservationIgnored private(set) var latest: NavDisplay?
     @ObservationIgnored private let source: Source?
     @ObservationIgnored private var gate = NavWriteGate()
@@ -41,8 +46,12 @@ final class NavigationFeed {
 
     /// Previews and tests: fixed values, no service behind them unless a
     /// `source` is given (a test of the first poll after seeded values).
-    init(display: NavDisplay?, stats: NavStatsDisplay? = nil, matchedEdge: [GeoPoint] = [], source: Source? = nil) {
+    init(
+        display: NavDisplay?, stats: NavStatsDisplay? = nil, matchedEdge: [GeoPoint] = [], gps: EngineGPS? = nil,
+        source: Source? = nil
+    ) {
         self.source = source
+        self.gps = gps
         self.matchedEdge = matchedEdge
         self.display = display
         self.latest = display
@@ -72,6 +81,9 @@ final class NavigationFeed {
 
     /// Applies one snapshot (split from `poll` so tests need no service).
     func apply(_ snapshot: NavigationSnapshot, at now: ContinuousClock.Instant) -> Bool {
+        let nextGPS = snapshot.sessionID == nil
+            ? nil : EngineGPS(inUse: snapshot.gnssInUse, switchedOff: snapshot.gpsSwitchedOff)
+        if nextGPS != gps { gps = nextGPS }
         let next = NavDisplay(snapshot)
         latest = next
         writeStats(snapshot, at: now)
@@ -106,4 +118,13 @@ final class NavigationFeed {
         let next = NavStatsDisplay(snapshot.stats)
         if next != stats { stats = next }
     }
+}
+
+/// What the engine says about GPS (`NavigationSnapshot.gnssInUse`,
+/// `gpsSwitchedOff`), for the HUD.
+struct EngineGPS: Hashable, Sendable {
+    /// A fix with a valid speed was used in the last 5 s (network-only fixes never count).
+    var inUse: Bool
+    /// The engine has the driver's switch off. Lags the tap by the tap buffer.
+    var switchedOff: Bool
 }
