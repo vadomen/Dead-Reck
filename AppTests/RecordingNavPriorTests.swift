@@ -133,11 +133,17 @@ struct RecordingNavPriorTests {
         rig.session.disableNavigate()
     }
 
-    /// Records a short session on a `FakeLink` with a start-up init in its
-    /// replay, `configure`d before Start; returns the file's events and the
-    /// recording's feed.
-    static func record(scratch: ScratchStore,
-                       configure: (RecordingSession) -> Void) async throws -> (events: [LogEvent], feed: RecordingNavigationFeed) {
+    /// A short recording on a `FakeLink` whose start-up init is in its
+    /// replay, `configure`d before Start.
+    struct Recorded {
+        let events: [LogEvent]
+        let feed: RecordingNavigationFeed
+        /// The replay rows the file must hold, exactly: `lastInitEvents`
+        /// mapped on the file's clock, as the recorder maps them.
+        let replay: [LogEvent]
+    }
+
+    static func record(scratch: ScratchStore, configure: (RecordingSession) -> Void) async throws -> Recorded {
         let link = FakeLink()
         let base = ProcessInfo.processInfo.systemUptime
         link.lastInitEvents = [InitScript.connection(at: base - 10)[2]]
@@ -148,17 +154,35 @@ struct RecordingNavPriorTests {
         configure(session)
         try await session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
         let url = try #require(session.currentFile)
-        #expect(await eventually(2) { (try? RecordingFixtures.read(url).events.contains { $0.payload.kind == "accel" }) == true })
+        #expect(await eventually(10) { (try? RecordingFixtures.read(url).events.contains { $0.payload.kind == "accel" }) == true })
         await session.stop()
         let feed = try #require(feeds.last)
         #expect(feeds.count == 1)
-        return (try RecordingFixtures.read(url).events, feed)
+        let (header, events, _) = try RecordingFixtures.read(url)
+        let clock = SessionClock(header: header)
+        let replay = link.lastInitEvents.flatMap { LogEvent.rows(for: $0, adapter: link.adapter, clock: clock) }
+        #expect(replay.count == 17, "→ connected and the 16-event init")
+        return Recorded(events: events, feed: feed, replay: replay)
     }
 
-    /// Kinds of the rows up to the first source sample: the start-up part.
-    static func startKinds(_ events: [LogEvent]) -> [String] {
-        Array(events.prefix { !["accel", "gyro", "mag", "baro", "motion", "location", "obd"].contains($0.payload.kind) }
-            .map(\.payload.kind))
+    /// The head of the file, which the synchronous Start step writes before
+    /// any source runs (so it is deterministic): the `start` row, the rows
+    /// `between` (the `navPrior` or its error row, or none), then the init
+    /// replay, exactly. What follows (calibration rows, the first source
+    /// samples from the sources' own queues, thermal or memory rows) races
+    /// and is not compared. Returns the head's kinds.
+    @discardableResult
+    static func checkHead(_ recorded: Recorded, between: [String]) -> [String] {
+        let events = recorded.events
+        let n = 1 + between.count + recorded.replay.count
+        guard events.count >= n else {
+            Issue.record("only \(events.count) rows, head needs \(n)")
+            return []
+        }
+        #expect(events[0].payload == .lifecycle(LifecycleSample(.start)), "the start row first")
+        #expect(events[1..<1 + between.count].map(\.payload.kind) == between)
+        #expect(Array(events[(1 + between.count)..<n]) == recorded.replay, "the init replay right after, row for row")
+        return events.prefix(n).map(\.payload.kind)
     }
 
     @Test("No provider, or a provider that returns nil: no navPrior row, the start of the file as before, nil in the feed")
@@ -168,16 +192,14 @@ struct RecordingNavPriorTests {
         let none = try await Self.record(scratch: scratch) { _ in }
         #expect(Self.navPriors(none.events).isEmpty)
         #expect(none.feed.navPrior == nil)
-        let start = Self.startKinds(none.events)
-        #expect(start.first == "lifecycle" && start.dropFirst().first == "link", "the init replay right after start: \(start)")
-        #expect(!none.events.contains { $0.payload.kind == "navPrior" })
+        let head = Self.checkHead(none, between: [])
 
         let probe = NavPriorProbe { _ in nil }
         let fresh = try await Self.record(scratch: scratch) { probe.install(on: $0) }
         #expect(probe.asks.count == 1)
         #expect(Self.navPriors(fresh.events).isEmpty)
         #expect(fresh.feed.navPrior == nil)
-        #expect(Self.startKinds(fresh.events) == start, "nil changes nothing")
+        #expect(Self.checkHead(fresh, between: []) == head, "nil changes nothing")
         #expect(!RecordingFixtures.lifecycle(fresh.events).contains { $0.sample.event == "error" })
     }
 
@@ -196,6 +218,7 @@ struct RecordingNavPriorTests {
         let error = try #require(lifecycle.first { $0.sample.event == "error" })
         #expect(error.index == 1, "where the row would have been")
         #expect(error.sample.detail == "navPrior invalid: headingDeg")
+        Self.checkHead(result, between: ["lifecycle"])
     }
 
     @Test("A valid sample on a plain recording (no Navigate run): the row at index 1 with the feed's sample")
@@ -217,6 +240,6 @@ struct RecordingNavPriorTests {
         #expect(result.feed.navPrior == sample)
         let firstSample = try #require(result.events.firstIndex { $0.payload.kind == "accel" })
         #expect(1 < firstSample)
-        #expect(Self.startKinds(result.events).prefix(3) == ["lifecycle", "navPrior", "link"])
+        Self.checkHead(result, between: ["navPrior"])
     }
 }
