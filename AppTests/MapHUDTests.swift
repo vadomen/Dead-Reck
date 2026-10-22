@@ -166,9 +166,9 @@ struct MapHUDTests {
     @Test("Bottom zone stacks offer, toast, banner, roads warning, hint, strip: top to bottom")
     func stackOrder() {
         let all = MapBottomZone.items(
-            offer: true, toast: true, status: true, positionStatus: true, roadsWarning: true, resumeHint: true,
-            debugSetting: true)
-        #expect(all == [.offerCard, .toast, .statusLine, .positionStatus, .roadsWarning, .resumeHint, .debugStrip])
+            offer: true, toast: true, status: true, positionStatus: true, restoreStatus: true, roadsWarning: true,
+            resumeHint: true, debugSetting: true)
+        #expect(all == [.offerCard, .toast, .statusLine, .restoreStatus, .positionStatus, .roadsWarning, .resumeHint, .debugStrip])
         #expect(Set(all).count == all.count)
         #expect(Set(all) == Set(MapBottomItem.allCases))
     }
