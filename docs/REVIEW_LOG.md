@@ -1040,3 +1040,15 @@ Reviewers: two opus reviewers in parallel: A engine/replay, B app. Result: 0 BLO
 | R77.2-3 | MAJOR (raised from MINOR) | `App/Sources/Navigation/NavigationService.swift:299/682`: a Navigate run waiting to restore could begin after a newer recording and overwrite `current`, then its end set it nil: map idle for the whole recording. | CONFIRMED, FIXED (adfccd7) | `begin` sets `current` only for a newer generation; `end` falls back to the newest remaining run; test `staleNavigateKeepsTheNewerRecordingCurrent`. |
 
 Tests at round 2: Core 1167 tests passed (36 known issues), perf gate 9/9, AppTests 753 passed (one first-run failure in PackNetworkPolicyTests, the known run-75 flake; rerun green).
+
+### Round 3
+
+Reviewers: two opus reviewers in parallel: A engine/replay, B app. Result: 0 BLOCKER, 2 MAJOR (both CONFIRMED, FIXED f8e4d7a), 1 MINOR (one-line PLAN wording, fixed in this ledger commit). Reviewer A: fix before merge (2 major); round-2 fix verified, the author's `guard parkedSinceZero` mutation killed. Reviewer B: ready to merge; the R77.2-3 fix keeps `current` equal to the newest run for every reader. Mutations: removing `if obdSpeedKmh == nil { parkedSinceZero = false }` and narrowing the older-than-save check to `.unconfirmed` survived (R77.3-1, R77.3-2). Bit-identical re-run (clean drive, seed 1, roads off and on): identical.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R77.3-1 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/NavigationEngine.swift:1307`: releasing the prior's parked hold on rejection was untested; without it a no-OBD car cruising at constant speed ran stale-parked after a rejecting fix (probe: 300 parked steps, 178 m from a fresh engine). | CONFIRMED, FIXED (f8e4d7a) | Test `rejectedParkedPriorWithoutOBDReleasesTheParkedHold`. |
+| R77.3-2 | MAJOR | `NavigationEngine.swift:1362`: dropping a cached fix older than the save after a hand-over confirmation was untested; without it the fix is counted twice and the ellipse shrinks with no new information (probe: 29.8 m → 11.3 m). | CONFIRMED, FIXED (f8e4d7a) | Test `cachedFixOlderThanTheSaveIsIgnoredAfterAHandOverConfirmation`. |
+| R77.3-3 | MINOR | `docs/PLAN.md:435` §6 UX-20 check 9 waited "more than ~2 min", under the ~135 s moving cap, so it could pass with R77.2-1 reverted. | FIXED (this commit) | "more than 3 min". |
+
+Tests at round 3: Core 1169 tests passed (36 known issues), perf gate 9/9; App unchanged since round 2 (AppTests 753 passed).

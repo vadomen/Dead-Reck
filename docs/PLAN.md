@@ -432,7 +432,7 @@ Items 1-7 above (demo pipeline) and the airplane-mode check (item 1) cover the d
 6. **Save file:** `NavigationRestore/estimate.json` is excluded from backup and has protection `completeUntilFirstUserAuthentication` (written while the phone is locked, read after a reboot and first unlock).
 7. **Background save:** the save on `.background` completes before suspension (kill the app from the switcher right after backgrounding, relaunch: the restored position is the last one).
 8. **First OBD reply after ignition-on:** note how fast it comes; it decides how long the restored prior waits for the parked-or-moving decision. Pull out of the space at once, before the adapter answers: a first reply under 10 km/h keeps the restored arrow (slightly wider ellipse); 10 km/h or more after a park longer than about 2 min drops it until a fix.
-9. **Parked prior, OBD not yet on:** park overnight, open Navigate before ignition on, stop it, start Navigate again after more than ~2 min: the Restored line appears (the parked class was kept).
+9. **Parked prior, OBD not yet on:** park overnight, open Navigate before ignition on, stop it, start Navigate again after more than 3 min (the moving-class cap is reached at ~135 s, so a shorter wait cannot tell): the Restored line appears (the parked class was kept).
 10. **Stop Record while Navigate's start waits for it:** stop Record while Navigate's start is still waiting for it, then start a new recording at once: the map keeps showing the recording (never idle), and no Restored line shows during Record.
 
 ### Added by run 60, push_packs.sh app guard (not verified on a device)
