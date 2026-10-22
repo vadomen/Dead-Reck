@@ -525,8 +525,9 @@ without a prior writes byte-identical sidecars and replay results.
   `parked` (last OBD 0 and the engine stale-parked, or the app says the
   engine is off), `standingStop` (a fresh OBD 0 held ≥ 3 s), else
   `moving` (no OBD, a moving last reply even if the link was lost).
-- **Age**: same boot max(wall Δ, uptime Δ), else wall Δ; below 0 or over
-  24 h: no restore.
+- **Age**: same boot max(wall Δ, uptime Δ), else wall Δ; in [−5 s, 0)
+  it is clock skew and taken as 0 (`NavigationRestoreModel.maxNegativeAgeS`);
+  below −5 s or over 24 h: no restore.
 - **Seed** (`NavigationEngine(config:roads:prior:)`): at the first input,
   through the same `initialize` as a first fix, the same random draws (one
   heading, Gaussian or stratified uniform, one scale per particle), every
@@ -560,9 +561,15 @@ without a prior writes byte-identical sidecars and replay results.
   A grown heading σ over 30° seeds uniform headings; a major-axis σ over
   1.5 km is no prior at all (`.none`, `tooUncertain`): the run starts
   fresh. A parked or standing-stop prior holds the cloud parked until OBD
-  or the IMU says otherwise, and its first OBD reply decides: moving
-  regrows it as moving for the gap up to that reply, or rejects it
-  (`movingAtStart`) when that is over 1.5 km. The arrow shows at once when
+  or the IMU says otherwise, and its first OBD reply decides (user
+  decision 2026-10-22): 0 keeps it; under 10 km/h keeps it too (a slow
+  pull-out while the adapter connects) with (v_first × 5 s)² added to each
+  axis of every particle's position variance for the unknown roll before
+  the reply (`restore.slowPullOutKmh`); 10 km/h or more regrows it as
+  moving for the gap up to that reply, or rejects it (`movingAtStart`)
+  when that is over 1.5 km. The heading is not grown for a slow pull-out:
+  a turn out of the space before the reply is left to the next fix's
+  test. The arrow shows at once when
   the grown heading σ is under the converged threshold (10°: a saved σ up
   to about 9.5° after parking).
 - **Disagreeing fix or pin** wins, never the prior. While unconfirmed,
@@ -580,9 +587,25 @@ without a prior writes byte-identical sidecars and replay results.
 - **A cached fix older than the save** is ignored
   (`restore.fixesOlderThanSave`): the state is newer. A younger one is an
   ordinary fix through the test.
+- **Record-stop hand-over** (user decision 2026-10-22):
+  `NavigationPrior.handOver`, set only by the app, means the state is the
+  final save of a recording that ended in this process and this Navigate
+  run takes over from it. With the saved `converged` true and a gap (save
+  to the run's first input) ≤ 10 s
+  (`NavigationRestoreModel.handOverConfirmMaxGapS`) the restore is
+  `confirmed` at once, reason `handOver`, so the map never shows the
+  Restored line; otherwise the normal rule. Only the status changes: the
+  growth, the seed and every later step are the same as without the flag
+  (a confirmed hand-over of a stopped class still regrows as moving at a
+  first reply ≥ 10 km/h). So after a gap over about 1.5–1.8 s the arrow
+  still waits for the next fix (grown heading σ over 10°, see above),
+  without the Restored line. A relaunch or a next-morning start never has the
+  flag (the app keeps it in memory only), and its gap is far over 10 s
+  anyway.
 - **Status** (`NavigationRestore` on the engine and on
   `NavigationSnapshot.restore`, never in the sidecar): `none`,
-  `unconfirmed`, `confirmed`, `rejected`, with the reason, the decision's
+  `unconfirmed`, `confirmed`, `rejected`, with the reason (`fix`, `pin`,
+  `handOver`, `movingAtStart`, `tooUncertain`), the decision's
   time and the save time (`ageS(at:)` for "Restored · n min ago · not yet
   confirmed").
 - **In the app** (`NavigationService`, `NavigationRestoreStore`): every run,
@@ -594,7 +617,10 @@ without a prior writes byte-identical sidecars and replay results.
   deleted (the run starts fresh). Only a Navigate run reads it (younger than
   24 h); a recording starts a fresh engine. A Navigate run waits for earlier
   runs to end, so after Record's Stop it restores from the save Record's
-  engine made at its end (the hand-over above). Record-start restore is not
+  engine made at its end (the hand-over above), with `handOver` set when
+  that recording's final save is the newest save of this process
+  (`NavigationService.recordingEndSave`, cleared by any later save and by
+  the read). Record-start restore is not
   built yet. Nothing is logged: no coordinate reaches the system log.
 
 ### Estimate
@@ -2338,27 +2364,36 @@ is the largest in the first 2 km after the restart.
 |---|---|---|---|---|
 | jammed-A → jammed-B (parked, towers) | — / 12 / 12 (truth point) | — | 1 s / 111 s (0.43 km) | confirmed by the first fix ×5 |
 | jammed-B → clean, GPS masked (parked) | — / 12 / no estimate | — / 118 / — | 1 s / never | unconfirmed (no fix); 87 % inside 95 % + truth σ |
-| drive-9 park (455 s, ignition off), GPS masked | 6 / no estimate / no estimate | — | never / never | rejected ×5 (`movingAtStart`: OBD came back at 8 km/h) |
+| drive-9 park (455 s, ignition off), GPS masked | 6 / 6 / no estimate | — | 0 s / never | unconfirmed ×5, kept at a slow first reply (8 km/h, 2026-10-22 rule); 5/5 inside, d² 0.02 (until 2026-10-22: rejected, `movingAtStart`, no estimate) |
+| drive-9 park, GPS as recorded (fixes ≤ 100 m held out) | 6 / 6 / 8 | — | 0 s / 315 s (2.42 km) | unconfirmed ×5, kept (8 km/h); 5/5 inside, d² 0.02 |
+| drive-9 park, car moved 300 m (synthetic `--prior-offset`), GPS as recorded | 6 / 92 (4–418) / 8 | — | 0 s / 315 s | rejected by a fix at 219 s ×2; unconfirmed ×3; 4/5 inside, one seed 418 m off in a 64 m ellipse (d² 75) |
+| drive-9 park, moved 300 m (synthetic), GPS masked | 6 / 222 (15–643) / no estimate | — | 0 s / never | unconfirmed ×5 (nothing can reject); roads pull 3 seeds back to 15–21 m, 2 stay 416 / 643 m off in 65 / 121 m ellipses (d² up to 101) |
 | killed moving, gap 1 s (6 cuts on clean-long, drive-7) | 2–14 / 1–16 | 15–25 / 11–46 | 1 s / never | unconfirmed (GPS masked) |
 | killed moving, gap 2 s | 2–11 / 2–16 | 15–25 / 13–55 | 3–19 s (one cut 58 s) / never | unconfirmed |
 | killed moving, gap 10 s | 2–11 / 20–1172 | 15–25 / 400–2104 | never (one cut 99 s) / never | unconfirmed; inside 95 % 77–100 % |
 | killed moving, gap 30–60 s | 3–15 / 20–1502 | 19–25 / 386–3352 | never / never | unconfirmed; inside 95 % 86–100 % |
 | killed moving, gap 120 s | 2–25 / 788–1245, or no prior | — | never | 3 of 6 cuts `tooUncertain` (> 1.5 km) |
 | moved 300 m / 2 km, then jammed-B or clean | as fresh | as fresh | as fresh | rejected by the first fix ×5 in all four cases |
-| drive-8 → drive-9 (report only) | — / 447 / 447 | — | 242 s / 242 s | rejected (`movingAtStart`) |
-| 2026-10-20 morning → evening 1 (report only) | — / 60 / 60 | — | never / never | rejected (`movingAtStart`) |
+| drive-8 → drive-9 (report only) | — / 447 / 447 | — | 242 s / 242 s | rejected (`movingAtStart`: first reply ≥ 10 km/h), unchanged by the 2026-10-22 rule |
+| 2026-10-20 morning → evening 1 (report only) | — / 60 / 60 | — | never / never | rejected (`movingAtStart`: the recording starts at 38 km/h), unchanged |
 
 Fresh has no estimate at all where GPS is masked. The mean carried forward
 over a short gap matters: with it held at the save, the gap-1 s first
 checkpoint was 5–27 m and gap-2 s 10–41 m instead of 1–16 and 2–16. Past 5
 s the heading is uniform, so with no GPS the cloud becomes a ring of the
 distance driven: consistent (the truth inside), not useful; the first fix
-or pin ends it. Experiment, not adopted (the first OBD reply not checked):
-drive-9 park restores to 6 m at once, converged at 0 s, as uncut; but the
-evening drive, whose recording started at 38 km/h, then keeps a parked
-prior 2.2 km wrong that no tower fix rejects (0 of 6110 inside). The
-check stays; a slow first reply (pulling out of a parking space while the
-adapter connects) is an open decision.
+or pin ends it. Without any first-reply check the evening drive, whose
+recording started at 38 km/h, keeps a parked prior 2.2 km wrong that no
+tower fix rejects (0 of 6110 inside): the check stays for 10 km/h and
+more. Below 10 km/h (user decision 2026-10-22, the slow pull-out) the
+stopped prior is kept with (v × 5 s)² per axis: drive-9 park now restores
+to 6 m at once, converged at 0 s, as uncut, in both legs; the jammed and
+moved cases above (first reply 0) and the report-only pairs (first reply
+≥ 10 km/h) are unchanged (2026-10-22 re-run, seeds 1–5, roads). The cost
+is the parked prior's known risk extended to slow pull-outs: a car moved
+while parked (synthetic 300 m) stays wrong until a fix that can reject it;
+with only coarse fixes that took 219 s on two seeds and never came on
+three. 110-cell no-prior matrix byte-identical to main after the change.
 
 ## Known limitations and options
 
