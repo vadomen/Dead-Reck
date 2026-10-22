@@ -218,6 +218,14 @@ struct NavigationRestoreStoreTests {
         }
     }
 
+    @Test("The boot session ID is read (simulator: the host's kern.bootsessionuuid), stable, and within Core's 1…64 characters")
+    func bootSession() {
+        let id = BootSession.current
+        #expect(id != nil, "the phone is a §6 check")
+        #expect((1...64).contains(id?.count ?? 0))
+        #expect(BootSession.current == id)
+    }
+
     @Test("A failed write is counted and leaves nothing half-written")
     func writeFailure() async throws {
         let scratch = RestoreScratch()
