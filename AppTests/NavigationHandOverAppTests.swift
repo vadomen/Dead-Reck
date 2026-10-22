@@ -133,7 +133,7 @@ struct NavigationHandOverAppTests {
         rig.session.disableNavigate()
     }
 
-    @Test("A Navigate run that ended before Record's Start (Navigate off) is never handed over, though its capture is still held")
+    @Test("A Navigate run that ended before Record's Start (Navigate off) is never handed over, though its capture is still held (Start ended no run: the nil navigateEndedByStart guard; the generation check is staleCaptureIsNotHandedOver)")
     func endedNavigateIsNotHandedOver() async throws {
         let scratch = try ScratchStore()
         defer { scratch.remove() }
@@ -156,6 +156,63 @@ struct NavigationHandOverAppTests {
         #expect(rig.tee.feeds.last?.navPrior == nil)
         await rig.session.stop()
         #expect(try Self.navPriors(url).isEmpty)
+    }
+
+    @Test("R78.1-B1: Navigate g1 converges → Record g2 → Navigate g3 with no estimate (no fix, no restore) → Record g4: the slot still holds g1's capture, but Start ended g3, so no navPrior row and Record starts fresh")
+    func staleCaptureIsNotHandedOver() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let service = R.service(nil)
+        let rig = NavigateRig(store: scratch.store, service: service)
+        service.provideHandOver(to: rig.session)
+        let driver = ScriptDriver(rig)
+        await rig.connect(speed: 36)
+        rig.session.enableNavigate(RecordingSessionNavigateTests.quick)
+
+        // g1: converged on fixes, published.
+        let first = try #require(rig.session.navigateGeneration)
+        await driver.drive(0..<3, runStart: 0)
+        #expect(await Self.ingested(service, first, driver.sent))
+        #expect(service.handOver.capture?.generation == first)
+
+        // g2: Record takes g1's estimate over, and stops.
+        try await rig.session.start(mount: "m", vehicle: "v", allowWithoutOBD: false, calibration: .zero)
+        let firstRecord = try #require(rig.session.currentGeneration)
+        #expect(rig.session.navigateEndedByStart == first)
+        #expect(rig.tee.feeds.last?.navPrior != nil, "g1 handed over to g2")
+        driver.reset()
+        await driver.step(3, runStart: 3, fixes: false)
+        #expect(await Self.ingested(service, firstRecord, driver.sent))
+        #expect(await service.recordingsFromPrior == 1)
+        await rig.session.stop()
+        #expect(await R.ended(service, firstRecord))
+
+        // g3: Navigate resumes after the stop; no fix, no saved estimate: never initialised, never publishes.
+        let third = try #require(rig.session.navigateGeneration)
+        #expect(third > firstRecord)
+        driver.reset()
+        await driver.drive(3.2..<5, runStart: 3.2, fixes: false)
+        #expect(await Self.ingested(service, third, driver.sent))
+        #expect(!(await service.snapshot(at: MonotonicTimestamp(seconds: 1.7))).initialized)
+        #expect(service.handOver.capture?.generation == first, "the slot still holds g1's capture: only the generation check stands between it and g4")
+
+        // g4: Start ended g3, which had no estimate: no row, a fresh engine.
+        try await rig.session.start(mount: "m", vehicle: "v", allowWithoutOBD: false, calibration: .zero)
+        let record = try #require(rig.session.currentGeneration)
+        let url = try #require(rig.session.currentFile)
+        #expect(rig.session.navigateEndedByStart == third)
+        let feed = try #require(rig.tee.feeds.last)
+        #expect(feed.generation == record)
+        #expect(feed.navPrior == nil, "g1's stale estimate is not handed over")
+        driver.reset()
+        await driver.drive(5..<6, runStart: 5, fixes: false)
+        #expect(await Self.ingested(service, record, driver.sent))
+        let snapshot = await service.snapshot(at: MonotonicTimestamp(seconds: 0.9))
+        #expect(!snapshot.initialized && snapshot.restore.status == .none)
+        #expect(await service.recordingsFromPrior == 1, "only g2 started from a prior")
+        await rig.session.stop()
+        #expect(try Self.navPriors(url).isEmpty)
+        rig.session.disableNavigate()
     }
 
     @Test("Navigate is itself an unconfirmed restore → Record: the row says not converged, so Record stays unconfirmed (Restored line) instead of being confirmed unseen")
@@ -239,6 +296,49 @@ struct NavigationHandOverAppTests {
         print("Prompt 40 app roads: Record's roads active at session \(String(format: "%.2f", activeAt)) s (Navigate's at \(navigateRoads.activeAtSessionS ?? .nan) s)")
         await rig.session.stop()
         rig.session.disableNavigate()
+    }
+}
+
+// R78.1-B1: the slot itself, without a session.
+@Suite("NavigateHandOver slot (prompt 40)")
+struct NavigateHandOverTests {
+    typealias R = RestoreScript
+
+    @Test("prior(navigate:) hands over only the capture of the generation asked for: g1's capture is nil for g3, and for nil")
+    func priorMatchesTheGeneration() throws {
+        let handOver = NavigateHandOver()
+        let clock = R.clock()
+        let g1 = R.state(ageS: 5, northM: 10)
+        handOver.publish(generation: 1, state: g1)
+        #expect(handOver.capture == NavigateHandOver.Capture(generation: 1, state: g1))
+        #expect(handOver.prior(navigate: 3, clock: clock) == nil)
+        #expect(handOver.prior(navigate: nil, clock: clock) == nil)
+        let row = try #require(handOver.prior(navigate: 1, clock: clock))
+        #expect(row == NavPriorSample(handOver: g1, clock: clock))
+        #expect(row.estimateT.seconds == -5, "on the asking clock: the estimate's uptime, 5 s before its reference")
+    }
+
+    @Test("An older generation's publish (a run still draining) never replaces a newer one's capture; once the newest has published nil, a late older capture fills the slot but is still not handed over for the newest")
+    func olderPublishDoesNotReplaceNewer() throws {
+        let handOver = NavigateHandOver()
+        let clock = R.clock()
+        let g1 = R.state(ageS: 5, northM: 10), g3 = R.state(ageS: 1, northM: 30)
+        handOver.publish(generation: 1, state: g1)
+        handOver.publish(generation: 3, state: g3)
+        handOver.publish(generation: 1, state: g1)
+        #expect(handOver.capture == NavigateHandOver.Capture(generation: 3, state: g3))
+        #expect(handOver.prior(navigate: 3, clock: clock) == NavPriorSample(handOver: g3, clock: clock))
+        #expect(handOver.prior(navigate: 1, clock: clock) == nil)
+        handOver.publish(generation: 1, state: nil)
+        #expect(handOver.capture?.generation == 3, "an older nil does not clear it either")
+
+        // g3 loses its estimate (rejected prior): the slot empties.
+        handOver.publish(generation: 3, state: nil)
+        #expect(handOver.capture == nil)
+        #expect(handOver.prior(navigate: 3, clock: clock) == nil)
+        handOver.publish(generation: 1, state: g1)
+        #expect(handOver.capture?.generation == 1)
+        #expect(handOver.prior(navigate: 3, clock: clock) == nil, "g1's late capture is not g3's")
     }
 }
 
