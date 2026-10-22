@@ -4,7 +4,7 @@ Field-by-field reference for DriveLogger recordings. The code in
 `Core/Sources/DriveLoggerCore/Log/` is authoritative; this file must be updated
 in the same commit as any change to it.
 
-Current version: **4** (`LogFormatVersion.current`). Readable: **1, 2, 3, 4**.
+Current version: **5** (`LogFormatVersion.current`). Readable: **1, 2, 3, 4, 5**.
 
 ## File
 
@@ -87,7 +87,7 @@ Current version: **4** (`LogFormatVersion.current`). Readable: **1, 2, 3, 4**.
 
 | Field | Type | Since | Meaning |
 |---|---|---|---|
-| `formatVersion` | int | 1 | `1` to `4` (current: `4`). A reader refuses versions newer than it knows. |
+| `formatVersion` | int | 1 | `1` to `5` (current: `5`). A reader refuses versions newer than it knows. |
 | `sessionID` | UUID string | 1 | Unique per recording. |
 | `startedAt` | ISO 8601 string | 1 | Wall clock at start, whole seconds, UTC. The only wall-clock anchor. |
 | `referenceUptimeSeconds` | double, s | 1 | Seconds since boot at start; `t = 0` here. |
@@ -154,6 +154,7 @@ verbatim (`LogEvent.Payload.unrecognized`) instead of dropping it.
 | `stats` | 2 | end of 10 s window | 0.1 Hz |
 | `manualFix` | 3 | driver double-tapped a position | user |
 | `gpsSwitch` | 4 | driver tapped the GPS switch | user |
+| `navPrior` | 5 | Record start | at most once |
 
 ### `motion`
 
@@ -644,6 +645,52 @@ session's tap and nothing is stored.
 
 `source` values are frozen strings (`GPSSwitchSample.Source`).
 
+### `navPrior`
+
+The estimate a recording's live navigation run started from (prompt 40, the
+Navigate to Record hand-over): what Navigate had when Record was started.
+Core type: `NavPriorSample`.
+
+```json
+{"data":{"converged":true,"covEE":25,"covEN":-2.5,"covNN":36,"estimateT":-850000000,"headingDeg":271.5,"headingStdDeg":3.25,"latitude":0.0125,"longitude":-0.025,"obdSpeedKmh":80,"restoreClass":"moving","source":"navigate","speedMps":22.25},"kind":"navPrior","t":2000000}
+```
+
+**`t` = Record start** on the session clock (`clock.now()`).
+
+| Field | Type, unit | Meaning |
+|---|---|---|
+| `latitude`, `longitude` | degrees, WGS 84 | The estimate's mean. |
+| `covEE`, `covEN`, `covNN` | m² | Position covariance, east/north. |
+| `headingDeg` | degrees, [0, 360) | Heading of travel, clockwise from north. |
+| `headingStdDeg` | degrees | Circular std of the heading. |
+| `converged` | bool | The estimate's `converged`. If Navigate itself was an unconfirmed restore, `false`, so Record stays unconfirmed. |
+| `speedMps` | m/s | The estimate's speed (the growth over the gap uses it). |
+| `obdSpeedKmh` | number, km/h, optional | The last OBD vehicle speed the estimating run had. Omitted when there was no OBD reply. Information: the growth does not use it. |
+| `restoreClass` | string | How the car was left. Frozen values `moving`, `standingStop`, `parked` (`NavigationRestoreClass`). |
+| `source` | string | Where the estimate came from. Frozen value `navigate`. An open set: a later build may add a value without a version bump; a reader keeps an unknown value verbatim. |
+| `estimateT` | integer ns | The time the estimate describes, on this recording's session clock (the estimate's uptime minus `referenceUptimeSeconds`). Usually negative, never clamped. No wall-clock time: `startedAt` stays the only one in the file. |
+
+Placement: at most one row, written right after the `start` row and before
+the start-up init replay (which can contain `obd` rows), so before every
+engine input (`motion`, `location`, `obd`). No row means the recording
+started fresh (no initialised Navigate estimate, or Navigate was still
+finding its position); the file is then exactly what it would have been
+without this kind. The row is not a navigation input and is not tapped.
+
+Semantics: the row maps one to one to the engine's prior with `handOver`
+set. At its first input the engine grows the prior over
+gap = first input time minus `estimateT` (the rule of the restore model). A
+converged estimate with a gap of 10 s or less is confirmed at once; otherwise
+the restore confirm/reject rule applies. While a prior is pending, engine
+inputs older than the estimate's time are ignored (counted in
+`restore.inputsOlderThanSave`). `replay_nav` reads the row and starts from the
+same prior (`docs/NAVIGATION.md`).
+
+The row is the navigator's output, not a measurement. An invalid sample is
+not written; a `lifecycle` `error` row `navPrior invalid: <field>` is
+written instead and the run starts fresh. `restoreClass` and `source` values
+are frozen strings (`NavigationRestoreClass`, `NavPriorSample.Source`).
+
 ## Versions
 
 | Version | Changes |
@@ -652,6 +699,7 @@ session's tap and nothing is stored.
 | 2 | Header `adapter`, `polling`, `sensors`, `mount`, `vehicle`, `timeZone`. `motion.magneticAccuracy`. `location` `receivedT`, `fixTime`, `ageS`, `ellipsoidalAltitude`, `simulated`, `accessory`; `t` defined as fix time. `obd` `requestT`, `command`, `ecu`, `seq`; `raw` becomes the full header-on reply. New kinds `accel`, `gyro`, `mag`, `baro`, `elm`, `adapter`, `link`, `lifecycle`, `stats`. |
 | 3 | New kind `manualFix` (`speedSource` vocabulary `obd`, `gps`, `unknown`). Nothing else changed: every v2 row is written and read exactly as before. A v2 reader refuses a v3 file rather than keep the new rows as unrecognized. |
 | 4 | New kind `gpsSwitch` (`on`, `source`; `source` vocabulary `driver`, open). Nothing else changed: every v3 row is written and read exactly as before. A v3 reader refuses a v4 file rather than keep the switch rows as unrecognized and replay the drive as if GPS had stayed on. |
+| 5 | New kind `navPrior` (the Navigate to Record hand-over estimate; `restoreClass` vocabulary `moving`, `standingStop`, `parked`; `source` vocabulary `navigate`, open). Nothing else changed: every v4 row is written and read exactly as before. A v4 reader refuses a v5 file rather than keep the row as unrecognized and replay the drive from a fresh start. |
 
 Within v2, without a version bump (both read unchanged by every v2 reader):
 M4 added the `lifecycle` value `locationAuthorization` (`event` is an open
@@ -665,8 +713,8 @@ Within v3, without a version bump (read unchanged by every v3 reader): the
 per recording.
 
 Every version stays readable. v2 only adds optional fields, so DriveLogger
-decodes a v1 file into the same types with those fields absent. v3 and v4
-each only add a kind. Frozen fixtures for all four versions are in
+decodes a v1 file into the same types with those fields absent. v3, v4 and v5
+each only add a kind. Frozen fixtures for all five versions are in
 `LogFormatCompatibilityTests`.
 
 ## Reading recordings outside DriveLogger
@@ -698,9 +746,11 @@ Prints the header, events per kind, rates, gaps over 50 ms, OBD latency
 report, and lists every `manualFix` (`t`, `speedSource`, gate speed,
 press-to-confirm delay, coordinates, note) and every `gpsSwitch` change
 (`GPS switch` line: `t`, off/on, source; a v4 file without one says
-`none (GPS on throughout)`). `--csv` writes one CSV per kind
+`none (GPS on throughout)`) and the `navPrior` row (`Nav prior` line; a v5 file
+without one says `Nav prior none (navigation started fresh)`; warnings for more
+than one row, a row after the first input, and an invalid row). `--csv` writes one CSV per kind
 (`manualFix.csv` has every field; `gpsSwitch.csv` is `t,on,source` with
-`on` as `true`/`false`): `t` in integer nanoseconds, empty cell
+`on` as `true`/`false`; `navPrior.csv` has every field): `t` in integer nanoseconds, empty cell
 for an absent field, RFC 4180 quoting, compact JSON for `stats.counts` and for
 unknown kinds. `--strict` stops at the first damaged member or malformed line.
 

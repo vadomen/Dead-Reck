@@ -51,6 +51,9 @@ public enum RecordingCSV {
              "gpsSpeedKmh", "speedSource", "gateSpeedKmh", "note"]
         case .gpsSwitch:
             ["t", "on", "source"]
+        case .navPrior:
+            ["t", "estimateT", "latitude", "longitude", "covEE", "covEN", "covNN", "headingDeg", "headingStdDeg",
+             "converged", "speedMps", "obdSpeedKmh", "restoreClass", "source"]
         case nil:
             ["t", "data"]
         }
@@ -103,6 +106,10 @@ public enum RecordingCSV {
                     d(f.gpsSpeedKmh), f.speedSource, d(f.gateSpeedKmh), f.note ?? ""]
         case .gpsSwitch(let g):
             return [t, b(g.on), g.source]
+        case .navPrior(let p):
+            return [t, ts(p.estimateT), d(p.latitude), d(p.longitude), d(p.covEE), d(p.covEN), d(p.covNN),
+                    d(p.headingDeg), d(p.headingStdDeg), b(p.converged), d(p.speedMps), d(p.obdSpeedKmh),
+                    p.restoreClass, p.source]
         case .unrecognized(_, let data):
             return [t, data.map(json) ?? ""]
         }

@@ -22,6 +22,8 @@ public enum LogEventKind: String, Hashable, Sendable, Codable, CaseIterable {
     case manualFix
     // v4
     case gpsSwitch
+    // v5
+    case navPrior
 }
 
 /// One timestamped record in a recording.
@@ -62,6 +64,9 @@ public struct LogEvent: Hashable, Sendable, Codable {
         case manualFix(ManualFixSample)
         /// The driver's "GPS off" switch (v4). `t` is the tap.
         case gpsSwitch(GPSSwitchSample)
+        /// The navigator's estimate the recording's navigation run started
+        /// from (v5, at most one, before every input). `t` is Record start.
+        case navPrior(NavPriorSample)
 
         /// A record whose `kind` this build doesn't know, with its payload kept
         /// verbatim so a round-trip through an older reader doesn't destroy
@@ -85,6 +90,7 @@ public struct LogEvent: Hashable, Sendable, Codable {
             case .stats: LogEventKind.stats.rawValue
             case .manualFix: LogEventKind.manualFix.rawValue
             case .gpsSwitch: LogEventKind.gpsSwitch.rawValue
+            case .navPrior: LogEventKind.navPrior.rawValue
             case .unrecognized(let kind, _): kind
             }
         }
@@ -132,6 +138,8 @@ public struct LogEvent: Hashable, Sendable, Codable {
             payload = .manualFix(try container.decode(ManualFixSample.self, forKey: .data))
         case .gpsSwitch:
             payload = .gpsSwitch(try container.decode(GPSSwitchSample.self, forKey: .data))
+        case .navPrior:
+            payload = .navPrior(try container.decode(NavPriorSample.self, forKey: .data))
         case nil:
             payload = .unrecognized(
                 kind: kind,
@@ -171,6 +179,8 @@ public struct LogEvent: Hashable, Sendable, Codable {
         case .manualFix(let sample):
             try container.encode(sample, forKey: .data)
         case .gpsSwitch(let sample):
+            try container.encode(sample, forKey: .data)
+        case .navPrior(let sample):
             try container.encode(sample, forKey: .data)
         case .unrecognized(_, let data):
             try container.encodeIfPresent(data, forKey: .data)

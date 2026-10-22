@@ -33,8 +33,16 @@ public enum LogFormatVersion: Int, Hashable, Sendable, Codable, CaseIterable, Co
     /// `unrecognized` and replay the drive as if GPS had stayed on.
     case v4 = 4
 
+    /// v4 plus the kind `navPrior`: the navigator's estimate a recording's
+    /// navigation run started from (`NavPriorSample`, the Navigate → Record
+    /// hand-over), so a replay starts from the same prior. Nothing else
+    /// changed, so v1–v4 files decode exactly as before. A v4 reader
+    /// refuses a v5 header rather than keep the row only as `unrecognized`
+    /// and replay the drive from a fresh start.
+    case v5 = 5
+
     /// The version new recordings are written in.
-    public static let current: LogFormatVersion = .v4
+    public static let current: LogFormatVersion = .v5
 
     public static func < (lhs: LogFormatVersion, rhs: LogFormatVersion) -> Bool {
         lhs.rawValue < rhs.rawValue

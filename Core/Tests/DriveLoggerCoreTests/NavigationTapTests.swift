@@ -68,6 +68,12 @@ enum TapFixtures {
             timeouts: 0, queueDepthMax: 0, dropped: 0, bytesWritten: 0))
         case .manualFix: .manualFix(ManualFixSample(latitude: 0, longitude: 0, pressedT: t, speedSource: "unknown"))
         case .gpsSwitch: .gpsSwitch(GPSSwitchSample(on: false, source: .driver))
+        // v5: not tapped. The prior is the run's start condition, handed to
+        // it with the feed (and read by a replay before any input), never
+        // an input itself.
+        case .navPrior: .navPrior(NavPriorSample(
+            latitude: 0, longitude: 0, covEE: 100, covEN: 0, covNN: 100, headingDeg: 90, headingStdDeg: 5,
+            converged: true, speedMps: 10, restoreClass: "moving", source: "navigate", estimateT: t))
         }
         return LogEvent(timestamp: t, payload: payload)
     }

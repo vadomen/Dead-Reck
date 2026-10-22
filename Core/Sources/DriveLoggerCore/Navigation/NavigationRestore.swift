@@ -287,6 +287,10 @@ public struct NavigationRestore: Hashable, Sendable, Codable {
     /// Fixes ignored because their own time is before `savedT` (a cached
     /// fix older than the restored state).
     public var fixesOlderThanSave = 0
+    /// Inputs ignored before the prior was applied because they arrived
+    /// before `savedT` (prompt 40: the start-up init replay's `obd` rows,
+    /// stamped when the link connected); nil when none (absent in JSON).
+    public var inputsOlderThanSave: Int?
 
     public init() {}
 
@@ -499,6 +503,40 @@ public struct NavigationRestoreState: Hashable, Sendable, Codable {
             lastOBDSpeedKmh: obd?.kmh, lastOBDAgeS: obd.map { max(0, (Double(t.nanoseconds) - Double($0.t.nanoseconds)) / 1e9) },
             roadPacks: engine.roadNetwork?.packs.map { String(NavigationSeed.hex($0.contentHash).prefix(8)) } ?? [])
         return state.invalidField == nil ? state : nil
+    }
+}
+
+/// Distance driven by OBD vehicle speed (UX-20, R77.4-3): each reply from
+/// the primary ECU (`NavigationEngine.primaryECU`, or no ECU) held until the
+/// next one, at most `maxHoldS`, with whole km/h truncation corrected
+/// (v + 0.5 for v > 0). Replies out of time order are skipped. Pure
+/// bookkeeping: it feeds nothing in the engine. The app uses `metres > 0`
+/// (the car drove) to invalidate a saved estimate a run could not replace.
+public struct OBDOdometer: Hashable, Sendable {
+    /// Longest a reply's speed is held, s (the engine's `obdMaxAgeS` default).
+    public static let maxHoldS = 2.0
+
+    public private(set) var metres = 0.0
+    private var lastKmh: Double?
+    private var lastNs: Int64?
+
+    public init() {}
+
+    /// Whether the car has moved by OBD.
+    public var drove: Bool { metres > 0 }
+
+    public mutating func observe(_ input: NavigationInput) {
+        guard case .obd(let sample, let t) = input, sample.pid == .vehicleSpeed,
+              sample.ecu == nil || sample.ecu == NavigationEngine.primaryECU,
+              sample.value.isFinite, sample.value >= 0 else { return }
+        let ns = t.nanoseconds
+        if let lastNs, ns < lastNs { return }
+        if let lastKmh, let lastNs, lastKmh > 0 {
+            let dt = min(Self.maxHoldS, (Double(ns) - Double(lastNs)) / 1e9)
+            metres += (lastKmh + 0.5) / 3.6 * dt
+        }
+        lastKmh = sample.value
+        lastNs = ns
     }
 }
 

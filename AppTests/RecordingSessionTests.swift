@@ -764,7 +764,7 @@ struct RecordingSessionManualFixTests {
 
         let (header, events, report) = try RecordingFixtures.read(url)
         #expect(report.failure == nil && !report.truncatedTail)
-        #expect(header.formatVersion == .v4)
+        #expect(header.formatVersion == .current && header.formatVersion >= .v4)
         let rows = Self.gpsSwitches(events)
         #expect(rows.map(\.t) == [offT, onT, lastOffT])
         #expect(rows.map(\.sample) == [

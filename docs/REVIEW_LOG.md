@@ -1069,3 +1069,29 @@ Tests at round 4: Core 1169 tests passed (36 known issues), perf gate 9/9, AppTe
 ### Run 77 summary
 
 4 rounds; 9 fixed (R77.1-1, R77.1-2, R77.2-1..3, R77.3-1..3; R77.2-3 raised from MINOR); 0 rejected; 5 deferred (R77.1-3, R77.4-1..4). Engine output bit-identical to 21fe5ac without a prior (110-cell matrix by the author; clean drive, seed 1, roads on/off by reviewers each round). NAV-INITSTALE adoption PASS (all 18 gated cells unchanged). Final tests: Core 1169 tests in 144 suites passed (36 known issues), perf gate 9/9, AppTests 753 passed.
+
+## Run 78: Prompt 40 Record starts from Navigate's estimate (log v5 navPrior, engine ignores inputs older than a pending prior, replay_nav --no-prior), R77.4-1..4, R77.1-3 privacy text (main..record-handover: f6d73b9..772cfb9), started 2026-10-22
+
+### Round 1
+
+Reviewers: two opus reviewers in parallel: A Core/replay/docs, B App/site/PLAN. Result: 0 BLOCKER, 2 MAJOR (both CONFIRMED, fixing). Reviewer A: no findings; the author's mutation at `NavigationEngine.swift:433` re-checked and killed; two own mutations survived without behavioural effect (fix time vs arrival for a cached first fix; `!priorApplied` given the recorder's row order), not findings. Reviewer B: 2 MAJOR. Bit-identical re-run (clean drive, seed 1, roads on / off) vs f6d73b9: byte-identical GeoJSON. Synthetic v5 `--as-live --compare`: PASS (exact); `--no-prior`: FAIL, as documented.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R78.1-1 | MAJOR | `App/Sources/Navigation/NavigationService.swift:858`: `NavigateHandOver.prior`'s generation check (the only guard against handing over a stale capture: Navigate g1 converged → Record → Navigate g3 without an estimate → Record g4 would start from g1's estimate) is reached by no test; replacing it with `true` survives. | CONFIRMED, FIXED (7080012) | Code correct; test gap closed in round 1. |
+| R78.1-2 | MAJOR | `docs/PLAN.md:440`: §6 prompt-40 check 2 says Record started while Navigate is "finding its position" has no navPrior row; the code hands over any initialised estimate (converged false), so the check fails as written. | CONFIRMED | FIXED in round 1 (PLAN §6 checks 2-3 reworded). |
+
+Tests at round 1: Core 1198 tests in 147 suites passed (36 known issues); App 769 tests in 112 suites passed.
+
+### Round 2
+
+Reviewers: one opus reviewer, whole range f6d73b9..772cfb9. Result: 0 BLOCKER, 0 MAJOR, 2 MINOR (both DEFERRED); ready to merge. R78.1-1 and R78.1-2 verified. The author's mutation at `NavigationReplay.swift:501` re-checked and killed; two own mutations survived without realistic effect (ignore rule restricted to `.obd`; odometer without ECU-less replies), not findings. Bit-identical re-run (clean drive, seed 1, roads on / off) vs f6d73b9: GeoJSON byte-identical.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R78.2-1 | MINOR | `docs/LOG_FORMAT.md:674-677`: says a v5 file has no `navPrior` row when Navigate "was still finding its position"; the code hands over any initialised estimate (`converged: false` when unconverged), as PLAN §6 check 3 says (the R78.1-2 wording in a second file). | DEFERRED | BACKLOG. Fix: "no row: no initialised Navigate estimate (not running, or no position yet)"; an unconverged estimate is written with `converged: false`. |
+| R78.2-2 | MINOR | `Core/Sources/replay_nav/main.swift:693`, `:731-735`: `--start-at X` on a v5 file with a `navPrior` row still applies the drive-start prior at the cut (grown for X + \|estimateT\|, ~3 km at 300 s), and the printed Prior note uses the uncut start input (claims ~1 s); `docs/NAVIGATION.md:835` calls `--start-at` alone the fresh column of a cut. | DEFERRED | BACKLOG. Fix: with `--start-at` and no `--prior`, drop the row as `--no-prior` with a note, or compute the note on the cut inputs and document it. |
+
+### Run 78 summary
+
+2 rounds; 2 fixed (R78.1-1, R78.1-2); 0 rejected; 2 deferred (R78.2-1, R78.2-2). Engine output bit-identical to f6d73b9 without a prior (110-cell matrix by the author; clean drive, seed 1, roads on/off by reviewers each round). Final tests: Core 1198 tests in 147 suites passed (36 known issues); App 769 tests in 112 suites passed.

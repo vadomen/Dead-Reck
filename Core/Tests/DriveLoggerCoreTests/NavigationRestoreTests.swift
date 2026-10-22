@@ -132,6 +132,24 @@ struct NavigationRestoreTests {
         #expect(Self.prior(.parked, gapS: 20).seed(gapS: 20, movingAtStart: true)?.headingRadians == nil)
     }
 
+    /// R77.4-2: a short moving gap whose grown heading σ is over 30°
+    /// (uniform heading) does not carry the mean forward: there is no
+    /// heading to carry it along.
+    @Test func shortGapWithAnUnknownHeadingIsNotShifted() throws {
+        // 29° ⊕ 11° (5.5°/s × 2 s) = 31°: uniform.
+        let wide = try #require(Self.prior(.moving, gapS: 2, headingStdDeg: 29, speedMps: 10).seed(gapS: 2))
+        #expect(wide.headingRadians == nil && wide.headingSigmaRadians == nil)
+        #expect(wide.shiftEastM == 0 && wide.shiftNorthM == 0, "\(wide.shiftEastM), \(wide.shiftNorthM)")
+        // 5 s at 20 m/s from 25° (⊕ 27.5° = 37.2°): uniform, not 100 m along 30°.
+        let long = try #require(Self.prior(.moving, gapS: 5, headingStdDeg: 25, speedMps: 20).seed(gapS: 5))
+        #expect(long.headingRadians == nil && long.shiftEastM == 0 && long.shiftNorthM == 0)
+        // The same 2 s gap with a known heading (25° ⊕ 11° = 27.3°) is shifted 20 m.
+        let known = try #require(Self.prior(.moving, gapS: 2, headingStdDeg: 25, speedMps: 10).seed(gapS: 2))
+        #expect(known.headingRadians != nil)
+        #expect(abs((known.shiftEastM * known.shiftEastM + known.shiftNorthM * known.shiftNorthM).squareRoot() - 20)
+                < 1e-9)
+    }
+
     @Test func invalidPriorGivesNoSeed() {
         var p = Self.prior(.parked, gapS: 10)
         p.covEN = 100 // |en| > √(ee·nn): not a covariance
@@ -597,6 +615,32 @@ struct NavigationRestoreTests {
         #expect(Self.distance(a, east: pb.east, north: pb.north) < 5, "\(Self.distance(a, east: pb.east, north: pb.north)) m")
     }
 
+    /// R77.4-1: a stopped-class prior rejected before the first OBD reply
+    /// stops waiting for it, so the first replies (zeros) start a new run
+    /// of zeros as without a prior: not a standing stop until 3 s of them,
+    /// never the prior's stop continued.
+    @Test func rejectedStoppedPriorBeforeAnyOBDDoesNotContinueItsStop() throws {
+        let prior = Self.prior(.standingStop, gapS: 600)
+        // Standing; a clean fix 2 km away from 1 s; OBD zeros from 1.5 s.
+        let far = S(initialHeadingDeg: Self.headingDeg, [.stop(seconds: 10)]).events(
+            gyroNoise: 0.001, obdSpeed: { t, _ in t < 1.5 ? nil : 0 }, fix: { t, _, _ in
+                t < 0.5 ? nil : S.Fix(east: Self.parkedEast + 2000, north: Self.parkedNorth, accuracy: 5,
+                                      speed: 0, speedAccuracy: 0.3)
+            })
+        let beforeOBD = Self.run(far, prior: prior, until: 1.4)
+        #expect(beforeOBD.restore.status == .rejected && beforeOBD.lastOBDSpeed == nil)
+        let rejected = Self.run(far, prior: prior, until: 3)
+        #expect(rejected.restoreClass(at: S.ms(3), engineOff: false) == .moving,
+                "1.5 s of zeros after the rejection are not a standing stop")
+        let fresh = Self.run(far, prior: nil, until: 3)
+        #expect(fresh.restoreClass(at: S.ms(3), engineOff: false) == .moving)
+        // 3.5 s of zeros: a standing stop either way.
+        #expect(Self.run(far, prior: prior, until: 5).restoreClass(at: S.ms(5), engineOff: false) == .standingStop)
+        let state = try #require(NavigationRestoreState.capture(rejected, at: S.ms(3), clock: Self.clock,
+                                                                bootSessionID: nil, engineOff: false))
+        #expect(state.restoreClass == .moving)
+    }
+
     // MARK: Determinism, no prior
 
     @Test func seededRunIsDeterministic() {
@@ -855,6 +899,55 @@ struct NavigationRestoreTests {
         #expect(abs(try #require(snapshot.restore.ageS(at: S.ms(3))) - 1203) < 1e-6)
         #expect(snapshot.converged)
         #expect(lines.contains { if case .estimate = $0 { true } else { false } }, "estimates from the first second")
+    }
+
+    /// R77.4-4: the state is stamped at the engine's last step (the
+    /// cloud's time), whatever the caller's clock reads after it.
+    @Test func restoreStateIsStampedAtTheLastStep() throws {
+        let drive = S(initialHeadingDeg: 60, [.ramp(seconds: 4, from: 0, to: 12), .straight(seconds: 10, speed: 12)])
+        var run = LiveNavigationRun(sessionID: UUID(), config: S.config(particles: 200), appBuild: "test")
+        #expect(run.restoreState(clock: Self.clock, bootSessionID: nil, engineOff: false) == nil, "no input yet")
+        let inputs = S.inputs(drive.events(gyroNoise: 0.001, fix: S.cleanFix()))
+        for input in inputs { run.ingest(input) { _ in } }
+        let last = try #require(run.engine.lastStepTime)
+        let arrival = try #require(inputs.last?.arrival)
+        #expect(last <= arrival && arrival.seconds - last.seconds < 0.1 + 1e-9)
+        #expect(last.nanoseconds % 100_000_000 == 0, "on the 10 Hz grid")
+        let state = try #require(run.restoreState(clock: Self.clock, bootSessionID: "boot-a", engineOff: false))
+        #expect(state == run.restoreState(at: last, clock: Self.clock, bootSessionID: "boot-a", engineOff: false))
+        #expect(state.uptimeSeconds == 5000 + last.seconds)
+        #expect(state.savedAt == Self.clock.wallClock(for: last))
+        // Not what a later clock reading (a stop flow 3 s on) would stamp.
+        let later = MonotonicTimestamp(seconds: arrival.seconds + 3)
+        let stampedLate = try #require(run.restoreState(at: later, clock: Self.clock, bootSessionID: "boot-a",
+                                                         engineOff: false))
+        #expect(stampedLate.uptimeSeconds - state.uptimeSeconds > 3)
+        // Restored 1 s after that later reading: the gap is counted from the last step.
+        let next = SessionClock(referenceUptimeSeconds: 5000 + later.seconds + 1,
+                                wallClockStart: Self.clock.wallClock(for: later).addingTimeInterval(1))
+        let prior = try #require(state.prior(at: .zero, clock: next, bootSessionID: "boot-a"))
+        #expect(abs(-prior.savedT.seconds - (later.seconds + 1 - last.seconds)) < 1e-6)
+    }
+
+    /// R77.4-3: OBD distance, the primary ECU's speed held to the next reply.
+    @Test func obdOdometer() {
+        func obd(_ t: Double, _ kmh: Double, ecu: String? = "7E8") -> NavigationInput {
+            .obd(OBDSample(pid: .vehicleSpeed, value: kmh, unit: .kilometersPerHour, ecu: ecu), at: S.ms(t))
+        }
+        var odometer = OBDOdometer()
+        for input in [obd(0, 0), obd(1, 0), obd(1.5, 0, ecu: nil)] { odometer.observe(input) }
+        #expect(!odometer.drove && odometer.metres == 0, "standing")
+        odometer.observe(obd(2, 35.5))
+        #expect(!odometer.drove, "one moving reply, no time at it yet")
+        odometer.observe(obd(3, 36))
+        #expect(abs(odometer.metres - 10) < 1e-9, "35.5 + 0.5 km/h for 1 s")
+        odometer.observe(obd(2.5, 100))
+        odometer.observe(obd(4, 36, ecu: "7E9"))
+        odometer.observe(.motion(MotionSample(userAcceleration: .zero, gravity: Vector3(x: 0, y: 0, z: -1),
+                                              rotationRate: .zero, attitude: .identity), at: S.ms(4)))
+        #expect(abs(odometer.metres - 10) < 1e-9, "out of order, another ECU and motion are ignored")
+        odometer.observe(obd(13, 0))
+        #expect(abs(odometer.metres - 10 - 36.5 / 3.6 * OBDOdometer.maxHoldS) < 1e-9, "held at most 2 s")
     }
 
     // MARK: Record → Navigate hand-over

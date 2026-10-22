@@ -1,5 +1,6 @@
 import DriveLoggerCore
 import Foundation
+import os
 
 /// Live dead reckoning for the run in progress: a recording (N4 B) or a
 /// Navigate run, which writes nothing (UX-1).
@@ -41,13 +42,23 @@ import Foundation
 ///   ingest path, at the run's end (`engineOff` from `feed.runEnd`: the
 ///   auto-stop) and on `flush()`; and seeds each **Navigate** run from the
 ///   saved estimate when it is younger than 24 h (`restorePrior`). A
-///   recording never reads it: it always starts a fresh engine (UX-1).
+///   recording never reads it: it starts a fresh engine, or from its own
+///   `navPrior` row (below).
 ///   A Navigate run waits for every earlier run to end first, so after
 ///   Record's Stop it restores from the estimate Record's engine saved at
 ///   its end (the store's serial queue orders that save before the read),
 ///   flagged as a hand-over (`NavigationPrior.handOver`): confirmed at once
 ///   when Record's estimate was converged and the gap is ≤ 10 s.
 ///   Without a store nothing of this runs and nothing is written.
+/// - the Navigate → Record hand-over (prompt 40, log v5 `navPrior`): every
+///   Navigate run publishes its estimate at each engine step to
+///   `handOver` (`NavigateHandOver`, readable synchronously on the main
+///   actor); at Record's Start the session's `navPriorProvider`
+///   (`provideHandOver(to:)`) turns the capture of the Navigate run that
+///   Start ended into the recording's `navPrior` row, and the recording's
+///   run starts from that row's prior (`feed.navPrior`) at once, as a
+///   replay of the file does. No initialised Navigate estimate: no row, a
+///   fresh engine, as before. Independent of the store.
 ///
 /// The per-run loop is Core's `LiveNavigationRun`, the same code
 /// `replay_nav --as-live --compare` runs over a recording on a Mac.
@@ -150,6 +161,12 @@ actor NavigationService {
         var lastFlush: ContinuousClock.Instant
         /// The last estimate save (UX-20), or the run's start.
         var lastSave: ContinuousClock.Instant
+        /// This run drove (OBD) with no estimate and deleted the saved one
+        /// (`invalidateSaveIfDriven`, R77.4-3); once per run.
+        var invalidatedSave = false
+        /// A Navigate run: the engine step last published to `handOver`
+        /// (nil: none, or not initialised).
+        var handOverStepT: MonotonicTimestamp?
         /// The matched edge's shape for snapshots, rebuilt only when the
         /// matched edge changes (N3.4 item 6).
         var edgeGeometry = MatchedEdgeGeometry.Cache()
@@ -236,6 +253,15 @@ actor NavigationService {
     /// (the Record-stop hand-over). Cleared by any later save and by that
     /// read. In memory only, so a relaunch never has one.
     private var recordingEndSave: Int?
+    /// Saved estimates deleted because a run drove without one
+    /// (`invalidateSaveIfDriven`): a count for tests.
+    private(set) var savesInvalidated = 0
+    /// The Navigate → Record hand-over (prompt 40): the running Navigate
+    /// run's latest estimate, for Record's Start on the main actor.
+    nonisolated let handOver = NavigateHandOver()
+    /// Recordings whose run started from their `navPrior` row: a count for
+    /// tests.
+    private(set) var recordingsFromPrior = 0
 
     init(flushInterval: Duration = .seconds(10), library: RoadPackLibrary? = nil,
          libraryRescan: @escaping LibraryRescan = { await $0.rescan() },
@@ -260,8 +286,16 @@ actor NavigationService {
 
     /// Runs one run's navigation until its feed ends.
     func consume(_ feed: RecordingNavigationFeed) async {
-        // Without a store, or for a recording, `begin` runs at once as always.
-        let prior = restoreStore != nil && feed.output == .navigateOnly ? await restorePrior(for: feed) : nil
+        // A Navigate run: the saved estimate (waits for earlier runs; not
+        // without a store). A recording never reads the store: it starts
+        // from its own `navPrior` row (prompt 40), at once, or fresh.
+        let prior: NavigationPrior?
+        if feed.output == .navigateOnly {
+            prior = restoreStore != nil ? await restorePrior(for: feed) : nil
+        } else {
+            prior = feed.navPrior?.navigationPrior
+            if prior != nil { recordingsFromPrior += 1 }
+        }
         begin(feed, prior: prior)
         for await input in feed.inputs {
             ingest(input, generation: feed.generation)
@@ -394,6 +428,8 @@ actor NavigationService {
             saveEstimate(of: run, generation: generation, engineOff: false)
             run.lastSave = now
         }
+        invalidateSaveIfDriven(&run, generation: generation)
+        if run.feed.output == .navigateOnly { publishHandOver(&run, generation: generation) }
         let request = run.live.newSelectionRequest
         runs[generation] = run
         guard let request else { return }
@@ -462,20 +498,59 @@ actor NavigationService {
 
     // MARK: Restore (UX-20)
 
-    /// Captures `run`'s estimate now and hands it to the store (encoded and
-    /// written on its queue). Nothing before initialisation, and nothing
-    /// from a run older than one that already saved.
+    /// Captures `run`'s estimate at its engine's last step (R77.4-4: not
+    /// `clock.now()`, which at a run's end is after the stop flow) and
+    /// hands it to the store (encoded and written on its queue). Nothing
+    /// before initialisation, and nothing from a run older than one that
+    /// already saved.
     @discardableResult
     private func saveEstimate(of run: Run, generation: Int, engineOff: Bool) -> Bool {
         guard let restoreStore else { return false }
         if let newest = newestSavedGeneration, generation < newest { return false }
-        let clock = run.feed.clock
-        guard let state = run.live.restoreState(at: clock.now(), clock: clock, bootSessionID: bootSessionID(),
+        guard let state = run.live.restoreState(clock: run.feed.clock, bootSessionID: bootSessionID(),
                                                 engineOff: engineOff) else { return false }
         restoreStore.save(state)
         newestSavedGeneration = generation
         recordingEndSave = nil
         return true
+    }
+
+    /// Prompt 40: a Navigate run's estimate at its engine's latest step
+    /// (`lastStepTime`, as the saves: R77.4-4), published to `handOver`
+    /// once per step; nil once the engine is not initialised (before the
+    /// first position, after a rejected prior). One `estimate(at:)` pass
+    /// per 10 Hz step, off the engine's timed step. While the Navigate run
+    /// is itself an unconfirmed restore, `converged` is published as false:
+    /// 39's hand-over rule confirms at once only from a converged estimate,
+    /// so Record keeps the restore unconfirmed (and its Restored line)
+    /// until a fix or pin decides, instead of confirming it unseen.
+    private func publishHandOver(_ run: inout Run, generation: Int) {
+        let engine = run.live.engine
+        let t = engine.isInitialized ? engine.lastStepTime : nil
+        guard t != run.handOverStepT else { return }
+        run.handOverStepT = t
+        var state = t.flatMap {
+            run.live.restoreState(at: $0, clock: run.feed.clock, bootSessionID: bootSessionID(), engineOff: false)
+        }
+        if engine.restore.status == .unconfirmed { state?.converged = false }
+        handOver.publish(generation: generation, state: state)
+    }
+
+    /// R77.4-3: a run whose car drove (OBD distance > 0) while its engine
+    /// had no estimate (GPS off or jammed, no pin; or a prior rejected at
+    /// a moving first reply) cannot write the save, so the saved estimate
+    /// is older than the car's position: it is deleted, and the next
+    /// Navigate starts fresh. Counts as this run's save for the ordering
+    /// (an older run draining cannot write over it). Once per run.
+    private func invalidateSaveIfDriven(_ run: inout Run, generation: Int) {
+        guard let restoreStore, !run.invalidatedSave, run.live.obdOdometer.drove,
+              !run.live.engine.isInitialized else { return }
+        if let newest = newestSavedGeneration, generation < newest { return }
+        run.invalidatedSave = true
+        restoreStore.delete()
+        newestSavedGeneration = generation
+        recordingEndSave = nil
+        savesInvalidated += 1
     }
 
     /// The prior for a Navigate run: after every earlier run has ended (so
@@ -642,6 +717,7 @@ actor NavigationService {
 
     private func end(_ generation: Int) {
         guard var run = runs[generation] else { return }
+        invalidateSaveIfDriven(&run, generation: generation)
         // UX-20: the final save, before a waiting Navigate start reads the
         // store (same serial queue, so the read sees it). A recording's is
         // what the next Navigate run takes over from.
@@ -726,4 +802,60 @@ actor NavigationService {
     /// drained): it may have road packs mapped. `RoadPackLibrary.remove`
     /// asks this before deleting a pack file.
     var hasActiveRun: Bool { !runs.isEmpty }
+}
+
+// MARK: - Navigate → Record hand-over (prompt 40)
+
+extension NavigationService {
+    /// Installs `session.navPriorProvider`: at Record's Start it returns the
+    /// `navPrior` row for the Navigate run that Start ended
+    /// (`RecordingSession.navigateEndedByStart`), from that run's latest
+    /// published estimate (`handOver`) on the recording's clock; nil when
+    /// the Start ended no Navigate run or its engine had no estimate (the
+    /// recording then starts fresh, as before). Synchronous: never waits
+    /// for the actor.
+    @MainActor
+    func provideHandOver(to session: RecordingSession) {
+        let handOver = handOver
+        session.navPriorProvider = { [weak session] clock in
+            handOver.prior(navigate: session?.navigateEndedByStart, clock: clock)
+        }
+    }
+}
+
+/// The running Navigate run's latest estimate, readable synchronously from
+/// any thread (Record's Start runs on the main actor; the service's runs
+/// publish from its actor). One slot, the newest Navigate generation's: an
+/// older run still draining never replaces a newer one's. Kept after the
+/// run ends (Record's Start ends Navigate and asks in the same main-actor
+/// step, while the actor may already be ending the run); the generation
+/// check (`prior(navigate:clock:)`) is what limits it to the run the Start
+/// ended.
+final class NavigateHandOver: Sendable {
+    struct Capture: Sendable, Hashable {
+        let generation: Int
+        let state: NavigationRestoreState
+    }
+
+    private let latest = OSAllocatedUnfairLock<Capture?>(initialState: nil)
+
+    /// Run `generation`'s estimate now; nil: it has none (not initialised).
+    func publish(generation: Int, state: NavigationRestoreState?) {
+        latest.withLock { current in
+            if let current, current.generation > generation { return }
+            current = state.map { Capture(generation: generation, state: $0) }
+        }
+    }
+
+    /// The latest capture, any run (tests, diagnostics).
+    var capture: Capture? { latest.withLock { $0 } }
+
+    /// The `navPrior` row for Navigate run `generation`'s latest estimate,
+    /// on `clock` (`NavPriorSample(handOver:clock:)`: `estimateT` is the
+    /// estimate's step time on the recording's clock, never clamped); nil
+    /// when `generation` is nil, another run's capture is held, or none.
+    func prior(navigate generation: Int?, clock: SessionClock) -> NavPriorSample? {
+        guard let generation, let capture, capture.generation == generation else { return nil }
+        return NavPriorSample(handOver: capture.state, clock: clock)
+    }
 }

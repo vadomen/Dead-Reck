@@ -326,6 +326,12 @@ public struct NavigationEngine: Sendable {
     /// the first input. A rejected forward jump does not move it.
     public var latestArrival: MonotonicTimestamp? { lastInputNs.map { MonotonicTimestamp(nanoseconds: $0) } }
 
+    /// The last grid step run (the time the particle cloud is at); nil
+    /// before the first input. A saved estimate is stamped with it
+    /// (`LiveNavigationRun.restoreState(clock:bootSessionID:engineOff:)`,
+    /// R77.4-4).
+    public var lastStepTime: MonotonicTimestamp? { lastStepNs.map { MonotonicTimestamp(nanoseconds: $0) } }
+
     /// Attaches `network` to an engine that has none, between two inputs,
     /// before or after initialisation (N3.3, docs/N3_PLAN.md amendment).
     ///
@@ -422,6 +428,16 @@ public struct NavigationEngine: Sendable {
         guard accepts(input) else {
             counters.inputsRejectedTimeJump += 1
             jumpCandidateNs = arrival
+            return
+        }
+        if let prior, !priorApplied, arrival < prior.savedT.nanoseconds {
+            // Prompt 40: older than the restored estimate (the start-up
+            // init replay's readings, stamped at the link's connect, or a
+            // pre-dated motion batch): the prior already holds what it
+            // says. Ignored, clock included, so the prior is applied at the
+            // first newer input and nothing is dead-reckoned from before
+            // the save.
+            restore.inputsOlderThanSave = (restore.inputsOlderThanSave ?? 0) + 1
             return
         }
         jumpCandidateNs = nil

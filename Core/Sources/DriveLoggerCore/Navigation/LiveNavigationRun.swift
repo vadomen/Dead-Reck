@@ -62,6 +62,10 @@ public struct LiveNavigationRun: Sendable {
     public private(set) var timing = StepTiming()
     /// Inputs handed to `ingest`.
     public private(set) var inputs = 0
+    /// Distance driven by OBD speed over the inputs handed to `ingest`
+    /// (UX-20, R77.4-3: a run that drives without an estimate invalidates
+    /// the saved one). Read by nothing in the engine.
+    public private(set) var obdOdometer = OBDOdometer()
     /// Estimate lines emitted.
     public private(set) var estimates = 0
     private var nextEstimateNs: Int64?
@@ -298,6 +302,7 @@ public struct LiveNavigationRun: Sendable {
         _ input: NavigationInput, droppedInputs: Int = 0, emit: (NavSidecar.Line) -> Void
     ) {
         inputs += 1
+        obdOdometer.observe(input)
         newSelectionRequest = nil
         guard engine.accepts(input), !input.isGPSSwitch else {
             engine.ingest(input)
@@ -378,6 +383,16 @@ public struct LiveNavigationRun: Sendable {
     public func restoreState(at t: MonotonicTimestamp, clock: SessionClock, bootSessionID: String?,
                              engineOff: Bool) -> NavigationRestoreState? {
         NavigationRestoreState.capture(engine, at: t, clock: clock, bootSessionID: bootSessionID, engineOff: engineOff)
+    }
+
+    /// The state to persist, stamped at the engine's last step
+    /// (`NavigationEngine.lastStepTime`): the time of the cloud the
+    /// estimate is from, not the caller's clock after a stop flow, so a
+    /// restore grows it for the whole gap (R77.4-4). nil before
+    /// initialisation.
+    public func restoreState(clock: SessionClock, bootSessionID: String?, engineOff: Bool) -> NavigationRestoreState? {
+        guard let t = engine.lastStepTime else { return nil }
+        return restoreState(at: t, clock: clock, bootSessionID: bootSessionID, engineOff: engineOff)
     }
 
     /// `snapshot(at:droppedInputs:)` plus the matched edge's shape

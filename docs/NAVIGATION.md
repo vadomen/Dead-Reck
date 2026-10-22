@@ -511,8 +511,11 @@ adoption").
 ### Restored prior (UX-20)
 
 A Navigate run can start from the estimate an earlier run saved (killed
-mid-drive, or Navigate started again after parking; Record never does: a
-recording replays from its own start). Code: `NavigationRestore.swift`;
+mid-drive, or Navigate started again after parking). A recording never
+reads the save; since prompt 40 it starts from the running Navigate
+estimate it took over, written into the file as its `navPrior` row (log
+v5), so it still replays from its own content ("Navigate → Record
+hand-over" below). Code: `NavigationRestore.swift`;
 the numbers are `NavigationRestoreModel`, not config keys, so a run
 without a prior writes byte-identical sidecars and replay results.
 
@@ -596,6 +599,16 @@ without a prior writes byte-identical sidecars and replay results.
 - **A cached fix older than the save** is ignored
   (`restore.fixesOlderThanSave`): the state is newer. A younger one is an
   ordinary fix through the test.
+- **Any input older than the save, before the prior is applied** (prompt
+  40) is ignored, its clock too (`restore.inputsOlderThanSave`): the
+  start-up init replay at a session's start writes the link's init
+  readings, an `obd` speed among them, stamped when the link connected,
+  possibly long before the save. Applying the prior at such a reading
+  dead-reckoned the cloud from the reading's time to the first live input
+  (measured on a synthetic 80 km/h hand-over with a reading 40 s old:
+  406 m off and a 590 m ellipse at once, against 0.8 m without it); it is
+  now applied at the first input at or after the save. Without a prior
+  nothing changes.
 - **Record-stop hand-over** (user decision 2026-10-22):
   `NavigationPrior.handOver`, set only by the app, means the state is the
   final save of a recording that ended in this process and this Navigate
@@ -619,7 +632,17 @@ without a prior writes byte-identical sidecars and replay results.
   confirmed").
 - **In the app** (`NavigationService`, `NavigationRestoreStore`): every run,
   Record's too, saves its estimate every 5 s from the ingest path, at the
-  run's end (the auto-stop) and on `flush()` (background). The file is
+  run's end (the auto-stop) and on `flush()` (background). Each save is
+  stamped at the engine's last grid step (`NavigationEngine.lastStepTime`,
+  `LiveNavigationRun.restoreState(clock:bootSessionID:engineOff:)`), the
+  time of the cloud it captures, not the clock after the stop flow
+  (R77.4-4): a restore grows it for the whole gap. A run whose car drives
+  (`LiveNavigationRun.obdOdometer`: OBD distance > 0) while its engine has
+  no estimate (GPS off or jammed, no pin) cannot replace the save, so it
+  deletes it, once, and counts as the newest saver (an older run still
+  draining cannot write it back): the next Navigate starts fresh instead of
+  restoring a point the car has left (R77.4-3). Standing still (OBD 0)
+  keeps it. The file is
   `Application Support/NavigationRestore/estimate.json`, excluded from
   backup, `completeUntilFirstUserAuthentication`, replaced atomically; one
   serial queue orders every save, load and delete, and an unreadable file is
@@ -629,8 +652,31 @@ without a prior writes byte-identical sidecars and replay results.
   engine made at its end (the hand-over above), with `handOver` set when
   that recording's final save is the newest save of this process
   (`NavigationService.recordingEndSave`, cleared by any later save and by
-  the read). Record-start restore is not
-  built yet. Nothing is logged: no coordinate reaches the system log.
+  the read). Nothing is logged: no coordinate reaches the system log.
+- **Navigate → Record hand-over** (prompt 40, user decision 2026-10-22):
+  each Navigate run publishes its estimate at every engine step
+  (`NavigateHandOver`: `LiveNavigationRun.restoreState(at: lastStepTime)`,
+  readable on the main actor without waiting for the service). Record's
+  Start ends Navigate and, in the same main-actor step, writes the capture
+  of the Navigate run it ended (`RecordingSession.navigateEndedByStart`) as
+  the recording's `navPrior` row (`NavPriorSample(handOver:clock:)`:
+  `estimateT` = the estimate's step on the recording's clock, negative)
+  and hands it to the recording's run, which starts from
+  `navPrior.navigationPrior` (`handOver` true) at once: the same growth for
+  the gap to its first live input, the same rule (converged and ≤ 10 s:
+  confirmed at once). While the Navigate run is itself an unconfirmed
+  restore, the capture says not converged, so Record keeps it unconfirmed
+  (and the Restored line) until a fix or pin decides. No initialised
+  Navigate estimate, or Navigate not running at Start: no row, a fresh
+  engine as before. Roads need nothing new: the run has an estimate from
+  its first input, so its normal selection request fires there and the
+  library's verified candidates attach. Measured (synthetic, 80 km/h, the
+  estimate 1.1 s old, GPS jammed after the switch;
+  `NavigationHandOverTests`): Record within 1.4 m of the uncut run at the
+  switch (2σ 50 m), 4 m after 60 s, along-track −0.7 m (no lag: without the
+  carry-forward it would trail by v × gap ≈ 24 m). The first OBD reply
+  after Start still matters: until it arrives the cloud has no speed
+  (about 5 m behind at 80 km/h for a 0.25 s wait).
 
 ### Estimate
 
@@ -759,8 +805,20 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   [--fix-offset-max <m>] [--fix-offset-step <m>] [--fix-offset-stat mean|median] \
   [--fix-offset-course <deg>|off] [--fix-offset-test <m>@<deg>]... [--fix-offset-trace] \
   [--save-prior <state.json> [--save-prior-at <s>|end] [--save-prior-engine-off]] \
-  [--prior <state.json> [--prior-offset <dE>,<dN>]] [--start-at <s>]
+  [--prior <state.json> [--prior-offset <dE>,<dN>]] [--start-at <s>] [--no-prior]
 ```
+
+- **Navigate → Record hand-over (prompt 40, log v5)**: a recording with a
+  `navPrior` row started its live run from that row's prior, so every
+  replay of it does too (`ReplayRecordedPrior`): the metrics replay,
+  `--as-live`, `--compare` and `--write-sidecar` alike. The summary prints
+  a `Prior` line (the estimate's time, the input it starts at, class,
+  `converged`, heading σ; no position); the label gets `-prior`. An
+  explicit `--prior` replaces the row (a printed note; label `-restored`);
+  `--no-prior` ignores it (a printed note: not what ran live, so
+  `--compare` then fails). A recording without the row (every recording
+  before v5, every acceptance drive) replays exactly as before;
+  `--no-prior` then changes nothing.
 
 - **Restore (UX-20), replay only, one log**: the same Core code as the
   app (`NavigationRestoreState`, `NavigationEngine(config:roads:prior:)`).

@@ -228,6 +228,9 @@ public enum ReplayReport {
         if restore.fixesOlderThanSave > 0 {
             text += "; \(restore.fixesOlderThanSave) cached fix\(restore.fixesOlderThanSave == 1 ? "" : "es") older than the save ignored"
         }
+        if let older = restore.inputsOlderThanSave, older > 0 {
+            text += "; \(older) input\(older == 1 ? "" : "s") older than the save ignored before the prior was applied"
+        }
         return text
     }
 
