@@ -44,7 +44,9 @@ import Foundation
 ///   recording never reads it: it always starts a fresh engine (UX-1).
 ///   A Navigate run waits for every earlier run to end first, so after
 ///   Record's Stop it restores from the estimate Record's engine saved at
-///   its end (the store's serial queue orders that save before the read).
+///   its end (the store's serial queue orders that save before the read),
+///   flagged as a hand-over (`NavigationPrior.handOver`): confirmed at once
+///   when Record's estimate was converged and the gap is ≤ 10 s.
 ///   Without a store nothing of this runs and nothing is written.
 ///
 /// The per-run loop is Core's `LiveNavigationRun`, the same code
@@ -203,7 +205,7 @@ actor NavigationService {
         /// Seeded from an estimate saved `ageS` seconds before the run's start.
         case restored(ageS: Double)
         /// The saved estimate was not used (and was deleted): unreadable, or
-        /// its age outside 0…24 h.
+        /// its age outside −5 s…24 h.
         case refused(String)
     }
 
@@ -225,6 +227,14 @@ actor NavigationService {
     /// The latest Navigate run's restore attempt, and its generation.
     private(set) var lastRestore: RestoreAttempt?
     private(set) var lastRestoreGeneration: Int?
+    /// Whether the latest Navigate run's prior was a Record-stop hand-over
+    /// (`NavigationPrior.handOver`).
+    private(set) var lastRestoreHandOver = false
+    /// A recording whose final save (at its run's end) is the newest save
+    /// in this process: the next Navigate run's read takes over from it
+    /// (the Record-stop hand-over). Cleared by any later save and by that
+    /// read. In memory only, so a relaunch never has one.
+    private var recordingEndSave: Int?
 
     init(flushInterval: Duration = .seconds(10), library: RoadPackLibrary? = nil,
          libraryRescan: @escaping LibraryRescan = { await $0.rescan() },
@@ -451,25 +461,34 @@ actor NavigationService {
     /// Captures `run`'s estimate now and hands it to the store (encoded and
     /// written on its queue). Nothing before initialisation, and nothing
     /// from a run older than one that already saved.
-    private func saveEstimate(of run: Run, generation: Int, engineOff: Bool) {
-        guard let restoreStore else { return }
-        if let newest = newestSavedGeneration, generation < newest { return }
+    @discardableResult
+    private func saveEstimate(of run: Run, generation: Int, engineOff: Bool) -> Bool {
+        guard let restoreStore else { return false }
+        if let newest = newestSavedGeneration, generation < newest { return false }
         let clock = run.feed.clock
         guard let state = run.live.restoreState(at: clock.now(), clock: clock, bootSessionID: bootSessionID(),
-                                                engineOff: engineOff) else { return }
+                                                engineOff: engineOff) else { return false }
         restoreStore.save(state)
         newestSavedGeneration = generation
+        recordingEndSave = nil
+        return true
     }
 
     /// The prior for a Navigate run: after every earlier run has ended (so
     /// a recording that just stopped has saved its final estimate), the
-    /// store's state if its age at the run's start is within 0…24 h. A
-    /// refused state is deleted; an unreadable one the store deletes.
+    /// store's state if its age at the run's start is within −5 s…24 h
+    /// (Core's `age`). A refused state is deleted; an unreadable one the
+    /// store deletes. When the newest save is a recording's final one made
+    /// in this process, the prior is a hand-over (`handOver`): the engine
+    /// confirms it at once if it was converged and the gap is ≤ 10 s.
     private func restorePrior(for feed: RecordingNavigationFeed) async -> NavigationPrior? {
         guard let restoreStore else { return nil }
         await awaitEarlierRuns(before: feed.generation)
         let loaded = await restoreStore.load()
+        let handOver = recordingEndSave != nil
+        recordingEndSave = nil
         lastRestoreGeneration = feed.generation
+        lastRestoreHandOver = false
         switch loaded {
         case .none:
             lastRestore = .noSavedState
@@ -479,12 +498,14 @@ actor NavigationService {
             return nil
         case .state(let state):
             let t = feed.clock.now()
-            guard let prior = state.prior(at: t, clock: feed.clock, bootSessionID: bootSessionID()) else {
+            guard let prior = state.prior(at: t, clock: feed.clock, bootSessionID: bootSessionID(),
+                                          handOver: handOver) else {
                 restoreStore.delete()
-                lastRestore = .refused("age outside 0…24 h")
+                lastRestore = .refused("age outside −5 s…24 h")
                 return nil
             }
             lastRestore = .restored(ageS: Double(t.nanoseconds - prior.savedT.nanoseconds) / 1e9)
+            lastRestoreHandOver = handOver
             return prior
         }
     }
@@ -618,8 +639,12 @@ actor NavigationService {
     private func end(_ generation: Int) {
         guard var run = runs[generation] else { return }
         // UX-20: the final save, before a waiting Navigate start reads the
-        // store (same serial queue, so the read sees it).
-        saveEstimate(of: run, generation: generation, engineOff: run.feed.runEnd.engineOff)
+        // store (same serial queue, so the read sees it). A recording's is
+        // what the next Navigate run takes over from.
+        if saveEstimate(of: run, generation: generation, engineOff: run.feed.runEnd.engineOff),
+           run.feed.output != .navigateOnly {
+            recordingEndSave = generation
+        }
         runs[generation] = nil
         let state = roadStates.removeValue(forKey: generation)
         inlineSelectors[generation] = nil

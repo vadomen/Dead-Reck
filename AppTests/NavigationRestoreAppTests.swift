@@ -285,6 +285,25 @@ struct NavigationRestoreServiceTests {
         await run.value
     }
 
+    @Test("Saved 3 s in the future on another boot (clock skew): restored at age 0, unconfirmed (no recording ended in this process: not a hand-over)")
+    func skewedClockRestoresAtAgeZero() async throws {
+        let scratch = RestoreScratch()
+        defer { scratch.remove() }
+        scratch.store.save(R.state(ageS: -3, boot: "boot-other"))
+        let service = R.service(scratch.store)
+        let (feed, tap) = R.feed(1)
+        let run = service.start(feed)
+        let still = R.parked(0...1)
+        #expect(await R.send(still, to: tap, service: service, total: still.count))
+        #expect(await service.lastRestore == .restored(ageS: 0))
+        #expect(await service.lastRestoreHandOver == false)
+        let snapshot = await service.snapshot(at: MonotonicTimestamp(seconds: 1))
+        #expect(snapshot.restore.status == .unconfirmed)
+        #expect(RestoreStatus.line(RestoreDisplay(snapshot.restore, run: 1)) != nil)
+        tap.finish()
+        await run.value
+    }
+
     @Test("Refused: saved 5 min in the future or 25 h ago; corrupt, truncated or unknown version. A fresh start; the file deleted",
           arguments: ["future", "old", "corrupt", "truncated", "version"])
     func refused(_ kind: String) async throws {
@@ -313,7 +332,7 @@ struct NavigationRestoreServiceTests {
         #expect(!snapshot.initialized, "fresh: nothing until a fix")
         let attempt = await service.lastRestore
         switch kind {
-        case "future", "old": #expect(attempt == .refused("age outside 0…24 h"))
+        case "future", "old": #expect(attempt == .refused("age outside −5 s…24 h"))
         case "version": #expect(attempt == .refused("unreadable: unsupported version 99"))
         default: #expect(attempt == .refused("unreadable: malformed"))
         }
@@ -494,7 +513,11 @@ struct NavigationRestoreServiceTests {
         #expect(await R.wait { await service.snapshot(at: .zero).stats.inputs == still.count })
         #expect(await service.lastRestoreGeneration == 2)
         #expect(await service.lastRestore == .restored(ageS: 0), "Record's save at its end (t 8)")
-        #expect(await service.snapshot(at: MonotonicTimestamp(seconds: 8.2)).restore.status == .unconfirmed)
+        #expect(await service.lastRestoreHandOver, "Record's final save: a hand-over")
+        // Record converged on the drive, gap 0: confirmed at once.
+        #expect(try scratch.saved().converged)
+        let restore = await service.snapshot(at: MonotonicTimestamp(seconds: 8.2)).restore
+        #expect(restore.status == .confirmed && restore.reason == .handOver)
         navigateTap.finish()
         await navigateRun.value
     }
@@ -596,15 +619,27 @@ final class ScriptDriver {
             receivedT: MonotonicTimestamp(seconds: st), ageS: 0)))
     }
 
+    /// A Wi-Fi fix on the track at script `t` (65 m, no speed, no course).
+    static func wifiTrackFix(_ t: Double, runStart: Double) -> LogEvent {
+        let p = S.position(t), st = t - runStart
+        return LogEvent(timestamp: MonotonicTimestamp(seconds: st), payload: .location(LocationSample(
+            latitude: p.latitude, longitude: p.longitude, altitude: 0, horizontalAccuracy: 65, verticalAccuracy: -1,
+            speed: -1, speedAccuracy: -1, course: -1, courseAccuracy: -1,
+            receivedT: MonotonicTimestamp(seconds: st), ageS: 0)))
+    }
+
     /// 0.2 s from script `t0`, as `NavigateRig.step` but on the run's clock:
     /// motion at 50 Hz, one OBD poll over the link, a fix on whole script
     /// seconds while `fixes`. Parked: speed 0, no yaw, fixes at (0, 0).
-    func step(_ t0: Double, runStart: Double, fixes: Bool = true, parked: Bool = false) async {
+    /// `wifi`: the fix is a Wi-Fi fix of the track (65 m, no speed or
+    /// course) instead of a GNSS one.
+    func step(_ t0: Double, runStart: Double, fixes: Bool = true, parked: Bool = false, wifi: Bool = false) async {
         let st = t0 - runStart
         let yaw = parked ? 0 : 0.002
         var first = (0..<5).map { S.motion(st + Double($0) * 0.02, yawRate: yaw) }
         if fixes, abs(t0 - t0.rounded()) < 1e-9 {
             first.insert(parked ? RestoreScript.fix(st, northM: 0, wifi: false, accuracy: 5)
+                                : wifi ? Self.wifiTrackFix(t0, runStart: runStart)
                                 : Self.trackFix(t0, runStart: runStart), at: 0)
         }
         rig.uptime.set(NavigateRig.base + t0 + 0.09)
@@ -640,7 +675,7 @@ struct NavigationRestoreSessionTests {
         }
     }
 
-    @Test("Navigate → Record → Stop: Navigate resumes from the estimate Record's engine saved at Stop: converged kept, heading σ continuous, no reseed, the next fix confirms")
+    @Test("Navigate → Record → Stop: Navigate resumes from the estimate Record's engine saved at Stop: converged kept, heading σ continuous, no reseed; converged and 0.2 s gap: confirmed at once as a hand-over, no Restored line")
     func recordStopHandOver() async throws {
         let scratch = try ScratchStore()
         defer { scratch.remove() }
@@ -685,7 +720,9 @@ struct NavigationRestoreSessionTests {
             return
         }
         #expect(ageS >= 0 && ageS < 0.05, "Record's final save at Stop: \(ageS)")
+        #expect(await service.lastRestoreHandOver, "Record's own final save, in this process")
         #expect(try restore.saved().restoreClass == .moving)
+        #expect(try restore.saved().converged)
 
         // The first Navigate input 0.2 s after the save (the scripted gap).
         let gapS = 0.2
@@ -693,7 +730,8 @@ struct NavigationRestoreSessionTests {
         await driver.step(15 + gapS, runStart: 15)
         #expect(await Self.ingested(service, second, driver.sent))
         let resumed = await service.snapshot(at: MonotonicTimestamp(seconds: gapS + 0.18))
-        #expect(resumed.restore.status == .unconfirmed)
+        #expect(resumed.restore.status == .confirmed && resumed.restore.reason == .handOver)
+        #expect(RestoreStatus.line(RestoreDisplay(resumed.restore, run: second)) == nil, "no Restored line")
         #expect(resumed.converged, "converged carries over: no calibrating-heading phase")
         let sigma = try #require(resumed.headingStdDeg)
         let turn = NavigationRestoreModel.movingHeadingRateDegPerS * gapS
@@ -704,13 +742,90 @@ struct NavigationRestoreSessionTests {
         #expect(S.distanceM(resumed, truth.latitude, truth.longitude) < 15)
         print("UX-20 hand-over: heading σ at Stop \(sigmaAtStop)°, after a \(gapS) s gap \(sigma)° (grown \(grown)°)")
 
-        // The next fix (script 16 s) agrees: confirmed, never reseeded.
+        // The next fix (script 16 s): still the hand-over's confirmation, never reseeded.
         await driver.drive((15 + gapS + 0.2)..<16.4, runStart: 15)
         #expect(await Self.ingested(service, second, driver.sent))
         let confirmed = await service.snapshot(at: MonotonicTimestamp(seconds: 1.38))
-        #expect(confirmed.restore.status == .confirmed && confirmed.restore.reason == .fix)
+        #expect(confirmed.restore.status == .confirmed && confirmed.restore.reason == .handOver)
         #expect(confirmed.converged)
         #expect(await service.currentCounters?.reseeds == 0)
+        rig.session.disableNavigate()
+        #expect(await R.ended(service, second))
+    }
+
+    @Test("Navigate → Record → Stop with Record not converged at Stop (one Wi-Fi fix): a hand-over, but unconfirmed with the Restored line until a fix")
+    func recordStopHandOverUnconverged() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let restore = RestoreScratch()
+        defer { restore.remove() }
+        let service = R.service(restore.store)
+        let rig = NavigateRig(store: scratch.store, service: service)
+        let driver = ScriptDriver(rig)
+        await rig.connect(speed: 36)
+        rig.session.enableNavigate(RecordingSessionNavigateTests.quick)
+        let first = try #require(rig.session.navigateGeneration)
+        await driver.drive(0..<3, runStart: 0)
+        #expect(await Self.ingested(service, first, driver.sent))
+
+        // Record: one Wi-Fi fix (no heading), then none: never converged.
+        try await rig.session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
+        let record = try #require(rig.session.currentGeneration)
+        #expect(await R.ended(service, first))
+        driver.reset()
+        await driver.step(3, runStart: 3, wifi: true)
+        await driver.drive(3.2..<15, runStart: 3, fixes: false)
+        #expect(await Self.ingested(service, record, driver.sent))
+        let recordAtStop = await service.snapshot(at: MonotonicTimestamp(seconds: 12))
+        #expect(recordAtStop.initialized && !recordAtStop.converged)
+
+        await rig.session.stop()
+        let second = try #require(rig.session.navigateGeneration)
+        #expect(await R.wait { await service.lastRestoreGeneration == second })
+        guard case .restored = await service.lastRestore else {
+            Issue.record("not restored: \(String(describing: await service.lastRestore))")
+            return
+        }
+        #expect(await service.lastRestoreHandOver)
+        #expect(try restore.saved().converged == false)
+
+        driver.reset()
+        await driver.step(15.2, runStart: 15, fixes: false)
+        #expect(await Self.ingested(service, second, driver.sent))
+        let resumed = await service.snapshot(at: MonotonicTimestamp(seconds: 0.38))
+        #expect(resumed.restore.status == .unconfirmed && resumed.restore.reason == nil)
+        let line = RestoreStatus.line(RestoreDisplay(resumed.restore, run: second))
+        #expect(line != nil, "the Restored line shows")
+        rig.session.disableNavigate()
+        #expect(await R.ended(service, second))
+    }
+
+    @Test("Navigate after Navigate (no recording between): never a hand-over")
+    func navigateAfterNavigateIsNoHandOver() async throws {
+        let restore = RestoreScratch()
+        defer { restore.remove() }
+        let service = R.service(restore.store)
+        let rig = NavigateRig(store: RecordingSessionNavigateTests.absentStore(), service: service)
+        let driver = ScriptDriver(rig)
+        await rig.connect(speed: 36)
+        rig.session.enableNavigate(RecordingSessionNavigateTests.quick)
+        let first = try #require(rig.session.navigateGeneration)
+        await driver.drive(0..<3, runStart: 0)
+        #expect(await Self.ingested(service, first, driver.sent))
+        rig.session.disableNavigate()
+        #expect(await R.ended(service, first))
+        rig.session.enableNavigate(RecordingSessionNavigateTests.quick)
+        let second = try #require(rig.session.navigateGeneration)
+        #expect(await R.wait { await service.lastRestoreGeneration == second })
+        guard case .restored = await service.lastRestore else {
+            Issue.record("not restored: \(String(describing: await service.lastRestore))")
+            return
+        }
+        #expect(await service.lastRestoreHandOver == false)
+        driver.reset()
+        await driver.step(3.2, runStart: 3, fixes: false)
+        #expect(await Self.ingested(service, second, driver.sent))
+        #expect(await service.snapshot(at: MonotonicTimestamp(seconds: 0.38)).restore.status == .unconfirmed)
         rig.session.disableNavigate()
         #expect(await R.ended(service, second))
     }
