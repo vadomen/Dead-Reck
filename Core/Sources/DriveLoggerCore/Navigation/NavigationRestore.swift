@@ -29,7 +29,8 @@ public enum NavigationRestoreClass: String, Hashable, Sendable, Codable, CaseIte
     /// A fresh OBD 0 held for at least
     /// `NavigationRestoreModel.standingStopMinZeroS`.
     case standingStop
-    /// Anything else: moving, or speed unknown.
+    /// Anything else: moving, or speed unknown (a run from a stopped-class
+    /// prior keeps the prior's class until OBD or the IMU says otherwise).
     case moving
 }
 

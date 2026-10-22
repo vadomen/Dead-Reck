@@ -161,7 +161,8 @@ actor NavigationService {
     private let library: RoadPackLibrary?
     private var runs: [Int: Run] = [:]
     private var roadStates: [Int: RoadsState] = [:]
-    /// The newest run's generation; snapshots follow it.
+    /// The newest run's generation; snapshots follow it. Never moves to an
+    /// older run while a newer one runs (`begin`, `end`).
     private var current: Int?
     /// Engines built so far (one per run).
     private(set) var runsStarted = 0
@@ -296,7 +297,10 @@ actor NavigationService {
         let started = ContinuousClock.now
         runs[feed.generation] = Run(feed: feed, live: live, writer: writer, openFailure: openFailure,
                                     lastFlush: started, lastSave: started)
-        current = feed.generation
+        // Only a newer run takes the snapshots: a Navigate run whose start
+        // waited (`restorePrior`) may begin after a newer recording did
+        // (R77.2-3).
+        if current.map({ feed.generation > $0 }) ?? true { current = feed.generation }
         runsStarted += 1
         roadStates[feed.generation] = RoadsState()
         if let inlineCandidates {
@@ -679,7 +683,8 @@ actor NavigationService {
             selectionAttempts: run.live.selectionLog.attempts,
             selectionLines: run.live.selectionLog.lines
         ))
-        if current == generation { current = nil }
+        // The newest run still draining, if any, takes over (R77.2-3).
+        if current == generation { current = runs.keys.max() }
         let waiters = endWaiters
         endWaiters = [:]
         for waiter in waiters.values { waiter.resume() }

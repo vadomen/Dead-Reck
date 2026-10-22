@@ -540,10 +540,52 @@ struct NavigationRestoreServiceTests {
         let waited = ContinuousClock.now - started
         #expect(waited >= .milliseconds(290) && waited < .seconds(2), "\(waited)")
         #expect(await service.lastRestore == .noSavedState)
+        #expect(await service.currentGeneration == 2)
+        navigateTap.finish()
+        await navigateRun.value
+        #expect(await service.currentGeneration == 1, "the run still draining, not none (R77.2-3)")
+        stuckTap.finish()
+        await stuckRun.value
+        #expect(await service.currentGeneration == nil)
+    }
+
+    @Test("A Navigate start that waited never takes the map from a newer recording (R77.2-3)")
+    func staleNavigateKeepsTheNewerRecordingCurrent() async throws {
+        let scratch = RestoreScratch()
+        defer { scratch.remove() }
+        let sidecars = try Self.sidecarDirectory()
+        defer { try? FileManager.default.removeItem(at: sidecars) }
+        let service = NavigationService(restoreStore: scratch.store, saveInterval: .seconds(3_600),
+                                        handOverTimeout: .milliseconds(300), bootSessionID: { R.boot })
+        let (stuck, stuckTap) = R.feed(1, recordingIn: sidecars, nowS: 8)
+        let stuckRun = service.start(stuck)
+        #expect(await R.wait { await service.currentGeneration == 1 })
+        // Navigate (2) waits for the stuck recording; a newer recording (3)
+        // begins meanwhile.
+        let (navigate, navigateTap) = R.feed(2, nowS: 8)
+        let navigateRun = service.start(navigate)
+        let header = R.header()
+        let (record, recordTap) = R.feed(3, recordingIn: sidecars, nowS: 9, header: header)
+        let recordRun = service.start(record)
+        #expect(await R.wait { await service.currentGeneration == 3 })
+        // Navigate's start after its hand-over timeout.
+        #expect(await R.wait { await service.runsStarted == 3 })
+        #expect(await service.lastRestoreGeneration == 2)
+        #expect(await service.currentGeneration == 3, "the stale Navigate run's begin")
         navigateTap.finish()
         await navigateRun.value
         stuckTap.finish()
         await stuckRun.value
+        #expect(await service.currentGeneration == 3, "after runs 1 and 2 ended")
+        let drive = S.drive(0...8)
+        #expect(await R.send(drive, to: recordTap, service: service, total: drive.count))
+        let snapshot = await service.snapshot(at: MonotonicTimestamp(seconds: 8))
+        #expect(snapshot.sessionID == header.sessionID, "the recording's snapshot, not idle")
+        #expect(snapshot.initialized)
+        await service.flush()
+        #expect(try scratch.saved().savedAt == R.wallStart.addingTimeInterval(9), "the recording's save")
+        recordTap.finish()
+        await recordRun.value
     }
 
     @Test("An older run's save at its late end never replaces a newer run's")

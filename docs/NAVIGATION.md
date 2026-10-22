@@ -524,7 +524,16 @@ without a prior writes byte-identical sidecars and replay results.
   (diagnostics only), and the class (`NavigationEngine.restoreClass`):
   `parked` (last OBD 0 and the engine stale-parked, or the app says the
   engine is off), `standingStop` (a fresh OBD 0 held ≥ 3 s), else
-  `moving` (no OBD, a moving last reply even if the link was lost).
+  `moving` (no OBD, a moving last reply even if the link was lost). A run
+  seeded from a parked or standing-stop prior keeps that stop (R77.2-1):
+  until its first OBD reply (and unless rejected) it saves the prior's
+  class while the prior's parked hold stands (`parked` if the app says
+  the engine is off), `moving` once the IMU clears the hold; a run of
+  zeros beginning at that first reply continues the prior's stop, so it
+  is a `standingStop` (or `parked`, as above) without waiting 3 s. So a
+  Navigate run opened before the ignition, or stopped in the first
+  seconds after it, never turns a parked save into a `moving` one that
+  the next start could not restore. A rejected prior keeps nothing.
 - **Age**: same boot max(wall Δ, uptime Δ), else wall Δ; in [−5 s, 0)
   it is clock skew and taken as 0 (`NavigationRestoreModel.maxNegativeAgeS`);
   below −5 s or over 24 h: no restore.

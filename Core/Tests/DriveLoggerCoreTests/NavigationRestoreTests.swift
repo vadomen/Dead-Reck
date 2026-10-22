@@ -601,6 +601,78 @@ struct NavigationRestoreTests {
         // No OBD at all: moving.
         let noOBD = drive.events(obdSpeed: { _, _ in nil }, fix: S.cleanFix())
         #expect(Self.run(noOBD, prior: nil, until: 30).restoreClass(at: S.ms(30), engineOff: true) == .moving)
+
+        // R77.2-2 (a): standing 5 s at OBD 0, then the link drops and, at
+        // 8 s, the car drives off: the IMU clears the parked latch. The run
+        // of zeros is over 3 s old but stale: moving, not a standing stop.
+        let away = S(initialHeadingDeg: 0, [
+            .stop(seconds: 8), .ramp(seconds: 5, from: 0, to: 12), .straight(seconds: 10, speed: 12),
+        ])
+        let dropped = away.events(obdSpeed: { t, _ in t > 5 ? nil : 0 })
+        #expect(Self.run(dropped, prior: nil, until: 4.5).restoreClass(at: S.ms(4.5), engineOff: false) == .standingStop)
+        #expect(Self.run(dropped, prior: nil, until: 7.5).restoreClass(at: S.ms(7.5), engineOff: false) == .parked,
+                "stale after the 0, no motion yet")
+        #expect(Self.run(dropped, prior: nil, until: 11).restoreClass(at: S.ms(11), engineOff: false) == .moving)
+
+        // R77.2-2 (b): OBD stuck at 0 while clean fixes read 12 m/s: the
+        // zero is vetoed (`zuptFixGate`), so neither a standing stop nor,
+        // with `engineOff`, parked.
+        let stuck = S(initialHeadingDeg: 0, initialSpeed: 12, [.straight(seconds: 20, speed: 12)])
+            .events(obdSpeed: { _, _ in 0 }, fix: S.cleanFix())
+        let vetoed = Self.run(stuck, prior: nil, until: 10)
+        #expect(vetoed.restoreClass(at: S.ms(10), engineOff: false) == .moving)
+        #expect(vetoed.restoreClass(at: S.ms(10), engineOff: true) == .moving)
+        let unvetoed = S(initialHeadingDeg: 0, initialSpeed: 12, [.straight(seconds: 20, speed: 12)])
+            .events(obdSpeed: { _, _ in 0 })
+        #expect(Self.run(unvetoed, prior: nil, until: 10).restoreClass(at: S.ms(10), engineOff: false) == .standingStop,
+                "the same zeros without the fixes")
+    }
+
+    /// R77.2-1: a run seeded from a stopped-class prior saves that class
+    /// while it still waits for its first OBD reply (Navigate opened before
+    /// the ignition), and a run of zeros from that first reply continues
+    /// the prior's stop.
+    @Test(arguments: [NavigationRestoreClass.parked, .standingStop])
+    func stoppedPriorKeepsItsClassUntilOBDSaysOtherwise(_ restoreClass: NavigationRestoreClass) throws {
+        let prior = Self.prior(restoreClass, gapS: 600)
+        // Motion only: the car stands 5 s, then drives off; no OBD, no fix.
+        let noOBD = Self.afterParking.events(gyroNoise: 0.001, obdSpeed: { _, _ in nil })
+        let waiting = Self.run(noOBD, prior: prior, until: 4)
+        #expect(waiting.restore.status == .unconfirmed)
+        #expect(waiting.restoreClass(at: S.ms(4), engineOff: false) == restoreClass)
+        #expect(waiting.restoreClass(at: S.ms(4), engineOff: true) == .parked)
+        let state = try #require(NavigationRestoreState.capture(waiting, at: S.ms(4), clock: Self.clock,
+                                                                bootSessionID: nil, engineOff: false))
+        #expect(state.restoreClass == restoreClass)
+        // Driving off: the IMU clears the parked hold.
+        #expect(Self.run(noOBD, prior: prior, until: 12).restoreClass(at: S.ms(12), engineOff: false) == .moving)
+        // Without a prior the same motion is moving throughout.
+        #expect(Self.run(noOBD, prior: nil, until: 4).restoreClass(at: S.ms(4), engineOff: false) == .moving)
+
+        // The first replies are 0 (from 0.05 s): 1.5 s of zeros continue the
+        // prior's stop. Without a prior they are not yet a standing stop.
+        let zeros = Self.pullOut(kmh: 0)
+        let stopped = Self.run(zeros, prior: prior, until: 1.5)
+        #expect(stopped.restoreClass(at: S.ms(1.5), engineOff: false) == .standingStop)
+        #expect(stopped.restoreClass(at: S.ms(1.5), engineOff: true) == .parked)
+        #expect(Self.run(zeros, prior: nil, until: 1.5).restoreClass(at: S.ms(1.5), engineOff: false) == .moving)
+
+        // A slow pull-out, then zeros from 2 s: a new run of zeros, under 3 s.
+        let rolled = S(initialHeadingDeg: Self.headingDeg, [.stop(seconds: 10)])
+            .events(gyroNoise: 0.001, obdSpeed: { t, _ in t < 2 ? 5 : 0 })
+        let rerun = Self.run(rolled, prior: prior, until: 3.5)
+        #expect(rerun.restore.slowPullOutKmh == 5)
+        #expect(rerun.restoreClass(at: S.ms(3.5), engineOff: false) == .moving)
+
+        // Rejected after its first 0 reply (a clean fix 2 km away at 1 s):
+        // as without a prior, 1.95 s of zeros are not a standing stop.
+        let far = S(initialHeadingDeg: Self.headingDeg, [.stop(seconds: 10)]).events(gyroNoise: 0.001, fix: { t, _, _ in
+            t < 1 ? nil : S.Fix(east: Self.parkedEast + 2000, north: Self.parkedNorth, accuracy: 5,
+                                speed: 0, speedAccuracy: 0.3)
+        })
+        let rejected = Self.run(far, prior: prior, until: 2)
+        #expect(rejected.restore.status == .rejected)
+        #expect(rejected.restoreClass(at: S.ms(2), engineOff: false) == .moving)
     }
 
     // MARK: Persisted state

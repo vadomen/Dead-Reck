@@ -197,6 +197,10 @@ public struct NavigationEngine: Sendable {
     /// A stopped-class prior waits for the first OBD vehicle-speed reply:
     /// moving regrows it as moving (`resolvePriorAtFirstOBD`).
     private var priorAwaitingOBD = false
+    /// `t` of the first OBD reply after a stopped-class prior when it was
+    /// 0: a run of zeros starting there continues the prior's stop
+    /// (`restoreClass`). nil without one, and once the prior is discarded.
+    private var priorStopZeroSinceNs: Int64?
     /// The restore's status (`NavigationRestore`): `.none` without a prior.
     public private(set) var restore = NavigationRestore()
     /// End of the latest grid step since initialisation in which the cloud
@@ -1187,6 +1191,7 @@ public struct NavigationEngine: Sendable {
     /// hand-over alone (no fix has seen it: the growth is the same).
     private mutating func resolvePriorAtFirstOBD(at ns: Int64) {
         priorAwaitingOBD = false
+        if obdSpeedKmh == 0 { priorStopZeroSinceNs = zeroFix.zeroSinceNs }
         guard restore.status == .unconfirmed || (restore.status == .confirmed && restore.reason == .handOver),
               let prior, let v = obdSpeedKmh, v > 0 else { return }
         if v < NavigationRestoreModel.slowPullOutMaxKmh {
@@ -1301,6 +1306,7 @@ public struct NavigationEngine: Sendable {
         // The prior's parked hold, not an OBD 0.
         if obdSpeedKmh == nil { parkedSinceZero = false }
         priorAwaitingOBD = false
+        priorStopZeroSinceNs = nil
     }
 
     /// The last OBD vehicle speed from the primary ECU (raw km/h) and its
@@ -1320,13 +1326,25 @@ public struct NavigationEngine: Sendable {
     /// - `.moving`: anything else, no OBD reply included. `engineOff` with
     ///   a moving last reply is moving: a link lost mid-drive is not a
     ///   parked car.
+    ///
+    /// A run seeded from a stopped-class prior (R77.2-1) keeps that stop:
+    /// - before its first OBD reply (and while not rejected), the prior's
+    ///   class while its parked hold stands (`.parked` with `engineOff`),
+    ///   `.moving` once the IMU has cleared it;
+    /// - a run of zeros beginning at that first reply continues the prior's
+    ///   stop, so it needs no `standingStopMinZeroS` of its own.
     public func restoreClass(at t: MonotonicTimestamp, engineOff: Bool) -> NavigationRestoreClass {
         let ns = t.nanoseconds
+        if priorAwaitingOBD, let prior {
+            guard parkedSinceZero else { return .moving }
+            return engineOff ? .parked : prior.restoreClass
+        }
         guard let v = obdSpeedKmh, let tObd = obdNs, v == 0, !zeroVetoed(at: ns) else { return .moving }
         let fresh = (Double(ns) - Double(tObd)) / 1e9 <= config.obdMaxAgeS
         if engineOff || (!fresh && parkedSinceZero) { return .parked }
         if fresh, let since = zeroFix.zeroSinceNs,
-           (Double(ns) - Double(since)) / 1e9 >= NavigationRestoreModel.standingStopMinZeroS {
+           since == priorStopZeroSinceNs
+            || (Double(ns) - Double(since)) / 1e9 >= NavigationRestoreModel.standingStopMinZeroS {
             return .standingStop
         }
         return .moving
