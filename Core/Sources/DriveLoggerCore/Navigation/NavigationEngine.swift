@@ -1137,10 +1137,35 @@ public struct NavigationEngine: Sendable {
         }
     }
 
+    /// The cloud at the grown prior: every particle at the (carried
+    /// forward) mean with the grown covariance. Gaussian headings are then
+    /// rescaled about the mean so the cloud's circular std is the grown σ
+    /// (no extra random draw): `converged` (std under the threshold) then
+    /// follows the grown σ, not the sampling noise of N draws, so a tight
+    /// hand-over keeps it.
     private mutating func seedFromPrior(_ prior: NavigationPrior, _ seed: NavigationPrior.Seed, at ns: Int64) {
         let heading: (radians: Double, sigma: Double)? = seed.headingRadians.map { ($0, seed.headingSigmaRadians ?? 0) }
-        initialize(latitude: prior.latitude, longitude: prior.longitude, sigma: 0, heading: heading, at: ns,
+        var latitude = prior.latitude, longitude = prior.longitude
+        if seed.shiftEastM != 0 || seed.shiftNorthM != 0 {
+            let p = LocalTangentPlane(latitude: latitude, longitude: longitude)
+                .geodetic(east: seed.shiftEastM, north: seed.shiftNorthM)
+            latitude = p.latitude
+            longitude = p.longitude
+        }
+        initialize(latitude: latitude, longitude: longitude, sigma: 0, heading: heading, at: ns,
                    covariance: (seed.covEE, seed.covEN, seed.covNN))
+        guard let heading, heading.sigma > 0 else { return }
+        // Small-angle rescale, iterated: exact to well under 1e-6 rad for
+        // σ ≤ 30°.
+        for _ in 0..<3 {
+            let actual = headingStdRadians()
+            guard actual > 0, actual.isFinite else { return }
+            let k = heading.sigma / actual
+            if abs(k - 1) < 1e-9 { return }
+            for i in self.heading.indices {
+                self.heading[i] = Self.wrap2Pi(heading.radians + k * Self.wrapPi(self.heading[i] - heading.radians))
+            }
+        }
     }
 
     /// The first OBD vehicle-speed reply after a stopped-class prior was

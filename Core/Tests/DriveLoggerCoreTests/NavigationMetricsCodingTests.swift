@@ -60,6 +60,14 @@ struct NavigationMetricsCodingTests {
         // The GPS switch key (UX-9 a) filled too.
         metrics.gpsSwitch = .init(offIntervals: [.init(offT: 20.5, onT: 50.5), .init(offT: 70)], fixesWithheld: 31,
                                   switches: 3)
+        // The restore key (UX-20) filled too.
+        var restore = NavigationRestore()
+        restore.status = .rejected
+        restore.reason = .fix
+        restore.savedT = MonotonicTimestamp(seconds: -600)
+        restore.decidedT = MonotonicTimestamp(seconds: 1.25)
+        restore.fixesOlderThanSave = 1
+        metrics.restore = restore
         return metrics
     }
 
@@ -183,7 +191,7 @@ struct NavigationMetricsCodingTests {
             == ["consistency", "consistencyWithTruthSigma", "motionStartT", "pinScoring", "pins",
                 "checkpointsAfterScoreUntil", "roadMetrics", "roadSetHash", "roads", "scoreUntilT",
                 "roadsAttachedAfterInputs", "attachedRoadSetHash", "roadsExtendedAfterInputs", "fixesExcludedByTruth", "fixPinDecisions",
-                "maxErrorByKind", "gpsSwitch"].sorted())
+                "maxErrorByKind", "gpsSwitch", "restore"].sorted())
         for key in later {
             var old = row
             old.removeValue(forKey: key.stringValue)
@@ -208,6 +216,7 @@ struct NavigationMetricsCodingTests {
             case .fixPinDecisions: #expect(decoded.fixPinDecisions == nil)
             case .maxErrorByKind: #expect(decoded.maxErrorByKind == nil)
             case .gpsSwitch: #expect(decoded.gpsSwitch == nil)
+            case .restore: #expect(decoded.restore == nil)
             default: Issue.record("unexpected later key \(key)")
             }
         }

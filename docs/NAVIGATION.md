@@ -533,11 +533,29 @@ without a prior writes byte-identical sidecars and replay results.
   particle at the saved mean with the grown covariance. No prior: that code
   never runs. Growth for the gap since the save (`NavigationPrior.seed`):
 
-  | class | position, per axis (quadrature) | heading |
+  With g = max(v_last, 11.1 m/s) × gap, the distance a moving car may
+  cover:
+
+  | class | position, per axis (quadrature) | heading (quadrature) |
   |---|---|---|
-  | parked | + 10 m | + 3° |
-  | standing stop | + 50 m (a guess: no recording measures it) | + 3° |
-  | moving | + max(v_last, 11.1 m/s) × gap, mean not shifted | uniform for a gap > 5 s, else + 3° and 6°/s × gap (a guess) |
+  | parked | + min(10 m, g) | + min(3°, 5.5°/s × gap) |
+  | standing stop | + min(50 m, g) (50 m a guess: no recording measures it) | as parked |
+  | moving | + g; gap ≤ 5 s: mean carried forward by v_last × gap along the saved heading | gap ≤ 5 s: + 5.5°/s × gap; longer: uniform |
+
+  5.5°/s is measured: the RMS of the gyro heading change over 0.5, 1, 2,
+  3 and 5 s windows while moving (OBD ≥ 10 km/h at both ends) on seven
+  acceptance drives is 5.4, 5.3, 5.1, 4.9 and 4.5 °/s × window. It is
+  heavy-tailed (1 s: median 0.5°, p95 13°, p99 22°); a turn in the gap
+  that the Gaussian misses is caught by the next clean fix's no-support
+  reseed. The stopped classes never grow more than a moving car over the
+  same gap, so a hand-over within a second (Record stops, Navigate
+  resumes from Record's save) adds about 11 m, not 50 m. Gaussian
+  headings are rescaled about the mean after the draw (no extra random
+  number) so the cloud's circular std is the grown σ exactly: the
+  restored `converged` is that σ under 10°, not sampling noise. From a
+  converged 2–5° it survives a hand-over gap of about 1.5–1.8 s; at 2 s
+  the grown σ is 11° and the arrow waits for the next fix
+  (`NavigationRestoreTests.recordStopHandOverIsContinuous`).
 
   A grown heading σ over 30° seeds uniform headings; a major-axis σ over
   1.5 km is no prior at all (`.none`, `tooUncertain`): the run starts
@@ -693,9 +711,28 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   [--roads <pack.roadpack>]... [--wrong-road-tolerance <m>] \
   [--fix-offset <from>:<to>|auto[:<len>:<step>]]... [--fix-source any|accessory|phone] [--fix-max-acc <m>] \
   [--fix-offset-max <m>] [--fix-offset-step <m>] [--fix-offset-stat mean|median] \
-  [--fix-offset-course <deg>|off] [--fix-offset-test <m>@<deg>]... [--fix-offset-trace]
+  [--fix-offset-course <deg>|off] [--fix-offset-test <m>@<deg>]... [--fix-offset-trace] \
+  [--save-prior <state.json> [--save-prior-at <s>|end] [--save-prior-engine-off]] \
+  [--prior <state.json> [--prior-offset <dE>,<dN>]] [--start-at <s>]
 ```
 
+- **Restore (UX-20), replay only, one log**: the same Core code as the
+  app (`NavigationRestoreState`, `NavigationEngine(config:roads:prior:)`).
+  `--save-prior` writes the state captured from this run at
+  `--save-prior-at` (session seconds; default `end`, the last input),
+  from the state before the first input arriving after it;
+  `--save-prior-engine-off` classifies it as after Navigate's ignition-off
+  auto-stop. Saving changes no number and no label. `--prior` seeds the
+  engine from a saved state, its age taken on this recording's clock
+  (`SessionClock(header:)`, wall clock only: no boot session) at
+  `--start-at` or the first input; older than 24 h or from the future:
+  no prior, as in the app. `--prior-offset dE,dN` moves the saved position
+  by metres first (a car moved while the app was not running).
+  `--start-at` drops every input arriving before it (the app was not
+  running), and works without `--prior` (the fresh column of a cut). Labels:
+  `-from-<s>`, `-restored`; the summary and `metrics.json` (`restore`) give
+  the restore's status, reason and decision time. Refused with
+  `--compare` and `--write-sidecar`.
 - **Constant-offset check** (`--fix-offset`, needs `--roads`; analysis
   only: no engine, no metrics files, nothing but relative metres and
   bearings printed). `FixOffsetScan` scores each window of clean fixes
@@ -2277,6 +2314,40 @@ acts on cached pre-session fixes taken while moving, like the 2026-10-20
 morning drive's (as live, report only: pin 1 inside the 95 % ellipse now,
 130 → 430 m semi-major; consistency 1/2 → 2/2). Manual's convergence
 distance (reported): unchanged.
+
+### UX-20 cut-replay proof (2026-10-21)
+
+`replay_nav --save-prior` at a cut, then `--prior --start-at` (restored)
+and `--start-at` alone (fresh) against the uncut run; seeds 1–5, roads,
+arrival order. Errors in metres at the checkpoints after the restart
+(withheld clean fixes, truth points), mean (range) over seeds; "max 2 km"
+is the largest in the first 2 km after the restart.
+
+| case | first checkpoint: uncut / restored / fresh | max 2 km: uncut / restored / fresh | converged after restart: restored / fresh | restore |
+|---|---|---|---|---|
+| jammed-A → jammed-B (parked, towers) | — / 12 / 12 (truth point) | — | 1 s / 111 s (0.43 km) | confirmed by the first fix ×5 |
+| jammed-B → clean, GPS masked (parked) | — / 12 / no estimate | — / 118 / — | 1 s / never | unconfirmed (no fix); 87 % inside 95 % + truth σ |
+| drive-9 park (455 s, ignition off), GPS masked | 6 / no estimate / no estimate | — | never / never | rejected ×5 (`movingAtStart`: OBD came back at 8 km/h) |
+| killed moving, gap 1 s (6 cuts on clean-long, drive-7) | 2–14 / 1–16 | 15–25 / 11–46 | 1 s / never | unconfirmed (GPS masked) |
+| killed moving, gap 2 s | 2–11 / 2–16 | 15–25 / 13–55 | 3–19 s (one cut 58 s) / never | unconfirmed |
+| killed moving, gap 10 s | 2–11 / 20–1172 | 15–25 / 400–2104 | never (one cut 99 s) / never | unconfirmed; inside 95 % 77–100 % |
+| killed moving, gap 30–60 s | 3–15 / 20–1502 | 19–25 / 386–3352 | never / never | unconfirmed; inside 95 % 86–100 % |
+| killed moving, gap 120 s | 2–25 / 788–1245, or no prior | — | never | 3 of 6 cuts `tooUncertain` (> 1.5 km) |
+| moved 300 m / 2 km, then jammed-B or clean | as fresh | as fresh | as fresh | rejected by the first fix ×5 in all four cases |
+| drive-8 → drive-9 (report only) | — / 447 / 447 | — | 242 s / 242 s | rejected (`movingAtStart`) |
+| 2026-10-20 morning → evening 1 (report only) | — / 60 / 60 | — | never / never | rejected (`movingAtStart`) |
+
+Fresh has no estimate at all where GPS is masked. The mean carried forward
+over a short gap matters: with it held at the save, the gap-1 s first
+checkpoint was 5–27 m and gap-2 s 10–41 m instead of 1–16 and 2–16. Past 5
+s the heading is uniform, so with no GPS the cloud becomes a ring of the
+distance driven: consistent (the truth inside), not useful; the first fix
+or pin ends it. Experiment, not adopted (the first OBD reply not checked):
+drive-9 park restores to 6 m at once, converged at 0 s, as uncut; but the
+evening drive, whose recording started at 38 km/h, then keeps a parked
+prior 2.2 km wrong that no tower fix rejects (0 of 6110 inside). The
+check stays; a slow first reply (pulling out of a parking space while the
+adapter connects) is an open decision.
 
 ## Known limitations and options
 

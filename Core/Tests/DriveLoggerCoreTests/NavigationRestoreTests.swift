@@ -104,11 +104,26 @@ struct NavigationRestoreTests {
         #expect(Self.prior(.moving, gapS: 80, speedMps: 20).seed(gapS: 80) == nil)
         #expect(Self.prior(.moving, gapS: 136, speedMps: 0).seed(gapS: 136) == nil)
         #expect(Self.prior(.moving, gapS: 135, speedMps: 0).seed(gapS: 135) != nil)
-        // A short gap keeps a Gaussian heading: σ² + 3² + (6°/s · gap)².
+        // A short gap keeps a Gaussian heading, σ² + (5.5°/s · gap)², and
+        // carries the mean forward by speed × gap along the heading (30°).
         let short = try #require(Self.prior(.moving, gapS: 2, speedMps: 10).seed(gapS: 2))
         let shortSigma: Double = try #require(short.headingSigmaRadians)
-        let shortExpected: Double = (9.0 + 9 + 144).squareRoot()
+        let shortExpected: Double = (9.0 + 121).squareRoot()
         #expect(abs(shortSigma * 180 / Double.pi - shortExpected) < 1e-9)
+        #expect(abs(short.shiftEastM - 20 * sin(Double.pi / 6)) < 1e-9)
+        #expect(abs(short.shiftNorthM - 20 * cos(Double.pi / 6)) < 1e-9)
+        #expect(abs(short.covEE - (25 + 22.2 * 22.2)) < 1e-6)
+        // Past 5 s: uniform heading, no shift.
+        let long = try #require(Self.prior(.moving, gapS: 6, speedMps: 10).seed(gapS: 6))
+        #expect(long.headingRadians == nil && long.shiftEastM == 0 && long.shiftNorthM == 0)
+        // A stopped class never grows more than a moving car over the gap.
+        let stopOneSecond = try #require(Self.prior(.standingStop, gapS: 1).seed(gapS: 1))
+        #expect(abs(stopOneSecond.covEE - (25 + 11.1 * 11.1)) < 1e-6)
+        #expect(stopOneSecond.shiftEastM == 0)
+        let parkedTenthSecond = try #require(Self.prior(.parked, gapS: 0.1).seed(gapS: 0.1))
+        #expect(abs(parkedTenthSecond.covEE - (25 + 1.11 * 1.11)) < 1e-6)
+        let parkedSigma: Double = try #require(parkedTenthSecond.headingSigmaRadians)
+        #expect(abs(parkedSigma * 180 / Double.pi - (9 + 0.55 * 0.55).squareRoot()) < 1e-9)
         // Grown over 30°: uniform.
         #expect(Self.prior(.parked, gapS: 10, headingStdDeg: 31).seed(gapS: 10)?.headingRadians == nil)
         #expect(Self.prior(.parked, gapS: 10, headingStdDeg: 29).seed(gapS: 10)?.headingRadians != nil)
@@ -450,6 +465,92 @@ struct NavigationRestoreTests {
         #expect(abs(try #require(snapshot.restore.ageS(at: S.ms(3))) - 1203) < 1e-6)
         #expect(snapshot.converged)
         #expect(lines.contains { if case .estimate = $0 { true } else { false } }, "estimates from the first second")
+    }
+
+    // MARK: Record → Navigate hand-over
+
+    /// `input` on a session clock that started `offset` seconds later.
+    static func shifted(_ input: NavigationInput, by offset: Double) -> NavigationInput {
+        let d = MonotonicTimestamp(seconds: offset).nanoseconds
+        func m(_ t: MonotonicTimestamp) -> MonotonicTimestamp { MonotonicTimestamp(nanoseconds: t.nanoseconds - d) }
+        switch input {
+        case .motion(let s, let t): return .motion(s, at: m(t))
+        case .obd(let s, let t): return .obd(s, at: m(t))
+        case .location(var s, let t):
+            s.receivedT = s.receivedT.map(m)
+            return .location(s, at: m(t))
+        case .manualFix(var s, let t):
+            s.pressedT = m(s.pressedT)
+            return .manualFix(s, at: m(t))
+        case .gpsSwitch(let s, let t): return .gpsSwitch(s, at: m(t))
+        }
+    }
+
+    @Test(arguments: [0.3, 1.0, 2.0])
+    func recordStopHandOverIsContinuous(gapS: Double) throws {
+        // Record's run converges on clean fixes; at Stop (60 s, moving) it
+        // saves with the app's function; Navigate starts `gapS` later on
+        // its own session clock and boot, seeded through the normal path.
+        let drive = S(initialHeadingDeg: 70, [
+            .ramp(seconds: 5, from: 0, to: 14), .straight(seconds: 20, speed: 14),
+            .turn(degrees: 60, seconds: 8, speed: 12), .straight(seconds: 50, speed: 14),
+        ])
+        let all = S.inputs(drive.events(gyroNoise: 0.001, fix: S.cleanFix(accuracy: 5, positionNoise: 2)))
+        let stopT = 60.0, startT = stopT + gapS
+        let config = S.config(particles: 400)
+        var record = LiveNavigationRun(sessionID: UUID(), config: config, appBuild: "test")
+        var uncut = record
+        for input in all where input.arrival <= S.ms(stopT) {
+            record.ingest(input) { _ in }
+        }
+        let saved = try #require(record.engine.estimate(at: S.ms(stopT)))
+        #expect(saved.converged)
+        let state = try #require(record.restoreState(at: S.ms(stopT), clock: Self.clock, bootSessionID: "boot-a",
+                                                     engineOff: false))
+        #expect(state.restoreClass == .moving)
+
+        let navigateClock = SessionClock(referenceUptimeSeconds: Self.clock.referenceUptimeSeconds + startT,
+                                         wallClockStart: Self.clock.wallClock(for: S.ms(startT)))
+        let prior = try #require(state.prior(at: .zero, clock: navigateClock, bootSessionID: "boot-a"))
+        #expect(prior.converged)
+        #expect(abs(prior.savedT.seconds + gapS) < 1e-6)
+        var navigate = LiveNavigationRun(sessionID: UUID(), config: config, appBuild: "test", prior: prior)
+        let later = all.filter { $0.arrival > S.ms(startT) }.map { Self.shifted($0, by: startT) }
+        // The first input: motion, before the first fix after the gap.
+        let firstFix = try #require(later.firstIndex { if case .location = $0 { true } else { false } })
+        for input in later[..<firstFix] { navigate.ingest(input) { _ in } }
+        let tFirst = later[firstFix].arrival
+        let restored = try #require(navigate.engine.estimate(at: tFirst))
+        #expect(navigate.engine.restore.status == .unconfirmed)
+        let turn = NavigationRestoreModel.movingHeadingRateDegPerS * gapS
+        let grown = (saved.headingStdDeg * saved.headingStdDeg + turn * turn).squareRoot()
+        // Continuous: the grown σ exactly at the seed, plus the heading
+        // noise of the step or two run before the first fix.
+        #expect(restored.headingStdDeg >= grown - 1e-6 && restored.headingStdDeg < grown + 0.2,
+                "\(restored.headingStdDeg) vs \(grown)")
+        // `converged` follows the grown σ: kept while it stays under 10°
+        // (about 1.5–1.8 s of gap from a converged 2–5°), not by chance.
+        #expect(restored.converged == (restored.headingStdDeg < config.convergedHeadingStdDeg))
+        if gapS <= 1 { #expect(restored.converged, "converged carries over") }
+        // Against the run Record would have continued: same place, same heading.
+        for input in all where input.arrival < MonotonicTimestamp(seconds: tFirst.seconds + startT) {
+            uncut.ingest(input) { _ in }
+        }
+        let reference = try #require(uncut.engine.estimate(at: MonotonicTimestamp(seconds: tFirst.seconds + startT)))
+        let a = S.plane.enu(latitude: restored.latitude, longitude: restored.longitude)
+        let b = S.plane.enu(latitude: reference.latitude, longitude: reference.longitude)
+        #expect(((a.east - b.east) * (a.east - b.east) + (a.north - b.north) * (a.north - b.north)).squareRoot() < 10)
+        #expect(abs(angleDifference(restored.headingDeg, reference.headingDeg)) < 2)
+
+        // The next fix agrees: confirmed, no reseed, still converged.
+        navigate.ingest(later[firstFix]) { _ in }
+        #expect(navigate.engine.restore.status == .confirmed)
+        #expect(navigate.engine.counters.reseeds == 0)
+        for input in later[(firstFix + 1)...] { navigate.ingest(input) { _ in } }
+        #expect(navigate.engine.counters.reseeds == 0)
+        let end = try #require(navigate.engine.estimate(at: later.last!.arrival))
+        #expect(end.converged)
+        #expect(drive.error(end, at: later.last!.arrival.seconds + startT) < 15)
     }
 
     @Test func ellipseCovarianceRoundTrips() {

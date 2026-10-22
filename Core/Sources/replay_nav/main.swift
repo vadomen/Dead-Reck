@@ -13,7 +13,20 @@ import Foundation
 //       [--fix-offset-max <m>] [--fix-offset-step <m>] [--fix-max-acc <m>] [--fix-offset-stat mean|median]
 //       [--fix-offset-course <deg>|off] [--fix-offset-test <m>@<deg>]... [--fix-offset-trace]
 //       [--fixpin-inject <out.jsonl> [--fixpin-two-pins] [--fixpin-survey] [--fixpin-pins <n>] [--fixpin-separation <s>] [--fixpin-engine-no-roads]]
+//       [--save-prior <state.json> [--save-prior-at <s>|end] [--save-prior-engine-off]]
+//       [--prior <state.json> [--prior-offset <dE>,<dN>]] [--start-at <s>]
 //
+// UX-20 restore, replay only (one log): --save-prior writes the restore
+// state (`NavigationRestoreState`, the app's persisted form) captured at
+// --save-prior-at (session seconds, default end: the last input) from this
+// run; --save-prior-engine-off classifies it as the app does after an
+// ignition-off auto-stop. --prior seeds the engine from a saved state, its
+// age on this recording's clock (`SessionClock(header:)`, no boot session:
+// wall clock only) at --start-at, or at the first input; a state older than
+// 24 h (or from the future) is not restored, as in the app. --prior-offset
+// moves the saved position dE, dN metres first (a car moved while the app
+// was not running). --start-at drops every input arriving before it (the
+// app was not running). Labels: -from-<s>, -restored.
 // --fixpin-inject (one log, needs --roads): the N3-FIXPIN injection study
 // (`FixPinInjection`), no metrics files. Picks pin times (genuine GNSS
 // rings, road context straight/junction/parallel, clear of recorded pins and
@@ -151,6 +164,8 @@ let usage = """
            [--fix-offset-max <m>] [--fix-offset-step <m>] [--fix-max-acc <m>] [--fix-offset-stat mean|median]
            [--fix-offset-course <deg>|off] [--fix-offset-test <m>@<deg>]... [--fix-offset-trace]
            [--fixpin-inject <out.jsonl> [--fixpin-two-pins] [--fixpin-survey] [--fixpin-pins <n>] [--fixpin-separation <s>] [--fixpin-engine-no-roads]]
+           [--save-prior <state.json> [--save-prior-at <s>|end] [--save-prior-engine-off]]
+           [--prior <state.json> [--prior-offset <dE>,<dN>]] [--start-at <s>]
     """
 
 var arguments = Array(CommandLine.arguments.dropFirst())
@@ -186,6 +201,12 @@ var fixPinSurvey = false
 var fixPinEngineRoads = true
 var fixPinOptions = FixPinInjection.Options()
 var givenFlags: [String] = []
+var savePriorPath: String?
+var savePriorAt = Double.infinity
+var savePriorEngineOff = false
+var priorPath: String?
+var priorOffset: (east: Double, north: Double)?
+var startAt: Double?
 
 func number(_ text: String, _ flag: String) -> Double {
     guard let value = Double(text), value.isFinite else { fail("\(flag) needs a number, got \(text)\n\(usage)", status: 2) }
@@ -340,6 +361,21 @@ while !arguments.isEmpty {
         guard parts.count == 2 else { fail("--fix-offset-test needs <m>@<deg>\n\(usage)", status: 2) }
         let metres = number(parts[0], argument), degrees = number(parts[1], argument) * .pi / 180
         fixOffsetOptions.tested.append(FixOffsetScan.Shift(east: metres * sin(degrees), north: metres * cos(degrees)))
+    case "--save-prior":
+        savePriorPath = value()
+    case "--save-prior-at":
+        let text = value()
+        savePriorAt = text == "end" ? .infinity : number(text, argument)
+    case "--save-prior-engine-off":
+        savePriorEngineOff = true
+    case "--prior":
+        priorPath = value()
+    case "--prior-offset":
+        let parts = value().split(separator: ",").map(String.init)
+        guard parts.count == 2 else { fail("--prior-offset needs <dE>,<dN> metres\n\(usage)", status: 2) }
+        priorOffset = (number(parts[0], argument), number(parts[1], argument))
+    case "--start-at":
+        startAt = number(value(), argument)
     case "-h", "--help":
         print(usage)
         exit(EXIT_SUCCESS)
@@ -362,6 +398,24 @@ if asLive {
         fail("--as-live replays the live app: the header's seed and the default config; drop --seed N, --particles and --set\n\(usage)", status: 2)
     }
     seedFromHeader = true
+}
+if (savePriorPath != nil || priorPath != nil || startAt != nil) && paths.count != 1 {
+    fail("--save-prior, --prior and --start-at take exactly one log\n\(usage)", status: 2)
+}
+if (priorPath != nil || startAt != nil) && (comparePath != nil || writeSidecarPath != nil) {
+    fail("--prior and --start-at are replay only: drop --compare / --write-sidecar\n\(usage)", status: 2)
+}
+if priorOffset != nil && priorPath == nil {
+    fail("--prior-offset needs --prior\n\(usage)", status: 2)
+}
+var restoreState: NavigationRestoreState?
+if let priorPath {
+    do {
+        restoreState = try NavigationRestoreState.decode(Data(contentsOf: URL(fileURLWithPath: priorPath)))
+    } catch {
+        fail("cannot use the saved state \(priorPath): \(error)", status: 1)
+    }
+    if let offset = priorOffset { restoreState = restoreState?.shifted(eastM: offset.east, northM: offset.north) }
 }
 if (comparePath != nil || writeSidecarPath != nil) && paths.count != 1 {
     fail("--compare and --write-sidecar take exactly one log\n\(usage)", status: 2)
@@ -656,7 +710,40 @@ for path in paths {
     if truth != nil && entry == nil {
         print("note: no truth entry for \(name)")
     }
+    options.startAtS = startAt
+    if let restoreState {
+        // Its age on this recording's clock at the start (the first input
+        // given, or --start-at).
+        let start = startAt.map { MonotonicTimestamp(seconds: $0) }
+            ?? inputs.first { !$0.isGPSSwitch }?.arrival ?? .zero
+        let first = inputs.first { $0.arrival >= start && !$0.isGPSSwitch }?.arrival ?? start
+        options.prior = restoreState.prior(at: first, clock: SessionClock(header: header), bootSessionID: nil)
+        if let prior = options.prior {
+            print(String(format: "Prior         %@, saved %.1f s before t %.1f s (class %@)", priorPath ?? "",
+                         first.seconds - prior.savedT.seconds, first.seconds, prior.restoreClass.rawValue)
+                  + (priorOffset.map { String(format: ", moved %.0f m E, %.0f m N", $0.east, $0.north) } ?? ""))
+        } else {
+            print("note: the saved state is not restorable here (older than 24 h, from the future, or invalid): no prior")
+            options.prior = nil
+        }
+    }
+    if savePriorPath != nil {
+        options.savePrior = ReplaySavePrior(atS: savePriorAt, header: header, engineOff: savePriorEngineOff)
+    }
     let result = NavigationReplay.run(logName: name, inputs: inputs, options: options, truth: entry)
+    if let savePriorPath {
+        if let state = result.savedRestoreState {
+            do {
+                try state.encoded().write(to: URL(fileURLWithPath: savePriorPath))
+                print("Saved prior   \(savePriorPath): class \(state.restoreClass.rawValue), converged \(state.converged)"
+                      + String(format: ", σhead %.1f°", state.headingStdDeg))
+            } catch {
+                fail("cannot write \(savePriorPath): \(error)", status: 1)
+            }
+        } else {
+            print("note: no estimate at --save-prior-at: no state written")
+        }
+    }
     if result.counters.inputsRejectedTimeJump > 0 {
         print("note: \(result.counters.inputsRejectedTimeJump) input(s) rejected as implausible forward time jumps")
     }

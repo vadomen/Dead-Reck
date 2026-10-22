@@ -50,6 +50,9 @@ public enum NavigationRestoreModel {
     /// moved a little before the relaunch.
     public static let standingStopPositionSigmaM = 50.0
     /// Stopped classes: heading σ added in quadrature, degrees.
+    /// Stopped classes never grow more than a moving car would over the
+    /// same gap (`seed`): a hand-over within a second (Record stopped at a
+    /// light, Navigate resumes) adds about 11 m and 3°·gap, not 50 m.
     public static let stoppedHeadingSigmaDeg = 3.0
     /// Moving: the gap is driven at no less than this, m/s (40 km/h); the
     /// last speed when it was higher. Per-axis σ added = speed × gap.
@@ -57,9 +60,19 @@ public enum NavigationRestoreModel {
     /// Moving: heading is uniform for a gap longer than this, s.
     public static let movingUniformHeadingAfterS = 5.0
     /// Moving, gap up to `movingUniformHeadingAfterS`: heading σ added per
-    /// second of gap, degrees (a 90° junction turn takes about 5 s; a
-    /// guess, no recording measures it).
-    public static let movingHeadingRateDegPerS = 6.0
+    /// second of gap, degrees, in quadrature. Measured: the RMS of the gyro
+    /// heading change over windows of 0.5, 1, 2, 3 and 5 s while moving
+    /// (OBD ≥ 10 km/h at both ends) on seven acceptance drives (≈ 13 000
+    /// windows each) is 5.4, 5.3, 5.1, 4.9 and 4.5 °/s × the window; 5.5
+    /// covers every one. The distribution is heavy-tailed (1 s: median
+    /// 0.5°, p95 13°, p99 22°): a turn during the gap can fall outside, and
+    /// the next clean fix's no-support reseed is what catches it.
+    public static let movingHeadingRateDegPerS = 5.5
+    /// Moving, gap up to this: the mean is carried forward along the saved
+    /// heading by the last speed × gap (dead reckoning over the gap, as
+    /// `estimate(at:)` extrapolates), s. Longer gaps (uniform heading):
+    /// the mean is not shifted.
+    public static let movingShiftMaxGapS = 5.0
     /// A grown heading σ above this seeds headings stratified uniformly
     /// over 360°, degrees (the engine's `reseedHeadingStdDeg` default).
     public static let uniformHeadingAboveDeg = 30.0
@@ -101,10 +114,15 @@ public struct NavigationPrior: Hashable, Sendable {
     /// Estimated speed when saved, m/s.
     public var lastSpeedMps: Double
     public var restoreClass: NavigationRestoreClass
+    /// The saved estimate's `converged` (information: the restored run's
+    /// `converged` is its grown heading σ under the threshold, the same
+    /// rule as always; equal to this whenever the growth keeps σ under it).
+    public var converged: Bool
 
     public init(latitude: Double, longitude: Double, covEE: Double, covEN: Double, covNN: Double,
                 headingDeg: Double, headingStdDeg: Double, savedT: MonotonicTimestamp, lastSpeedMps: Double,
-                restoreClass: NavigationRestoreClass) {
+                restoreClass: NavigationRestoreClass, converged: Bool = false) {
+        self.converged = converged
         self.latitude = latitude
         self.longitude = longitude
         self.covEE = covEE
@@ -126,6 +144,9 @@ public struct NavigationPrior: Hashable, Sendable {
         /// Heading mean and σ, radians; nil: stratified uniform.
         public var headingRadians: Double?
         public var headingSigmaRadians: Double?
+        /// The mean carried forward over the gap, metres (moving, short gap).
+        public var shiftEastM = 0.0
+        public var shiftNorthM = 0.0
 
         /// Major-axis σ, metres.
         public var majorSigmaM: Double { NavigationPrior.majorVariance(covEE, covEN, covNN).squareRoot() }
@@ -141,13 +162,15 @@ public struct NavigationPrior: Hashable, Sendable {
     }
 
     /// The prior grown for `gapS` seconds since `savedT`
-    /// (docs/NAVIGATION.md "Restored prior (UX-20)"):
-    /// - parked: per-axis σ² + 10², heading σ² + 3²;
-    /// - standing stop: per-axis σ² + 50², heading σ² + 3²;
+    /// (docs/NAVIGATION.md "Restored prior (UX-20)"), with g = max(last
+    /// speed, 11.1 m/s) · gap the distance a moving car may cover:
     /// - moving (or a stopped class whose first OBD reply is moving:
-    ///   `movingAtStart`): per-axis σ² + (max(last speed, 11.1 m/s) · gap)²,
-    ///   mean not shifted; heading uniform for a gap over 5 s, else σ² +
-    ///   3² + (6°/s · gap)².
+    ///   `movingAtStart`): per-axis σ² + g²; heading uniform for a gap
+    ///   over 5 s, else σ² + (5.5°/s · gap)² and the mean carried forward
+    ///   by last speed · gap along the saved heading;
+    /// - parked: per-axis σ² + min(10 m, g)², heading σ² + min(3°, 5.5°/s ·
+    ///   gap)²;
+    /// - standing stop: per-axis σ² + min(50 m, g)², heading as parked.
     /// A grown heading σ over 30° is uniform. nil (no prior: start fresh)
     /// when the grown major-axis σ is over 1.5 km, or the prior is invalid.
     public func seed(gapS: Double, movingAtStart: Bool = false) -> Seed? {
@@ -155,25 +178,32 @@ public struct NavigationPrior: Hashable, Sendable {
         let gap = max(0, gapS)
         typealias M = NavigationRestoreModel
         let moving = restoreClass == .moving || movingAtStart
+        let movingSigma = max(lastSpeedMps, M.movingMinSpeedMps) * gap
+        let turn = M.movingHeadingRateDegPerS * gap
         let addSigma: Double
         var headingSigmaDeg: Double?
+        var shift = 0.0
         if moving {
-            addSigma = max(lastSpeedMps, M.movingMinSpeedMps) * gap
+            addSigma = movingSigma
             if gap <= M.movingUniformHeadingAfterS {
-                let turn = M.movingHeadingRateDegPerS * gap
-                headingSigmaDeg = (headingStdDeg * headingStdDeg + M.stoppedHeadingSigmaDeg * M.stoppedHeadingSigmaDeg
-                                   + turn * turn).squareRoot()
+                headingSigmaDeg = (headingStdDeg * headingStdDeg + turn * turn).squareRoot()
             }
+            if gap <= M.movingShiftMaxGapS { shift = lastSpeedMps * gap }
         } else {
-            addSigma = restoreClass == .parked ? M.parkedPositionSigmaM : M.standingStopPositionSigmaM
-            headingSigmaDeg = (headingStdDeg * headingStdDeg + M.stoppedHeadingSigmaDeg * M.stoppedHeadingSigmaDeg)
-                .squareRoot()
+            addSigma = min(restoreClass == .parked ? M.parkedPositionSigmaM : M.standingStopPositionSigmaM, movingSigma)
+            let add = min(M.stoppedHeadingSigmaDeg, turn)
+            headingSigmaDeg = (headingStdDeg * headingStdDeg + add * add).squareRoot()
         }
         if let s = headingSigmaDeg, s > M.uniformHeadingAboveDeg { headingSigmaDeg = nil }
         let add = addSigma * addSigma
-        let seed = Seed(covEE: covEE + add, covEN: covEN, covNN: covNN + add,
-                        headingRadians: headingSigmaDeg.map { _ in headingDeg * .pi / 180 },
+        let h = headingDeg * .pi / 180
+        var seed = Seed(covEE: covEE + add, covEN: covEN, covNN: covNN + add,
+                        headingRadians: headingSigmaDeg.map { _ in h },
                         headingSigmaRadians: headingSigmaDeg.map { $0 * .pi / 180 })
+        if shift > 0, headingSigmaDeg != nil {
+            seed.shiftEastM = shift * sin(h)
+            seed.shiftNorthM = shift * cos(h)
+        }
         guard seed.majorSigmaM.isFinite, seed.majorSigmaM <= M.maxSigmaM else { return nil }
         return seed
     }
@@ -407,7 +437,7 @@ public struct NavigationRestoreState: Hashable, Sendable, Codable {
             latitude: latitude, longitude: longitude, covEE: covEE, covEN: covEN, covNN: covNN,
             headingDeg: headingDeg, headingStdDeg: headingStdDeg,
             savedT: MonotonicTimestamp(nanoseconds: t.nanoseconds - Int64((age * 1e9).rounded())),
-            lastSpeedMps: speedMps, restoreClass: restoreClass)
+            lastSpeedMps: speedMps, restoreClass: restoreClass, converged: converged)
         return prior.isValid ? prior : nil
     }
 
@@ -433,6 +463,19 @@ public struct NavigationRestoreState: Hashable, Sendable, Codable {
             lastOBDSpeedKmh: obd?.kmh, lastOBDAgeS: obd.map { max(0, (Double(t.nanoseconds) - Double($0.t.nanoseconds)) / 1e9) },
             roadPacks: engine.roadNetwork?.packs.map { String(NavigationSeed.hex($0.contentHash).prefix(8)) } ?? [])
         return state.invalidField == nil ? state : nil
+    }
+}
+
+extension NavigationRestoreState {
+    /// The same state with its position moved `east`/`north` metres
+    /// (`replay_nav --prior-offset`: a car moved while the app was not
+    /// running, synthetic). Offline tools only.
+    public func shifted(eastM: Double, northM: Double) -> NavigationRestoreState {
+        var copy = self
+        let p = LocalTangentPlane(latitude: latitude, longitude: longitude).geodetic(east: eastM, north: northM)
+        copy.latitude = p.latitude
+        copy.longitude = p.longitude
+        return copy
     }
 }
 
