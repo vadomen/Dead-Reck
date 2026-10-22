@@ -14,7 +14,16 @@ import Foundation
 //       [--fix-offset-course <deg>|off] [--fix-offset-test <m>@<deg>]... [--fix-offset-trace]
 //       [--fixpin-inject <out.jsonl> [--fixpin-two-pins] [--fixpin-survey] [--fixpin-pins <n>] [--fixpin-separation <s>] [--fixpin-engine-no-roads]]
 //       [--save-prior <state.json> [--save-prior-at <s>|end] [--save-prior-engine-off]]
-//       [--prior <state.json> [--prior-offset <dE>,<dN>]] [--start-at <s>]
+//       [--prior <state.json> [--prior-offset <dE>,<dN>]] [--start-at <s>] [--no-prior]
+//
+// Prompt 40, the Navigate → Record hand-over (log v5): a recording that
+// carries a `navPrior` row started its live run from that prior, so every
+// replay of it does too (`ReplayRecordedPrior`): the metrics replay,
+// --as-live, --compare and --write-sidecar alike; the label gets -prior.
+// An explicit --prior replaces the row (a printed note; label -restored);
+// --no-prior ignores it (a printed note: the run starts fresh, not as the
+// live run did). A recording without the row (every recording before v5)
+// replays exactly as before; --no-prior then changes nothing.
 //
 // UX-20 restore, replay only (one log): --save-prior writes the restore
 // state (`NavigationRestoreState`, the app's persisted form) captured at
@@ -165,7 +174,7 @@ let usage = """
            [--fix-offset-course <deg>|off] [--fix-offset-test <m>@<deg>]... [--fix-offset-trace]
            [--fixpin-inject <out.jsonl> [--fixpin-two-pins] [--fixpin-survey] [--fixpin-pins <n>] [--fixpin-separation <s>] [--fixpin-engine-no-roads]]
            [--save-prior <state.json> [--save-prior-at <s>|end] [--save-prior-engine-off]]
-           [--prior <state.json> [--prior-offset <dE>,<dN>]] [--start-at <s>]
+           [--prior <state.json> [--prior-offset <dE>,<dN>]] [--start-at <s>] [--no-prior]
     """
 
 var arguments = Array(CommandLine.arguments.dropFirst())
@@ -207,6 +216,7 @@ var savePriorEngineOff = false
 var priorPath: String?
 var priorOffset: (east: Double, north: Double)?
 var startAt: Double?
+var noPrior = false
 
 func number(_ text: String, _ flag: String) -> Double {
     guard let value = Double(text), value.isFinite else { fail("\(flag) needs a number, got \(text)\n\(usage)", status: 2) }
@@ -376,6 +386,8 @@ while !arguments.isEmpty {
         priorOffset = (number(parts[0], argument), number(parts[1], argument))
     case "--start-at":
         startAt = number(value(), argument)
+    case "--no-prior":
+        noPrior = true
     case "-h", "--help":
         print(usage)
         exit(EXIT_SUCCESS)
@@ -674,6 +686,12 @@ for path in paths {
         }
     }
     inputs = baseOptions.fileOrder ? NavigationReplay.fileOrderInputs(from: events) : NavigationReplay.inputs(from: events)
+    // Prompt 40: the recording's navPrior row, the live run's start
+    // condition (absent: everything below is exactly as before v5).
+    let recordedPrior = ReplayRecordedPrior.choose(row: NavigationReplay.recordedPrior(in: events),
+                                                   explicitPrior: priorPath != nil, noPrior: noPrior)
+    if let note = recordedPrior.note(firstInput: recordedPrior.startInput(in: inputs)) { print(note) }
+    if case .absent = recordedPrior, noPrior { print("note: --no-prior: \(name) has no navPrior row; nothing to ignore") }
     if let writeSidecarPath {
         // Exactly the app's loop: file order, header seed, default config,
         // the given packs attached by the live rule.
@@ -684,7 +702,7 @@ for path in paths {
             let run = NavigationReplay.runLive(
                 inputs: NavigationReplay.fileOrderInputs(from: events), sessionID: header.sessionID,
                 config: NavigationConfig(seed: NavigationSeed.derive(header: header)), appBuild: "replay_nav",
-                roads: roads, attach: .live, injections: injections
+                roads: roads, attach: .live, injections: injections, prior: recordedPrior.prior
             ) { line in
                 if case .roadsSelection = line { selections += 1 }
                 writer.append(line)
@@ -711,6 +729,10 @@ for path in paths {
         print("note: no truth entry for \(name)")
     }
     options.startAtS = startAt
+    if let prior = recordedPrior.prior {
+        options.prior = prior
+        options.priorSource = .recording
+    }
     if let restoreState {
         // Its age on this recording's clock at the start (the first input
         // given, or --start-at).
@@ -777,7 +799,7 @@ for path in paths {
             return NavigationReplay.withholdReason(sample, at: t, options: options, motionStart: motionStart) == nil
         }
         let lines = NavigationReplay.liveLines(inputs: given, sessionID: header.sessionID, config: options.config,
-                                               roads: roads, attach: options.roadAttach)
+                                               roads: roads, attach: options.roadAttach, prior: options.prior)
         let comparison = SidecarComparison(
             sidecar: contents, replay: lines, replayConfig: NavigationEngine(config: options.config).config,
             encodingFailures: NavigationReplay.encodingFailures(in: events).count,

@@ -101,8 +101,12 @@ public struct ReplayOptions: Hashable, Sendable {
     /// UX-20, replay only (`replay_nav --prior`): the engine is seeded from
     /// this restored prior at its first input
     /// (`NavigationEngine(config:roads:prior:)`); the label gets
-    /// `-restored`. nil: as before.
+    /// `-restored`. nil: as before. Prompt 40: also the recording's own
+    /// `navPrior` row (`ReplayRecordedPrior`, `priorSource` `.recording`),
+    /// the start condition the live run had; the label then gets `-prior`.
     public var prior: NavigationPrior?
+    /// Where `prior` comes from; the label part only.
+    public var priorSource = ReplayPriorSource.savedState
     /// UX-20, replay only (`replay_nav --save-prior-at`): capture the
     /// restore state (`NavigationRestoreState.capture`) at this time;
     /// `ReplayResult.savedRestoreState`. Changes no number.
@@ -146,8 +150,81 @@ public struct ReplayOptions: Hashable, Sendable {
             }
         }
         if let startAtS { label += "-from-\(GPSMode.format(startAtS))" }
-        if prior != nil { label += "-restored" }
+        if prior != nil { label += priorSource == .recording ? "-prior" : "-restored" }
         return label
+    }
+}
+
+/// Where a replay's `ReplayOptions.prior` comes from (its label part).
+public enum ReplayPriorSource: String, Hashable, Sendable {
+    /// `replay_nav --prior <state.json>`: a saved restore state; `-restored`.
+    case savedState
+    /// The recording's own `navPrior` row (prompt 40); `-prior`.
+    case recording
+}
+
+/// What a replay does with a recording's `navPrior` row (format v5, the
+/// Navigate → Record hand-over, prompt 40): `replay_nav` starts the engine
+/// from it, as the live run did, unless `--prior` replaces it or
+/// `--no-prior` drops it. A recording without the row is `.absent` and its
+/// replay is exactly what it was before v5.
+public enum ReplayRecordedPrior: Hashable, Sendable {
+    /// No `navPrior` row.
+    case absent
+    /// The row's prior (`NavPriorSample.navigationPrior`) starts the run.
+    case used(NavigationPrior)
+    /// `--prior` given: the saved state replaces the row.
+    case overridden
+    /// `--no-prior`: the row is ignored, the run starts fresh.
+    case ignored
+    /// The row starts nothing (`NavPriorSample.invalidField`), live and in
+    /// the replay alike.
+    case invalid(field: String)
+
+    /// The choice for `row` (`NavigationReplay.recordedPrior(in:)`).
+    /// `explicitPrior`: `--prior` was given; `noPrior`: `--no-prior`.
+    /// `--prior` wins over `--no-prior` (which only drops the row).
+    public static func choose(row: NavPriorSample?, explicitPrior: Bool, noPrior: Bool) -> Self {
+        guard let row else { return .absent }
+        if explicitPrior { return .overridden }
+        if noPrior { return .ignored }
+        guard let prior = row.navigationPrior else { return .invalid(field: row.invalidField ?? "restoreClass") }
+        return .used(prior)
+    }
+
+    /// The prior the run starts from because of the row; nil otherwise.
+    public var prior: NavigationPrior? {
+        if case .used(let prior) = self { prior } else { nil }
+    }
+
+    /// The input the prior is applied at: the first one (not a
+    /// GPS switch) arriving at or after the estimate's time; earlier ones
+    /// (the init replay's readings) are ignored by the engine.
+    public func startInput(in inputs: [NavigationInput]) -> MonotonicTimestamp? {
+        guard let prior else { return nil }
+        return inputs.first { !$0.isGPSSwitch && $0.arrival >= prior.savedT }?.arrival
+    }
+
+    /// The line `replay_nav` prints, nil for `.absent`. Times relative to
+    /// `firstInput` (`startInput(in:)`), never a position.
+    public func note(firstInput: MonotonicTimestamp?) -> String? {
+        switch self {
+        case .absent:
+            return nil
+        case .used(let prior):
+            let gap = firstInput.map { String(format: ", %.2f s before the input it starts at (t %.2f s)",
+                                              $0.seconds - prior.savedT.seconds, $0.seconds) } ?? ""
+            return "Prior         the recording's navPrior row (hand-over): estimate at t "
+                + String(format: "%.3f s", prior.savedT.seconds) + gap
+                + ", class \(prior.restoreClass.rawValue), converged \(prior.converged)"
+                + String(format: ", σhead %.1f°", prior.headingStdDeg)
+        case .overridden:
+            return "note: --prior replaces the recording's navPrior row (the live run started from the row)"
+        case .ignored:
+            return "note: --no-prior: the recording's navPrior row is ignored; the run starts fresh (not as live)"
+        case .invalid(let field):
+            return "note: the recording's navPrior row is invalid (\(field)): no prior, as the live run"
+        }
     }
 }
 
@@ -349,6 +426,16 @@ public enum NavigationReplay {
         return nil
     }
 
+    /// The recording's `navPrior` row (format v5, prompt 40): the first one
+    /// in file order, nil when there is none. A recorder writes at most one,
+    /// before every engine input.
+    public static func recordedPrior<S: Sequence>(in events: S) -> NavPriorSample? where S.Element == LogEvent {
+        for event in events {
+            if case .navPrior(let sample) = event.payload { return sample }
+        }
+        return nil
+    }
+
     /// The navigation inputs of a recording in file order: the order the
     /// live app's tap delivered them (`LogSink`, "Tap"), for
     /// `replay_nav --as-live`. Unlike `inputs(from:)`, a location fix comes
@@ -379,11 +466,12 @@ public enum NavigationReplay {
     /// reference for `--compare`. `roads`/`attach`: see `runLive`.
     public static func liveLines(
         inputs: [NavigationInput], sessionID: UUID, config: NavigationConfig, appBuild: String = "replay",
-        roads: ReplayRoadSet? = nil, attach: ReplayRoadAttach = .live, injections: [ReplayRoadInjection] = []
+        roads: ReplayRoadSet? = nil, attach: ReplayRoadAttach = .live, injections: [ReplayRoadInjection] = [],
+        prior: NavigationPrior? = nil
     ) -> [NavSidecar.Line] {
         var lines: [NavSidecar.Line] = []
         runLive(inputs: inputs, sessionID: sessionID, config: config, appBuild: appBuild, roads: roads,
-                attach: attach, injections: injections) { lines.append($0) }
+                attach: attach, injections: injections, prior: prior) { lines.append($0) }
         return lines
     }
 
@@ -398,16 +486,19 @@ public enum NavigationReplay {
     /// `libraryChanged` request answered at once);
     /// `.afterInputs(k)` attaches the whole set after k inputs, and
     /// `.schedule` each point's packs after its inputs (the first attached,
-    /// the later ones extending it); `.fromStart` gives it at init. Returns
-    /// the finished run.
+    /// the later ones extending it); `.fromStart` gives it at init.
+    /// `prior` (prompt 40): the recording's `navPrior` row
+    /// (`NavPriorSample.navigationPrior`), the live run's start condition,
+    /// as the app's `LiveNavigationRun(header:…prior:)`; nil: as before.
+    /// Returns the finished run.
     @discardableResult
     public static func runLive(
         inputs: [NavigationInput], sessionID: UUID, config: NavigationConfig, appBuild: String = "replay",
         roads: ReplayRoadSet? = nil, attach: ReplayRoadAttach = .live, injections: [ReplayRoadInjection] = [],
-        emit: (NavSidecar.Line) -> Void
+        prior: NavigationPrior? = nil, emit: (NavSidecar.Line) -> Void
     ) -> LiveNavigationRun {
         var run = LiveNavigationRun(sessionID: sessionID, config: config, appBuild: appBuild,
-                                    roads: attach == .fromStart ? roads?.network : nil)
+                                    roads: attach == .fromStart ? roads?.network : nil, prior: prior)
         for line in run.openingLines { emit(line) }
         guard let roads, attach != .fromStart else {
             for input in inputs { run.ingest(input, emit: emit) }

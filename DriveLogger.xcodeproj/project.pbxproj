@@ -118,6 +118,7 @@
 		C0D308ED2C7D266BE36FC103 /* MapFollow.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDF21332A165EE4A986319E5 /* MapFollow.swift */; };
 		C595401ECC2ECBFDD58C1F07 /* AppServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6A7B2B4C3A009CAC7FAB6CD /* AppServices.swift */; };
 		C764915FFD1BD7F0C992E18D /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 145E23F3160AFCFA7C47F652 /* PrivacyInfo.xcprivacy */; };
+		C84F29C9AF54589F26CE8CE8 /* NavigationHandOverAppTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 967CFE9DD8079ED28B5AFDF5 /* NavigationHandOverAppTests.swift */; };
 		C945C19EA207DDAC807ED960 /* RecordingSessionLogHealthTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D2F9F3B73447BA4697222DE /* RecordingSessionLogHealthTests.swift */; };
 		CB124DE702CBA6B493AAA28F /* SimulatedOBDLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14F0D843A473920A9680FC04 /* SimulatedOBDLink.swift */; };
 		CB188C622936937BAC5F2899 /* MapNavigation.swift in Sources */ = {isa = PBXBuildFile; fileRef = C940A0982D6C1029FF16340A /* MapNavigation.swift */; };
@@ -255,6 +256,7 @@
 		90AC7FA4AD498307B3C7D5C3 /* AppInfoTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppInfoTests.swift; sourceTree = "<group>"; };
 		91D3719D9A3A53C5D01BA7E8 /* CachedLocation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CachedLocation.swift; sourceTree = "<group>"; };
 		93DE5F24930CC6CE64909294 /* AdapterSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdapterSettings.swift; sourceTree = "<group>"; };
+		967CFE9DD8079ED28B5AFDF5 /* NavigationHandOverAppTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NavigationHandOverAppTests.swift; sourceTree = "<group>"; };
 		982E965A8FFF8D4E784FD5CE /* ReferenceLocationSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReferenceLocationSource.swift; sourceTree = "<group>"; };
 		9AD177F87E3035993E62C165 /* RoadPackLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoadPackLibrary.swift; sourceTree = "<group>"; };
 		9EB67A48C50C39BEF8F22B3B /* PackOfferCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PackOfferCard.swift; sourceTree = "<group>"; };
@@ -380,6 +382,7 @@
 				E10D65817793B02936D47090 /* MapTrackTests.swift */,
 				31D1C917B449CDA56A0254E5 /* MountConfirmationTests.swift */,
 				405DDC15D444E14982ABE749 /* NavigationFeedTests.swift */,
+				967CFE9DD8079ED28B5AFDF5 /* NavigationHandOverAppTests.swift */,
 				B4EA48ED12A52275E63661D5 /* NavigationRestoreAppTests.swift */,
 				DE40C048BA69DF456E9DB55B /* NavigationServiceLibraryChangeTests.swift */,
 				B39D06A2ABBC27C741D74CCB /* NavigationServiceNavigateTests.swift */,
@@ -789,6 +792,7 @@
 				33A00E975C5880A134985B95 /* MapsTests.swift in Sources */,
 				001775BA018736DDAA3A5C55 /* MountConfirmationTests.swift in Sources */,
 				5EC1979BE339D4AFC4791413 /* NavigationFeedTests.swift in Sources */,
+				C84F29C9AF54589F26CE8CE8 /* NavigationHandOverAppTests.swift in Sources */,
 				784BB0A56A2DE84D7548F459 /* NavigationRestoreAppTests.swift in Sources */,
 				70EE82528AFC31656258692E /* NavigationServiceLibraryChangeTests.swift in Sources */,
 				89EB1F3B0F2B6E6020F824D1 /* NavigationServiceNavigateTests.swift in Sources */,

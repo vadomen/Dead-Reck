@@ -287,6 +287,10 @@ public struct NavigationRestore: Hashable, Sendable, Codable {
     /// Fixes ignored because their own time is before `savedT` (a cached
     /// fix older than the restored state).
     public var fixesOlderThanSave = 0
+    /// Inputs ignored before the prior was applied because they arrived
+    /// before `savedT` (prompt 40: the start-up init replay's `obd` rows,
+    /// stamped when the link connected); nil when none (absent in JSON).
+    public var inputsOlderThanSave: Int?
 
     public init() {}
 

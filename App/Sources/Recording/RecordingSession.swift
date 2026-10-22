@@ -526,6 +526,11 @@ final class RecordingSession {
     /// capture), or nil to start fresh. Must not block. nil (the default):
     /// no `navPrior` row, ever.
     @ObservationIgnored var navPriorProvider: (@MainActor (SessionClock) -> NavPriorSample?)?
+    /// The generation of the Navigate run the latest Record Start ended
+    /// (prompt 40: the run whose estimate `navPriorProvider` may hand
+    /// over); nil when that Start ended none (Navigate off, or not running).
+    /// Set before the provider is asked.
+    @ObservationIgnored private(set) var navigateEndedByStart: Int?
     /// Awaited inside the background task of the flush on `.background` and
     /// on a memory warning, after the log's own flush (R14.1-4): `AppServices`
     /// flushes the navigation sidecar here, which is otherwise flushed only
@@ -766,8 +771,11 @@ final class RecordingSession {
 
         // From here to the calibration wait nothing suspends.
         // UX-1: Navigate ends completely (sources stopped, sink and feed
-        // finished) before this recording's clock exists; no hand-over. The
-        // idle timer stays as it is: the recording keeps it off.
+        // finished) before this recording's clock exists; its estimate is
+        // handed over only through `navPriorProvider` below (prompt 40),
+        // which reads `navigateEndedByStart`. The idle timer stays as it
+        // is: the recording keeps it off.
+        navigateEndedByStart = navigate?.generation
         if let nav = navigate { endNavigate(nav) }
         try store.createDirectory()
         let clock = SessionClock(source: uptime, wallClockStart: Date())

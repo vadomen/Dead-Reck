@@ -430,6 +430,16 @@ public struct NavigationEngine: Sendable {
             jumpCandidateNs = arrival
             return
         }
+        if let prior, !priorApplied, arrival < prior.savedT.nanoseconds {
+            // Prompt 40: older than the restored estimate (the start-up
+            // init replay's readings, stamped at the link's connect, or a
+            // pre-dated motion batch): the prior already holds what it
+            // says. Ignored, clock included, so the prior is applied at the
+            // first newer input and nothing is dead-reckoned from before
+            // the save.
+            restore.inputsOlderThanSave = (restore.inputsOlderThanSave ?? 0) + 1
+            return
+        }
         jumpCandidateNs = nil
         lastInputNs = max(lastInputNs ?? arrival, arrival)
         expireHeldFix(at: arrival)

@@ -124,6 +124,9 @@ final class AppServices {
         session.onRecordActiveChange = { active in recordActivity.send(active) }
         // Synchronous inside `start`, before any row: only start the task.
         session.onNavigationFeed = { feed in navigation.start(feed) }
+        // Prompt 40: Record's Start takes over the running Navigate
+        // estimate (the `navPrior` row); none: a fresh start.
+        navigation.provideHandOver(to: session)
         // The sidecar is flushed with the log on background (R14.1-4).
         session.onFlush = { await navigation.flush() }
         // UX-1: Navigate runs whenever the link polls and Record doesn't.
