@@ -262,6 +262,145 @@ struct NavigationRestoreTests {
         #expect(try #require(parked.estimate(at: S.ms(1))).converged)
     }
 
+    /// A parked car pulling out at `kmh` from the first input on, its
+    /// every OBD reply `kmh`; no fix.
+    static func pullOut(kmh: Double, seconds: Double = 10) -> [LogEvent] {
+        let drive = kmh == 0
+            ? S(initialHeadingDeg: headingDeg, [.stop(seconds: seconds)])
+            : S(initialHeadingDeg: headingDeg, initialSpeed: kmh / 3.6, [.straight(seconds: seconds, speed: kmh / 3.6)])
+        return drive.events(gyroNoise: 0.001, obdSpeed: { _, _ in kmh })
+    }
+
+    @Test(arguments: [(0.0, NavigationRestoreClass.parked), (5, .parked), (9.9, .parked), (10, .parked), (15, .parked),
+                      (5, .standingStop), (10, .standingStop)])
+    func slowPullOutKeepsTheStoppedPrior(kmh: Double, restoreClass: NavigationRestoreClass) throws {
+        // The first OBD reply arrives at 0.05 s; the cloud is the same
+        // before it whatever it says (same draws, same IMU), so the
+        // covariance right after it differs only by what the reply did.
+        let replyT = 0.05
+        let prior = Self.prior(restoreClass, gapS: 600)
+        let engine = Self.run(Self.pullOut(kmh: kmh), prior: prior, until: replyT)
+        let still = Self.run(Self.pullOut(kmh: 0), prior: prior, until: replyT)
+        let before = Self.run(Self.pullOut(kmh: kmh), prior: prior, until: replyT - 0.001)
+        #expect(before.restore.status == .unconfirmed && before.restore.slowPullOutKmh == nil)
+        if kmh < M.slowPullOutMaxKmh {
+            #expect(engine.restore.status == .unconfirmed, "\(kmh) km/h: kept")
+            #expect(!engine.restore.regrownAsMoving)
+            #expect(engine.restore.slowPullOutKmh == (kmh > 0 ? kmh : nil))
+            let a = try #require(engine.estimate(at: S.ms(replyT)))
+            let b = try #require(still.estimate(at: S.ms(replyT)))
+            let roll = kmh / 3.6 * M.slowPullOutRollS
+            let ca = a.ellipse.covariance, cb = b.ellipse.covariance
+            #expect(abs(ca.ee - (cb.ee + roll * roll)) < 1e-6 * max(1, ca.ee), "\(kmh): \(ca.ee) vs \(cb.ee) + \(roll)²")
+            #expect(abs(ca.nn - (cb.nn + roll * roll)) < 1e-6 * max(1, ca.nn))
+            #expect(abs(ca.en - cb.en) < 1e-6 * max(1, ca.ee))
+            #expect(a.latitude == b.latitude && a.longitude == b.longitude, "the mean stays where it was saved")
+            #expect(a.converged, "the heading is kept")
+        } else {
+            // 10 min as a moving car: far beyond 1.5 km, rejected as before.
+            #expect(engine.restore.regrownAsMoving, "\(kmh) km/h: regrown as moving")
+            #expect(engine.restore.slowPullOutKmh == nil)
+            #expect(engine.restore.status == .rejected && engine.restore.reason == .movingAtStart)
+            #expect(!engine.isInitialized)
+        }
+    }
+
+    @Test func slowPullOutThenAgreeingFixConfirms() throws {
+        // Pulling out at 2 m/s (OBD 7 km/h) from where it was saved: kept,
+        // and the first clean fix (from 3 s, after the first reply) confirms it.
+        let drive = S(initialHeadingDeg: Self.headingDeg, initialSpeed: 2, [
+            .straight(seconds: 5, speed: 2), .ramp(seconds: 5, from: 2, to: 12),
+            .straight(seconds: 20, speed: 12),
+        ])
+        let events = Self.events(drive, fixes: .gnss).filter {
+            if case .location = $0.payload { return $0.timestamp >= S.ms(3) }
+            return true
+        }
+        let engine = Self.run(events, prior: Self.prior(.parked, gapS: 900))
+        #expect(engine.restore.slowPullOutKmh == 7)
+        #expect(engine.restore.status == .confirmed && engine.restore.reason == .fix)
+        #expect(engine.counters.reseeds == 0)
+        let end = try #require(engine.estimate(at: S.ms(drive.duration)))
+        let truth = drive.truth(at: drive.duration)
+        #expect(Self.distance(end, east: truth.east + Self.parkedEast, north: truth.north + Self.parkedNorth) < 15)
+    }
+
+    // MARK: Record-stop hand-over confirmation
+
+    /// A moving prior `gapS` old with `converged` and `handOver` set.
+    static func handOverPrior(gapS: Double, converged: Bool, handOver: Bool = true,
+                              restoreClass: NavigationRestoreClass = .moving) -> NavigationPrior {
+        var prior = Self.prior(restoreClass, gapS: gapS, headingStdDeg: converged ? 3 : 40,
+                               speedMps: restoreClass == .moving ? 12 : 0)
+        prior.converged = converged
+        prior.handOver = handOver
+        return prior
+    }
+
+    static let handOverDrive = S(initialHeadingDeg: headingDeg, initialSpeed: 12, [.straight(seconds: 20, speed: 12)])
+
+    @Test(arguments: [(3.0, true, NavigationRestore.Status.confirmed), (3, false, .unconfirmed),
+                      (10, true, .confirmed), (12, true, .unconfirmed)])
+    func handOverConfirmsOnlyAConvergedShortGap(gapS: Double, converged: Bool,
+                                                expected: NavigationRestore.Status) throws {
+        let events = Self.events(Self.handOverDrive, fixes: .none)
+        let engine = Self.run(events, prior: Self.handOverPrior(gapS: gapS, converged: converged), until: 0.01)
+        #expect(engine.restore.status == expected, "gap \(gapS) s, converged \(converged)")
+        if expected == .confirmed {
+            #expect(engine.restore.reason == .handOver)
+            #expect(engine.restore.decidedT == S.ms(0))
+        } else {
+            #expect(engine.restore.reason == nil && engine.restore.decidedT == nil)
+        }
+        // Only the status: the cloud is the one the same prior without the
+        // flag gives, at every step.
+        var plain = Self.handOverPrior(gapS: gapS, converged: converged)
+        plain.handOver = false
+        let full = Self.run(events, prior: Self.handOverPrior(gapS: gapS, converged: converged))
+        let reference = Self.run(events, prior: plain)
+        #expect(reference.restore.status == .unconfirmed)
+        for t in stride(from: 0.5, through: 19.5, by: 3.0) {
+            #expect(full.estimate(at: S.ms(t)) == reference.estimate(at: S.ms(t)), "t \(t)")
+        }
+        #expect(full.counters == reference.counters)
+    }
+
+    @Test func withoutTheHandOverFlagAShortConvergedGapStaysUnconfirmed() {
+        // A relaunch a few seconds after a kill: the state is as fresh as a
+        // hand-over's, but the app never sets the flag for it.
+        let events = Self.events(Self.handOverDrive, fixes: .none)
+        let engine = Self.run(events, prior: Self.handOverPrior(gapS: 3, converged: true, handOver: false), until: 1)
+        #expect(engine.restore.status == .unconfirmed)
+    }
+
+    @Test func nextMorningRestoreIsNeverConfirmedByTheHandOverRule() throws {
+        // Saved converged, read 8 h later even with the flag set: the gap
+        // rule refuses; `prior(at:)` never sets the flag by itself.
+        let state = Self.state()
+        let morning = SessionClock(referenceUptimeSeconds: 5000 + 8 * 3600,
+                                   wallClockStart: Date(timeIntervalSince1970: 1_000_000_000 + 8 * 3600))
+        #expect(try #require(state.prior(at: .zero, clock: morning, bootSessionID: "boot-a")).handOver == false)
+        let flagged = try #require(state.prior(at: .zero, clock: morning, bootSessionID: "boot-a", handOver: true))
+        #expect(flagged.converged && flagged.handOver)
+        let engine = Self.run(Self.events(fixes: .none), prior: flagged, until: 2)
+        #expect(engine.restore.status == .unconfirmed)
+    }
+
+    @Test func handOverConfirmedStoppedPriorStillRegrowsAtAMovingFirstReply() throws {
+        // Record stopped at a light (standing stop), Navigate resumes 3 s
+        // later, the first reply says 15 km/h: confirmed by the hand-over,
+        // and grown as moving exactly as without the flag.
+        let events = Self.events(Self.handOverDrive, fixes: .none)
+        let flagged = Self.run(events, prior: Self.handOverPrior(gapS: 3, converged: true, restoreClass: .standingStop),
+                               until: 1)
+        var plain = Self.handOverPrior(gapS: 3, converged: true, restoreClass: .standingStop)
+        plain.handOver = false
+        let reference = Self.run(events, prior: plain, until: 1)
+        #expect(flagged.restore.status == .confirmed && flagged.restore.reason == .handOver)
+        #expect(flagged.restore.regrownAsMoving && reference.restore.regrownAsMoving)
+        #expect(flagged.estimate(at: S.ms(1)) == reference.estimate(at: S.ms(1)))
+    }
+
     @Test func movingPriorTooWideStartsFresh() throws {
         let events = Self.events(fixes: .gnss)
         let first = Self.run(events, prior: Self.prior(.moving, gapS: 200, speedMps: 5), until: 0.01)
@@ -415,6 +554,20 @@ struct NavigationRestoreTests {
         #expect(state.age(nowWall: saved.addingTimeInterval(25 * 3600), nowUptimeSeconds: 0, bootSessionID: nil) == nil)
         #expect(state.age(nowWall: saved.addingTimeInterval(24 * 3600 + 1), nowUptimeSeconds: 0, bootSessionID: nil) == nil)
         #expect(state.age(nowWall: saved.addingTimeInterval(24 * 3600 - 1), nowUptimeSeconds: 0, bootSessionID: nil) != nil)
+        // Up to 5 s in the future (clock skew): age 0; beyond: refused.
+        #expect(state.age(nowWall: saved.addingTimeInterval(-3), nowUptimeSeconds: 0, bootSessionID: nil) == 0)
+        #expect(state.age(nowWall: saved.addingTimeInterval(-5), nowUptimeSeconds: 0, bootSessionID: nil) == 0)
+        #expect(state.age(nowWall: saved.addingTimeInterval(-5.001), nowUptimeSeconds: 0, bootSessionID: nil) == nil)
+        #expect(state.age(nowWall: saved.addingTimeInterval(-6), nowUptimeSeconds: 0, bootSessionID: nil) == nil)
+        #expect(state.age(nowWall: saved.addingTimeInterval(-0.001), nowUptimeSeconds: 0, bootSessionID: "boot-b") == 0)
+        // The same boot: uptime 3 s behind and wall 3 s behind is skew too.
+        #expect(state.age(nowWall: saved.addingTimeInterval(-3), nowUptimeSeconds: 4997, bootSessionID: "boot-a") == 0)
+        #expect(state.age(nowWall: saved.addingTimeInterval(-6), nowUptimeSeconds: 4994, bootSessionID: "boot-a") == nil)
+        // A prior from a state 3 s in the future is saved at the run's start.
+        let skewed = SessionClock(referenceUptimeSeconds: 0, wallClockStart: saved.addingTimeInterval(-3))
+        #expect(state.prior(at: S.ms(1), clock: skewed, bootSessionID: nil)?.savedT == S.ms(1))
+        let tooSkewed = SessionClock(referenceUptimeSeconds: 0, wallClockStart: saved.addingTimeInterval(-7))
+        #expect(state.prior(at: S.ms(1), clock: tooSkewed, bootSessionID: nil) == nil)
     }
 
     @Test func priorFromStateIsOnTheNewClock() throws {

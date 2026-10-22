@@ -92,6 +92,19 @@ public enum NavigationRestoreModel {
     public static let towerAccuracyM = 400.0
     /// A fresh OBD 0 held at least this long is a standing stop, s.
     public static let standingStopMinZeroS = 3.0
+    /// A parked or standing-stop prior whose first OBD reply is below this
+    /// is kept (a slow pull-out while the adapter connects), km/h; at or
+    /// above it the prior is regrown as moving (user decision 2026-10-22).
+    public static let slowPullOutMaxKmh = 10.0
+    /// A kept slow pull-out adds (v_first × this)² to each axis of the
+    /// position variance for the roll before the first reply, s.
+    public static let slowPullOutRollS = 5.0
+    /// A hand-over (`NavigationPrior.handOver`) from a converged estimate
+    /// with a gap up to this is confirmed at once, s.
+    public static let handOverConfirmMaxGapS = 10.0
+    /// A wall-clock age down to minus this is taken as 0 (clock skew
+    /// between the save and the read), s; below it the state is refused.
+    public static let maxNegativeAgeS = 5.0
 }
 
 /// A saved belief to start a run from, on the new run's session clock
@@ -118,11 +131,19 @@ public struct NavigationPrior: Hashable, Sendable {
     /// `converged` is its grown heading σ under the threshold, the same
     /// rule as always; equal to this whenever the growth keeps σ under it).
     public var converged: Bool
+    /// Set by the app only: the state was saved, in this process, by a
+    /// recording that has just ended and this run takes over from it (the
+    /// Record-stop hand-over). With `converged` and a gap up to
+    /// `NavigationRestoreModel.handOverConfirmMaxGapS` the restore is
+    /// confirmed at once (`.handOver`); otherwise the normal rule. Never set
+    /// for a relaunch or a state read from an earlier process.
+    public var handOver: Bool
 
     public init(latitude: Double, longitude: Double, covEE: Double, covEN: Double, covNN: Double,
                 headingDeg: Double, headingStdDeg: Double, savedT: MonotonicTimestamp, lastSpeedMps: Double,
-                restoreClass: NavigationRestoreClass, converged: Bool = false) {
+                restoreClass: NavigationRestoreClass, converged: Bool = false, handOver: Bool = false) {
         self.converged = converged
+        self.handOver = handOver
         self.latitude = latitude
         self.longitude = longitude
         self.covEE = covEE
@@ -239,6 +260,10 @@ public struct NavigationRestore: Hashable, Sendable, Codable {
         /// A stopped-class prior whose first OBD reply was moving, grown
         /// as moving beyond `NavigationRestoreModel.maxSigmaM`.
         case movingAtStart
+        /// Confirmed at once: a Record-stop hand-over (`NavigationPrior.handOver`)
+        /// from a converged estimate within
+        /// `NavigationRestoreModel.handOverConfirmMaxGapS`.
+        case handOver
         /// The grown prior was beyond `NavigationRestoreModel.maxSigmaM` at
         /// the first input.
         case tooUncertain
@@ -254,6 +279,10 @@ public struct NavigationRestore: Hashable, Sendable, Codable {
     public var decidedT: MonotonicTimestamp?
     /// A stopped-class prior regrown as moving at its first OBD reply.
     public var regrownAsMoving = false
+    /// A stopped-class prior kept at a slow first OBD reply (below
+    /// `NavigationRestoreModel.slowPullOutMaxKmh`): that reply, km/h; nil
+    /// otherwise (absent in JSON).
+    public var slowPullOutKmh: Double?
     /// Fixes ignored because their own time is before `savedT` (a cached
     /// fix older than the restored state).
     public var fixesOlderThanSave = 0
@@ -413,7 +442,9 @@ public struct NavigationRestoreState: Hashable, Sendable, Codable {
     }
 
     /// Seconds since the save, or nil when the state must not be restored
-    /// (age below 0 or above `NavigationRestoreModel.maxAgeS`, 24 h).
+    /// (age below −`NavigationRestoreModel.maxNegativeAgeS` (5 s) or above
+    /// `NavigationRestoreModel.maxAgeS`, 24 h). An age in [−5 s, 0) is
+    /// clock skew and returned as 0.
     /// Same boot (`bootSessionID` equal and non-nil): max(wall Δ, uptime
     /// Δ), so a wall clock set back cannot make the state look younger.
     /// Otherwise the wall Δ.
@@ -422,14 +453,18 @@ public struct NavigationRestoreState: Hashable, Sendable, Codable {
         if let now, let saved = bootSessionID, now == saved, nowUptimeSeconds.isFinite {
             age = max(age, nowUptimeSeconds - uptimeSeconds)
         }
-        guard age.isFinite, age >= 0, age <= NavigationRestoreModel.maxAgeS else { return nil }
-        return age
+        guard age.isFinite, age >= -NavigationRestoreModel.maxNegativeAgeS, age <= NavigationRestoreModel.maxAgeS
+        else { return nil }
+        return max(0, age)
     }
 
     /// The prior for a run whose clock is `clock`, starting at `t`
     /// (`savedT` = t − age); nil when `age` refuses the state or it is
     /// invalid. The engine grows it for the gap at its first input.
-    public func prior(at t: MonotonicTimestamp, clock: SessionClock, bootSessionID: String?) -> NavigationPrior? {
+    /// `handOver`: `NavigationPrior.handOver` (the app's Record-stop
+    /// hand-over only).
+    public func prior(at t: MonotonicTimestamp, clock: SessionClock, bootSessionID: String?,
+                      handOver: Bool = false) -> NavigationPrior? {
         guard invalidField == nil,
               let age = age(nowWall: clock.wallClock(for: t), nowUptimeSeconds: clock.referenceUptimeSeconds + t.seconds,
                             bootSessionID: bootSessionID) else { return nil }
@@ -437,7 +472,7 @@ public struct NavigationRestoreState: Hashable, Sendable, Codable {
             latitude: latitude, longitude: longitude, covEE: covEE, covEN: covEN, covNN: covNN,
             headingDeg: headingDeg, headingStdDeg: headingStdDeg,
             savedT: MonotonicTimestamp(nanoseconds: t.nanoseconds - Int64((age * 1e9).rounded())),
-            lastSpeedMps: speedMps, restoreClass: restoreClass, converged: converged)
+            lastSpeedMps: speedMps, restoreClass: restoreClass, converged: converged, handOver: handOver)
         return prior.isValid ? prior : nil
     }
 

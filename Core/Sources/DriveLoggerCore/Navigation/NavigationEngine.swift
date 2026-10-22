@@ -1128,6 +1128,14 @@ public struct NavigationEngine: Sendable {
         }
         seedFromPrior(prior, seed, at: arrival)
         restore.status = .unconfirmed
+        if prior.handOver, prior.converged, gap <= NavigationRestoreModel.handOverConfirmMaxGapS {
+            // The Record-stop hand-over: the estimate a converged recording
+            // left seconds ago in this process. Only the status: the growth
+            // is the same as for any prior.
+            restore.status = .confirmed
+            restore.reason = .handOver
+            restore.decidedT = MonotonicTimestamp(nanoseconds: arrival)
+        }
         if prior.restoreClass != .moving {
             priorAwaitingOBD = true
             if obdSpeedKmh == nil {
@@ -1169,13 +1177,27 @@ public struct NavigationEngine: Sendable {
     }
 
     /// The first OBD vehicle-speed reply after a stopped-class prior was
-    /// seeded: 0 keeps it; moving (the car was driving when the run
-    /// started) regrows it as moving for the gap up to this reply, or, too
-    /// wide, rejects it (`.movingAtStart`) and the engine waits for a fix
-    /// or pin as without a prior. Only while unconfirmed.
+    /// seeded: 0 keeps it; below `slowPullOutMaxKmh` (10 km/h: pulling out
+    /// while the adapter connected) keeps it with (v × `slowPullOutRollS`)²
+    /// added to each particle's position variance per axis, for the roll
+    /// before the reply; faster (the car was driving when the run started)
+    /// regrows it as moving for the gap up to this reply, or, too wide,
+    /// rejects it (`.movingAtStart`) and the engine waits for a fix or pin
+    /// as without a prior. Only while unconfirmed, or confirmed by the
+    /// hand-over alone (no fix has seen it: the growth is the same).
     private mutating func resolvePriorAtFirstOBD(at ns: Int64) {
         priorAwaitingOBD = false
-        guard restore.status == .unconfirmed, let prior, let v = obdSpeedKmh, v > 0 else { return }
+        guard restore.status == .unconfirmed || (restore.status == .confirmed && restore.reason == .handOver),
+              let prior, let v = obdSpeedKmh, v > 0 else { return }
+        if v < NavigationRestoreModel.slowPullOutMaxKmh {
+            let roll = v / 3.6 * NavigationRestoreModel.slowPullOutRollS
+            for i in covEE.indices {
+                covEE[i] += roll * roll
+                covNN[i] += roll * roll
+            }
+            restore.slowPullOutKmh = v
+            return
+        }
         restore.regrownAsMoving = true
         discardPrior()
         let gap = (Double(ns) - Double(prior.savedT.nanoseconds)) / 1e9

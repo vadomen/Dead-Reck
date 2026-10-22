@@ -224,6 +224,7 @@ public enum ReplayReport {
         }
         if let saved = restore.savedT { text += String(format: ", saved at t %.1f s", saved.seconds) }
         if restore.regrownAsMoving { text += ", regrown as moving at the first OBD reply" }
+        if let v = restore.slowPullOutKmh { text += String(format: ", kept at a slow first OBD reply (%.0f km/h)", v) }
         if restore.fixesOlderThanSave > 0 {
             text += "; \(restore.fixesOlderThanSave) cached fix\(restore.fixesOlderThanSave == 1 ? "" : "es") older than the save ignored"
         }

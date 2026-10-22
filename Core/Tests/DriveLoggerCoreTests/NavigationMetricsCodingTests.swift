@@ -67,6 +67,7 @@ struct NavigationMetricsCodingTests {
         restore.savedT = MonotonicTimestamp(seconds: -600)
         restore.decidedT = MonotonicTimestamp(seconds: 1.25)
         restore.fixesOlderThanSave = 1
+        restore.slowPullOutKmh = 8
         metrics.restore = restore
         return metrics
     }
