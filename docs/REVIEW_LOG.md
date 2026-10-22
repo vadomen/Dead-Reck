@@ -1052,3 +1052,20 @@ Reviewers: two opus reviewers in parallel: A engine/replay, B app. Result: 0 BLO
 | R77.3-3 | MINOR | `docs/PLAN.md:435` §6 UX-20 check 9 waited "more than ~2 min", under the ~135 s moving cap, so it could pass with R77.2-1 reverted. | FIXED (this commit) | "more than 3 min". |
 
 Tests at round 3: Core 1169 tests passed (36 known issues), perf gate 9/9; App unchanged since round 2 (AppTests 753 passed).
+
+### Round 4
+
+Reviewers: two opus reviewers in parallel: A engine/replay, B app. Result: 0 BLOCKER, 0 MAJOR, 4 MINOR (all DEFERRED). Reviewer A: ready to merge; round-3 fix verified (the author's `parkedSinceZero` release mutation killed); `priorAwaitingOBD = false` in `discardPrior` and the `headingSigmaDeg != nil` shift guard survived (R77.4-1, R77.4-2). Reviewer B: ready to merge. Bit-identical re-run (clean drive, seed 1, roads off and on): identical.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R77.4-1 | MINOR | `Core/Sources/DriveLoggerCore/Navigation/NavigationEngine.swift:1308`: `discardPrior` clearing `priorAwaitingOBD` is untested; a regression would save `.standingStop` within 3 s of a first OBD 0 after a rejected prior. | DEFERRED | BACKLOG. |
+| R77.4-2 | MINOR | `Core/Sources/DriveLoggerCore/Navigation/NavigationRestore.swift:225`: the `headingSigmaDeg != nil` guard on the short-gap forward shift is untested; a regression would push the mean ~100 m along an unknown heading. | DEFERRED | BACKLOG. |
+| R77.4-3 | MINOR | `App/Sources/Navigation/NavigationService.swift:423` (`end`, with `saveEstimate` :338): a recording whose engine never initialises (GPS off or jammed, no pin) leaves the pre-recording Navigate save in place; after Stop, Navigate restores the drive's start point with a 50 m-class ellipse and nothing may reject it. | DEFERRED | BACKLOG; orchestrator: first item of the next prompt (Record-start side of the hand-over). |
+| R77.4-4 | MINOR | `App/Sources/Navigation/NavigationService.swift:342`: the final save is stamped `clock.now()` at run end, after the stop flow, while the cloud is from the last input; the hand-over gap is under-counted (bias v·Δ, Δ unmeasured). | DEFERRED | BACKLOG; stamp with the engine's last step time. |
+
+Tests at round 4: Core 1169 tests passed (36 known issues), perf gate 9/9, AppTests 753 passed.
+
+### Run 77 summary
+
+4 rounds; 9 fixed (R77.1-1, R77.1-2, R77.2-1..3, R77.3-1..3; R77.2-3 raised from MINOR); 0 rejected; 5 deferred (R77.1-3, R77.4-1..4). Engine output bit-identical to 21fe5ac without a prior (110-cell matrix by the author; clean drive, seed 1, roads on/off by reviewers each round). NAV-INITSTALE adoption PASS (all 18 gated cells unchanged). Final tests: Core 1169 tests in 144 suites passed (36 known issues), perf gate 9/9, AppTests 753 passed.
