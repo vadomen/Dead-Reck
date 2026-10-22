@@ -1028,3 +1028,15 @@ Reviewers: two opus reviewers in parallel: A engine/replay, B app. Result: 0 BLO
 | R77.1-3 | MINOR | `site/public/privacy.html:44` and `site/public/uk/privacy.html:44`: "Deleting your data" covers recordings only; the saved last estimate (position and time) survives deleting all recordings, is not backed up, and is removed with the app or replaced by the next drive. | DEFERRED | BACKLOG. Fix: one sentence on both pages, before the next site deploy. |
 
 Tests at round 1: Core 1163 tests passed (36 known issues), AppTests 752 passed, at HEAD (4c62ada).
+
+### Round 2
+
+Reviewers: two opus reviewers in parallel: A engine/replay, B app. Result: 0 BLOCKER, 3 MAJOR (all CONFIRMED, FIXED adfccd7). Reviewer A: fix before merge (2 major). Reviewer B: ready to merge (1 MINOR, upgraded to MAJOR by the orchestrator: a regression introduced by this range). Mutations: the author's R77.1-1 mutation killed (round-1 fix verified); the reviewer's `if fresh, let since` → `if let since` and removed `!zeroVetoed` survived (R77.2-2). Bit-identical re-run (clean drive, seed 1, roads off): identical.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R77.2-1 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/NavigationEngine.swift:1324`: `restoreClass` returned `.moving` with no OBD reply yet, so a parked prior awaiting its first OBD reply (Navigate opened before ignition on) was re-saved as moving and the next start > ~135 s later restored nothing. | CONFIRMED, FIXED (adfccd7) | Prior's class kept while its parked hold stands; zeros from the first reply continue the prior's stop; test `stoppedPriorKeepsItsClassUntilOBDSaysOtherwise`. |
+| R77.2-2 | MAJOR | `NavigationEngine.swift:1324/1328`: the `fresh` and zero-veto guards of `restoreClass` were untested (both mutations survived). | CONFIRMED, FIXED (adfccd7) | Classification test extended (drive-off after link loss; OBD 0 vetoed by moving fixes). |
+| R77.2-3 | MAJOR (raised from MINOR) | `App/Sources/Navigation/NavigationService.swift:299/682`: a Navigate run waiting to restore could begin after a newer recording and overwrite `current`, then its end set it nil: map idle for the whole recording. | CONFIRMED, FIXED (adfccd7) | `begin` sets `current` only for a newer generation; `end` falls back to the newest remaining run; test `staleNavigateKeepsTheNewerRecordingCurrent`. |
+
+Tests at round 2: Core 1167 tests passed (36 known issues), perf gate 9/9, AppTests 753 passed (one first-run failure in PackNetworkPolicyTests, the known run-75 flake; rerun green).
