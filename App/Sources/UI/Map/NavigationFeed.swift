@@ -34,6 +34,13 @@ final class NavigationFeed {
     /// HUD follows it without the 10 Hz `display` writes.
     private(set) var gps: EngineGPS?
 
+    /// The restored estimate's status (UX-20) while a session is navigating
+    /// from one, else nil (no run, or a run started fresh: status `.none`).
+    /// Observed, written only when it changes (start, then the decision), so
+    /// the map's "Restored · n min ago" line follows it without the 10 Hz
+    /// `display` writes.
+    private(set) var restore: RestoreDisplay?
+
     @ObservationIgnored private(set) var latest: NavDisplay?
     @ObservationIgnored private let source: Source?
     /// The generation the source's snapshots follow (the service's current
@@ -53,11 +60,12 @@ final class NavigationFeed {
     /// `source` is given (a test of the first poll after seeded values).
     init(
         display: NavDisplay?, stats: NavStatsDisplay? = nil, matchedEdge: [GeoPoint] = [], gps: EngineGPS? = nil,
-        source: Source? = nil
+        restore: RestoreDisplay? = nil, source: Source? = nil
     ) {
         self.source = source
         self.generation = nil
         self.gps = gps
+        self.restore = restore
         self.matchedEdge = matchedEdge
         self.display = display
         self.latest = display
@@ -76,10 +84,12 @@ final class NavigationFeed {
         return apply(snapshot, run: after, at: now)
     }
 
-    /// Forgets the engine's GPS state: the map's run changed, and the next
-    /// state must come from the new run's own snapshots (R76.2-1).
+    /// Forgets the engine's GPS state and the restore status (UX-20): the
+    /// map's run changed, and the next state must come from the new run's
+    /// own snapshots (R76.2-1).
     func clearGPS() {
         if gps != nil { gps = nil }
+        if restore != nil { restore = nil }
     }
 
     /// Polls once and returns the estimate as of now, for framing the camera
@@ -99,6 +109,8 @@ final class NavigationFeed {
         let nextGPS = snapshot.sessionID == nil
             ? nil : EngineGPS(inUse: snapshot.gnssInUse, switchedOff: snapshot.gpsSwitchedOff, run: run)
         if nextGPS != gps { gps = nextGPS }
+        let nextRestore = snapshot.sessionID == nil ? nil : RestoreDisplay(snapshot.restore, run: run)
+        if nextRestore != restore { restore = nextRestore }
         let next = NavDisplay(snapshot)
         latest = next
         writeStats(snapshot, at: now)
@@ -145,4 +157,44 @@ struct EngineGPS: Hashable, Sendable {
     /// The run generation this state came from (R76.2-1); nil when the feed
     /// is untagged. The HUD ignores a state from any other run than the live one.
     var run: Int? = nil
+}
+
+/// What the engine says about a restored estimate (UX-20,
+/// `NavigationSnapshot.restore`), for the map's "Restored · n min ago"
+/// line. Constant over a run but for the one decision, so `NavigationFeed`
+/// writes it a few times per run at most.
+struct RestoreDisplay: Hashable, Sendable {
+    /// `.unconfirmed` (seeded, no fix or pin has decided yet), `.confirmed`
+    /// or `.rejected` (a fix or pin disagreed: the engine started over).
+    var status: NavigationRestore.Status
+    /// What confirmed or rejected it; nil while unconfirmed.
+    var reason: NavigationRestore.Reason?
+    /// How old the saved estimate was when the run started, seconds
+    /// ("n min ago" is this over 60).
+    var ageAtStartS: Double
+    /// When it was confirmed or rejected, seconds on the run's clock; nil
+    /// while unconfirmed.
+    var decidedAtS: Double?
+    /// The run generation this came from (as `EngineGPS.run`); nil untagged.
+    var run: Int? = nil
+
+    /// nil without a restore (`.none`: no saved estimate, refused, or too
+    /// uncertain to use).
+    init?(_ restore: NavigationRestore, run: Int? = nil) {
+        guard restore.status != .none, let savedT = restore.savedT else { return nil }
+        status = restore.status
+        reason = restore.reason
+        ageAtStartS = -savedT.seconds
+        decidedAtS = restore.decidedT?.seconds
+        self.run = run
+    }
+
+    init(status: NavigationRestore.Status, reason: NavigationRestore.Reason? = nil, ageAtStartS: Double,
+         decidedAtS: Double? = nil, run: Int? = nil) {
+        self.status = status
+        self.reason = reason
+        self.ageAtStartS = ageAtStartS
+        self.decidedAtS = decidedAtS
+        self.run = run
+    }
 }

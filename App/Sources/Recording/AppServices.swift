@@ -17,7 +17,8 @@ final class AppServices {
     let session: RecordingSession
     /// Live dead reckoning for each recording (N4 B) and each Navigate
     /// session (UX-1): it consumes every feed and writes a recording's
-    /// sidecar (none for Navigate).
+    /// sidecar (none for Navigate). It owns the saved estimate (UX-20,
+    /// `NavigationRestoreStore`): Navigate starts from it.
     let navigation: NavigationService
     /// The road packs: the store in Application Support/RoadPacks (filled
     /// from the developer inbox Documents/RoadPacks at launch), verified
@@ -72,7 +73,10 @@ final class AppServices {
         )
         let roadPacks = RoadPackLibrary.makeDefault()
         self.roadPacks = roadPacks
-        let navigation = NavigationService(library: roadPacks)
+        // UX-20: the saved estimate. This service only: Navigate restores
+        // from it, every run (Record's too) saves to it.
+        let navigation = NavigationService(
+            library: roadPacks, restoreStore: NavigationRestoreStore(directory: NavigationRestoreStore.defaultDirectory()))
         self.navigation = navigation
         // Remove (Settings → Maps) deletes only when no run may have a pack
         // mapped: no recording or Navigate run in the session (starting

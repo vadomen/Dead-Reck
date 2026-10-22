@@ -139,7 +139,9 @@ final class DemoDriveController {
         self.packURL = packURL
         self.options = options
         roadPacks = packURL.map { url in RoadPackLibrary(source: { [url] }, cacheURL: nil) }
-        navigation = NavigationService(library: nil)
+        // No restore store (UX-20): the demo never reads or writes the saved
+        // estimate, so the demo grid cannot replace the real drive's.
+        navigation = NavigationService(library: nil, restoreStore: nil)
     }
 
     /// Seconds since the running demo's time origin (its session clock's
