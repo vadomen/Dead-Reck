@@ -619,7 +619,17 @@ without a prior writes byte-identical sidecars and replay results.
   confirmed").
 - **In the app** (`NavigationService`, `NavigationRestoreStore`): every run,
   Record's too, saves its estimate every 5 s from the ingest path, at the
-  run's end (the auto-stop) and on `flush()` (background). The file is
+  run's end (the auto-stop) and on `flush()` (background). Each save is
+  stamped at the engine's last grid step (`NavigationEngine.lastStepTime`,
+  `LiveNavigationRun.restoreState(clock:bootSessionID:engineOff:)`), the
+  time of the cloud it captures, not the clock after the stop flow
+  (R77.4-4): a restore grows it for the whole gap. A run whose car drives
+  (`LiveNavigationRun.obdOdometer`: OBD distance > 0) while its engine has
+  no estimate (GPS off or jammed, no pin) cannot replace the save, so it
+  deletes it, once, and counts as the newest saver (an older run still
+  draining cannot write it back): the next Navigate starts fresh instead of
+  restoring a point the car has left (R77.4-3). Standing still (OBD 0)
+  keeps it. The file is
   `Application Support/NavigationRestore/estimate.json`, excluded from
   backup, `completeUntilFirstUserAuthentication`, replaced atomically; one
   serial queue orders every save, load and delete, and an unreadable file is

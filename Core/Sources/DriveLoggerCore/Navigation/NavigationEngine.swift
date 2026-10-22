@@ -326,6 +326,12 @@ public struct NavigationEngine: Sendable {
     /// the first input. A rejected forward jump does not move it.
     public var latestArrival: MonotonicTimestamp? { lastInputNs.map { MonotonicTimestamp(nanoseconds: $0) } }
 
+    /// The last grid step run (the time the particle cloud is at); nil
+    /// before the first input. A saved estimate is stamped with it
+    /// (`LiveNavigationRun.restoreState(clock:bootSessionID:engineOff:)`,
+    /// R77.4-4).
+    public var lastStepTime: MonotonicTimestamp? { lastStepNs.map { MonotonicTimestamp(nanoseconds: $0) } }
+
     /// Attaches `network` to an engine that has none, between two inputs,
     /// before or after initialisation (N3.3, docs/N3_PLAN.md amendment).
     ///

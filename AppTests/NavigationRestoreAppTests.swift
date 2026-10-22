@@ -391,7 +391,7 @@ struct NavigationRestoreServiceTests {
         #expect(scratch.store.counts.saves > 2, "every save interval (1 ms here) and at the end")
         let saved = try scratch.saved()
         #expect(saved != planted)
-        #expect(saved.savedAt == R.wallStart.addingTimeInterval(8), "captured at the run's end, on its clock")
+        #expect(saved.savedAt == R.wallStart.addingTimeInterval(8), "captured at the run's last step, on its clock")
         #expect(saved.bootSessionID == R.boot && saved.uptimeSeconds == R.referenceUptime + 8)
         #expect(saved.restoreClass == .moving && saved.lastOBDSpeedKmh == 36)
     }
@@ -577,13 +577,14 @@ struct NavigationRestoreServiceTests {
         stuckTap.finish()
         await stuckRun.value
         #expect(await service.currentGeneration == 3, "after runs 1 and 2 ended")
-        let drive = S.drive(0...8)
+        let drive = S.drive(0...9)
         #expect(await R.send(drive, to: recordTap, service: service, total: drive.count))
-        let snapshot = await service.snapshot(at: MonotonicTimestamp(seconds: 8))
+        let snapshot = await service.snapshot(at: MonotonicTimestamp(seconds: 9))
         #expect(snapshot.sessionID == header.sessionID, "the recording's snapshot, not idle")
         #expect(snapshot.initialized)
         await service.flush()
-        #expect(try scratch.saved().savedAt == R.wallStart.addingTimeInterval(9), "the recording's save")
+        #expect(try scratch.saved().savedAt == R.wallStart.addingTimeInterval(9),
+                "the recording's save, at its last step (9 s)")
         recordTap.finish()
         await recordRun.value
     }
@@ -596,13 +597,15 @@ struct NavigationRestoreServiceTests {
         defer { try? FileManager.default.removeItem(at: sidecars) }
         let service = R.service(scratch.store)
         let drive = S.drive(0...8)
-        // Navigate (1) still draining when Record (2) has saved.
+        // Navigate (1) still draining when Record (2) has saved; Record's
+        // last step is 9 s, Navigate's 8 s (each save is stamped there).
         let (navigate, navigateTap) = R.feed(1, nowS: 8)
         let navigateRun = service.start(navigate)
         #expect(await R.send(drive, to: navigateTap, service: service, total: drive.count))
         let (record, recordTap) = R.feed(2, recordingIn: sidecars, nowS: 9)
         let recordRun = service.start(record)
-        #expect(await R.send(drive, to: recordTap, service: service, total: drive.count))
+        let recordDrive = S.drive(0...9)
+        #expect(await R.send(recordDrive, to: recordTap, service: service, total: recordDrive.count))
         await service.flush()
         #expect(try scratch.saved().savedAt == R.wallStart.addingTimeInterval(9), "Record's")
         navigateTap.finish()
@@ -614,6 +617,106 @@ struct NavigationRestoreServiceTests {
         await recordRun.value
         await scratch.store.drain()
         #expect(scratch.store.counts.saves == 2, "Record's own end")
+    }
+
+    @Test("R77.4-4: a recording's final save is stamped at its engine's last step, not after the stop flow; Navigate grows it for the whole gap (12 s: a hand-over, but unconfirmed)")
+    func finalSaveStampedAtTheLastStep() async throws {
+        let scratch = RestoreScratch()
+        defer { scratch.remove() }
+        let sidecars = try Self.sidecarDirectory()
+        defer { try? FileManager.default.removeItem(at: sidecars) }
+        let service = R.service(scratch.store)
+        // The drive's inputs end at 8 s; the run ends at 20 s.
+        let drive = S.drive(0...8)
+        let (record, recordTap) = R.feed(1, recordingIn: sidecars, nowS: 20)
+        let recordRun = service.start(record)
+        #expect(await R.send(drive, to: recordTap, service: service, total: drive.count))
+        #expect(await service.snapshot(at: MonotonicTimestamp(seconds: 8)).converged)
+        recordTap.finish()
+        await recordRun.value
+        await scratch.store.drain()
+        let saved = try scratch.saved()
+        #expect(saved.savedAt == R.wallStart.addingTimeInterval(8), "the last step, not the end (20 s)")
+        #expect(saved.uptimeSeconds == R.referenceUptime + 8)
+        #expect(saved.converged && saved.restoreClass == .moving)
+
+        let (navigate, navigateTap) = R.feed(2, nowS: 20)
+        let navigateRun = service.start(navigate)
+        let still = R.parked(20...20.4)
+        #expect(await R.send(still, to: navigateTap, service: service, total: still.count))
+        #expect(await service.lastRestore == .restored(ageS: 12))
+        #expect(await service.lastRestoreHandOver, "Record's final save, in this process")
+        let restore = await service.snapshot(at: MonotonicTimestamp(seconds: 20.4)).restore
+        #expect(restore.status == .unconfirmed && restore.reason == nil,
+                "a 12 s gap is over the hand-over's 10 s: not confirmed at once")
+        navigateTap.finish()
+        await navigateRun.value
+    }
+
+    @Test("R77.4-3: a run that drives (OBD) with no estimate deletes the saved one; an older run's late end cannot write it back; Navigate then starts fresh")
+    func drivingWithoutAnEstimateInvalidatesTheSave() async throws {
+        let scratch = RestoreScratch()
+        defer { scratch.remove() }
+        let sidecars = try Self.sidecarDirectory()
+        defer { try? FileManager.default.removeItem(at: sidecars) }
+        scratch.store.save(R.state(ageS: 60, restoreClass: .standingStop))
+        let service = R.service(scratch.store)
+        // An older recording with an estimate from its first input (a fix
+        // at 0 s, before the first OBD reply), still draining.
+        let (older, olderTap) = R.feed(1, recordingIn: sidecars, nowS: 8)
+        let olderRun = service.start(older)
+        let drive = [S.fix(0)] + S.drive(0...8)
+        #expect(await R.send(drive, to: olderTap, service: service, total: drive.count))
+        await scratch.store.drain()
+        #expect(scratch.fileExists, "drove with an estimate: kept (no save yet, interval 1 h)")
+        #expect(await service.savesInvalidated == 0)
+        // A newer recording drives with no fix and no pin.
+        let (blind, blindTap) = R.feed(2, recordingIn: sidecars, nowS: 8)
+        let blindRun = service.start(blind)
+        let noFixes = S.drive(0...8, fixesUntil: -1)
+        #expect(await R.send(noFixes, to: blindTap, service: service, total: noFixes.count))
+        #expect(await !service.snapshot(at: MonotonicTimestamp(seconds: 8)).initialized)
+        await scratch.store.drain()
+        #expect(!scratch.fileExists, "deleted once the car drove")
+        #expect(await service.savesInvalidated == 1)
+        olderTap.finish()
+        await olderRun.value
+        await scratch.store.drain()
+        #expect(!scratch.fileExists, "the older run's end save is refused")
+        blindTap.finish()
+        await blindRun.value
+        await scratch.store.drain()
+        #expect(!scratch.fileExists && scratch.store.counts.saves == 1, "only the planted save was ever written")
+        #expect(await service.savesInvalidated == 1, "once per run")
+
+        let (navigate, navigateTap) = R.feed(3, nowS: 8)
+        let navigateRun = service.start(navigate)
+        let still = R.parked(8...8.2)
+        #expect(await R.send(still, to: navigateTap, service: service, total: still.count))
+        #expect(await service.lastRestore == .noSavedState)
+        #expect(await service.snapshot(at: MonotonicTimestamp(seconds: 8.2)).restore.status == .none)
+        navigateTap.finish()
+        await navigateRun.value
+    }
+
+    @Test("R77.4-3: a run with no estimate that never drives (OBD 0) keeps the saved estimate")
+    func standingWithoutAnEstimateKeepsTheSave() async throws {
+        let scratch = RestoreScratch()
+        defer { scratch.remove() }
+        let sidecars = try Self.sidecarDirectory()
+        defer { try? FileManager.default.removeItem(at: sidecars) }
+        let planted = R.state(ageS: 60, restoreClass: .standingStop)
+        scratch.store.save(planted)
+        let service = R.service(scratch.store)
+        let (record, recordTap) = R.feed(1, recordingIn: sidecars, nowS: 8)
+        let recordRun = service.start(record)
+        let standing = R.parked(0...8)
+        #expect(await R.send(standing, to: recordTap, service: service, total: standing.count))
+        recordTap.finish()
+        await recordRun.value
+        await scratch.store.drain()
+        #expect(try scratch.saved() == planted)
+        #expect(await service.savesInvalidated == 0)
     }
 
     @Test("Without a store nothing is read or written; the demo's service has none")
@@ -717,7 +820,7 @@ struct NavigationRestoreSessionTests {
         }
     }
 
-    @Test("Navigate → Record → Stop: Navigate resumes from the estimate Record's engine saved at Stop: converged kept, heading σ continuous, no reseed; converged and 0.2 s gap: confirmed at once as a hand-over, no Restored line")
+    @Test("Navigate → Record → Stop: Navigate resumes from the estimate Record's engine saved at Stop: converged kept, heading σ continuous, no reseed; converged and 0.3 s gap (0.2 s after Stop): confirmed at once as a hand-over, no Restored line")
     func recordStopHandOver() async throws {
         let scratch = try ScratchStore()
         defer { scratch.remove() }
@@ -761,17 +864,20 @@ struct NavigationRestoreSessionTests {
             Issue.record("not restored: \(String(describing: await service.lastRestore))")
             return
         }
-        #expect(ageS >= 0 && ageS < 0.05, "Record's final save at Stop: \(ageS)")
+        // Stamped at Record's last engine step (script 14.9 s: inputs to
+        // 14.98 s), not when Stop's flow saved it (15 s): R77.4-4.
+        #expect(abs(ageS - 0.1) < 0.005, "Record's final save at its last step: \(ageS)")
         #expect(await service.lastRestoreHandOver, "Record's own final save, in this process")
         #expect(try restore.saved().restoreClass == .moving)
         #expect(try restore.saved().converged)
 
-        // The first Navigate input 0.2 s after the save (the scripted gap).
-        let gapS = 0.2
+        // The first Navigate input 0.2 s after Stop (the scripted gap), 0.3 s
+        // after the save.
+        let afterStopS = 0.2, gapS = afterStopS + ageS
         driver.reset()
-        await driver.step(15 + gapS, runStart: 15)
+        await driver.step(15 + afterStopS, runStart: 15)
         #expect(await Self.ingested(service, second, driver.sent))
-        let resumed = await service.snapshot(at: MonotonicTimestamp(seconds: gapS + 0.18))
+        let resumed = await service.snapshot(at: MonotonicTimestamp(seconds: afterStopS + 0.18))
         #expect(resumed.restore.status == .confirmed && resumed.restore.reason == .handOver)
         #expect(RestoreStatus.line(RestoreDisplay(resumed.restore, run: second)) == nil, "no Restored line")
         #expect(resumed.converged, "converged carries over: no calibrating-heading phase")
@@ -780,12 +886,12 @@ struct NavigationRestoreSessionTests {
         let grown = (sigmaAtStop * sigmaAtStop + turn * turn).squareRoot()
         #expect(abs(sigma - grown) < 0.5, "heading σ continuous: \(sigma) vs \(grown) grown from \(sigmaAtStop)")
         #expect(abs(R.angleDifference(try #require(resumed.headingDeg), headingAtStop)) < 2)
-        let truth = S.position(15 + gapS + 0.18)
+        let truth = S.position(15 + afterStopS + 0.18)
         #expect(S.distanceM(resumed, truth.latitude, truth.longitude) < 15)
         print("UX-20 hand-over: heading σ at Stop \(sigmaAtStop)°, after a \(gapS) s gap \(sigma)° (grown \(grown)°)")
 
         // The next fix (script 16 s): still the hand-over's confirmation, never reseeded.
-        await driver.drive((15 + gapS + 0.2)..<16.4, runStart: 15)
+        await driver.drive((15 + afterStopS + 0.2)..<16.4, runStart: 15)
         #expect(await Self.ingested(service, second, driver.sent))
         let confirmed = await service.snapshot(at: MonotonicTimestamp(seconds: 1.38))
         #expect(confirmed.restore.status == .confirmed && confirmed.restore.reason == .handOver)
@@ -838,6 +944,48 @@ struct NavigationRestoreSessionTests {
         #expect(resumed.restore.status == .unconfirmed && resumed.restore.reason == nil)
         let line = RestoreStatus.line(RestoreDisplay(resumed.restore, run: second))
         #expect(line != nil, "the Restored line shows")
+        rig.session.disableNavigate()
+        #expect(await R.ended(service, second))
+    }
+
+    @Test("R77.4-3: Navigate saved (standing) → Record with GPS off, no pin, 2 km by OBD → Stop: Navigate does not restore the pre-recording save; a fresh start")
+    func blindRecordingInvalidatesNavigateSave() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let restore = RestoreScratch()
+        defer { restore.remove() }
+        let service = R.service(restore.store)
+        let rig = NavigateRig(store: scratch.store, service: service)
+        let driver = ScriptDriver(rig)
+        await rig.connect(speed: 0)
+        rig.session.enableNavigate(RecordingSessionNavigateTests.quick)
+        let first = try #require(rig.session.navigateGeneration)
+        await driver.drive(0..<4, runStart: 0, parked: true)
+        #expect(await Self.ingested(service, first, driver.sent))
+
+        try await rig.session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
+        let record = try #require(rig.session.currentGeneration)
+        #expect(await R.ended(service, first))
+        await restore.store.drain()
+        #expect(try restore.saved().restoreClass == .standingStop, "Navigate's save at its end: a 50 m class")
+        // 200 s at 36 km/h (OBD), no fix, no pin.
+        driver.reset()
+        await driver.drive(4..<204, runStart: 4, fixes: false)
+        #expect(await Self.ingested(service, record, driver.sent))
+        #expect(await !service.snapshot(at: MonotonicTimestamp(seconds: 199)).initialized)
+        await restore.store.drain()
+        #expect(!restore.fileExists, "the car drove with no estimate: the save is deleted")
+
+        await rig.session.stop()
+        let second = try #require(rig.session.navigateGeneration)
+        #expect(await R.wait { await service.lastRestoreGeneration == second })
+        #expect(await service.lastRestore == .noSavedState)
+        #expect(await service.lastRestoreHandOver == false)
+        driver.reset()
+        await driver.step(204.2, runStart: 204, fixes: false)
+        #expect(await Self.ingested(service, second, driver.sent))
+        let fresh = await service.snapshot(at: MonotonicTimestamp(seconds: 0.38))
+        #expect(fresh.restore.status == .none && !fresh.initialized, "not the drive's start point")
         rig.session.disableNavigate()
         #expect(await R.ended(service, second))
     }

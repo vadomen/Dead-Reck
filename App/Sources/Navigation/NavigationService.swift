@@ -150,6 +150,9 @@ actor NavigationService {
         var lastFlush: ContinuousClock.Instant
         /// The last estimate save (UX-20), or the run's start.
         var lastSave: ContinuousClock.Instant
+        /// This run drove (OBD) with no estimate and deleted the saved one
+        /// (`invalidateSaveIfDriven`, R77.4-3); once per run.
+        var invalidatedSave = false
         /// The matched edge's shape for snapshots, rebuilt only when the
         /// matched edge changes (N3.4 item 6).
         var edgeGeometry = MatchedEdgeGeometry.Cache()
@@ -236,6 +239,9 @@ actor NavigationService {
     /// (the Record-stop hand-over). Cleared by any later save and by that
     /// read. In memory only, so a relaunch never has one.
     private var recordingEndSave: Int?
+    /// Saved estimates deleted because a run drove without one
+    /// (`invalidateSaveIfDriven`): a count for tests.
+    private(set) var savesInvalidated = 0
 
     init(flushInterval: Duration = .seconds(10), library: RoadPackLibrary? = nil,
          libraryRescan: @escaping LibraryRescan = { await $0.rescan() },
@@ -394,6 +400,7 @@ actor NavigationService {
             saveEstimate(of: run, generation: generation, engineOff: false)
             run.lastSave = now
         }
+        invalidateSaveIfDriven(&run, generation: generation)
         let request = run.live.newSelectionRequest
         runs[generation] = run
         guard let request else { return }
@@ -462,20 +469,38 @@ actor NavigationService {
 
     // MARK: Restore (UX-20)
 
-    /// Captures `run`'s estimate now and hands it to the store (encoded and
-    /// written on its queue). Nothing before initialisation, and nothing
-    /// from a run older than one that already saved.
+    /// Captures `run`'s estimate at its engine's last step (R77.4-4: not
+    /// `clock.now()`, which at a run's end is after the stop flow) and
+    /// hands it to the store (encoded and written on its queue). Nothing
+    /// before initialisation, and nothing from a run older than one that
+    /// already saved.
     @discardableResult
     private func saveEstimate(of run: Run, generation: Int, engineOff: Bool) -> Bool {
         guard let restoreStore else { return false }
         if let newest = newestSavedGeneration, generation < newest { return false }
-        let clock = run.feed.clock
-        guard let state = run.live.restoreState(at: clock.now(), clock: clock, bootSessionID: bootSessionID(),
+        guard let state = run.live.restoreState(clock: run.feed.clock, bootSessionID: bootSessionID(),
                                                 engineOff: engineOff) else { return false }
         restoreStore.save(state)
         newestSavedGeneration = generation
         recordingEndSave = nil
         return true
+    }
+
+    /// R77.4-3: a run whose car drove (OBD distance > 0) while its engine
+    /// had no estimate (GPS off or jammed, no pin; or a prior rejected at
+    /// a moving first reply) cannot write the save, so the saved estimate
+    /// is older than the car's position: it is deleted, and the next
+    /// Navigate starts fresh. Counts as this run's save for the ordering
+    /// (an older run draining cannot write over it). Once per run.
+    private func invalidateSaveIfDriven(_ run: inout Run, generation: Int) {
+        guard let restoreStore, !run.invalidatedSave, run.live.obdOdometer.drove,
+              !run.live.engine.isInitialized else { return }
+        if let newest = newestSavedGeneration, generation < newest { return }
+        run.invalidatedSave = true
+        restoreStore.delete()
+        newestSavedGeneration = generation
+        recordingEndSave = nil
+        savesInvalidated += 1
     }
 
     /// The prior for a Navigate run: after every earlier run has ended (so
@@ -642,6 +667,7 @@ actor NavigationService {
 
     private func end(_ generation: Int) {
         guard var run = runs[generation] else { return }
+        invalidateSaveIfDriven(&run, generation: generation)
         // UX-20: the final save, before a waiting Navigate start reads the
         // store (same serial queue, so the read sees it). A recording's is
         // what the next Navigate run takes over from.
