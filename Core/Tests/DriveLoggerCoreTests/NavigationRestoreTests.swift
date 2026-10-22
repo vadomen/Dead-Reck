@@ -215,6 +215,59 @@ struct NavigationRestoreTests {
         #expect(engine.restore.status == .unconfirmed)
     }
 
+    // MARK: Fix variance in the restore test (R77.1-1)
+
+    /// A parked prior (σ ≈ 11 m per axis), the car not moved and standing,
+    /// one fix at 2 s offset by (`dEast`, `dNorth`) from where it stands.
+    /// `gnss`: a Doppler speed (0 m/s), so not a network fix.
+    static func oneFix(dEast: Double, dNorth: Double, accuracy: Double, gnss: Bool) -> NavigationEngine {
+        let drive = S(initialHeadingDeg: headingDeg, [.stop(seconds: 4)])
+        let events = drive.events(fix: { t, state, _ in
+            guard abs(t - 2) < 1e-6 else { return nil }
+            return S.Fix(east: state.east + parkedEast + dEast, north: state.north + parkedNorth + dNorth,
+                         accuracy: accuracy, speed: gnss ? 0 : -1, speedAccuracy: gnss ? 1 : -1)
+        })
+        return run(events, prior: prior(.parked, gapS: 600))
+    }
+
+    @Test func offsetNetworkFixesWithinTheirOwnSigmaKeepTheParkedPrior() throws {
+        // Wi-Fi 60 m off, accuracy 65 m (σ ≈ 43 m): d² ≈ 60² / (125 + 43²)
+        // ≈ 1.8. Without the fix's σ² the cloud's ~11 m alone gives ≈ 29.
+        let wifi = Self.oneFix(dEast: 36, dNorth: -48, accuracy: 65, gnss: false)
+        #expect(wifi.restore.status == .confirmed, "σ 43 m ≤ 50 m, not a tower fix")
+        #expect(wifi.restore.reason == .fix)
+        // A tower fix 1 km off, accuracy 1414 m (σ ≈ 936 m): d² ≈ 1.1, kept
+        // and never confirming. Without σ² it would be ≈ 8000.
+        let tower = Self.oneFix(dEast: 600, dNorth: 800, accuracy: 1414, gnss: false)
+        #expect(tower.restore.status == .unconfirmed)
+        #expect(tower.counters.networkFixesUsed == 1, "the tower fix is still used")
+        for engine in [wifi, tower] {
+            let end = try #require(engine.estimate(at: S.ms(4)))
+            #expect(Self.distance(end, east: Self.parkedEast, north: Self.parkedNorth) < 60,
+                    "the prior is kept, not reinitialised at the fix")
+        }
+    }
+
+    @Test(arguments: [(0.97, false), (1.03, true)])
+    func gnssFixAtTheChi2BoundaryOfTheCombinedCovariance(scale: Double, rejects: Bool) throws {
+        // The bound is r² = 9.21 (λ + σ²) along the cloud's major axis
+        // (λ from its estimate's ellipse, read before the fix), with the
+        // fix's σ = accuracy / 1.51 ≈ 19.9 m: r ≈ 69 m. Without σ², 3 %
+        // inside (≈ 67 m) would be d² ≈ 36 and reject.
+        let accuracy = 30.0
+        let drive = S(initialHeadingDeg: Self.headingDeg, [.stop(seconds: 4)])
+        let standing = Self.run(drive.events(), prior: Self.prior(.parked, gapS: 600))
+        let estimate = try #require(standing.estimate(at: S.ms(2)))
+        let lambda = estimate.ellipse.semiMajorM * estimate.ellipse.semiMajorM / ErrorEllipse.chiSquare95
+        let sigma = accuracy * NavigationConfig().fixSigmaPerAccuracy
+        let r = scale * (M.rejectChi2 * (lambda + sigma * sigma)).squareRoot()
+        let bearing = estimate.ellipse.orientationDeg * .pi / 180
+        let engine = Self.oneFix(dEast: r * sin(bearing), dNorth: r * cos(bearing), accuracy: accuracy, gnss: true)
+        #expect(engine.restore.status == (rejects ? .rejected : .confirmed),
+                "\(r) m off, λ \(lambda) m², σ \(sigma) m")
+        #expect(engine.restore.reason == .fix)
+    }
+
     // MARK: Pins
 
     @Test func pinThatDisagreesRejectsAndInitialisesAtThePin() throws {
@@ -236,6 +289,64 @@ struct NavigationRestoreTests {
         #expect(engine.restore.reason == .pin)
         let estimate = try #require(engine.estimate(at: S.ms(4)))
         #expect(estimate.converged, "the restored heading is kept")
+    }
+
+    /// R77.1-2: a pin that rejects a restored prior while the car drives,
+    /// written late (Navigate commits it when the 3 s undo window closes),
+    /// initialises the engine as a fresh engine's first late pin does: the
+    /// cloud carried forward from the tap over the steps run since, from
+    /// the pre-initialisation record kept while the prior was unconfirmed.
+    /// GPS masked (no fixes delivered); the car was moved 600 m while parked.
+    @Test func lateRejectingPinWhileDrivingMatchesAFreshEngine() throws {
+        let v = 15.0, tPin = 20.0, delay = 3.0, tSecond = 60.0
+        let drive = S(initialHeadingDeg: Self.headingDeg, [
+            .stop(seconds: 5), .ramp(seconds: 5, from: 0, to: v), .straight(seconds: 20, speed: v),
+            .turn(degrees: 60, seconds: 10, speed: v), .straight(seconds: 40, speed: v),
+        ])
+        let oe = Self.parkedEast + 600, on = Self.parkedNorth
+        let a = drive.truth(at: tPin), b = drive.truth(at: tSecond)
+        let events = drive.events(gyroNoise: 0.002, extra: [
+            Self.pin(east: a.east + oe, north: a.north + on, at: tPin),
+            Self.pin(east: b.east + oe, north: b.north + on, at: tSecond),
+        ])
+        let inputs = NavigationLatePinTests.delayingPin(S.inputs(events), at: tPin, by: delay)
+        let config = S.config(particles: 2000, seed: 1)
+        func run(prior: NavigationPrior?, at times: [Double]) -> (NavigationEngine, [NavigationEstimate?]) {
+            var engine = NavigationEngine(config: config, prior: prior)
+            var out: [NavigationEstimate?] = []
+            var pending = times[...]
+            for input in inputs {
+                while let t = pending.first, input.arrival > S.ms(t) {
+                    out.append(engine.estimate(at: S.ms(t)))
+                    pending = pending.dropFirst()
+                }
+                engine.ingest(input)
+            }
+            return (engine, out)
+        }
+        let times = [tPin + delay + 0.5, tSecond + 3.5]
+        let (restored, r) = run(prior: Self.prior(.parked, gapS: 3600), at: times)
+        let (fresh, f) = run(prior: nil, at: times)
+        #expect(restored.restore.status == .rejected && restored.restore.reason == .pin)
+        #expect(restored.counters.lateManualFixes == 1 && fresh.counters.lateManualFixes == 1)
+        #expect(restored.counters.lateManualFixesMeanShift == 0 && fresh.counters.lateManualFixesMeanShift == 0,
+                "the steps since the tap are on record: no mean-shift fallback")
+        func gap(_ p: NavigationEstimate, _ q: NavigationEstimate) -> Double {
+            Self.distance(p, east: S.plane.enu(latitude: q.latitude, longitude: q.longitude).east,
+                          north: S.plane.enu(latitude: q.latitude, longitude: q.longitude).north)
+        }
+        // Just after the late pin: the same ring-shaped cloud, carried forward.
+        let r0 = try #require(r[0]), f0 = try #require(f[0])
+        #expect(gap(r0, f0) < 1, "\(gap(r0, f0)) m from the fresh engine")
+        #expect(abs(r0.ellipse.semiMajorM - f0.ellipse.semiMajorM) < 0.02 * f0.ellipse.semiMajorM,
+                "ellipse \(r0.ellipse.semiMajorM) m vs fresh \(f0.ellipse.semiMajorM) m")
+        #expect(abs(r0.ellipse.semiMinorM - f0.ellipse.semiMinorM) < 0.02 * f0.ellipse.semiMinorM)
+        // After the second pin, past the turn: the same converged estimate.
+        let r1 = try #require(r[1]), f1 = try #require(f[1])
+        #expect(gap(r1, f1) < 3, "\(gap(r1, f1)) m from the fresh engine")
+        #expect(abs(angleDifference(r1.headingDeg, f1.headingDeg)) < 2)
+        let truth = drive.truth(at: times[1])
+        #expect(Self.distance(r1, east: truth.east + oe, north: truth.north + on) < 20)
     }
 
     // MARK: First OBD reply, cap, cached fix
