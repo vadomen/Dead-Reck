@@ -188,6 +188,21 @@ public struct NavigationEngine: Sendable {
     /// initialised the engine or updated it), ns; nil if none
     /// (`gnssInUse(at:)`).
     private var lastGNSSFixUsedNs: Int64?
+
+    // Restored prior (UX-20). Outside `counters`, so a run without a prior
+    // codes exactly as before; with `prior` nil none of it runs.
+    /// The prior given at init; applied at the first input.
+    private let prior: NavigationPrior?
+    private var priorApplied = false
+    /// A stopped-class prior waits for the first OBD vehicle-speed reply:
+    /// moving regrows it as moving (`resolvePriorAtFirstOBD`).
+    private var priorAwaitingOBD = false
+    /// `t` of the first OBD reply after a stopped-class prior when it was
+    /// 0: a run of zeros starting there continues the prior's stop
+    /// (`restoreClass`). nil without one, and once the prior is discarded.
+    private var priorStopZeroSinceNs: Int64?
+    /// The restore's status (`NavigationRestore`): `.none` without a prior.
+    public private(set) var restore = NavigationRestore()
     /// End of the latest grid step since initialisation in which the cloud
     /// moved (not a ZUPT or parked step); nil if none (R11.1-5). A stale
     /// fix accepted while stopped must be no older than this: then every
@@ -267,13 +282,18 @@ public struct NavigationEngine: Sendable {
     /// the engine's `config` is the validated value. A config with an
     /// `invalidReason` traps. `roads`: the road network the road update
     /// matches against (N3.2); nil runs no road code at all.
-    public init(config: NavigationConfig = NavigationConfig(), roads: RoadNetwork? = nil) {
-        self.init(config: config, roads: roads, roadCacheCapacity: RoadMatcher.defaultCacheCapacity)
+    /// `prior` (UX-20): a restored estimate to seed the cloud from at the
+    /// first input instead of waiting for a fix or pin ("Restored prior"
+    /// below); nil runs exactly as before it existed.
+    public init(config: NavigationConfig = NavigationConfig(), roads: RoadNetwork? = nil,
+                prior: NavigationPrior? = nil) {
+        self.init(config: config, roads: roads, roadCacheCapacity: RoadMatcher.defaultCacheCapacity, prior: prior)
     }
 
     /// `roadCacheCapacity`: the matcher's cell cache size (tests run 1
     /// against the default: it must not change a result).
-    init(config: NavigationConfig, roads: RoadNetwork?, roadCacheCapacity: Int) {
+    init(config: NavigationConfig, roads: RoadNetwork?, roadCacheCapacity: Int, prior: NavigationPrior? = nil) {
+        self.prior = prior
         let config = config.validated(roads: roads)
         precondition(config.particleCount > 0, "particleCount must be positive")
         precondition(config.stepHz > 0, "stepHz must be positive")
@@ -407,12 +427,14 @@ public struct NavigationEngine: Sendable {
         jumpCandidateNs = nil
         lastInputNs = max(lastInputNs ?? arrival, arrival)
         expireHeldFix(at: arrival)
+        if prior != nil && !priorApplied { applyPrior(at: arrival) }
         switch input {
         case .motion(let sample, let t):
             ingestMotion(sample, at: t.nanoseconds)
         case .obd(let sample, let t):
             advance(to: t.nanoseconds)
             if ingestOBD(sample, at: t.nanoseconds) {
+                if priorAwaitingOBD { resolvePriorAtFirstOBD(at: t.nanoseconds) }
                 resolveHeldFix(obdNs: t.nanoseconds)
             }
         case .location(let sample, let t):
@@ -714,6 +736,9 @@ public struct NavigationEngine: Sendable {
             recordPreInitStep(at: ns, dt: dt, yaw: yaw)
             return
         }
+        // While a restored prior is unconfirmed, a rejecting late pin
+        // initialises as a fresh engine's would: it needs this record.
+        if restore.status == .unconfirmed { recordPreInitStep(at: ns, dt: dt, yaw: yaw) }
         counters.steps += 1
 
         var fresh = false
@@ -1027,9 +1052,12 @@ public struct NavigationEngine: Sendable {
 
     // MARK: Initialisation
 
+    /// `covariance`: the position covariance (a restored prior) instead
+    /// of `sigma`² on each axis.
     private mutating func initialize(
         latitude: Double, longitude: Double, sigma: Double,
-        heading course: (radians: Double, sigma: Double)?, at ns: Int64
+        heading course: (radians: Double, sigma: Double)?, at ns: Int64,
+        covariance: (ee: Double, en: Double, nn: Double)? = nil
     ) {
         let plane = LocalTangentPlane(latitude: latitude, longitude: longitude)
         tangentPlane = plane
@@ -1039,6 +1067,11 @@ public struct NavigationEngine: Sendable {
         covEE = [Double](repeating: sigma * sigma, count: n)
         covEN = east
         covNN = covEE
+        if let covariance {
+            covEE = [Double](repeating: covariance.ee, count: n)
+            covEN = [Double](repeating: covariance.en, count: n)
+            covNN = [Double](repeating: covariance.nn, count: n)
+        }
         heading = east
         scale = east
         speedOffset = east
@@ -1075,6 +1108,248 @@ public struct NavigationEngine: Sendable {
         lastMeanSpeed = 0
     }
 
+    // MARK: Restored prior (UX-20)
+
+    /// The first input has arrived: seed the cloud from `prior` grown for
+    /// the gap since it was saved (`NavigationPrior.seed`), through
+    /// `initialize` with the same random draws as a first fix (one heading
+    /// draw, Gaussian or stratified uniform, and one scale draw per
+    /// particle). Too uncertain: nothing is seeded (`.none`,
+    /// `.tooUncertain`) and the run starts as without a prior. A stopped
+    /// class holds the cloud parked until OBD or the IMU says otherwise,
+    /// and its first OBD reply decides (`resolvePriorAtFirstOBD`).
+    private mutating func applyPrior(at arrival: Int64) {
+        guard let prior else { return }
+        priorApplied = true
+        restore.savedT = prior.savedT
+        // The first input sets the grid exactly so (`advance`).
+        if lastStepNs == nil { lastStepNs = Self.floorToGrid(arrival, stepNs) }
+        let gap = (Double(arrival) - Double(prior.savedT.nanoseconds)) / 1e9
+        guard let seed = prior.seed(gapS: gap) else {
+            restore.status = .none
+            restore.reason = .tooUncertain
+            return
+        }
+        seedFromPrior(prior, seed, at: arrival)
+        restore.status = .unconfirmed
+        if prior.handOver, prior.converged, gap <= NavigationRestoreModel.handOverConfirmMaxGapS {
+            // The Record-stop hand-over: the estimate a converged recording
+            // left seconds ago in this process. Only the status: the growth
+            // is the same as for any prior.
+            restore.status = .confirmed
+            restore.reason = .handOver
+            restore.decidedT = MonotonicTimestamp(nanoseconds: arrival)
+        }
+        if prior.restoreClass != .moving {
+            priorAwaitingOBD = true
+            if obdSpeedKmh == nil {
+                parkedSinceZero = true
+                lastStepStationary = true
+            }
+        }
+    }
+
+    /// The cloud at the grown prior: every particle at the (carried
+    /// forward) mean with the grown covariance. Gaussian headings are then
+    /// rescaled about the mean so the cloud's circular std is the grown σ
+    /// (no extra random draw): `converged` (std under the threshold) then
+    /// follows the grown σ, not the sampling noise of N draws, so a tight
+    /// hand-over keeps it.
+    private mutating func seedFromPrior(_ prior: NavigationPrior, _ seed: NavigationPrior.Seed, at ns: Int64) {
+        let heading: (radians: Double, sigma: Double)? = seed.headingRadians.map { ($0, seed.headingSigmaRadians ?? 0) }
+        var latitude = prior.latitude, longitude = prior.longitude
+        if seed.shiftEastM != 0 || seed.shiftNorthM != 0 {
+            let p = LocalTangentPlane(latitude: latitude, longitude: longitude)
+                .geodetic(east: seed.shiftEastM, north: seed.shiftNorthM)
+            latitude = p.latitude
+            longitude = p.longitude
+        }
+        initialize(latitude: latitude, longitude: longitude, sigma: 0, heading: heading, at: ns,
+                   covariance: (seed.covEE, seed.covEN, seed.covNN))
+        guard let heading, heading.sigma > 0 else { return }
+        // Small-angle rescale, iterated: exact to well under 1e-6 rad for
+        // σ ≤ 30°.
+        for _ in 0..<3 {
+            let actual = headingStdRadians()
+            guard actual > 0, actual.isFinite else { return }
+            let k = heading.sigma / actual
+            if abs(k - 1) < 1e-9 { return }
+            for i in self.heading.indices {
+                self.heading[i] = Self.wrap2Pi(heading.radians + k * Self.wrapPi(self.heading[i] - heading.radians))
+            }
+        }
+    }
+
+    /// The first OBD vehicle-speed reply after a stopped-class prior was
+    /// seeded: 0 keeps it; below `slowPullOutMaxKmh` (10 km/h: pulling out
+    /// while the adapter connected) keeps it with (v × `slowPullOutRollS`)²
+    /// added to each particle's position variance per axis, for the roll
+    /// before the reply; faster (the car was driving when the run started)
+    /// regrows it as moving for the gap up to this reply, or, too wide,
+    /// rejects it (`.movingAtStart`) and the engine waits for a fix or pin
+    /// as without a prior. Only while unconfirmed, or confirmed by the
+    /// hand-over alone (no fix has seen it: the growth is the same).
+    private mutating func resolvePriorAtFirstOBD(at ns: Int64) {
+        priorAwaitingOBD = false
+        if obdSpeedKmh == 0 { priorStopZeroSinceNs = zeroFix.zeroSinceNs }
+        guard restore.status == .unconfirmed || (restore.status == .confirmed && restore.reason == .handOver),
+              let prior, let v = obdSpeedKmh, v > 0 else { return }
+        if v < NavigationRestoreModel.slowPullOutMaxKmh {
+            let roll = v / 3.6 * NavigationRestoreModel.slowPullOutRollS
+            for i in covEE.indices {
+                covEE[i] += roll * roll
+                covNN[i] += roll * roll
+            }
+            restore.slowPullOutKmh = v
+            return
+        }
+        restore.regrownAsMoving = true
+        discardPrior()
+        let gap = (Double(ns) - Double(prior.savedT.nanoseconds)) / 1e9
+        if let seed = prior.seed(gapS: gap, movingAtStart: true) {
+            seedFromPrior(prior, seed, at: ns)
+        } else {
+            restore.status = .rejected
+            restore.reason = .movingAtStart
+            restore.decidedT = MonotonicTimestamp(nanoseconds: ns)
+        }
+    }
+
+    /// An unconfirmed prior against a fix (σ `sigma`, today's per-axis σ
+    /// with any stale growth): d² = rᵀ (Σ_cloud + σ² I)⁻¹ r, untempered,
+    /// with r the fix shifted to now minus the cloud's mean. Over
+    /// `rejectChi2`: rejected, and the engine is uninitialised so the fix
+    /// initialises it as a first fix. Agreeing: confirmed when the fix is
+    /// not a tower fix and σ ≤ max(the cloud's major-axis σ,
+    /// `confirmMinSigmaM`); otherwise still unconfirmed. Either way the fix
+    /// is then used as usual.
+    private mutating func judgeRestore(_ sample: LocationSample, fixNs: Int64, arrivalNs: Int64, sigma: Double,
+                                       network: Bool) {
+        guard let plane = tangentPlane else { return }
+        let fix = plane.enu(latitude: sample.latitude, longitude: sample.longitude)
+        let since = shiftSince(fixNs)
+        let tower = network && sample.horizontalAccuracy > NavigationRestoreModel.towerAccuracyM
+        judgeRestore(east: fix.east + since.east, north: fix.north + since.north, sigma: sigma, reason: .fix,
+                     canConfirm: { major in !tower && sigma <= max(major, NavigationRestoreModel.confirmMinSigmaM) },
+                     at: arrivalNs)
+    }
+
+    /// The same for a pin (σ from `manualFixSigma`, shifted by the cloud's
+    /// mean motion since its `t`): an agreeing pin always confirms; a
+    /// disagreeing one rejects, and the pin then initialises the engine
+    /// (uniform heading) as a first pin.
+    private mutating func judgeRestore(pin sample: ManualFixSample, at ns: Int64, sigma: Double) {
+        guard let plane = tangentPlane else { return }
+        let pin = plane.enu(latitude: sample.latitude, longitude: sample.longitude)
+        let since = shiftSince(ns)
+        judgeRestore(east: pin.east + since.east, north: pin.north + since.north, sigma: sigma, reason: .pin,
+                     canConfirm: { _ in true }, at: ns)
+    }
+
+    private mutating func judgeRestore(east e: Double, north n: Double, sigma: Double, reason: NavigationRestore.Reason,
+                                       canConfirm: (Double) -> Bool, at ns: Int64) {
+        let m = cloudMoments()
+        let s2 = sigma * sigma
+        let d2 = Self.chi2(e - m.east, n - m.north, ee: m.ee + s2, en: m.en, nn: m.nn + s2)
+        if d2 > NavigationRestoreModel.rejectChi2 {
+            discardPrior()
+            restore.status = .rejected
+        } else if canConfirm(NavigationPrior.majorVariance(m.ee, m.en, m.nn).squareRoot()) {
+            restore.status = .confirmed
+        } else {
+            return
+        }
+        restore.reason = reason
+        restore.decidedT = MonotonicTimestamp(nanoseconds: ns)
+    }
+
+    /// Back to the state before initialisation, the clock, OBD, motion and
+    /// counters kept: what a run without a prior has before its first fix
+    /// or pin. The pre-initialisation record kept while unconfirmed lets
+    /// a late pin initialise as it would there.
+    private mutating func discardPrior() {
+        tangentPlane = nil
+        east = []
+        north = []
+        covEE = []
+        covEN = []
+        covNN = []
+        heading = []
+        scale = []
+        speedOffset = []
+        motionEast = []
+        motionNorth = []
+        logWeight = []
+        weight = []
+        effectiveSampleSize = 0
+        roadEdge = []
+        roadLevel = []
+        offRoadM = []
+        speedOffsetsActive = false
+        lastStepStationary = true
+        lastMeanSpeed = 0
+        cumulativeEast = 0
+        cumulativeNorth = 0
+        cumulativeYaw = 0
+        history.removeAll()
+        motionRing.removeAll(particles: config.particleCount)
+        lastNetworkFixNs = nil
+        lastMovingStepNs = nil
+        roadDistanceM = 0
+        lastRoadAttemptNs = nil
+        roadShare = nil
+        roadMatchedEdge = nil
+        if !fixPin.isEmpty { fixPin = FixPinSource.Kind.allCases.map { _ in FixPinSource() } }
+        lastManualFixNs = nil
+        cumulativeOBDM = 0
+        lastFixPinDecision = nil
+        // The prior's parked hold, not an OBD 0.
+        if obdSpeedKmh == nil { parkedSinceZero = false }
+        priorAwaitingOBD = false
+        priorStopZeroSinceNs = nil
+    }
+
+    /// The last OBD vehicle speed from the primary ECU (raw km/h) and its
+    /// `t`; nil before the first reply.
+    public var lastOBDSpeed: (kmh: Double, t: MonotonicTimestamp)? {
+        guard let v = obdSpeedKmh, let t = obdNs else { return nil }
+        return (v, MonotonicTimestamp(nanoseconds: t))
+    }
+
+    /// How the car is left at `t`, for a saved state (UX-20):
+    /// - `.parked`: the last OBD reply is 0, not vetoed by moving fixes,
+    ///   and either `engineOff` (the app knows: ignition off, Navigate's
+    ///   auto-stop) or the engine's parked state (stale after the 0, no IMU
+    ///   sign of motion since);
+    /// - `.standingStop`: a fresh, unvetoed OBD 0 whose run of zeros began
+    ///   at least `standingStopMinZeroS` before `t`;
+    /// - `.moving`: anything else, no OBD reply included. `engineOff` with
+    ///   a moving last reply is moving: a link lost mid-drive is not a
+    ///   parked car.
+    ///
+    /// A run seeded from a stopped-class prior (R77.2-1) keeps that stop:
+    /// - before its first OBD reply (and while not rejected), the prior's
+    ///   class while its parked hold stands (`.parked` with `engineOff`),
+    ///   `.moving` once the IMU has cleared it;
+    /// - a run of zeros beginning at that first reply continues the prior's
+    ///   stop, so it needs no `standingStopMinZeroS` of its own.
+    public func restoreClass(at t: MonotonicTimestamp, engineOff: Bool) -> NavigationRestoreClass {
+        let ns = t.nanoseconds
+        if priorAwaitingOBD, let prior {
+            guard parkedSinceZero else { return .moving }
+            return engineOff ? .parked : prior.restoreClass
+        }
+        guard let v = obdSpeedKmh, let tObd = obdNs, v == 0, !zeroVetoed(at: ns) else { return .moving }
+        let fresh = (Double(ns) - Double(tObd)) / 1e9 <= config.obdMaxAgeS
+        if engineOff || (!fresh && parkedSinceZero) { return .parked }
+        if fresh, let since = zeroFix.zeroSinceNs,
+           since == priorStopZeroSinceNs
+            || (Double(ns) - Double(since)) / 1e9 >= NavigationRestoreModel.standingStopMinZeroS {
+            return .standingStop
+        }
+        return .moving
+    }
+
     // MARK: Location fixes
 
     private mutating func ingestLocation(_ sample: LocationSample, fixNs: Int64, arrivalNs: Int64) {
@@ -1082,6 +1357,13 @@ public struct NavigationEngine: Sendable {
         guard accuracy >= 0, accuracy.isFinite, sample.latitude.isFinite, sample.longitude.isFinite,
               abs(sample.latitude) <= 90, abs(sample.longitude) <= 180 else {
             counters.fixesIgnoredInvalid += 1
+            return
+        }
+        if let saved = restore.savedT, restore.status == .unconfirmed || restore.status == .confirmed,
+           fixNs < saved.nanoseconds {
+            // A cached fix older than the restored state: the state is newer
+            // information (UX-20).
+            restore.fixesOlderThanSave += 1
             return
         }
         noteZeroFixEvidence(sample, fixNs: fixNs)
@@ -1111,7 +1393,12 @@ public struct NavigationEngine: Sendable {
         let network = !sample.hasValidSpeed
         let sigma = max(accuracy * config.fixSigmaPerAccuracy, config.fixSigmaFloorM)
             * (network ? config.networkFixInflation : 1)
-            + Self.staleGrowth(fixNs: fixNs, age: age, config: config)
+            + Self.staleGrowth(fixNs: fixNs, age: age, config: config, sample: sample)
+        if restore.status == .unconfirmed {
+            // May reject the prior: the engine is then uninitialised and
+            // this fix initialises it below, as a fresh engine's first fix.
+            judgeRestore(sample, fixNs: fixNs, arrivalNs: arrivalNs, sigma: sigma, network: network)
+        }
         // Course needs real motion: GNSS reports a few m/s of speed noise
         // while parked, so an OBD speed under the threshold vetoes it. The
         // speed checked is the one OBD last reported at the fix time, fresh
@@ -1310,13 +1597,19 @@ public struct NavigationEngine: Sendable {
         }
     }
 
-    /// Extra σ of a stale fix: `staleFixSigmaGrowthMps × age` when the fix
-    /// is older than `staleFixAgeS` at ingest (a pre-session fix from minutes
-    /// ago, or a relaunch mid-drive); 0 otherwise. A pre-session fix only a
-    /// fraction of a second old is not stale.
-    static func staleGrowth(fixNs: Int64, age: Double, config: NavigationConfig) -> Double {
-        guard age > config.staleFixAgeS else { return 0 }
-        return max(0, config.staleFixSigmaGrowthMps) * age
+    /// Extra σ of a stale fix: max(`staleFixSigmaGrowthMps`, the fix's own
+    /// valid Doppler speed) × age when the fix is older than `staleFixAgeS`
+    /// at ingest (a pre-session fix from minutes ago, or a relaunch
+    /// mid-drive); 0 otherwise, and 0 while `staleFixSigmaGrowthMps` ≤ 0
+    /// (disabled). A pre-session fix only a fraction of a second old is not
+    /// stale. NAV-INITSTALE: a cached fix taken at 13 km/h 46 s before the
+    /// session was 223 m off at the first pin; at 1 m/s × age its σ was a
+    /// quarter of that. The car drove on at about its fix speed for an
+    /// unknown part of the age, so that speed bounds the distance.
+    static func staleGrowth(fixNs: Int64, age: Double, config: NavigationConfig, sample: LocationSample) -> Double {
+        guard age > config.staleFixAgeS, config.staleFixSigmaGrowthMps > 0 else { return 0 }
+        let fixSpeed = sample.hasValidSpeed && sample.speed.isFinite ? sample.speed : 0
+        return max(config.staleFixSigmaGrowthMps, fixSpeed) * age
     }
 
     /// Speed for the age allowance of a fix that initialises the engine,
@@ -1382,6 +1675,11 @@ public struct NavigationEngine: Sendable {
               abs(sample.latitude) <= 90, abs(sample.longitude) <= 180 else { return }
         counters.manualFixes += 1
         let sigma = config.manualFixSigma(sample, at: MonotonicTimestamp(nanoseconds: ns))
+        if restore.status == .unconfirmed {
+            // May reject the prior: the pin then initialises the engine
+            // below (uniform heading), as a fresh engine's first pin.
+            judgeRestore(pin: sample, at: ns, sigma: sigma)
+        }
         // N3-FIXPIN refinement rule, causal: the previous manual fix's `t` is
         // at most `fixPinRefinementWindowS` before this one (the replay's
         // pair rule, which is scoring only, on the pins ingested so far).

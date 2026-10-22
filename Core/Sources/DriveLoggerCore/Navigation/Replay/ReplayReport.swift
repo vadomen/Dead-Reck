@@ -74,6 +74,9 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
     /// it). nil (absent) without a `gpsSwitch` input, and in files written
     /// before it.
     public var gpsSwitch: ReplayResult.GPSSwitchReport?
+    /// UX-20 (replay only, `--prior`): the restore's outcome. nil (absent)
+    /// without a prior, and in files written before it.
+    public var restore: NavigationRestore?
 
     public init(_ result: ReplayResult) {
         logName = result.logName
@@ -115,6 +118,7 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
         fixPinDecisions = decisions.isEmpty ? nil : decisions
         maxErrorByKind = result.maxErrorByKind.isEmpty ? nil : result.maxErrorByKind
         gpsSwitch = result.gpsSwitch
+        restore = result.restore
     }
 
     /// `metrics.json` key: one row per log and mode.
@@ -136,6 +140,7 @@ extension ReplayMetrics {
         case fixPinDecisions
         case maxErrorByKind
         case gpsSwitch
+        case restore
     }
 
     /// Keys every `metrics.json` row has had since the first one (N2). A row
@@ -152,7 +157,7 @@ extension ReplayMetrics {
     ///   `motionStartT`, `consistency`, `consistencyWithTruthSigma`, `pins`,
     ///   `pinScoring`, `roads`, `roadSetHash`, `roadMetrics`, `scoreUntilT`,
     ///   `checkpointsAfterScoreUntil`, `roadsAttachedAfterInputs`,
-    ///   `attachedRoadSetHash`, `roadsExtendedAfterInputs`, `fixesExcludedByTruth`, `fixPinDecisions`, `maxErrorByKind`, `gpsSwitch` (and any key a
+    ///   `attachedRoadSetHash`, `roadsExtendedAfterInputs`, `fixesExcludedByTruth`, `fixPinDecisions`, `maxErrorByKind`, `gpsSwitch`, `restore` (and any key a
     ///   later build adds, which must be optional or take a default here).
     /// - `config` and `counters` decode tolerantly themselves: a config key
     ///   or counter added later takes its default (0 for a counter).
@@ -198,6 +203,7 @@ extension ReplayMetrics {
         fixPinDecisions = try c.decodeIfPresent([FixPinDecision].self, forKey: .fixPinDecisions)
         maxErrorByKind = try c.decodeIfPresent([String: KindMaxError].self, forKey: .maxErrorByKind)
         gpsSwitch = try c.decodeIfPresent(ReplayResult.GPSSwitchReport.self, forKey: .gpsSwitch)
+        restore = try c.decodeIfPresent(NavigationRestore.self, forKey: .restore)
     }
 }
 
@@ -207,6 +213,22 @@ public enum ReplayReport {
     static func m(_ value: Double?) -> String {
         guard let value else { return "n/a" }
         return String(format: "%.0f", value)
+    }
+
+    /// "unconfirmed, saved at t -600.0 s; 1 cached fix older than the save ignored",
+    /// "rejected by a fix at t 12.3 s, saved at t -600.0 s".
+    public static func restoreText(_ restore: NavigationRestore) -> String {
+        var text = restore.status.rawValue
+        if let reason = restore.reason {
+            text += " (\(reason.rawValue)" + (restore.decidedT.map { String(format: " at t %.1f s", $0.seconds) } ?? "") + ")"
+        }
+        if let saved = restore.savedT { text += String(format: ", saved at t %.1f s", saved.seconds) }
+        if restore.regrownAsMoving { text += ", regrown as moving at the first OBD reply" }
+        if let v = restore.slowPullOutKmh { text += String(format: ", kept at a slow first OBD reply (%.0f km/h)", v) }
+        if restore.fixesOlderThanSave > 0 {
+            text += "; \(restore.fixesOlderThanSave) cached fix\(restore.fixesOlderThanSave == 1 ? "" : "es") older than the save ignored"
+        }
+        return text
     }
 
     static func pct(_ value: Double?) -> String {
@@ -345,6 +367,9 @@ public enum ReplayReport {
         }
         if let report = result.gpsSwitch {
             lines.append("GPS switch    " + report.text)
+        }
+        if let restore = result.restore {
+            lines.append("Restore       " + restoreText(restore))
         }
         lines.append("Consistency   " + consistencyText(result.consistency) + " (engine ellipse)")
         lines.append("  + truth σ   " + consistencyText(result.consistencyWithTruthSigma) + " (engine covariance + truth σ²; gated)")
@@ -546,6 +571,9 @@ public enum ReplayReport {
             }
             if let report = r.gpsSwitch {
                 out += "GPS switch (the recording's, UX-9 a): \(report.text).\n\n"
+            }
+            if let restore = r.restore {
+                out += "Restored prior (UX-20, replay only): \(restoreText(restore)).\n\n"
             }
             out += "| kind | t s | distance m | error m | % of distance | σ heading ° | inside 95 % | + truth σ | truth σ m | 95 % ellipse |\n|---|---:|---:|---:|---:|---:|---|---|---:|---|\n"
             for cp in r.checkpoints where cp.kind != .cleanFix {

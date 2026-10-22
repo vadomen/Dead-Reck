@@ -195,6 +195,8 @@ enum MapBottomItem: Hashable, Sendable, CaseIterable {
     case statusLine
     /// "Finding your position... keep driving" while the estimate is unconverged or km-wide (C6).
     case positionStatus
+    /// "Restored · n min ago · not yet confirmed" while a restored estimate is unconfirmed (UX-20).
+    case restoreStatus
     case roadsWarning
     /// "Re-centre in N s".
     case resumeHint
@@ -208,13 +210,14 @@ enum MapBottomZone {
     /// order, so items never overlap whatever combination is present. The
     /// strip is gated by the setting alone; with it off nothing takes its place.
     static func items(
-        offer: Bool, toast: Bool, status: Bool, positionStatus: Bool = false, roadsWarning: Bool,
+        offer: Bool, toast: Bool, status: Bool, positionStatus: Bool = false, restoreStatus: Bool = false, roadsWarning: Bool,
         resumeHint: Bool, debugSetting: Bool
     ) -> [MapBottomItem] {
         var out: [MapBottomItem] = []
         if offer { out.append(.offerCard) }
         if toast { out.append(.toast) }
         if status { out.append(.statusLine) }
+        if restoreStatus { out.append(.restoreStatus) }
         if positionStatus { out.append(.positionStatus) }
         if roadsWarning { out.append(.roadsWarning) }
         if resumeHint { out.append(.resumeHint) }

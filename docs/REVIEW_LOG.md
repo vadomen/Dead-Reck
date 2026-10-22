@@ -982,7 +982,7 @@ Reviewers: three opus reviewers in parallel: A engine/replay, B log format/recor
 | R76.1-3 | MINOR | `NavigationTap.swift:42`: a `gpsSwitch` input can be dropped by the tap's newest-4096 buffer when the engine lags ~30 s, and the effect persists (the engine keeps using GPS while the HUD says GPS off). | DEFERRED | BACKLOG. Reviewer A accepted the risk (same as pins; droppedInputs visible). |
 | R76.1-4 | MINOR | `NavigationReplay.swift:986`: the `attachIfDue()` before a gpsSwitch input in the scored replay is untested (a mutation removing it survived 87 tests). | DEFERRED | BACKLOG. |
 | R76.1-5 | MINOR | `MapView.swift:536-541`: "Use GPS" (or Stop while off) re-frames the camera as a first fix (`latest` nil to non-nil), discarding the driver's zoom and pan. | DEFERRED | BACKLOG. |
-| R76.1-6 | MINOR | `docs/RELEASE_PLAN.md:173`: the Review Notes "only network use is downloading road maps" omits Apple Maps tiles (the map is MapKit). The wording was the user's, verbatim. | DEFERRED | User's decision; BACKLOG. |
+| R76.1-6 | MINOR | `docs/RELEASE_PLAN.md:173`: the Review Notes "only network use is downloading road maps" omits Apple Maps tiles (the map is MapKit). The wording was the user's, verbatim. | DONE (prompt 39) | User's decision (wording 2026-10-21); was BACKLOG, now closed in `docs/archive/BACKLOG-closed.md`. |
 
 Tests at round 1: Core 1131 tests in 142 suites passed (36 known issues) at 935791c (round 1 changes no Core code). App: 719 tests in 104 suites passed at 4cf9b19. `PackNetworkPolicyTests` "Turning the switch on restarts a transfer…" failed once in a fixer's run and passed on rerun with no change (flaky, unrelated).
 
@@ -1014,3 +1014,58 @@ Reviewer: one fresh opus reviewer (App focus plus a cross-cutting pass of the fu
 ### Run 76 summary
 
 4 rounds; 4 fixed (R76.1-1, R76.1-2, R76.2-1, R76.3-1; R76.3-1 after a user decision 2026-10-21: the GPS voice speaks only during a run); 0 rejected; 6 deferred (R76.1-3..6, R76.2-2). Engine output bit-identical to a9103dd without a switch event (clean drive, seed 1, roads on / off / as-live; a live-roads drive `--as-live --compare` exact PASS). Final tests: Core 1131 tests in 142 suites passed (36 known issues); App 727 tests in 105 suites passed at 162afbf.
+
+## Run 77: Prompt 39 UX-20 restore the estimate (persisted Navigate/Record estimate, engine seed from a prior with growth, d² reject/confirm, Record-stop hand-over, on-map Restored line), NAV-INITSTALE, privacy Map texts (main..ux20-restore: 21fe5ac..4c62ada), started 2026-10-22
+
+### Round 1
+
+Reviewers: two opus reviewers in parallel: A engine/replay, B app. Result: 0 BLOCKER, 2 MAJOR (both CONFIRMED, fixing), 1 MINOR (DEFERRED). Reviewer B: ready to merge (1 MINOR). Reviewer A: fix before merge (0 blocker, 2 major). Mutations: the author's `!tower &&` was killed by `wifiFixConfirmsATowerFixNeverDoes`; the reviewer's σ² removal and `recordPreInitStep` removal survived (R77.1-1, R77.1-2). Bit-identical re-run (clean drive, seed 1, roads on / off): identical.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R77.1-1 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/NavigationEngine.swift:1248`: the fix/pin σ² term in the restore d² covariance is untested (mutation `+ 0*s2` survives all NavigationRestore* tests); a correct parked prior would be rejected by an ordinary offset Wi-Fi or tower fix with no test failing. | CONFIRMED, FIXED (44dc89a) | |
+| R77.1-2 | MAJOR | `NavigationEngine.swift:737`: the pre-init step record kept while a prior is unconfirmed is untested (removing it survives); a late disagreeing pin would initialise without the motion since the tap. | CONFIRMED, FIXED (44dc89a) | |
+| R77.1-3 | MINOR | `site/public/privacy.html:44` and `site/public/uk/privacy.html:44`: "Deleting your data" covers recordings only; the saved last estimate (position and time) survives deleting all recordings, is not backed up, and is removed with the app or replaced by the next drive. | DEFERRED | BACKLOG. Fix: one sentence on both pages, before the next site deploy. |
+
+Tests at round 1: Core 1163 tests passed (36 known issues), AppTests 752 passed, at HEAD (4c62ada).
+
+### Round 2
+
+Reviewers: two opus reviewers in parallel: A engine/replay, B app. Result: 0 BLOCKER, 3 MAJOR (all CONFIRMED, FIXED adfccd7). Reviewer A: fix before merge (2 major). Reviewer B: ready to merge (1 MINOR, upgraded to MAJOR by the orchestrator: a regression introduced by this range). Mutations: the author's R77.1-1 mutation killed (round-1 fix verified); the reviewer's `if fresh, let since` → `if let since` and removed `!zeroVetoed` survived (R77.2-2). Bit-identical re-run (clean drive, seed 1, roads off): identical.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R77.2-1 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/NavigationEngine.swift:1324`: `restoreClass` returned `.moving` with no OBD reply yet, so a parked prior awaiting its first OBD reply (Navigate opened before ignition on) was re-saved as moving and the next start > ~135 s later restored nothing. | CONFIRMED, FIXED (adfccd7) | Prior's class kept while its parked hold stands; zeros from the first reply continue the prior's stop; test `stoppedPriorKeepsItsClassUntilOBDSaysOtherwise`. |
+| R77.2-2 | MAJOR | `NavigationEngine.swift:1324/1328`: the `fresh` and zero-veto guards of `restoreClass` were untested (both mutations survived). | CONFIRMED, FIXED (adfccd7) | Classification test extended (drive-off after link loss; OBD 0 vetoed by moving fixes). |
+| R77.2-3 | MAJOR (raised from MINOR) | `App/Sources/Navigation/NavigationService.swift:299/682`: a Navigate run waiting to restore could begin after a newer recording and overwrite `current`, then its end set it nil: map idle for the whole recording. | CONFIRMED, FIXED (adfccd7) | `begin` sets `current` only for a newer generation; `end` falls back to the newest remaining run; test `staleNavigateKeepsTheNewerRecordingCurrent`. |
+
+Tests at round 2: Core 1167 tests passed (36 known issues), perf gate 9/9, AppTests 753 passed (one first-run failure in PackNetworkPolicyTests, the known run-75 flake; rerun green).
+
+### Round 3
+
+Reviewers: two opus reviewers in parallel: A engine/replay, B app. Result: 0 BLOCKER, 2 MAJOR (both CONFIRMED, FIXED f8e4d7a), 1 MINOR (one-line PLAN wording, fixed in this ledger commit). Reviewer A: fix before merge (2 major); round-2 fix verified, the author's `guard parkedSinceZero` mutation killed. Reviewer B: ready to merge; the R77.2-3 fix keeps `current` equal to the newest run for every reader. Mutations: removing `if obdSpeedKmh == nil { parkedSinceZero = false }` and narrowing the older-than-save check to `.unconfirmed` survived (R77.3-1, R77.3-2). Bit-identical re-run (clean drive, seed 1, roads off and on): identical.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R77.3-1 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/NavigationEngine.swift:1307`: releasing the prior's parked hold on rejection was untested; without it a no-OBD car cruising at constant speed ran stale-parked after a rejecting fix (probe: 300 parked steps, 178 m from a fresh engine). | CONFIRMED, FIXED (f8e4d7a) | Test `rejectedParkedPriorWithoutOBDReleasesTheParkedHold`. |
+| R77.3-2 | MAJOR | `NavigationEngine.swift:1362`: dropping a cached fix older than the save after a hand-over confirmation was untested; without it the fix is counted twice and the ellipse shrinks with no new information (probe: 29.8 m → 11.3 m). | CONFIRMED, FIXED (f8e4d7a) | Test `cachedFixOlderThanTheSaveIsIgnoredAfterAHandOverConfirmation`. |
+| R77.3-3 | MINOR | `docs/PLAN.md:435` §6 UX-20 check 9 waited "more than ~2 min", under the ~135 s moving cap, so it could pass with R77.2-1 reverted. | FIXED (this commit) | "more than 3 min". |
+
+Tests at round 3: Core 1169 tests passed (36 known issues), perf gate 9/9; App unchanged since round 2 (AppTests 753 passed).
+
+### Round 4
+
+Reviewers: two opus reviewers in parallel: A engine/replay, B app. Result: 0 BLOCKER, 0 MAJOR, 4 MINOR (all DEFERRED). Reviewer A: ready to merge; round-3 fix verified (the author's `parkedSinceZero` release mutation killed); `priorAwaitingOBD = false` in `discardPrior` and the `headingSigmaDeg != nil` shift guard survived (R77.4-1, R77.4-2). Reviewer B: ready to merge. Bit-identical re-run (clean drive, seed 1, roads off and on): identical.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R77.4-1 | MINOR | `Core/Sources/DriveLoggerCore/Navigation/NavigationEngine.swift:1308`: `discardPrior` clearing `priorAwaitingOBD` is untested; a regression would save `.standingStop` within 3 s of a first OBD 0 after a rejected prior. | DEFERRED | BACKLOG. |
+| R77.4-2 | MINOR | `Core/Sources/DriveLoggerCore/Navigation/NavigationRestore.swift:225`: the `headingSigmaDeg != nil` guard on the short-gap forward shift is untested; a regression would push the mean ~100 m along an unknown heading. | DEFERRED | BACKLOG. |
+| R77.4-3 | MINOR | `App/Sources/Navigation/NavigationService.swift:423` (`end`, with `saveEstimate` :338): a recording whose engine never initialises (GPS off or jammed, no pin) leaves the pre-recording Navigate save in place; after Stop, Navigate restores the drive's start point with a 50 m-class ellipse and nothing may reject it. | DEFERRED | BACKLOG; orchestrator: first item of the next prompt (Record-start side of the hand-over). |
+| R77.4-4 | MINOR | `App/Sources/Navigation/NavigationService.swift:342`: the final save is stamped `clock.now()` at run end, after the stop flow, while the cloud is from the last input; the hand-over gap is under-counted (bias v·Δ, Δ unmeasured). | DEFERRED | BACKLOG; stamp with the engine's last step time. |
+
+Tests at round 4: Core 1169 tests passed (36 known issues), perf gate 9/9, AppTests 753 passed.
+
+### Run 77 summary
+
+4 rounds; 9 fixed (R77.1-1, R77.1-2, R77.2-1..3, R77.3-1..3; R77.2-3 raised from MINOR); 0 rejected; 5 deferred (R77.1-3, R77.4-1..4). Engine output bit-identical to 21fe5ac without a prior (110-cell matrix by the author; clean drive, seed 1, roads on/off by reviewers each round). NAV-INITSTALE adoption PASS (all 18 gated cells unchanged). Final tests: Core 1169 tests in 144 suites passed (36 known issues), perf gate 9/9, AppTests 753 passed.

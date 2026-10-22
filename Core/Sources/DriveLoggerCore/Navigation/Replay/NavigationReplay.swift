@@ -94,6 +94,19 @@ public struct ReplayOptions: Hashable, Sendable {
     /// Used only with `roadAttach` `.live`; empty: every pack is ready at
     /// the start, as before.
     public var roadInjections: [ReplayRoadInjection] = []
+    /// UX-20, replay only (`replay_nav --start-at`): inputs arriving before
+    /// this session time are dropped (the app was not running); the label
+    /// gets `-from-<s>`. nil: every input.
+    public var startAtS: Double?
+    /// UX-20, replay only (`replay_nav --prior`): the engine is seeded from
+    /// this restored prior at its first input
+    /// (`NavigationEngine(config:roads:prior:)`); the label gets
+    /// `-restored`. nil: as before.
+    public var prior: NavigationPrior?
+    /// UX-20, replay only (`replay_nav --save-prior-at`): capture the
+    /// restore state (`NavigationRestoreState.capture`) at this time;
+    /// `ReplayResult.savedRestoreState`. Changes no number.
+    public var savePrior: ReplaySavePrior?
 
     public init(gps: GPSMode, holdOutAccuracyM: Double? = nil, config: NavigationConfig = NavigationConfig()) {
         self.gps = gps
@@ -132,7 +145,37 @@ public struct ReplayOptions: Hashable, Sendable {
                 for injection in roadInjections { label += "-" + injection.label }
             }
         }
+        if let startAtS { label += "-from-\(GPSMode.format(startAtS))" }
+        if prior != nil { label += "-restored" }
         return label
+    }
+}
+
+/// When and with which clock a replay captures the restore state
+/// (`replay_nav --save-prior`, UX-20).
+public struct ReplaySavePrior: Hashable, Sendable {
+    /// Session seconds; `.infinity`: at the last input.
+    public var atS: Double
+    /// The recording's clock (`SessionClock(header:)`'s two values).
+    public var referenceUptimeSeconds: Double
+    public var wallClockStart: Date
+    /// The car's engine is known to be off (`restoreClass`).
+    public var engineOff: Bool
+
+    public init(atS: Double, referenceUptimeSeconds: Double, wallClockStart: Date, engineOff: Bool = false) {
+        self.atS = atS
+        self.referenceUptimeSeconds = referenceUptimeSeconds
+        self.wallClockStart = wallClockStart
+        self.engineOff = engineOff
+    }
+
+    public init(atS: Double, header: LogHeader, engineOff: Bool = false) {
+        self.init(atS: atS, referenceUptimeSeconds: header.referenceUptimeSeconds, wallClockStart: header.startedAt,
+                  engineOff: engineOff)
+    }
+
+    var clock: SessionClock {
+        SessionClock(referenceUptimeSeconds: referenceUptimeSeconds, wallClockStart: wallClockStart)
     }
 }
 
@@ -521,7 +564,11 @@ public enum NavigationReplay {
         options: ReplayOptions,
         truth: TruthFile.Entry? = nil
     ) -> ReplayResult {
-        var run = ReplayRun(logName: logName, inputs: inputs, options: options, truth: truth)
+        // `--start-at`: the app was not running before then.
+        let given = options.startAtS.map { start in
+            inputs.filter { $0.arrival >= MonotonicTimestamp(seconds: start) }
+        } ?? inputs
+        var run = ReplayRun(logName: logName, inputs: given, options: options, truth: truth)
         return run.execute()
     }
 }
@@ -854,6 +901,11 @@ public struct ReplayResult: Hashable, Sendable, Codable {
     public var roadsExtendedAfterInputs: [Int] = []
     /// UX-9 a: the recording's GPS switch; nil without a `gpsSwitch` input.
     public var gpsSwitch: GPSSwitchReport? = nil
+    /// UX-20: the restore's outcome with `ReplayOptions.prior`; nil without.
+    public var restore: NavigationRestore? = nil
+    /// UX-20: the state captured at `ReplayOptions.savePrior`; nil without
+    /// it, and when the engine had no estimate then.
+    public var savedRestoreState: NavigationRestoreState? = nil
 
     public var heldOutFixes: [Fix] { fixes.filter { $0.withheld == .heldOut } }
 }
@@ -938,6 +990,9 @@ private struct ReplayRun {
     var pendingInjections: [ReplayRoadInjection] = []
     /// UX-9 a: the GPS switch as given; nil until the first switch input.
     var gpsSwitch: ReplayResult.GPSSwitchReport?
+    /// UX-20: the state captured at `options.savePrior`.
+    var savedRestoreState: NavigationRestoreState?
+    var restoreStateCaptured = false
 
     init(logName: String, inputs: [NavigationInput], options: ReplayOptions, truth: TruthFile.Entry?) {
         self.logName = logName
@@ -945,7 +1000,8 @@ private struct ReplayRun {
         self.options = options
         self.truth = truth
         let fromStart = options.roadAttach == .fromStart
-        engine = NavigationEngine(config: options.config, roads: fromStart ? options.roads?.network : nil)
+        engine = NavigationEngine(config: options.config, roads: fromStart ? options.roads?.network : nil,
+                                  prior: options.prior)
         if let roads = options.roads, options.roadAttach == .live {
             // As `LiveNavigationRun.ingest(_:selector:emit:)`: the selector's
             // packs are watched from the first input on.
@@ -990,6 +1046,10 @@ private struct ReplayRun {
                 continue
             }
             let arrival = input.arrival.nanoseconds
+            if let save = options.savePrior, !restoreStateCaptured, save.atS.isFinite,
+               arrival > MonotonicTimestamp(seconds: save.atS).nanoseconds {
+                captureRestoreState(at: MonotonicTimestamp(seconds: save.atS))
+            }
             var reason: WithholdReason?
             if case .location(let sample, let t) = input {
                 reason = NavigationReplay.withholdReason(sample, at: t, options: options, motionStart: motionStart)
@@ -1077,8 +1137,21 @@ private struct ReplayRun {
             nextCheckpoint += 1
         }
         sampleTrack(at: endNs, withEllipse: true)
+        if let save = options.savePrior, !restoreStateCaptured {
+            let atNs = save.atS.isFinite ? min(MonotonicTimestamp(seconds: save.atS).nanoseconds, endNs) : endNs
+            captureRestoreState(at: MonotonicTimestamp(nanoseconds: atNs))
+        }
 
         return finish(firstNs: firstNs, lastNs: endNs)
+    }
+
+    /// The restore state at `t`, from the state before the first input
+    /// arriving after it (UX-20, `--save-prior`).
+    mutating func captureRestoreState(at t: MonotonicTimestamp) {
+        guard let save = options.savePrior else { return }
+        restoreStateCaptured = true
+        savedRestoreState = NavigationRestoreState.capture(engine, at: t, clock: save.clock, bootSessionID: nil,
+                                                           engineOff: save.engineOff)
     }
 
     /// A GPS switch input given to the engine, and the off intervals.
@@ -1534,6 +1607,8 @@ private struct ReplayRun {
             report.fixesWithheld = engine.fixesWithheldByGPSSwitch
             result.gpsSwitch = report
         }
+        if options.prior != nil { result.restore = engine.restore }
+        result.savedRestoreState = savedRestoreState
         result.maxErrorByKind = KindMaxError.byKind(checkpoints)
         if let scoreUntilT = truth?.scoreUntilT {
             result.scoreUntilT = scoreUntilT

@@ -1,6 +1,7 @@
 import DriveLoggerCore
 import Foundation
 import Observation
+import os
 import SwiftUI
 import UIKit
 
@@ -143,15 +144,21 @@ struct RecordingNavigationFeed: Sendable {
     /// first call. Default: no-op (feeds built without a session, and
     /// Navigate runs: no recording, no row).
     var recordRoadPacks: @Sendable (String) -> Void = { _ in }
+    /// How the run ended, as far as the session knows it (UX-20): set before
+    /// the tap finishes, read by the navigation service at the run's end for
+    /// the saved estimate's class (`engineOff`). Default: a fresh one,
+    /// never set.
+    let runEnd: NavigationRunEnd
 
     init(generation: Int, header: LogHeader, clock: SessionClock, output: Output, tap: NavigationTap,
-         recordRoadPacks: @escaping @Sendable (String) -> Void = { _ in }) {
+         recordRoadPacks: @escaping @Sendable (String) -> Void = { _ in }, runEnd: NavigationRunEnd = NavigationRunEnd()) {
         self.generation = generation
         self.header = header
         self.clock = clock
         self.output = output
         self.tap = tap
         self.recordRoadPacks = recordRoadPacks
+        self.runEnd = runEnd
     }
 
     /// A recording's feed: `output` is `.recording(recordingURL:sidecarURL:)`.
@@ -175,6 +182,25 @@ struct RecordingNavigationFeed: Sendable {
     var inputs: AsyncStream<NavigationInput> { tap.inputs }
     /// Inputs dropped so far because the consumer fell behind.
     var droppedInputs: Int { tap.droppedInputs }
+}
+
+/// What the session knows about why a run ended (UX-20), handed to the
+/// navigation service with the feed (`RecordingNavigationFeed.runEnd`).
+/// Written on the main actor before the run's tap finishes, read by the
+/// service after the feed has drained.
+final class NavigationRunEnd: Sendable {
+    private let state = OSAllocatedUnfairLock(initialState: false)
+
+    init() {}
+
+    /// The car's engine is known to be off: Navigate's auto-stop (no OBD
+    /// for `autoStopAfter`). The saved estimate is then classed with
+    /// `engineOff` (`NavigationEngine.restoreClass(at:engineOff:)`).
+    var engineOff: Bool { state.withLock { $0 } }
+
+    func markEngineOff() {
+        state.withLock { $0 = true }
+    }
 }
 
 /// Wires sensors, the OBD link and the writer into one recording.
@@ -375,7 +401,9 @@ struct RecordingNavigationFeed: Sendable {
 ///   screen locked; it is released when the session's sources stop.
 ///   Background and foreground reset nothing and write nothing: the engine
 ///   keeps its state, and any time the app is suspended anyway is a gap in
-///   every stream like any other. `backgroundRiskWarning` stays a Record
+///   every stream like any other. On background `onFlush` runs inside a
+///   background task (UX-20: the service saves the estimate it restores
+///   from after a kill). `backgroundRiskWarning` stays a Record
 ///   concern.
 /// - `willTerminate` ends the session.
 @MainActor
@@ -469,7 +497,8 @@ final class RecordingSession {
     /// Awaited inside the background task of the flush on `.background` and
     /// on a memory warning, after the log's own flush (R14.1-4): `AppServices`
     /// flushes the navigation sidecar here, which is otherwise flushed only
-    /// every 10 s.
+    /// every 10 s, and the service saves the estimate (UX-20). Also awaited
+    /// on `.background` while Navigate runs (no log to flush first).
     @ObservationIgnored var onFlush: (@Sendable () async -> Void)?
     /// Navigate mode (UX-1; see the type's doc and `NavigateState`). Always
     /// `.off` until `enableNavigate(_:)`.
@@ -979,8 +1008,14 @@ final class RecordingSession {
         case .background:
             // UX-1: a Navigate fix in its undo window reaches the engine
             // before the app is suspended, as a recording's is written.
-            // Nothing else: no row, no flush, nothing reset.
-            if navigate != nil { commitAllPendingManualFixes() }
+            // No row and nothing reset; UX-20: the navigation service saves
+            // the estimate (`onFlush`) inside a background task, so a kill
+            // in the background restores from now, not from the last 5 s
+            // save.
+            if navigate != nil {
+                commitAllPendingManualFixes()
+                flushNavigationInBackgroundTask()
+            }
             guard let rec = recording, rec.isWritable else { return }
             // A fix in its undo window is written now (R14.3-3): iOS may kill
             // the app after this, and the driver saw the fix as recorded.
@@ -1357,6 +1392,18 @@ final class RecordingSession {
             // delivers each failure once on `failures` (rule 4).
             try? await writer.flush()
             await alsoFlush?()
+            endBackgroundTask()
+        }
+    }
+
+    /// Navigate on `.background` (UX-20): `onFlush` (the navigation
+    /// service saves the estimate and waits for the file) inside a
+    /// background task. No log, so nothing else to flush.
+    private func flushNavigationInBackgroundTask() {
+        guard let alsoFlush = onFlush else { return }
+        let endBackgroundTask = beginBackgroundTask("DriveLogger.flush.navigate")
+        Task {
+            await alsoFlush()
             endBackgroundTask()
         }
     }
@@ -1756,6 +1803,9 @@ final class RecordingSession {
         guard navigate === nav, case .waitingForOBD(let since) = navigateState,
               let configuration = navigateConfiguration,
               since.duration(to: .now) >= configuration.autoStopAfter else { return }
+        // UX-20: no OBD for the auto-stop's 5 min: the engine is off, which
+        // the estimate saved at the run's end records as its class.
+        nav.runEnd.markEngineOff()
         endNavigate(nav)
         updateIdleTimer()
     }
@@ -1796,7 +1846,8 @@ final class RecordingSession {
         navigateState = .calibrating
         navigateStartedAt = .now
         onNavigationFeed?(RecordingNavigationFeed(
-            generation: nav.generation, header: header, clock: clock, output: .navigateOnly, tap: navigationTap))
+            generation: nav.generation, header: header, clock: clock, output: .navigateOnly, tap: navigationTap,
+            runEnd: nav.runEnd))
         replayStartupInit(nav)
         startSources(nav)
         nav.liveTimer = Task { [weak self, weak nav] in

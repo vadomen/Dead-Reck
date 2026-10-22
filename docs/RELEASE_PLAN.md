@@ -170,7 +170,7 @@ Normal use needs an OBD-II Bluetooth LE adapter (ELM327-compatible) in the car, 
 4. Tap Stop demo to return to the normal map.
 The demo works offline and stores nothing. A video of a real drive: <VIDEO LINK>
 
-Bluetooth is used only to talk to the OBD-II adapter. Location (When In Use) gives the map position and GPS fixes. Navigate keeps a background location activity session so the position continues while the screen is locked during a drive. No personal data leaves the phone; the only network use is downloading road maps, which reveals the requested region and the IP address to our server. There are no accounts or analytics. Road maps are optional OpenStreetMap data downloaded from our website.
+Bluetooth is used only to talk to the OBD-II adapter. Location (When In Use) gives the map position and GPS fixes. Navigate keeps a background location activity session so the position continues while the screen is locked during a drive. No personal data leaves the phone. The map uses Apple Maps (MapKit); road maps are downloaded from our website, which reveals the requested region and the IP address. There are no accounts or analytics. Road maps are optional OpenStreetMap data downloaded from our website.
 ```
 
 ## Phase 7. Submission and release

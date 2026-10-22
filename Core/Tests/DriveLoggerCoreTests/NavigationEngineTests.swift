@@ -379,4 +379,31 @@ struct NavigationEngineTests {
         let expected = 100 * base * base / (base * base + (base + 8) * (base + 8))
         #expect(abs(stale - expected) < 1, "stale update pulled \(stale) m, expected \(expected) m")
     }
+
+    @Test("NAV-INITSTALE: a stale fix's σ grows by max(k, its own valid speed) × age")
+    func staleFixSigmaGrowsWithFixSpeed() throws {
+        let config = S.config(particles: 50)
+        let k = ErrorEllipse.chiSquare95.squareRoot()
+        let base = 10 / 1.51
+        func initialSigma(speed: Double, speedAccuracy: Double, age: Double, growth: Double = 1) throws -> Double {
+            var c = config
+            c.staleFixSigmaGrowthMps = growth
+            var engine = NavigationEngine(config: c)
+            engine.ingest(.obd(OBDSample(pid: .vehicleSpeed, value: 0, unit: .kilometersPerHour, ecu: "7E8"),
+                               at: S.ms(age - 0.01)))
+            engine.ingest(.location(LocationSample(latitude: 0, longitude: 0, altitude: 0, horizontalAccuracy: 10,
+                                                   verticalAccuracy: -1, speed: speed, speedAccuracy: speedAccuracy,
+                                                   course: -1, courseAccuracy: -1, receivedT: S.ms(age), ageS: age),
+                                    at: .zero))
+            return try #require(engine.estimate(at: S.ms(age))).ellipse.semiMajorM / k
+        }
+        // The debrief's case: 46 s old, taken at 13 km/h.
+        #expect(abs(try initialSigma(speed: 3.6, speedAccuracy: 1, age: 46) - (base + 3.6 * 46)) < 1e-6)
+        // Slower than k, or no valid speed: k × age, as before.
+        #expect(abs(try initialSigma(speed: 0.4, speedAccuracy: 1, age: 46) - (base + 46)) < 1e-6)
+        #expect(abs(try initialSigma(speed: 3.6, speedAccuracy: -1, age: 46) - (base + 46)) < 1e-6)
+        // Not stale: no growth; growth disabled: none either.
+        #expect(abs(try initialSigma(speed: 20, speedAccuracy: 1, age: 4) - base) < 1e-6)
+        #expect(abs(try initialSigma(speed: 3.6, speedAccuracy: 1, age: 46, growth: 0) - base) < 1e-6)
+    }
 }

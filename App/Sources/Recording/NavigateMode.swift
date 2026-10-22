@@ -93,6 +93,10 @@ final class NavigateRun: SessionRun {
     /// `LogSink.tapOnly(navigationTap.tap)`.
     let sink: LogSink
     let navigationTap: NavigationTap
+    /// Why the session ended, for the estimate saved at its end (UX-20):
+    /// the auto-stop marks the engine off. Handed to the service with the
+    /// feed.
+    let runEnd = NavigationRunEnd()
     /// D7 revised (2026-10-20): like a recording, so the estimate continues
     /// with the screen locked; released when the session ends (its sources
     /// stop: `disableNavigate`, auto-stop, Record's Start, `willTerminate`).

@@ -782,7 +782,8 @@ struct GPSMapView: View {
     private var bottomItems: [MapBottomItem] {
         MapBottomZone.items(
             offer: offerCard != nil, toast: toast != nil, status: statusLine != nil,
-            positionStatus: estimate != nil, roadsWarning: roadsWarning != nil, resumeHint: follow.resumeDeadline != nil,
+            positionStatus: estimate != nil, restoreStatus: estimate.map { RestoreStatus.line($0.restore) != nil } ?? false,
+            roadsWarning: roadsWarning != nil, resumeHint: follow.resumeDeadline != nil,
             debugSetting: showNavStats)
     }
 
@@ -805,6 +806,7 @@ struct GPSMapView: View {
         case .toast: if let toast { toastView(toast) }
         case .statusLine: statusLine
         case .positionStatus: if let estimate { PositionStatusLine(feed: estimate) }
+        case .restoreStatus: if let estimate { RestoreStatusLine(feed: estimate) }
         case .roadsWarning: if let roadsWarning { roadsWarningView(roadsWarning) }
         case .resumeHint: resumeHint
         case .debugStrip: MapDebugStrip(lines: DebugStrip.lines(stats: navigation?.stats))

@@ -423,6 +423,18 @@ Items 1-7 above (demo pipeline) and the airplane-mode check (item 1) cover the d
 7. **Not persisted:** every new Navigate or Record starts with GPS on, also after a relaunch with the switch off.
 8. **Map POIs:** the map (and the demo) shows no Apple Maps points of interest; street names stay.
 
+### Added by UX-20 restore the estimate (prompt 39, branch `ux20-restore`) — not verified on a device
+1. **Next-morning start:** park, leave the phone overnight, start Navigate on OBD: the arrow shows at once with "Restored · … · not yet confirmed" until the first GNSS or Wi-Fi fix, then the line goes.
+2. **Car moved by someone else:** park, switch off, move the car (tow, valet), start Navigate: the first Wi-Fi/GNSS fix reseeds the position and the line goes.
+3. **Kill mid-drive:** swipe the app away while driving, relaunch Navigate: the arrow resumes near the true position with a widened ellipse.
+4. **Record Stop → Navigate:** stop a recording while driving, Record's heading converged; Navigate keeps the arrow, is converged at once (no calibrating-heading phase) and shows no "Restored" line (a hand-over within 10 s is confirmed at once, user decision 2026-10-22). Stop a recording before its heading converged (arrow not yet shown): the line shows until the first GNSS or Wi-Fi fix.
+5. **`kern.bootsessionuuid`:** readable on the phone (the simulator reads it; the boot session ID test is simulator-only).
+6. **Save file:** `NavigationRestore/estimate.json` is excluded from backup and has protection `completeUntilFirstUserAuthentication` (written while the phone is locked, read after a reboot and first unlock).
+7. **Background save:** the save on `.background` completes before suspension (kill the app from the switcher right after backgrounding, relaunch: the restored position is the last one).
+8. **First OBD reply after ignition-on:** note how fast it comes; it decides how long the restored prior waits for the parked-or-moving decision. Pull out of the space at once, before the adapter answers: a first reply under 10 km/h keeps the restored arrow (slightly wider ellipse); 10 km/h or more after a park longer than about 2 min drops it until a fix.
+9. **Parked prior, OBD not yet on:** park overnight, open Navigate before ignition on, stop it, start Navigate again after more than 3 min (the moving-class cap is reached at ~135 s, so a shorter wait cannot tell): the Restored line appears (the parked class was kept).
+10. **Stop Record while Navigate's start waits for it:** stop Record while Navigate's start is still waiting for it, then start a new recording at once: the map keeps showing the recording (never idle), and no Restored line shows during Record.
+
 ### Added by run 60, push_packs.sh app guard (not verified on a device)
 1. **Process list shape:** with the phone connected and unlocked and the app open, save `xcrun devicectl device info processes --device <id> --json-output -` and check that `result.runningProcesses[].executable` holds a `file:///…/DriveLogger.app/DriveLogger` URL (the parser's shape was inferred from devicectl's strings, never seen in real output). If the shape differs, the guard refuses ("cannot tell whether the app is running"); fix the parser rather than using `--force` by habit.
 2. **Suspended app:** leave the app in the app switcher (not swiped away) and run `scripts/push_packs.sh --dry-run`: Guard 1 reports it would refuse. Swipe it away: Guard 1 is clear.

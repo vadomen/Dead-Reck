@@ -157,11 +157,12 @@ public struct NavigationConfig: Hashable, Sendable, Codable {
     public var networkFixCorrelationS = 60.0
     /// A stale fix — older than `staleFixAgeS` at ingest: a pre-session fix
     /// from minutes ago, or a fix delivered after a relaunch mid-drive — has
-    /// its σ grown by this speed × its age, m/s: the car may have moved while
-    /// nothing observed it. Applies to initialisation and to updates.
-    /// 1.0 m/s (about walking speed, or a car repositioned unobserved);
-    /// adopted in N2.3 under the mean-based rule (docs/NAVIGATION.md). 0
-    /// disables.
+    /// its σ grown by max(this, the fix's own valid speed) × its age, m/s:
+    /// the car may have moved while nothing observed it, at about the speed
+    /// it had when the fix was taken (NAV-INITSTALE). Applies to
+    /// initialisation and to updates. 1.0 m/s (about walking speed, or a car
+    /// repositioned unobserved); adopted in N2.3 under the mean-based rule
+    /// (docs/NAVIGATION.md). 0 disables (the fix speed too).
     public var staleFixSigmaGrowthMps = 1.0
     /// Age at ingest beyond which a fix is stale, s.
     public var staleFixAgeS = 5.0
