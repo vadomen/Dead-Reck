@@ -585,6 +585,17 @@ without a prior writes byte-identical sidecars and replay results.
   `unconfirmed`, `confirmed`, `rejected`, with the reason, the decision's
   time and the save time (`ageS(at:)` for "Restored · n min ago · not yet
   confirmed").
+- **In the app** (`NavigationService`, `NavigationRestoreStore`): every run,
+  Record's too, saves its estimate every 5 s from the ingest path, at the
+  run's end (the auto-stop) and on `flush()` (background). The file is
+  `Application Support/NavigationRestore/estimate.json`, excluded from
+  backup, `completeUntilFirstUserAuthentication`, replaced atomically; one
+  serial queue orders every save, load and delete, and an unreadable file is
+  deleted (the run starts fresh). Only a Navigate run reads it (younger than
+  24 h); a recording starts a fresh engine. A Navigate run waits for earlier
+  runs to end, so after Record's Stop it restores from the save Record's
+  engine made at its end (the hand-over above). Record-start restore is not
+  built yet. Nothing is logged: no coordinate reaches the system log.
 
 ### Estimate
 

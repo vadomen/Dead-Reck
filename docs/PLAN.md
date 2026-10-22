@@ -423,6 +423,16 @@ Items 1-7 above (demo pipeline) and the airplane-mode check (item 1) cover the d
 7. **Not persisted:** every new Navigate or Record starts with GPS on, also after a relaunch with the switch off.
 8. **Map POIs:** the map (and the demo) shows no Apple Maps points of interest; street names stay.
 
+### Added by UX-20 restore the estimate (prompt 39, branch `ux20-restore`) — not verified on a device
+1. **Next-morning start:** park, leave the phone overnight, start Navigate on OBD: the arrow shows at once with "Restored · … · not yet confirmed" until the first GNSS or Wi-Fi fix, then the line goes.
+2. **Car moved by someone else:** park, switch off, move the car (tow, valet), start Navigate: the first Wi-Fi/GNSS fix reseeds the position and the line goes.
+3. **Kill mid-drive:** swipe the app away while driving, relaunch Navigate: the arrow resumes near the true position with a widened ellipse.
+4. **Record Stop → Navigate:** stop a recording while driving; Navigate keeps the arrow and is converged at once (no calibrating-heading phase).
+5. **`kern.bootsessionuuid`:** readable on the phone (the simulator reads it; the boot session ID test is simulator-only).
+6. **Save file:** `NavigationRestore/estimate.json` is excluded from backup and has protection `completeUntilFirstUserAuthentication` (written while the phone is locked, read after a reboot and first unlock).
+7. **Background save:** the save on `.background` completes before suspension (kill the app from the switcher right after backgrounding, relaunch: the restored position is the last one).
+8. **First OBD reply after ignition-on:** note how fast it comes; it decides how long the restored prior waits for the parked-or-moving decision.
+
 ### Added by run 60, push_packs.sh app guard (not verified on a device)
 1. **Process list shape:** with the phone connected and unlocked and the app open, save `xcrun devicectl device info processes --device <id> --json-output -` and check that `result.runningProcesses[].executable` holds a `file:///…/DriveLogger.app/DriveLogger` URL (the parser's shape was inferred from devicectl's strings, never seen in real output). If the shape differs, the guard refuses ("cannot tell whether the app is running"); fix the parser rather than using `--force` by habit.
 2. **Suspended app:** leave the app in the app switcher (not swiped away) and run `scripts/push_packs.sh --dry-run`: Guard 1 reports it would refuse. Swipe it away: Guard 1 is clear.
