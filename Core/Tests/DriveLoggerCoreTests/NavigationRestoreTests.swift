@@ -543,6 +543,60 @@ struct NavigationRestoreTests {
         #expect(newer.restore.fixesOlderThanSave == 0)
     }
 
+    @Test func cachedFixOlderThanTheSaveIsIgnoredAfterAHandOverConfirmation() throws {
+        // Record stopped at a light 1 s ago, converged: confirmed by the
+        // hand-over at the first input. A cached fix from before the save,
+        // where the car stands, is still older information than the state:
+        // ignored, and the cloud is the one the same run without it gives.
+        let prior = Self.handOverPrior(gapS: 1, converged: true, restoreClass: .standingStop)
+        let p = S.plane.geodetic(east: Self.parkedEast, north: Self.parkedNorth)
+        let cached = LogEvent.location(
+            LocationSample(latitude: p.latitude, longitude: p.longitude, altitude: 0, horizontalAccuracy: 5,
+                           verticalAccuracy: -1, speed: 0, speedAccuracy: 0.3, course: -1, courseAccuracy: -1,
+                           receivedT: S.ms(0.2), ageS: 2.2),
+            at: S.ms(-2))
+        let with = Self.run(Self.events(fixes: .none, extra: [cached]), prior: prior, until: 2)
+        let without = Self.run(Self.events(fixes: .none), prior: prior, until: 2)
+        #expect(with.restore.status == .confirmed && with.restore.reason == .handOver)
+        #expect(with.restore.fixesOlderThanSave == 1)
+        #expect(with.counters.fixesUsed == 0)
+        let a = try #require(with.estimate(at: S.ms(2)))
+        let b = try #require(without.estimate(at: S.ms(2)))
+        #expect(a.ellipse.semiMajorM > 25, "the grown prior, not shrunk to a 5 m fix: \(a.ellipse.semiMajorM)")
+        #expect(a == b)
+    }
+
+    @Test func rejectedParkedPriorWithoutOBDReleasesTheParkedHold() throws {
+        // No OBD at all, cruising at a constant 12 m/s from the first input
+        // (no acceleration to clear the hold through the IMU), the stopped
+        // prior 2.6 km from the car: the first clean fix rejects it, and the
+        // prior's parked hold goes with it. The run then matches a run
+        // without a prior instead of freezing at speed 0.
+        let cruise = S(initialHeadingDeg: Self.headingDeg, initialSpeed: 12, [.straight(seconds: 30, speed: 12)])
+        let clean = S.cleanFix(accuracy: 5, positionNoise: 1)
+        let moved = 2600.0
+        let events = cruise.events(gyroNoise: 0.001, obdSpeed: { _, _ in nil }, fix: { t, state, rng in
+            var f = clean(t, state, &rng)
+            f?.east += Self.parkedEast + moved
+            f?.north += Self.parkedNorth
+            return f
+        })
+        let engine = Self.run(events, prior: Self.prior(.parked, gapS: 600))
+        #expect(engine.restore.status == .rejected && engine.restore.reason == .fix)
+        let decided = try #require(engine.restore.decidedT)
+        #expect(decided <= S.ms(0.1), "the first fix rejects")
+        let atRejection = Self.run(events, prior: Self.prior(.parked, gapS: 600), until: decided.seconds)
+        #expect(atRejection.restore.status == .rejected)
+        #expect(engine.counters.staleParkedSteps == atRejection.counters.staleParkedSteps,
+                "no parked step after the rejection")
+        let fresh = Self.run(events, prior: nil)
+        let end = S.ms(cruise.duration)
+        let a = try #require(engine.estimate(at: end))
+        let b = try #require(fresh.estimate(at: end))
+        let pb = S.plane.enu(latitude: b.latitude, longitude: b.longitude)
+        #expect(Self.distance(a, east: pb.east, north: pb.north) < 5, "\(Self.distance(a, east: pb.east, north: pb.north)) m")
+    }
+
     // MARK: Determinism, no prior
 
     @Test func seededRunIsDeterministic() {
