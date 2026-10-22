@@ -237,6 +237,75 @@ struct RecordingAnalysisTests {
         v3.formatVersion = .v3
         #expect(!RecordingAnalyzer(header: v3).summary(report: empty).render().contains("GPS switch"))
     }
+
+    @Test("A navPrior row: one Nav prior line with t, estimateT, age, class, converged, σ, heading, speeds, source; no warning")
+    func navPrior() {
+        var header = F.header
+        header.formatVersion = .v5
+        var analyzer = RecordingAnalyzer(header: header)
+        analyzer.observe(LogEvent(timestamp: .zero, payload: .lifecycle(LifecycleSample(.start))))
+        analyzer.observe(LogEvent(timestamp: F.ms(2), payload: .navPrior(NavPriorSampleTests.sample)))
+        analyzer.observe(StatsFixtures.motion(at: 10))
+        let summary = analyzer.summary(report: LogReadReport(members: 1, truncatedTail: false, skippedLineIndices: []))
+        #expect(summary.navPriors == [RecordingSummary.NavPrior(t: F.ms(2), sample: NavPriorSampleTests.sample)])
+        #expect(summary.kinds.first { $0.kind == "navPrior" }?.count == 1)
+        #expect(!summary.healthWarnings.contains { $0.contains("navPrior") }, "\(summary.healthWarnings)")
+
+        let text = summary.render()
+        // σ: major axis of [[25, -2.5], [-2.5, 36]] = sqrt(36.54...) = 6.0 m.
+        let needle = "Nav prior     0.002 s  estimate -0.850 s (0.852 s old)  moving converged  σ 6.0 m"
+            + "  heading 271.5° ± 3.2°  22.2 m/s  OBD 80 km/h  (navigate)  0.0125000, -0.0250000"
+        #expect(text.contains(needle), "missing \(needle) in\n\(text)")
+    }
+
+    @Test("No navPrior: a v5 recording says navigation started fresh, an older one says nothing")
+    func noNavPrior() {
+        let empty = LogReadReport(members: 1, truncatedTail: false, skippedLineIndices: [])
+        var v5 = F.header
+        v5.formatVersion = .v5
+        #expect(RecordingAnalyzer(header: v5).summary(report: empty).render().contains("Nav prior     none (navigation started fresh)"))
+        var v4 = F.header
+        v4.formatVersion = .v4
+        #expect(!RecordingAnalyzer(header: v4).summary(report: empty).render().contains("Nav prior"))
+    }
+
+    @Test("navPrior health: more than one row, a row after the first engine input, an invalid row each warn")
+    func navPriorWarnings() {
+        var header = F.header
+        header.formatVersion = .v5
+        var analyzer = RecordingAnalyzer(header: header)
+        analyzer.observe(LogEvent(timestamp: F.ms(1), payload: .navPrior(NavPriorSampleTests.sample)))
+        analyzer.observe(StatsFixtures.motion(at: 10))
+        var late = NavPriorSampleTests.sample
+        late.restoreClass = "towed"
+        analyzer.observe(LogEvent(timestamp: F.ms(20), payload: .navPrior(late)))
+        let summary = analyzer.summary(report: LogReadReport(members: 1, truncatedTail: false, skippedLineIndices: []))
+        #expect(summary.navPriors.map(\.afterFirstInput) == [false, true])
+        let warnings = summary.healthWarnings
+        #expect(warnings.contains("2 navPrior rows (the recorder writes at most one)"))
+        #expect(warnings.contains("navPrior row after the first motion, location or obd row"))
+        #expect(warnings.contains("navPrior row invalid (restoreClass): a replay starts fresh"))
+        let text = summary.render()
+        #expect(text.contains("Nav prior     2\n  0.001 s  estimate -0.850 s"), "\(text)")
+        #expect(text.contains("\n  0.020 s  estimate -0.850 s (0.870 s old)  towed converged"), "\(text)")
+
+        // Each engine input kind counts as the first input.
+        for input in [StatsFixtures.motion(at: 1), LogEvent.location(LogFixtures.location, at: F.ms(1)),
+                      AnalysisFixtures.obd(seq: 1, requestMs: 0, replyMs: 1)] {
+            var a = RecordingAnalyzer(header: header)
+            a.observe(input)
+            a.observe(LogEvent(timestamp: F.ms(2), payload: .navPrior(NavPriorSampleTests.sample)))
+            let s = a.summary(report: LogReadReport(members: 1, truncatedTail: false, skippedLineIndices: []))
+            #expect(s.navPriors.first?.afterFirstInput == true, "\(input.payload.kind)")
+        }
+        // Other rows before it do not.
+        var b = RecordingAnalyzer(header: header)
+        b.observe(LogEvent(timestamp: .zero, payload: .lifecycle(LifecycleSample(.start))))
+        b.observe(LogEvent(timestamp: .zero, payload: .link(LinkSample(layer: "ble", from: "idle", to: "scanning"))))
+        b.observe(LogEvent(timestamp: .zero, payload: .accelerometer(.zero)))
+        b.observe(LogEvent(timestamp: F.ms(2), payload: .navPrior(NavPriorSampleTests.sample)))
+        #expect(b.summary(report: LogReadReport(members: 1, truncatedTail: false, skippedLineIndices: [])).healthWarnings.isEmpty)
+    }
 }
 
 @Suite("Recording CSV")
@@ -263,6 +332,7 @@ struct RecordingCSVTests {
             LogEvent(timestamp: t, payload: .unrecognized(kind: "future/kind", data: .object(["a": .int(1)]))),
             LogEvent(timestamp: t, payload: .manualFix(ManualFixSample(latitude: 0, longitude: 0, pressedT: t, speedSource: "unknown"))),
             LogEvent(timestamp: t, payload: .gpsSwitch(GPSSwitchSample(on: false, source: .driver))),
+            LogEvent(timestamp: t, payload: .navPrior(NavPriorSampleTests.sample)),
         ]
     }()
 
@@ -316,6 +386,27 @@ struct RecordingCSVTests {
         let on = LogEvent(timestamp: MonotonicTimestamp(nanoseconds: 2_000_000_000), payload: .gpsSwitch(GPSSwitchSample(on: true, source: "auto")))
         #expect(RecordingCSV.values(for: on) == ["2000000000", "true", "auto"])
         #expect(RecordingCSV.fileName(for: "gpsSwitch") == "gpsSwitch.csv")
+    }
+
+    @Test("navPrior.csv has t, estimateT and every field; an absent OBD speed is an empty cell")
+    func navPriorValues() {
+        #expect(RecordingCSV.columns(for: "navPrior") == [
+            "t", "estimateT", "latitude", "longitude", "covEE", "covEN", "covNN", "headingDeg", "headingStdDeg",
+            "converged", "speedMps", "obdSpeedKmh", "restoreClass", "source",
+        ])
+        let row = LogEvent(timestamp: MonotonicTimestamp(nanoseconds: 2_000_000), payload: .navPrior(NavPriorSampleTests.sample))
+        #expect(RecordingCSV.values(for: row) == [
+            "2000000", "-850000000", "0.0125", "-0.025", "25.0", "-2.5", "36.0", "271.5", "3.25",
+            "true", "22.25", "80.0", "moving", "navigate",
+        ])
+        var other = NavPriorSampleTests.sample
+        other.obdSpeedKmh = nil
+        other.converged = false
+        other.source = "auto"
+        other.restoreClass = "towed"
+        let values = RecordingCSV.values(for: LogEvent(timestamp: .zero, payload: .navPrior(other)))
+        #expect(values[9] == "false" && values[11] == "" && values[12] == "towed" && values[13] == "auto")
+        #expect(RecordingCSV.fileName(for: "navPrior") == "navPrior.csv")
     }
 
     @Test("The exporter writes one CSV per kind with a header row")

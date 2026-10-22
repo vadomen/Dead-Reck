@@ -149,9 +149,15 @@ struct RecordingNavigationFeed: Sendable {
     /// the saved estimate's class (`engineOff`). Default: a fresh one,
     /// never set.
     let runEnd: NavigationRunEnd
+    /// The `navPrior` row this recording writes (format v5, the Navigate →
+    /// Record hand-over), exactly as written, on `clock`: the run starts
+    /// from `navPrior?.navigationPrior`, as a replay of the file does. nil:
+    /// no row, the run starts fresh. Always nil in Navigate.
+    let navPrior: NavPriorSample?
 
     init(generation: Int, header: LogHeader, clock: SessionClock, output: Output, tap: NavigationTap,
-         recordRoadPacks: @escaping @Sendable (String) -> Void = { _ in }, runEnd: NavigationRunEnd = NavigationRunEnd()) {
+         recordRoadPacks: @escaping @Sendable (String) -> Void = { _ in }, runEnd: NavigationRunEnd = NavigationRunEnd(),
+         navPrior: NavPriorSample? = nil) {
         self.generation = generation
         self.header = header
         self.clock = clock
@@ -159,14 +165,16 @@ struct RecordingNavigationFeed: Sendable {
         self.tap = tap
         self.recordRoadPacks = recordRoadPacks
         self.runEnd = runEnd
+        self.navPrior = navPrior
     }
 
     /// A recording's feed: `output` is `.recording(recordingURL:sidecarURL:)`.
     init(generation: Int, header: LogHeader, clock: SessionClock, recordingURL: URL, sidecarURL: URL,
-         tap: NavigationTap, recordRoadPacks: @escaping @Sendable (String) -> Void = { _ in }) {
+         tap: NavigationTap, recordRoadPacks: @escaping @Sendable (String) -> Void = { _ in },
+         navPrior: NavPriorSample? = nil) {
         self.init(generation: generation, header: header, clock: clock,
                   output: .recording(recordingURL: recordingURL, sidecarURL: sidecarURL), tap: tap,
-                  recordRoadPacks: recordRoadPacks)
+                  recordRoadPacks: recordRoadPacks, navPrior: navPrior)
     }
 
     /// The `.jsonl.gz` being written; nil in Navigate.
@@ -229,16 +237,18 @@ final class NavigationRunEnd: Sendable {
 /// negative `t`, never clamped — and then lets its link-event loop skip the
 /// next `deliveredLinkEventCount − consumed` events (delivered before Start:
 /// either in the replay or pre-Start poll traffic, which is not written).
-/// Placement: right after the `start` row, before any other row; the `start`
-/// row stays the first line, and the first `stats` window still starts at
-/// `t ≈ 0` (the writer starts it at the first row it sees). Each recording
-/// replays once, at its own Start; an init during a recording arrives live.
+/// Placement: right after the `start` row (and the `navPrior` row, when
+/// there is one), before any other row; the `start` row stays the first
+/// line, and the first `stats` window still starts at `t ≈ 0` (the writer
+/// starts it at the first row it sees). Each recording replays once, at
+/// its own Start; an init during a recording arrives live.
 /// Nothing is replayed when the link isn't connected at Start (M6.1-1: the
 /// link then returns an empty `lastInitEvents`); the skip still applies, so
 /// no pre-Start event is written either way.
 ///
 /// **Rows it writes** (`lifecycle` unless noted): `start` (detail `without
-/// OBD: …` when started without a polling link), the replayed start-up
+/// OBD: …` when started without a polling link), `navPrior` (format v5, at
+/// most one; "Hand-over prior" below), the replayed start-up
 /// init (`link`, `elm`, `adapter`; above), `locationAuthorization` (one per
 /// `LocationAuthorizationReporting` source, after the source rows: phone
 /// builds), `roadPacks` (once, when the road-pack library scan started at
@@ -356,6 +366,19 @@ final class NavigationRunEnd: Sendable {
 /// sample — so no input of the recording precedes the hand-off. The feed's
 /// stream ends when the recording's writer has finished (either end path).
 /// The writer, the rows and the `stats` rows are unchanged by the tap.
+///
+/// **Hand-over prior (v5, prompt 40).** At Start, after Navigate has ended
+/// and the recording's clock exists, in the same synchronous main-actor
+/// step, the session asks `navPriorProvider` once for the estimate the
+/// recording's navigation run starts from, on the new clock. A sample it
+/// returns is written as the `navPrior` row right after the `start` row,
+/// stamped `clock.now()`: before the start-up init replay (which can carry
+/// `obd` rows) and every source sample, so before any engine input in
+/// file order. The same sample goes into the feed (`navPrior`). nil, or no
+/// provider: no row, and the file is exactly what it was before v5. A
+/// sample with an `invalidField` is not written and not handed over (the
+/// run starts fresh); an `error` row with detail `navPrior invalid:
+/// <field>` says so. Navigate runs never ask.
 ///
 /// **Navigate (UX-1).** Off until `enableNavigate(_:)` (the app enables it
 /// at launch; tests that don't are Record-only and see exactly the session
@@ -494,6 +517,15 @@ final class RecordingSession {
     /// don't consume here). nil: nobody listens, and the tap's buffer simply
     /// drops the oldest inputs; the log is unaffected.
     @ObservationIgnored var onNavigationFeed: (@MainActor (RecordingNavigationFeed) -> Void)?
+    /// The Navigate → Record hand-over (v5; the type's doc, "Hand-over
+    /// prior"): called once per recording, synchronously in `start` after
+    /// Navigate has ended and before `onNavigationFeed`, with the
+    /// recording's clock. Returns the estimate the recording's navigation
+    /// run starts from, with `estimateT` already on that clock (e.g.
+    /// `NavPriorSample(handOver:clock:)` of the Navigate run's last
+    /// capture), or nil to start fresh. Must not block. nil (the default):
+    /// no `navPrior` row, ever.
+    @ObservationIgnored var navPriorProvider: (@MainActor (SessionClock) -> NavPriorSample?)?
     /// Awaited inside the background task of the flush on `.background` and
     /// on a memory warning, after the log's own flush (R14.1-4): `AppServices`
     /// flushes the navigation sidecar here, which is otherwise flushed only
@@ -759,6 +791,10 @@ final class RecordingSession {
         obdSpeedUptime = nil
         state = .calibrating
         updateIdleTimer()
+        // v5 hand-over: asked once, on this recording's clock; written below.
+        let offeredPrior = navPriorProvider?(clock)
+        let invalidPriorField = offeredPrior?.invalidField
+        let navPrior = invalidPriorField == nil ? offeredPrior : nil
         onNavigationFeed?(RecordingNavigationFeed(
             generation: rec.generation,
             header: header,
@@ -768,10 +804,18 @@ final class RecordingSession {
             tap: navigationTap,
             recordRoadPacks: { [weak self] detail in
                 Task { @MainActor in self?.recordRoadPacks(detail, in: rec) }
-            }
+            },
+            navPrior: navPrior
         ))
 
         rec.record(LifecycleSample(.start, detail: polling ? nil : "without OBD: link \(Self.describe(link.state))"))
+        // Right after `start`, before the start-up init replay and every
+        // source: no engine input precedes it in the file.
+        if let navPrior {
+            rec.sink.record(LogEvent(timestamp: clock.now(), payload: .navPrior(navPrior)))
+        } else if let invalidPriorField {
+            rec.record(LifecycleSample(.error, detail: "navPrior invalid: \(invalidPriorField)"))
+        }
         // Still the same synchronous step: no suspension since `polling` was
         // read, so no link event can be consumed between the reads and the
         // replay rows, and no live link row precedes them.

@@ -27,6 +27,9 @@ public struct RecordingAnalyzer {
     private var markers: [RecordingSummary.Marker] = []
     private var manualFixes: [RecordingSummary.ManualFix] = []
     private var gpsSwitches: [RecordingSummary.GPSSwitch] = []
+    private var navPriors: [RecordingSummary.NavPrior] = []
+    /// A `motion`, `location` or `obd` row (an engine input) has been seen.
+    private var sawEngineInput = false
     private var stats = StatsAccumulation()
 
     public init(header: LogHeader) {
@@ -71,8 +74,14 @@ public struct RecordingAnalyzer {
             manualFixes.append(RecordingSummary.ManualFix(t: event.timestamp, sample: sample))
         case .gpsSwitch(let sample):
             gpsSwitches.append(RecordingSummary.GPSSwitch(t: event.timestamp, sample: sample))
+        case .navPrior(let sample):
+            navPriors.append(RecordingSummary.NavPrior(t: event.timestamp, sample: sample, afterFirstInput: sawEngineInput))
         default:
             break
+        }
+        switch event.payload {
+        case .motion, .location, .obd: sawEngineInput = true
+        default: break
         }
     }
 
@@ -105,6 +114,7 @@ public struct RecordingAnalyzer {
             markers: markers,
             manualFixes: manualFixes,
             gpsSwitches: gpsSwitches,
+            navPriors: navPriors,
             stats: stats.summary
         )
     }
@@ -308,6 +318,23 @@ public struct RecordingSummary: Hashable, Sendable {
         }
     }
 
+    /// A `navPrior` row (v5): the estimate the recording's navigation run
+    /// started from.
+    public struct NavPrior: Hashable, Sendable {
+        public var t: MonotonicTimestamp
+        public var sample: NavPriorSample
+        /// A `motion`, `location` or `obd` row came before it in the file
+        /// (the recorder writes it before every input; a replay may not
+        /// apply it).
+        public var afterFirstInput: Bool
+
+        public init(t: MonotonicTimestamp, sample: NavPriorSample, afterFirstInput: Bool = false) {
+            self.t = t
+            self.sample = sample
+            self.afterFirstInput = afterFirstInput
+        }
+    }
+
     public var header: LogHeader
     public var report: LogReadReport
     public var eventCount: Int
@@ -332,6 +359,8 @@ public struct RecordingSummary: Hashable, Sendable {
     public var manualFixes: [ManualFix]
     /// Every `gpsSwitch` row, in file order.
     public var gpsSwitches: [GPSSwitch]
+    /// Every `navPrior` row, in file order (the recorder writes at most one).
+    public var navPriors: [NavPrior] = []
     /// Aggregate of the recorder's own `stats` rows.
     public var stats: Stats?
 
@@ -388,6 +417,17 @@ public struct RecordingSummary: Hashable, Sendable {
         }
         if !errors.isEmpty {
             warnings.append("\(errors.count) lifecycle error row(s)")
+        }
+        if navPriors.count > 1 {
+            warnings.append("\(navPriors.count) navPrior rows (the recorder writes at most one)")
+        }
+        if navPriors.contains(where: \.afterFirstInput) {
+            warnings.append("navPrior row after the first motion, location or obd row")
+        }
+        for prior in navPriors {
+            if let field = prior.sample.invalidField {
+                warnings.append("navPrior row invalid (\(field)): a replay starts fresh")
+            }
         }
         return warnings
     }
@@ -480,6 +520,16 @@ public struct RecordingSummary: Hashable, Sendable {
         } else if header.formatVersion >= .v4 {
             out.append("GPS switch    none (GPS on throughout)")
         }
+        if navPriors.count == 1, let prior = navPriors.first {
+            out.append("Nav prior     " + Self.describe(prior))
+        } else if !navPriors.isEmpty {
+            out.append("Nav prior     \(navPriors.count)")
+            for prior in navPriors {
+                out.append("  " + Self.describe(prior))
+            }
+        } else if header.formatVersion >= .v5 {
+            out.append("Nav prior     none (navigation started fresh)")
+        }
         if let stats {
             let gaps = Self.counts(stats.totalGaps, order: StatsAccumulator.gapKinds.map(\.rawValue))
             out.append("Stats rows    \(stats.rows): motionHz min \(Self.format(stats.minMotionHz, 1)) mean \(Self.format(stats.meanMotionHz, 1)); obdHz min \(Self.format(stats.minObdHz, 1)) mean \(Self.format(stats.meanObdHz, 1)); queue depth max \(stats.maxQueueDepth); dropped \(stats.totalDropped); timeouts \(stats.totalTimeouts); gaps \(gaps.isEmpty ? "none" : gaps); \(stats.lastBytesWritten) bytes")
@@ -514,6 +564,23 @@ public struct RecordingSummary: Hashable, Sendable {
     /// `<t> s off|on (<source>)`.
     static func describe(_ change: GPSSwitch) -> String {
         "\(format(change.t.seconds, 1)) s \(change.sample.on ? "on" : "off") (\(change.sample.source))"
+    }
+
+    /// `<t> s  estimate <estimateT> s (<t − estimateT> s old)  <class>
+    /// converged|not converged  σ <major> m  heading <h>° ± <σ>°  <v> m/s
+    /// OBD <kmh> km/h|-  (<source>)  <lat>, <lon>`. Coordinates as for a
+    /// manual fix: user data, printed for the analyst running the tool on
+    /// their own recording.
+    static func describe(_ prior: NavPrior) -> String {
+        let s = prior.sample
+        let major = NavigationPrior.majorVariance(s.covEE, s.covEN, s.covNN).squareRoot()
+        var line = "\(format(prior.t.seconds, 3)) s  estimate \(format(s.estimateT.seconds, 3)) s"
+        line += " (\(format(s.estimateT.interval(to: prior.t), 3)) s old)"
+        line += "  \(s.restoreClass) \(s.converged ? "converged" : "not converged")"
+        line += "  σ \(format(major, 1)) m  heading \(format(s.headingDeg, 1))° ± \(format(s.headingStdDeg, 1))°"
+        line += "  \(format(s.speedMps, 1)) m/s  OBD \(s.obdSpeedKmh.map { "\(format($0, 0)) km/h" } ?? "-")"
+        line += "  (\(s.source))  \(format(s.latitude, 7)), \(format(s.longitude, 7))"
+        return line
     }
 
     static func format(_ value: Double, _ decimals: Int) -> String {

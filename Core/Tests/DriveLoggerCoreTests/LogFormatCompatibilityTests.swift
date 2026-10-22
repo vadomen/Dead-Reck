@@ -596,3 +596,139 @@ struct LogFormatCompatibilityV4Tests {
         #expect(String(decoding: line, as: UTF8.self) == #"{"data":{"on":false,"source":"driver"},"kind":"gpsSwitch","t":2000000000}"# + "\n")
     }
 }
+
+/// Format v5 counterpart. Same rule: frozen when v5 was introduced (prompt
+/// 40, the Navigate → Record hand-over) and never edited to fit a later
+/// change. v5 = v4 + the kind `navPrior`; the fixture has the row where the
+/// recorder writes it, right after the `start` row and before the start-up
+/// init replay (a `link` row stamped before the session, negative `t`) and
+/// every engine input, with a negative `estimateT`; then ordinary rows; and
+/// a second row whose `source` and `restoreClass` this build does not know,
+/// without `obdSpeedKmh`, kept verbatim (the recorder writes one; the
+/// second only pins the open vocabularies). Coordinates are small offsets
+/// from (0, 0): no real place.
+@Suite("Log format compatibility v5")
+struct LogFormatCompatibilityV5Tests {
+    let codec = LogCodec()
+
+    static let version5Recording = #"""
+        {"app":{"build":"41","name":"DriveLogger","version":"0.5.0"},"device":{"model":"iPhone16,1","systemName":"iOS","systemVersion":"18.6"},"formatVersion":5,"mount":"windscreen, portrait","polling":{"adaptiveTiming":1,"command":"010D0C1","multiPID":true,"pids":[13,12],"requestHeader":"7E0","responseCount":1,"rpmEvery":1,"timeoutMs":200},"referenceUptimeSeconds":7200.5,"sessionID":"5B7C9D1E-2F3A-4B5C-8D6E-7F8091A2B3C4","startedAt":"2026-03-01T00:00:00Z","timeZone":"UTC","vehicle":"test vehicle"}
+        {"data":{"event":"start"},"kind":"lifecycle","t":0}
+        {"data":{"converged":true,"covEE":25,"covEN":-2.5,"covNN":36,"estimateT":-850000000,"headingDeg":271.5,"headingStdDeg":3.25,"latitude":0.0125,"longitude":-0.025,"obdSpeedKmh":80,"restoreClass":"moving","source":"navigate","speedMps":22.25},"kind":"navPrior","t":2000000}
+        {"data":{"from":"discovering","layer":"ble","to":"connected"},"kind":"link","t":-30000000000}
+        {"data":{"command":"010D0C1","ecu":"7E8","pid":13,"raw":"7E806410D500C1AF8\r\r","requestT":95000000,"seq":41,"unit":"km/h","value":80},"kind":"obd","t":120000000}
+        {"data":{"ageS":0.25,"altitude":10,"course":270,"courseAccuracy":5,"horizontalAccuracy":8,"latitude":0.0125,"longitude":-0.0252,"receivedT":1250000000,"speed":22.25,"speedAccuracy":0.5,"verticalAccuracy":6},"kind":"location","t":1000000000}
+        {"data":{"converged":false,"covEE":400,"covEN":0,"covNN":400,"estimateT":-61000000000,"headingDeg":0,"headingStdDeg":180,"latitude":-0.0125,"longitude":0.025,"restoreClass":"towed","source":"auto","speedMps":0},"kind":"navPrior","t":5000000000}
+        {"data":{"bytesWritten":2048,"counts":{"lifecycle":1,"link":1,"location":1,"navPrior":2,"obd":1},"dropped":0,"gaps":{"accel":0,"gyro":0,"motion":0},"maxGapMs":{},"motionHz":0,"obdHz":0.1,"queueDepthMax":1,"timeouts":0,"windowS":10},"kind":"stats","t":10000000000}
+        {"data":{"detail":"user","event":"stop"},"kind":"lifecycle","t":10500000000}
+        """#
+
+    var document: LogDocument {
+        get throws { try codec.document(from: Data(Self.version5Recording.utf8)) }
+    }
+
+    static func ms(_ value: Int64) -> MonotonicTimestamp {
+        MonotonicTimestamp(nanoseconds: value * 1_000_000)
+    }
+
+    static func priors(_ events: [LogEvent]) -> [(t: MonotonicTimestamp, sample: NavPriorSample)] {
+        events.compactMap { if case .navPrior(let sample) = $0.payload { ($0.timestamp, sample) } else { nil } }
+    }
+
+    @Test("A v5 recording parses")
+    func readsVersion5Header() throws {
+        let header = try document.header
+        #expect(header.formatVersion == .v5)
+        #expect(header.startedAt == Date(timeIntervalSince1970: 1_772_323_200))
+        #expect(header.referenceUptimeSeconds == 7_200.5)
+        #expect(header.polling?.requestHeader == "7E0")
+        #expect(header.timeZone == "UTC")
+    }
+
+    @Test("Every v5 row decodes to its own payload, none as unrecognized")
+    func readsEveryRow() throws {
+        let events = try document.events
+        #expect(events.count == 8)
+        #expect(events.map(\.payload.kind) == [
+            "lifecycle", "navPrior", "link", "obd", "location", "navPrior", "stats", "lifecycle",
+        ])
+        for event in events {
+            if case .unrecognized(let kind, _) = event.payload {
+                Issue.record("\(kind) decoded as unrecognized")
+            }
+        }
+    }
+
+    @Test("navPrior rows keep every field, t and a negative estimateT; unknown source and class are kept verbatim")
+    func readsNavPriors() throws {
+        let events = try document.events
+        let rows = Self.priors(events)
+        #expect(rows.count == 2)
+        #expect(rows[0].t == Self.ms(2))
+        #expect(rows[0].sample == NavPriorSample(
+            latitude: 0.0125, longitude: -0.025, covEE: 25, covEN: -2.5, covNN: 36,
+            headingDeg: 271.5, headingStdDeg: 3.25, converged: true, speedMps: 22.25, obdSpeedKmh: 80,
+            restoreClass: "moving", source: "navigate", estimateT: MonotonicTimestamp(nanoseconds: -850_000_000)))
+        #expect(rows[0].sample.estimateT.nanoseconds < 0, "never clamped")
+        #expect(rows[0].sample.invalidField == nil)
+
+        #expect(rows[1].t == Self.ms(5_000))
+        #expect(rows[1].sample.source == "auto")
+        #expect(rows[1].sample.restoreClass == "towed")
+        #expect(rows[1].sample.obdSpeedKmh == nil)
+        #expect(rows[1].sample.estimateT == Self.ms(-61_000))
+        #expect(rows[1].sample.invalidField == "restoreClass", "decoded and kept, but it seeds nothing")
+        #expect(rows[1].sample.navigationPrior == nil)
+
+        // Where the recorder writes it: right after `start`, before the
+        // start-up init replay and every engine input.
+        #expect(events[0].payload == .lifecycle(LifecycleSample(.start)))
+        let firstInput = try #require(events.firstIndex { ["motion", "location", "obd"].contains($0.payload.kind) })
+        #expect(1 < firstInput)
+        #expect(events[2].timestamp.nanoseconds < 0, "the replayed link row predates the session")
+    }
+
+    @Test("The v5 navigate row converts to the engine's prior field for field, as a hand-over")
+    func convertsToPrior() throws {
+        let row = try #require(Self.priors(try document.events).first)
+        let prior = try #require(row.sample.navigationPrior)
+        #expect(prior == NavigationPrior(
+            latitude: 0.0125, longitude: -0.025, covEE: 25, covEN: -2.5, covNN: 36,
+            headingDeg: 271.5, headingStdDeg: 3.25, savedT: MonotonicTimestamp(nanoseconds: -850_000_000),
+            lastSpeedMps: 22.25, restoreClass: .moving, converged: true, handOver: true))
+    }
+
+    @Test("Rewriting a v5 recording reproduces it unchanged")
+    func rewritesVersion5Identically() throws {
+        let original = Data(Self.version5Recording.utf8)
+        let rewritten = try codec.encode(try document)
+        #expect(rewritten == original + Data("\n".utf8))
+    }
+
+    @Test("v5 is a declared, readable version; the next one is refused as v4 refused v5")
+    func version5IsDeclared() {
+        #expect(LogFormatVersion(rawValue: 5) == .v5)
+        #expect(LogFormatVersion.v5 <= .current)
+        #expect(LogFormatVersion(rawValue: 6) == nil)
+        let v6 = Self.version5Recording.replacingOccurrences(of: #""formatVersion":5"#, with: #""formatVersion":6"#)
+        #expect(throws: LogDecodingError.unsupportedFormatVersion(6)) {
+            try codec.document(from: Data(v6.utf8))
+        }
+    }
+
+    @Test("The v5 kind, its keys and the vocabularies are stable on-disk strings")
+    func stringsAreStable() throws {
+        #expect(LogEventKind.navPrior.rawValue == "navPrior")
+        #expect(NavPriorSample.Source.navigate.rawValue == "navigate")
+        #expect(NavigationRestoreClass.moving.rawValue == "moving")
+        #expect(NavigationRestoreClass.standingStop.rawValue == "standingStop")
+        #expect(NavigationRestoreClass.parked.rawValue == "parked")
+        let sample = NavPriorSample(
+            latitude: 0.0125, longitude: -0.025, covEE: 25, covEN: -2.5, covNN: 36,
+            headingDeg: 271.5, headingStdDeg: 3.25, converged: true, speedMps: 22.25, obdSpeedKmh: 80,
+            restoreClass: NavigationRestoreClass.moving.rawValue, source: NavPriorSample.Source.navigate.rawValue,
+            estimateT: MonotonicTimestamp(nanoseconds: -850_000_000))
+        let line = try codec.line(for: LogEvent(timestamp: Self.ms(2), payload: .navPrior(sample)))
+        #expect(String(decoding: line, as: UTF8.self) == #"{"data":{"converged":true,"covEE":25,"covEN":-2.5,"covNN":36,"estimateT":-850000000,"headingDeg":271.5,"headingStdDeg":3.25,"latitude":0.0125,"longitude":-0.025,"obdSpeedKmh":80,"restoreClass":"moving","source":"navigate","speedMps":22.25},"kind":"navPrior","t":2000000}"# + "\n")
+    }
+}

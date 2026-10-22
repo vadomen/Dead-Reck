@@ -8,10 +8,11 @@ import Foundation
 // Prints the header, events per kind, achieved rates, gaps over 50 ms in the
 // 100 Hz streams, OBD latency percentiles (t - requestT), `elm` outcome
 // counts, the recorder's own stats rows, manual position fixes (v3), the
-// driver's GPS switch changes (v4) and the truncation report; `--csv` writes
-// one CSV per kind for analysis in Python (`manualFix.csv`, `gpsSwitch.csv`
-// included). Reads every format version `LogCodec` knows (v1–v4) and refuses
-// a newer one. `--strict` stops at the
+// driver's GPS switch changes (v4), the navigator's hand-over prior (v5) and
+// the truncation report; `--csv` writes one CSV per kind for analysis in
+// Python (`manualFix.csv`, `gpsSwitch.csv`, `navPrior.csv` included). Reads
+// every format version `LogCodec` knows (v1–v5) and refuses a newer one.
+// `--strict` stops at the
 // first malformed line or damaged member instead of skipping it.
 //
 // The analysis lives in DriveLoggerCore (`RecordingAnalyzer`,
