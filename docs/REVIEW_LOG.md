@@ -1014,3 +1014,17 @@ Reviewer: one fresh opus reviewer (App focus plus a cross-cutting pass of the fu
 ### Run 76 summary
 
 4 rounds; 4 fixed (R76.1-1, R76.1-2, R76.2-1, R76.3-1; R76.3-1 after a user decision 2026-10-21: the GPS voice speaks only during a run); 0 rejected; 6 deferred (R76.1-3..6, R76.2-2). Engine output bit-identical to a9103dd without a switch event (clean drive, seed 1, roads on / off / as-live; a live-roads drive `--as-live --compare` exact PASS). Final tests: Core 1131 tests in 142 suites passed (36 known issues); App 727 tests in 105 suites passed at 162afbf.
+
+## Run 77: Prompt 39 UX-20 restore the estimate (persisted Navigate/Record estimate, engine seed from a prior with growth, d² reject/confirm, Record-stop hand-over, on-map Restored line), NAV-INITSTALE, privacy Map texts (main..ux20-restore: 21fe5ac..4c62ada), started 2026-10-22
+
+### Round 1
+
+Reviewers: two opus reviewers in parallel: A engine/replay, B app. Result: 0 BLOCKER, 2 MAJOR (both CONFIRMED, fixing), 1 MINOR (DEFERRED). Reviewer B: ready to merge (1 MINOR). Reviewer A: fix before merge (0 blocker, 2 major). Mutations: the author's `!tower &&` was killed by `wifiFixConfirmsATowerFixNeverDoes`; the reviewer's σ² removal and `recordPreInitStep` removal survived (R77.1-1, R77.1-2). Bit-identical re-run (clean drive, seed 1, roads on / off): identical.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R77.1-1 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/NavigationEngine.swift:1248`: the fix/pin σ² term in the restore d² covariance is untested (mutation `+ 0*s2` survives all NavigationRestore* tests); a correct parked prior would be rejected by an ordinary offset Wi-Fi or tower fix with no test failing. | CONFIRMED, FIXED (44dc89a) | |
+| R77.1-2 | MAJOR | `NavigationEngine.swift:737`: the pre-init step record kept while a prior is unconfirmed is untested (removing it survives); a late disagreeing pin would initialise without the motion since the tap. | CONFIRMED, FIXED (44dc89a) | |
+| R77.1-3 | MINOR | `site/public/privacy.html:44` and `site/public/uk/privacy.html:44`: "Deleting your data" covers recordings only; the saved last estimate (position and time) survives deleting all recordings, is not backed up, and is removed with the app or replaced by the next drive. | DEFERRED | BACKLOG. Fix: one sentence on both pages, before the next site deploy. |
+
+Tests at round 1: Core 1163 tests passed (36 known issues), AppTests 752 passed, at HEAD (4c62ada).
