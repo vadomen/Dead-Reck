@@ -437,7 +437,8 @@ Items 1-7 above (demo pipeline) and the airplane-mode check (item 1) cover the d
 
 ### Added by prompt 40, Record starts from Navigate's estimate (branch `record-handover`) — not verified on a device
 1. **Start and stop Record mid-drive under jamming:** with Navigate running and converged, start Record, drive, stop it: the arrow and the road binding continue through both hand-overs. `inspect_log` on the recording shows one `Nav prior` row, and `replay_nav --as-live --compare` against its sidecar is an exact PASS on a Release build.
-2. **Record started while Navigate is still finding its position:** the recording has no `navPrior` row (`Nav prior none (navigation started fresh)`) and Record starts fresh.
+2. **Record started before Navigate has any position:** no estimate on the map yet (for example before the first fix with GPS off or jammed): the recording has no `navPrior` row (`Nav prior none (navigation started fresh)`) and Record starts fresh.
+3. **Record started while Navigate shows "Finding your position":** the recording has one `navPrior` row with `converged: false`, and Record keeps searching from that estimate (no restart from nothing).
 
 ### Added by run 60, push_packs.sh app guard (not verified on a device)
 1. **Process list shape:** with the phone connected and unlocked and the app open, save `xcrun devicectl device info processes --device <id> --json-output -` and check that `result.runningProcesses[].executable` holds a `file:///…/DriveLogger.app/DriveLogger` URL (the parser's shape was inferred from devicectl's strings, never seen in real output). If the shape differs, the guard refuses ("cannot tell whether the app is running"); fix the parser rather than using `--force` by habit.
