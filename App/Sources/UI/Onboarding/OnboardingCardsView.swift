@@ -135,6 +135,9 @@ struct OnboardingCardsContent: View {
             }
             .padding(.horizontal, 24)
             .padding(.bottom, 8)
+            // The buttons are pinned: at the accessibility sizes they filled almost half of a small
+            // phone and left the text a window of three lines. They stay big (xxxLarge, 56 pt tall).
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
             .accessibilitySortPriority(1)
         }
         .accessibilityElement(children: .contain)

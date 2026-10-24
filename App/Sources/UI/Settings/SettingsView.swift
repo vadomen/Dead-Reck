@@ -28,6 +28,12 @@ enum SettingsRows {
         return rows
     }
 
+    static let languageTitle = String(localized: "Language")
+    static let languageFootnote = String(localized: "To switch, add the other language in iOS Settings → General → Language & Region; then choose it here.")
+    /// VoiceOver reads the title and the current language: "Language, English".
+    static func languageAccessibilityLabel(name: String) -> String { "\(languageTitle), \(name)" }
+    static let languageHint = String(localized: "Opens this app's page in iOS Settings")
+
     static let speakGPSTitle = String(localized: "Speak GPS changes")
     /// The footer quotes the spoken phrases themselves (`GPSPhrase.spoken`), so the
     /// words in the footer and in the voice are one source. `language`: "uk" / "en"
@@ -142,6 +148,8 @@ struct SettingsContent<Recording: View, Console: View, Maps: View, Sessions: Vie
     /// "How FuGPS works": the info cards again, read only (UX-18 (3)).
     @State private var cards = OnboardingModel(mode: .review)
     @State private var showsMount = false
+    @Environment(\.openURL) private var openURL
+    @Environment(\.dynamicTypeSize) private var typeSize
     @AppStorage(GPSVoiceSetting.key) private var speaksGPSChanges = false
 
     private var roadsSection: some View {
@@ -235,11 +243,33 @@ struct SettingsContent<Recording: View, Console: View, Maps: View, Sessions: Vie
         }
     }
 
+    /// The app's page in iOS Settings, where the per-app Language lives.
+    private func openAppSettings() {
+        if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+    }
+
     var body: some View {
         NavigationStack(path: $path) {
             ScrollViewReader { scroller in
             List {
                 Section { rows(SettingsRows.driver()) }
+                Section {
+                    Button(action: openAppSettings) {
+                        LabeledContent {
+                            Text(AppLanguage.currentName).foregroundStyle(.secondary)
+                        } label: {
+                            Label(SettingsRows.languageTitle, systemImage: "globe")
+                                .foregroundStyle(Color.primary)
+                        }
+                        .font(.title3)
+                        .frame(minHeight: 44)
+                    }
+                    .accessibilityLabel(SettingsRows.languageAccessibilityLabel(name: AppLanguage.currentName))
+                    .accessibilityHint(SettingsRows.languageHint)
+                    .accessibilityAddTraits(.isButton)
+                } footer: {
+                    Text(SettingsRows.languageFootnote)
+                }
                 Section {
                     NavigationLink(value: SettingsRoute.about) {
                         Label(SettingsRoute.about.title, systemImage: SettingsRoute.about.systemImage)
@@ -282,6 +312,8 @@ struct SettingsContent<Recording: View, Console: View, Maps: View, Sessions: Vie
             #endif
             }
             .navigationTitle("Settings")
+            // The large title is cut ("Налаштув…") at the accessibility sizes; the inline one wraps in the bar.
+            .navigationBarTitleDisplayMode(typeSize.isAccessibilitySize ? .inline : .large)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done", action: onDone)

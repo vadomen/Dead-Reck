@@ -59,6 +59,7 @@ struct RootView: View {
                 offline: fakeOffline, connection: DebugFakes.connection(UserDefaults.standard.string(forKey: "uiFakeConnection")) ?? .unmetered,
                 cellularAllowed: UserDefaults.standard.bool(forKey: MapsSettings.cellularKey))
         }
+        if UserDefaults.standard.bool(forKey: "uiFakeMapsStore") { mapsModel = DebugFakes.storeMapsModel }
         if UserDefaults.standard.bool(forKey: "uiFakeMapsShort") { mapsModel = DebugFakes.shortMapsModel }
         if UserDefaults.standard.bool(forKey: "uiFakeRemovalPending") { mapsModel = DebugFakes.removalModel }
         #endif
@@ -231,6 +232,11 @@ struct RootView: View {
             #if DEBUG
             // `-uiDemo 1` starts the demo at launch (screenshots, UI tests).
             if UserDefaults.standard.bool(forKey: "uiDemo") { startDemo() }
+            // `-storeDemoReadyAt S`: signal the capture script at demo second S.
+            if let at = StoreScreenshotMode.readyAt() {
+                let demo = services.demo
+                await StoreScreenshotMode.signalReady(at: at, elapsed: { demo.elapsedSeconds })
+            }
             #endif
         }
         // UX-8 (2): the at-a-stop offer loop, with Settings open too.

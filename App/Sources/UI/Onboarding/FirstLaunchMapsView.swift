@@ -79,33 +79,51 @@ struct FirstLaunchMapsContent: View {
     var onUseCellular: () -> Void = {}
     var onLater: () -> Void = {}
 
+    @Environment(\.dynamicTypeSize) private var typeSize
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(FirstLaunchMapsText.title).font(.largeTitle.bold())
-                Text(FirstLaunchMapsText.why).font(.title3).foregroundStyle(.secondary)
-                if asksLocation {
-                    Label(FirstLaunchMapsText.allowLocation, systemImage: "location")
-                        .font(.subheadline.weight(.semibold))
-                } else if fixState == .waiting, listState != .noList {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                        Text(FirstLaunchMapsText.lookingForRegion).font(.subheadline).foregroundStyle(.secondary)
-                    }
+        if typeSize.isAccessibilitySize {
+            // Header, list and buttons scroll together. Pinned, the header and the buttons
+            // alone fill a small phone at these sizes: the list gets no room and the buttons are cut.
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    header
+                    middle(inline: true)
+                    footer(pinned: false)
                 }
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 24)
-            // Never cut the explanation to make room: the list scrolls instead
-            // (Ukrainian runs a line or two longer than English).
-            .fixedSize(horizontal: false, vertical: true)
-            middle
-            footer
+        } else {
+            VStack(alignment: .leading, spacing: 12) {
+                header
+                middle(inline: false)
+                footer(pinned: true)
+            }
         }
     }
 
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(FirstLaunchMapsText.title).font(.largeTitle.bold())
+            Text(FirstLaunchMapsText.why).font(.title3).foregroundStyle(.secondary)
+            if asksLocation {
+                Label(FirstLaunchMapsText.allowLocation, systemImage: "location")
+                    .font(.subheadline.weight(.semibold))
+            } else if fixState == .waiting, listState != .noList {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text(FirstLaunchMapsText.lookingForRegion).font(.subheadline).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 24)
+        // Never cut the explanation to make room: the list scrolls instead
+        // (Ukrainian runs a line or two longer than English).
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
     @ViewBuilder
-    private var middle: some View {
+    private func middle(inline: Bool) -> some View {
         switch listState {
         case .loading:
             VStack(spacing: 12) {
@@ -122,18 +140,28 @@ struct FirstLaunchMapsContent: View {
             .padding(24)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         case .ready:
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(rows) { row in
-                        FirstLaunchMapsRow(row: row) { onToggle(row.id) }
-                        Divider().padding(.leading, 72)
-                    }
-                }
+            if inline {
+                rowList(lazy: false)
+            } else {
+                ScrollView { rowList(lazy: true) }
             }
         }
     }
 
-    private var footer: some View {
+    @ViewBuilder
+    private func rowList(lazy: Bool) -> some View {
+        if lazy { LazyVStack(spacing: 0) { rowItems } } else { VStack(spacing: 0) { rowItems } }
+    }
+
+    @ViewBuilder
+    private var rowItems: some View {
+        ForEach(rows) { row in
+            FirstLaunchMapsRow(row: row) { onToggle(row.id) }
+            Divider().padding(.leading, 72)
+        }
+    }
+
+    private func footer(pinned: Bool) -> some View {
         VStack(spacing: 10) {
             if listState == .ready {
                 Button(action: onConfirm) {
@@ -165,7 +193,7 @@ struct FirstLaunchMapsContent: View {
         .padding(.horizontal, 24)
         .padding(.top, 8)
         .padding(.bottom, 16)
-        .background(.bar)
+        .background { if pinned { Rectangle().fill(.bar) } }
     }
 }
 
@@ -173,8 +201,12 @@ struct FirstLaunchMapsContent: View {
 struct FirstLaunchMapsRow: View {
     let row: FirstLaunchMapsModel.Row
     var onTap: () -> Void
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
+        // At accessibility sizes the size goes under the title instead of beside it: a trailing
+        // column left the region name a few letters wide ("Regi-on A") and cut it.
+        let stacked = typeSize.isAccessibilitySize
         Button(action: onTap) {
             HStack(spacing: 14) {
                 Image(systemName: icon)
@@ -182,13 +214,18 @@ struct FirstLaunchMapsRow: View {
                     .foregroundStyle(row.isInstalled ? Color.secondary : row.isSelected ? Color.accentColor : Color.secondary)
                     .frame(width: 36)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(row.title).font(.title3.weight(.semibold)).foregroundStyle(.primary).lineLimit(2)
+                    Text(row.title).font(.title3.weight(.semibold)).foregroundStyle(.primary).lineLimit(stacked ? nil : 2)
                     if let caption = FirstLaunchMapsText.caption(row) {
                         Text(caption).font(.subheadline).foregroundStyle(.secondary)
                     }
+                    if stacked {
+                        Text(MapsText.size(row.sizeBytes)).font(.body.monospacedDigit()).foregroundStyle(.secondary)
+                    }
                 }
                 Spacer(minLength: 8)
-                Text(MapsText.size(row.sizeBytes)).font(.body.monospacedDigit()).foregroundStyle(.secondary)
+                if !stacked {
+                    Text(MapsText.size(row.sizeBytes)).font(.body.monospacedDigit()).foregroundStyle(.secondary)
+                }
             }
             .padding(.horizontal, 24)
             .padding(.vertical, 8)

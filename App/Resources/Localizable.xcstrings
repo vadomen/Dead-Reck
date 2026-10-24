@@ -1733,6 +1733,17 @@
         }
       }
     },
+    "Language" : {
+      "comment" : "Settings → Language row label (SettingsRows.languageTitle). The value shown beside it is the app's current language name.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Мова"
+          }
+        }
+      }
+    },
     "Later, everything is in Settings → Maps." : {
       "localizations" : {
         "uk" : {
@@ -2538,6 +2549,17 @@
         }
       }
     },
+    "Open iOS Settings" : {
+      "comment" : "Settings → OBD adapter: button shown when Bluetooth is denied for the app; opens the app's page in iOS Settings.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Відкрити Параметри iOS"
+          }
+        }
+      }
+    },
     "Open-source licences" : {
       "localizations" : {
         "uk" : {
@@ -2564,6 +2586,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Авторські права OpenStreetMap"
+          }
+        }
+      }
+    },
+    "Opens this app's page in iOS Settings" : {
+      "comment" : "VoiceOver hint of the Settings → Language row (opens UIApplication.openSettingsURLString).",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Відкриває сторінку цього застосунку в Параметрах iOS"
           }
         }
       }
@@ -3628,6 +3661,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Цей запис ще триває. Спершу зупиніть його."
+          }
+        }
+      }
+    },
+    "To switch, add the other language in iOS Settings → General → Language & Region; then choose it here." : {
+      "comment" : "Settings → footer under the Language row. iOS shows a per-app language choice only when the phone has more than one preferred language. UK iOS names (Параметри, Загальні, Мова й регіон) to be checked on a Ukrainian phone.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Щоб перемкнути, додайте другу мову в Параметри iOS → Загальні → Мова й регіон, а тоді оберіть її тут."
           }
         }
       }

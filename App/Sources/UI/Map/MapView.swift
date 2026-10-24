@@ -105,7 +105,7 @@ struct MapScreen: View {
             navigation: fake.nav.map { MapPreviewData.fakeNav($0, restored: fake.restored) }
                 ?? (fake.debugStrip ? NavigationFeed(display: nil, stats: MapPreviewData.navStats) : navigation),
             showsEstimate: status.showsEstimate || fake.nav != nil,
-            showNavStats: fake.debugStrip ? .constant(true) : $showNavStats,
+            showNavStats: fake.debugStrip ? .constant(true) : (StoreScreenshotMode.current.showsDebugStrip(setting: true) ? $showNavStats : .constant(false)),
             roadsWarning: warningText,
             roadsWarningDownload: warningDownload,
             onRoadsWarningDownload: { offerActions?.download() },
@@ -407,6 +407,7 @@ struct GPSMapView: View {
     var statusLine: AnyView?
 
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.dynamicTypeSize) private var typeSize
     @State private var position: MapCameraPosition = .automatic
     /// Visible north-south extent, metres, from the camera.
     @State private var visibleSpanM: Double?
@@ -689,21 +690,33 @@ struct GPSMapView: View {
         .onChange(of: gpsVoiceRun) { _, _ in onGPSState(gpsHUD, gpsVoiceRun) }
         // A new run: the previous run's engine state must not show for even one frame.
         .onChange(of: run) { _, _ in navigation?.clearGPS() }
-        // Right rail: North up / Heading up, Following, Settings.
-        .overlay(alignment: .bottomTrailing) { rail }
         // REL-DEMO: the badge and Stop demo, top right, only while it runs.
         .overlay(alignment: .topTrailing) {
-            if let demo {
+            if let demo, StoreScreenshotMode.current.showsDemoControls {
                 DemoControls(onStop: demo.onStop, elapsed: demo.elapsed)
                     .padding(.trailing, MapLayout.edgeInset)
                     .padding(.top, 8)
             }
         }
-        // Bottom-left zone, left of the rail, stacked upward.
-        .overlay(alignment: .bottomLeading) { bottomZone }
-        // UX-33: the OSM credit, one line at the very bottom edge.
-        .overlay(alignment: .bottom) {
-            if roadsAttribution { MapAttributionLine() }
+        // One column at the bottom (`MapBottomLayout`): the stack and the rail
+        // above, the OSM credit (UX-33) in the lowest band, never covered.
+        .overlay(alignment: .bottom) { bottomArea }
+    }
+
+    /// Bottom-left zone, left of the rail, stacked upward; the right rail
+    /// (North up / Heading up, Following, Settings); under both the credit band.
+    private var bottomArea: some View {
+        VStack(spacing: 0) {
+            ZStack(alignment: .bottomTrailing) {
+                bottomZone
+                rail
+            }
+            HStack(spacing: 0) {
+                Spacer(minLength: 0)
+                if roadsAttribution { MapAttributionLine() }
+            }
+            .padding(.trailing, MapLayout.edgeInset)
+            .frame(height: MapLayout.attributionBand, alignment: .top)
         }
     }
 
@@ -780,10 +793,14 @@ struct GPSMapView: View {
             HUDRailButton(symbol: "gearshape", label: String(localized: "Settings"), active: false, action: onOpenSettings)
         }
         .padding(.trailing, MapLayout.edgeInset)
-        .padding(.bottom, MapLayout.bottomInset())
+        .padding(.bottom, MapLayout.aboveCreditGap)
     }
 
     private var bottomItems: [MapBottomItem] {
+        MapBottomZone.limited(bottomItemsUnlimited, accessibilitySize: typeSize.isAccessibilitySize, offerVisible: offerShown)
+    }
+
+    private var bottomItemsUnlimited: [MapBottomItem] {
         MapBottomZone.items(
             offer: offerCard != nil, toast: toast != nil, status: statusLine != nil,
             positionStatus: estimate != nil, restoreStatus: estimate.map { RestoreStatus.line($0.restore) != nil } ?? false,
@@ -792,15 +809,17 @@ struct GPSMapView: View {
     }
 
     private var bottomZone: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: MapBottomLayout.itemGap) {
             ForEach(bottomItems, id: \.self) { item in
                 bottomView(item)
             }
         }
         .padding(.leading, MapLayout.edgeInset)
         .padding(.trailing, MapLayout.railReserved)
-        .padding(.bottom, MapLayout.bottomInset())
+        .padding(.bottom, MapLayout.aboveCreditGap)
         .frame(maxWidth: .infinity, alignment: .leading)
+        // Like every card in the stack: wraps in full, never grows past AX2.
+        .dynamicTypeSize(...DynamicTypeSize.accessibility2)
     }
 
     @ViewBuilder
@@ -868,7 +887,8 @@ struct GPSMapView: View {
                         .foregroundStyle(c.opacity(0.2))
                         .stroke(c, lineWidth: 1)
                     Annotation("", coordinate: latest.coordinate) {
-                        carMarker(color: c)
+                        // Decorative: VoiceOver read the arrow's symbol name ("Orient To Phone").
+                        carMarker(color: c).accessibilityHidden(true)
                     }
                 }
                 ForEach(manualFixes) { fix in
@@ -989,7 +1009,8 @@ struct GPSMapView: View {
     /// Not now / Never on the banner: quiet face, 48 pt tall, as on the card.
     private func bannerAnswer(_ text: String, label: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Text(text).font(.callout.weight(.semibold)).lineLimit(1)
+            // Two lines at accessibility sizes: "Not now" must not end in an ellipsis.
+            Text(text).font(.callout.weight(.semibold)).lineLimit(typeSize.isAccessibilitySize ? 2 : 1)
                 .frame(maxWidth: .infinity, minHeight: 48)
                 .foregroundStyle(HUDColors.text)
                 .hudSurface(Capsule())
@@ -1264,6 +1285,7 @@ private struct TrackOverlay: MapContent {
                 Circle()
                     .fill(point.band.color.opacity(0.3))
                     .frame(width: 10, height: 10)
+                    .accessibilityHidden(true)
             }
         }
         ForEach(Array(track.runs.enumerated()), id: \.offset) { _, run in
@@ -1306,6 +1328,7 @@ private struct NavOverlay: MapContent {
             if NavLayers.showDot(nav) {
                 Annotation("", coordinate: nav.position.coordinate) {
                     NavMarker(nav: nav, headingUp: headingUp, cameraHeading: cameraHeading)
+                        .accessibilityHidden(true)
                 }
             }
         }

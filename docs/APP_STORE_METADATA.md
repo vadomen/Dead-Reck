@@ -148,6 +148,20 @@ FuGPS розраховує позицію авто, коли GPS зникає а
 Bluetooth використовується лише для звʼязку з OBD-II адаптером. Геолокація (під час використання застосунку) дає позицію на карті та дані GPS. Під час навігації застосунок тримає фонову сесію геолокації, щоб позиція не переривалася із заблокованим екраном у поїздці. Особисті дані не залишають телефон. Карта використовує Apple Maps (MapKit); карти доріг завантажуються з нашого сайту, який бачить запитаний регіон та IP-адресу. Облікових записів і аналітики немає.
 ```
 
+## Screenshots (6.9", 1320×2868)
+
+Captured in prompt 42 into `logs/appstore/` (git-ignored; regenerate with `scripts/store_screenshots.sh [--dry-run] [--sim <udid>] [--lang en|uk]... [--scene <name>]... [--no-build]`). Debug build, demo drive; `-storeScreenshots 1` hides the debug strip, the DEMO badge and "Stop demo" (DEBUG only). The script sets the simulator to a 12-hour locale for the 9:41 status bar and restores it on exit. Heading-up via `-map.headingUp YES`. 10 files, 5 per language, in upload order:
+
+| # | File | Content |
+|---|---|---|
+| 1 | `{en,uk}-1-map.png` | Map, arrow on the road, uncertainty ellipse, GPS on (demo at 40 s) |
+| 2 | `{en,uk}-2-nogps.png` | "No GPS" / «Без GPS», arrow still on the road, elongated ellipse (demo at 90 s) |
+| 3 | `{en,uk}-3-maps.png` | Settings -> Maps (DEBUG fake list with synthetic region names) |
+| 4 | `{en,uk}-4-onboarding.png` | Onboarding card 1 |
+| 5 | `{en,uk}-5-about.png` | About |
+
+Open: on #1 and #2 the demo shows the greyed, disabled rail button "GPS off" / «GPS вимк.». Decide before upload whether the demo hides or relabels it.
+
 ## Open points
 
 1. Routing: resolved (prompt 41 follow-ups). The app shows a live position on the map and does not plan routes; RELEASE_PLAN D7 now justifies the background modes as "live position on the map while driving".
@@ -157,6 +171,6 @@ Bluetooth використовується лише для звʼязку з OBD
 5. Apostrophe: resolved; the UK text here and the UK site pages use ʼ (U+02BC).
 6. App Privacy label: Data Not Collected. No analytics on the site, no server logs kept; the user checks that Cloudflare Web Analytics is off for the site.
 7. Counts checked by script: subtitle 25/26 characters, promotional text 158/164 characters, keywords 91 bytes (EN) and 95 bytes (UK). Recount in App Store Connect when pasting.
-8. Name availability (D1), legal copyright holder, video link, screenshots (no real coordinates) and the optional App Preview are not in this file.
+8. Name availability (D1), legal copyright holder, video link and the optional App Preview are not in this file. Screenshots: see "Screenshots (6.9", 1320×2868)" above (prompt 42).
 9. UK keyword «розрахунок»: resolved, replaced by «навігація».
 

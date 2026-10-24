@@ -49,6 +49,7 @@ struct RecordingContent: View {
     var lastMark: String?
     var markCount = 0
     @Binding var isMarkSheetPresented: Bool
+    @Environment(\.dynamicTypeSize) private var typeSize
     var onStart: () -> Void = {}
     var onStop: () -> Void = {}
     var onMark: (String) -> Void = { _ in }
@@ -62,7 +63,8 @@ struct RecordingContent: View {
                 }
                 StatusBanner(state: state)
                 AdapterRow(status: state.adapter)
-                HStack(spacing: 12) {
+                // Side by side; stacked at accessibility sizes, where a half-width tile broke "GPS" and "reference" mid-word.
+                (typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 12)) : AnyLayout(HStackLayout(spacing: 12))) {
                     SpeedTile(title: "OBD SPEED", subtitle: nil, value: state.obdSpeed, tone: state.obdTone)
                     SpeedTile(title: "GPS", subtitle: "reference", value: state.gpsSpeed, tone: .neutral)
                 }
@@ -217,6 +219,7 @@ struct NoticeView: View {
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: notice.tone == .bad ? "exclamationmark.octagon.fill" : "exclamationmark.triangle.fill")
+                .accessibilityHidden(true)
             Text(notice.text).font(.callout.weight(.medium)).frame(maxWidth: .infinity, alignment: .leading)
         }
         .foregroundStyle(notice.tone.color)

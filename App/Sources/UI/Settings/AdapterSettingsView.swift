@@ -63,11 +63,17 @@ struct AdapterSettingsContent: View {
     var pendingLinkChange: LinkChange?
     var actions: LinkActions
     var connectRemembered: () -> Void
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         Form {
             Section {
                 statusRow
+                if status.offersAppSettings {
+                    rowButton("Open iOS Settings", systemImage: "gearshape") {
+                        if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+                    }
+                }
                 if isSimulated { SimulationBadge(text: String(localized: "SIMULATED ADAPTER")) }
             }
             Section("Paired adapter") {

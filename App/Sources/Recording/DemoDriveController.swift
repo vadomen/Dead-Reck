@@ -355,9 +355,9 @@ private struct NoDiskReading: DiskSpaceProvider {
 /// `UserDefaults` that keep `string`/`object`/`set`/`removeObject` in
 /// memory, for the demo adapter's remembered identifier and name: nothing
 /// of the demo reaches the app's defaults or disk.
-final class VolatileDefaults: UserDefaults, @unchecked Sendable {
-    // @unchecked: `values` is only touched under `lock` (UserDefaults is
-    // Sendable; this subclass keeps that promise with the lock).
+final class VolatileDefaults: UserDefaults {
+    // `values` is only touched under `lock`. No Sendable declaration here: the SDK marks
+    // the conformance inherited from UserDefaults unavailable for subclasses.
     private let lock = NSLock()
     private var values: [String: Any] = [:]
 

@@ -227,6 +227,33 @@ enum MapBottomZone {
         if debugSetting { out.append(.debugStrip) }
         return out
     }
+
+    /// Most items the stack shows at an accessibility Dynamic Type size (prompt 42 QA): each
+    /// one wraps to several lines there, and a taller stack grows over the speed card.
+    static let accessibilityLimit = 2
+
+    /// Least important first. The OBD / calibration banner and the offer card (it also
+    /// hosts the mount card) are never dropped. `.positionStatus` goes first: its slot is
+    /// in `items` whenever there is an estimate but draws nothing once converged, so
+    /// dropping it first never costs a visible line (R80.1-1); when it does draw,
+    /// "Restored ... not yet confirmed" conveys the same uncertainty and stays.
+    private static let dropOrder: [MapBottomItem] = [
+        .positionStatus, .debugStrip, .resumeHint, .restoreStatus, .roadsWarning, .toast,
+    ]
+
+    /// `items` as shown: unchanged at normal sizes; at accessibility sizes cut to
+    /// `accessibilityLimit` by dropping the least important first, order kept.
+    /// `offerVisible`: false when the offer card's slot is an empty shell (it is in
+    /// `items` whenever offers exist, but draws nothing), so it does not use up a place.
+    static func limited(_ items: [MapBottomItem], accessibilitySize: Bool, offerVisible: Bool = true) -> [MapBottomItem] {
+        guard accessibilitySize else { return items }
+        var out = items
+        func shown() -> Int { out.filter { $0 != .offerCard || offerVisible }.count }
+        for drop in dropOrder where shown() > accessibilityLimit {
+            out.removeAll { $0 == drop }
+        }
+        return out
+    }
 }
 
 /// The two developer-strip lines (mockup: `ms/step (max) · ESS · hdg σ` and
@@ -259,8 +286,11 @@ enum MapLayout {
 
     /// Gap between the screen's bottom (safe area) and the rail / bottom zone.
     static func bottomInset(slot: Double = bottomSlotHeight) -> Double {
-        attributionBand + 8 + slot
+        attributionBand + aboveCreditGap + slot
     }
+
+    /// Space between the credit band and the lowest rail button / stack item.
+    static let aboveCreditGap: Double = 8
 
     /// Height from the top of the map covered by the safe area and the HUD
     /// card (speed, indicators): the ellipse fit keeps clear of it.

@@ -2,9 +2,9 @@
 
 Compiled 2026-10-16 (repo at `16db485`); decisions taken by the user on 2026-10-16. Status notes in *(italics)* were added on 2026-10-17.
 
-## Status (2026-10-20)
+## Status (2026-10-24)
 
-Done / in code / open, per item. "In code (prompt 35)" = branch `release-blockers`, not yet merged or checked on a device.
+Done / in code / open, per item. "In code (prompt N)" = merged work that has not been checked on a device yet. Prompt 42 (release QA: OSM credit layout, Language row, simulator QA, store screenshots) is in progress.
 
 | Item | Status | Commit or backlog ID |
 |---|---|---|
@@ -15,18 +15,20 @@ Done / in code / open, per item. "In code (prompt 35)" = branch `release-blocker
 | About + attribution (2.6) | done in code (prompt 30) | UX-31, UX-33 (merge 4e45714) |
 | Developer group in Settings (Phase 1 item 6) | done in code (prompt 31) | UX-32 follow-ups (528035e, merge 7061f34) |
 | Site pages (`site/`) | done | BACKLOG_UX SITE-1 for the open follow-ups |
-| Identity: bundle id `com.vadomen.fugps`, display name FuGPS, `MARKETING_VERSION` 1.0.0, build number script (2.1, D1, D2) | in code (prompt 35) | |
-| Navigate in the background (D7 revised, 2.3) | in code (prompt 35); device check in PLAN §6 | |
-| Permission texts for a driver (2.3) | in code (prompt 35) | |
-| Privacy manifest (2.2) | in code (prompt 35) | |
-| Release surfaces: launch arguments and `DebugAutoRecord` inert in Release (Phase 1 item 6) | in code (prompt 35) | |
+| Identity: bundle id `com.vadomen.fugps`, display name FuGPS, `MARKETING_VERSION` 1.0.0, build number script (2.1, D1, D2) | done in code (prompt 35); device checks open | |
+| Navigate in the background (D7 revised, 2.3) | done in code (prompt 35); device check open (PLAN §6) | |
+| Permission texts for a driver (2.3) | done in code (prompt 35); device checks open | |
+| Privacy manifest (2.2) | done in code (prompt 35) | |
+| Release surfaces: launch arguments and `DebugAutoRecord` inert in Release (Phase 1 item 6) | done in code (prompt 35); device checks open | |
 | Demo mode for App Review (Phase 1 item 5) | done in code (prompt 36, branch `rel-demo`); device checks open (PLAN §6) | REL-DEMO |
 | Export of recordings vs the privacy-manifest reason codes (2.2) | done in code (prompt 36): codes kept, Record, Sessions and Console behind the 7-tap gate in Release; device checks open (PLAN §6) | REL-EXPORT |
 | Ukrainian + English localisation (D5, 2.3) | done in code (prompt 41, branch `ux15-localization`); device checks open (PLAN §6) | UX-15 |
 | App Store metadata draft (uk + en) | draft in `docs/APP_STORE_METADATA.md`. Routing settled (no routing; background modes justified as live position on the map while driving); privacy label Data Not Collected (no site analytics, no server logs kept; check Cloudflare Web Analytics is off). Open points: demo steps not yet checked on a Release build; name availability, copyright holder, video, screenshots | UX-15 |
-| First launch as instructions (Phase 1 item 3) | in code (prompt 32, UX-18) | UX-18 |
-| Manual "GPS off" + GPS state chip (D8) | open | UX-9 (a) + UX-22 |
-| Restore the estimate after a relaunch (D8) | open | UX-20 |
+| First launch as instructions (Phase 1 item 3) | done in code (prompt 32, follow-up prompt 36); device checks open (PLAN §6) | UX-18 |
+| Manual "GPS off" + GPS state chip + spoken GPS changes (D8) | done in code (prompt 37); device checks open (PLAN §6) | UX-9 (a) + UX-22 |
+| Restore the estimate after a relaunch (D8) | done in code (prompt 39); device checks open (PLAN §6) | UX-20 |
+| Record starts from Navigate's estimate | done in code (prompt 40); device checks open (PLAN §6) | |
+| Release QA: OSM credit layout, Language row, simulator QA, store screenshots | in progress (prompt 42) | |
 | Phases 4-7 (quality, TestFlight, App Store page, submission) | open | |
 
 Starting decisions (from the user, 2026-10-16):
@@ -152,6 +154,7 @@ Also: `NSPrivacyTracking = false`, no tracking domains, `NSPrivacyCollectedDataT
 
 ## Phase 6. App Store page
 - [ ] iPhone 6.9" screenshots (1320×2868 or 1290×2796), 3–10 of them: map with the ellipse, route along roads, onboarding, OBD connection. No real user coordinates: demo mode or a neutral route.
+  - Captured (prompt 42): 10 files (5 per language) in `logs/appstore/`; list, regeneration command and the open "GPS off" button note are in `docs/APP_STORE_METADATA.md`, section "Screenshots (6.9", 1320×2868)".
 - [ ] Description, keywords (100 characters), promotional text, uk + en: draft in `docs/APP_STORE_METADATA.md` (open points in the Status table).
 - [ ] Optional: App Preview video (15–30 s).
 - [ ] Review Notes: what the app is, how to test without a car (demo mode), the video link, an explanation of background modes and Bluetooth.

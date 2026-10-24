@@ -35,14 +35,17 @@ struct AdapterSettingsTextTests {
         #expect(off.phase == .bluetoothOff)
         #expect(off.title == "Bluetooth is off")
         #expect(off.tone == .bad)
+        #expect(!off.offersAppSettings, "Control Centre fixes it, not the app's Settings page")
         let denied = status(.unavailable(reason: BLEAvailability.Reason.unauthorized))
         #expect(denied.phase == .bluetoothNotAllowed)
         #expect(denied.title == "Bluetooth not allowed")
         #expect(denied.detail?.contains("Privacy & Security → Bluetooth") == true)
+        #expect(denied.offersAppSettings, "denied: the Open iOS Settings button")
         for reason in [BLEAvailability.Reason.unsupported, BLEAvailability.Reason.resetting, BLEAvailability.Reason.unknown, "Bluetooth state 9"] {
             let s = status(.unavailable(reason: reason))
             #expect(s.phase == .bluetoothUnavailable, "\(reason)")
             #expect(s.title == "Bluetooth not available")
+            #expect(!s.offersAppSettings)
             #expect(s.detail == reason)
         }
         // The BLE layer's strings are on disk (`link` rows): frozen.
@@ -500,6 +503,7 @@ struct AdapterFakeTests {
         #expect(notFound?.hasRemembered == false)
         #expect(notFound?.discovered.allSatisfy { !OBDLinkService.isLikelyAdapter($0) } == true)
         #expect(AdapterFake.parse("bluetoothOff")?.link == .unavailable(reason: BLEAvailability.Reason.poweredOff))
+        #expect(AdapterFake.parse("bluetoothDenied")?.link == .unavailable(reason: BLEAvailability.Reason.unauthorized))
         #expect(AdapterFake.parse("bogus") == nil)
         #expect(AdapterFake.parse(nil) == nil)
         #expect(AdapterFake.parse("") == nil)

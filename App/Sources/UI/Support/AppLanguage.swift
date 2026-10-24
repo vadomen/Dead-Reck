@@ -20,4 +20,22 @@ enum AppLanguage {
         if appLanguage.hasPrefix("uk") { return "uk-UA" }
         return systemVoiceLanguage.hasPrefix("en") ? systemVoiceLanguage : "en-US"
     }
+
+    /// The language's own name for the Settings row: "English", "Українська".
+    /// The two shipped languages are fixed endonyms (a driver who lands in the
+    /// wrong language can still read the value); any other code falls back to
+    /// the system's name for it in that language, capitalised, else the code.
+    static func displayName(code: String) -> String {
+        let base = code.split(separator: "-").first.map(String.init)?.lowercased() ?? code
+        switch base {
+        case "uk": return "Українська"
+        case "en": return "English"
+        default:
+            let locale = Locale(identifier: base)
+            return locale.localizedString(forLanguageCode: base)?.localizedCapitalized ?? code
+        }
+    }
+
+    /// The name of the language the app is showing now.
+    static var currentName: String { displayName(code: code) }
 }

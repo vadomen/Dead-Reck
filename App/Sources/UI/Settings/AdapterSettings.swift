@@ -38,6 +38,11 @@ struct AdapterScreenStatus: Equatable, Sendable {
     var symbol: String
     /// Show the "if your adapter isn't found" help.
     var showsHelp: Bool
+
+    /// Bluetooth is denied for the app: only iOS Settings can change it, so the screen
+    /// offers a button to the app's page there (R-QA42-3). Not for "Bluetooth is off"
+    /// (Control Centre) or an unsupported device.
+    var offersAppSettings: Bool { phase == .bluetoothNotAllowed }
 }
 
 /// The enablement of the screen's controls. Scan and Disconnect follow
@@ -194,7 +199,7 @@ enum AdapterSettingsText {
 
 // MARK: - Fakes
 
-/// DEBUG `-uiFakeAdapter connected|notfound|searching|failed|bluetoothOff`: plain
+/// DEBUG `-uiFakeAdapter connected|notfound|searching|failed|bluetoothOff|bluetoothDenied`: plain
 /// inputs for simulator screenshots, with a generic adapter name. Applied by
 /// `RootView` in DEBUG builds only; parsed here so it is testable.
 struct AdapterFake: Equatable, Sendable {
@@ -229,6 +234,9 @@ struct AdapterFake: Equatable, Sendable {
                                hasRemembered: true)
         case "bluetoothOff":
             return AdapterFake(link: .unavailable(reason: BLEAvailability.Reason.poweredOff), name: genericName,
+                               hasRemembered: true)
+        case "bluetoothDenied":
+            return AdapterFake(link: .unavailable(reason: BLEAvailability.Reason.unauthorized), name: genericName,
                                hasRemembered: true)
         default:
             return nil
