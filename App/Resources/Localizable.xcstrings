@@ -2549,6 +2549,17 @@
         }
       }
     },
+    "Open iOS Settings" : {
+      "comment" : "Settings → OBD adapter: button shown when Bluetooth is denied for the app; opens the app's page in iOS Settings.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Відкрити Параметри iOS"
+          }
+        }
+      }
+    },
     "Open-source licences" : {
       "localizations" : {
         "uk" : {

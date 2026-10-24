@@ -149,6 +149,7 @@ struct SettingsContent<Recording: View, Console: View, Maps: View, Sessions: Vie
     @State private var cards = OnboardingModel(mode: .review)
     @State private var showsMount = false
     @Environment(\.openURL) private var openURL
+    @Environment(\.dynamicTypeSize) private var typeSize
     @AppStorage(GPSVoiceSetting.key) private var speaksGPSChanges = false
 
     private var roadsSection: some View {
@@ -311,6 +312,8 @@ struct SettingsContent<Recording: View, Console: View, Maps: View, Sessions: Vie
             #endif
             }
             .navigationTitle("Settings")
+            // The large title is cut ("Налаштув…") at the accessibility sizes; the inline one wraps in the bar.
+            .navigationBarTitleDisplayMode(typeSize.isAccessibilitySize ? .inline : .large)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done", action: onDone)

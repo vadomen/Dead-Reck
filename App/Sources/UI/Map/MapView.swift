@@ -407,6 +407,7 @@ struct GPSMapView: View {
     var statusLine: AnyView?
 
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.dynamicTypeSize) private var typeSize
     @State private var position: MapCameraPosition = .automatic
     /// Visible north-south extent, metres, from the camera.
     @State private var visibleSpanM: Double?
@@ -796,6 +797,10 @@ struct GPSMapView: View {
     }
 
     private var bottomItems: [MapBottomItem] {
+        MapBottomZone.limited(bottomItemsUnlimited, accessibilitySize: typeSize.isAccessibilitySize, offerVisible: offerShown)
+    }
+
+    private var bottomItemsUnlimited: [MapBottomItem] {
         MapBottomZone.items(
             offer: offerCard != nil, toast: toast != nil, status: statusLine != nil,
             positionStatus: estimate != nil, restoreStatus: estimate.map { RestoreStatus.line($0.restore) != nil } ?? false,
@@ -813,6 +818,8 @@ struct GPSMapView: View {
         .padding(.trailing, MapLayout.railReserved)
         .padding(.bottom, MapLayout.aboveCreditGap)
         .frame(maxWidth: .infinity, alignment: .leading)
+        // Like every card in the stack: wraps in full, never grows past AX2.
+        .dynamicTypeSize(...DynamicTypeSize.accessibility2)
     }
 
     @ViewBuilder
@@ -880,7 +887,8 @@ struct GPSMapView: View {
                         .foregroundStyle(c.opacity(0.2))
                         .stroke(c, lineWidth: 1)
                     Annotation("", coordinate: latest.coordinate) {
-                        carMarker(color: c)
+                        // Decorative: VoiceOver read the arrow's symbol name ("Orient To Phone").
+                        carMarker(color: c).accessibilityHidden(true)
                     }
                 }
                 ForEach(manualFixes) { fix in
@@ -1001,7 +1009,8 @@ struct GPSMapView: View {
     /// Not now / Never on the banner: quiet face, 48 pt tall, as on the card.
     private func bannerAnswer(_ text: String, label: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Text(text).font(.callout.weight(.semibold)).lineLimit(1)
+            // Two lines at accessibility sizes: "Not now" must not end in an ellipsis.
+            Text(text).font(.callout.weight(.semibold)).lineLimit(typeSize.isAccessibilitySize ? 2 : 1)
                 .frame(maxWidth: .infinity, minHeight: 48)
                 .foregroundStyle(HUDColors.text)
                 .hudSurface(Capsule())
@@ -1276,6 +1285,7 @@ private struct TrackOverlay: MapContent {
                 Circle()
                     .fill(point.band.color.opacity(0.3))
                     .frame(width: 10, height: 10)
+                    .accessibilityHidden(true)
             }
         }
         ForEach(Array(track.runs.enumerated()), id: \.offset) { _, run in
@@ -1318,6 +1328,7 @@ private struct NavOverlay: MapContent {
             if NavLayers.showDot(nav) {
                 Annotation("", coordinate: nav.position.coordinate) {
                     NavMarker(nav: nav, headingUp: headingUp, cameraHeading: cameraHeading)
+                        .accessibilityHidden(true)
                 }
             }
         }

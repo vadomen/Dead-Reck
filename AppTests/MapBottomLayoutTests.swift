@@ -91,3 +91,51 @@ struct MapBottomLayoutTests {
         #expect(MapBottomLayout.creditHeight <= MapLayout.attributionBand)
     }
 }
+
+/// R-QA42-1: at accessibility Dynamic Type sizes the bottom stack is cut so it cannot grow over the speed card.
+@Suite("Map bottom stack at accessibility sizes")
+struct MapBottomLimitTests {
+    private let all = MapBottomZone.items(
+        offer: true, toast: true, status: true, positionStatus: true, restoreStatus: true,
+        roadsWarning: true, resumeHint: true, debugSetting: true)
+
+    @Test("normal sizes: nothing is dropped")
+    func normalUnchanged() {
+        #expect(MapBottomZone.limited(all, accessibilitySize: false) == all)
+    }
+
+    @Test("accessibility sizes: at most two, offer card and status banner kept, order kept")
+    func accessibilityLimited() {
+        let out = MapBottomZone.limited(all, accessibilitySize: true)
+        #expect(out == [.offerCard, .statusLine])
+        #expect(out.count == MapBottomZone.accessibilityLimit)
+    }
+
+    @Test("accessibility sizes: dropped least important first (debug, resume, restore, position, roads, toast)")
+    func dropOrder() {
+        #expect(MapBottomZone.limited([.statusLine, .positionStatus, .roadsWarning], accessibilitySize: true) == [.statusLine, .roadsWarning])
+        #expect(MapBottomZone.limited([.toast, .statusLine, .roadsWarning], accessibilitySize: true) == [.toast, .statusLine])
+        #expect(MapBottomZone.limited([.offerCard, .toast, .statusLine], accessibilitySize: true) == [.offerCard, .statusLine])
+        #expect(MapBottomZone.limited([.restoreStatus, .positionStatus, .resumeHint, .debugStrip], accessibilitySize: true) == [.restoreStatus, .positionStatus])
+    }
+
+    @Test("accessibility sizes: an empty offer-card shell does not use up a place")
+    func emptyOfferShell() {
+        let items: [MapBottomItem] = [.offerCard, .statusLine, .positionStatus, .roadsWarning]
+        #expect(MapBottomZone.limited(items, accessibilitySize: true, offerVisible: false) == [.offerCard, .statusLine, .roadsWarning])
+        #expect(MapBottomZone.limited(items, accessibilitySize: true, offerVisible: true) == [.offerCard, .statusLine])
+    }
+
+    @Test("accessibility sizes: two or fewer pass through; the status banner and offer card survive any combination")
+    func neverDropsCritical() {
+        #expect(MapBottomZone.limited([.positionStatus, .debugStrip], accessibilitySize: true) == [.positionStatus, .debugStrip])
+        for mask in 0..<(1 << MapBottomItem.allCases.count) {
+            let subset = MapBottomItem.allCases.enumerated().filter { mask & (1 << $0.offset) != 0 }.map(\.element)
+            let out = MapBottomZone.limited(subset, accessibilitySize: true)
+            for critical in [MapBottomItem.statusLine, .offerCard] where subset.contains(critical) {
+                #expect(out.contains(critical))
+            }
+            #expect(out.count <= max(MapBottomZone.accessibilityLimit, subset.filter { [.statusLine, .offerCard].contains($0) }.count))
+        }
+    }
+}

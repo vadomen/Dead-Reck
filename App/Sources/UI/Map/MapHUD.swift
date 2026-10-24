@@ -227,6 +227,30 @@ enum MapBottomZone {
         if debugSetting { out.append(.debugStrip) }
         return out
     }
+
+    /// Most items the stack shows at an accessibility Dynamic Type size (R-QA42-1): each
+    /// one wraps to several lines there, and a taller stack grows over the speed card.
+    static let accessibilityLimit = 2
+
+    /// Least important first. The OBD / calibration banner and the offer card (it also
+    /// hosts the mount card) are never dropped.
+    private static let dropOrder: [MapBottomItem] = [
+        .debugStrip, .resumeHint, .restoreStatus, .positionStatus, .roadsWarning, .toast,
+    ]
+
+    /// `items` as shown: unchanged at normal sizes; at accessibility sizes cut to
+    /// `accessibilityLimit` by dropping the least important first, order kept.
+    /// `offerVisible`: false when the offer card's slot is an empty shell (it is in
+    /// `items` whenever offers exist, but draws nothing), so it does not use up a place.
+    static func limited(_ items: [MapBottomItem], accessibilitySize: Bool, offerVisible: Bool = true) -> [MapBottomItem] {
+        guard accessibilitySize else { return items }
+        var out = items
+        func shown() -> Int { out.filter { $0 != .offerCard || offerVisible }.count }
+        for drop in dropOrder where shown() > accessibilityLimit {
+            out.removeAll { $0 == drop }
+        }
+        return out
+    }
 }
 
 /// The two developer-strip lines (mockup: `ms/step (max) · ESS · hdg σ` and
