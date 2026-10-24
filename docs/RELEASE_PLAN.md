@@ -22,7 +22,8 @@ Done / in code / open, per item. "In code (prompt 35)" = branch `release-blocker
 | Release surfaces: launch arguments and `DebugAutoRecord` inert in Release (Phase 1 item 6) | in code (prompt 35) | |
 | Demo mode for App Review (Phase 1 item 5) | done in code (prompt 36, branch `rel-demo`); device checks open (PLAN §6) | REL-DEMO |
 | Export of recordings vs the privacy-manifest reason codes (2.2) | done in code (prompt 36): codes kept, Record, Sessions and Console behind the 7-tap gate in Release; device checks open (PLAN §6) | REL-EXPORT |
-| Ukrainian + English localisation (D5, 2.3) | open | UX-15 |
+| Ukrainian + English localisation (D5, 2.3) | done in code (prompt 41, branch `ux15-localization`); device checks open (PLAN §6) | UX-15 |
+| App Store metadata draft (uk + en) | draft in `docs/APP_STORE_METADATA.md`. Open points: routing wording vs "turn-by-turn-style" in the Review Notes for 2.5.4; privacy label vs pack-server IP/region logs; demo steps not yet checked on a Release build; name availability, copyright holder, video, screenshots | UX-15 |
 | First launch as instructions (Phase 1 item 3) | in code (prompt 32, UX-18) | UX-18 |
 | Manual "GPS off" + GPS state chip (D8) | open | UX-9 (a) + UX-22 |
 | Restore the estimate after a relaunch (D8) | open | UX-20 |
@@ -151,14 +152,14 @@ Also: `NSPrivacyTracking = false`, no tracking domains, `NSPrivacyCollectedDataT
 
 ## Phase 6. App Store page
 - [ ] iPhone 6.9" screenshots (1320×2868 or 1290×2796), 3–10 of them: map with the ellipse, route along roads, onboarding, OBD connection. No real user coordinates: demo mode or a neutral route.
-- [ ] Description, keywords (100 characters), promotional text, uk + en.
+- [ ] Description, keywords (100 characters), promotional text, uk + en: draft in `docs/APP_STORE_METADATA.md` (open points in the Status table).
 - [ ] Optional: App Preview video (15–30 s).
 - [ ] Review Notes: what the app is, how to test without a car (demo mode), the video link, an explanation of background modes and Bluetooth.
   - Road maps are OpenStreetMap data files (not code), downloaded after install from the app's own website over HTTPS and verified by SHA-256 and the pack's content hash; the app works without them.
 
 ### Review Notes (draft)
 
-Plain English, ready to paste into App Store Connect. Fill in the video link before submitting.
+Plain English, ready to paste into App Store Connect. Fill in the video link before submitting. The metadata draft (`docs/APP_STORE_METADATA.md`) carries its own copy of the Review Notes; keep the two in step.
 
 ```
 FuGPS estimates the car's position when GPS is absent or distorted. It uses the car's speed, read over OBD-II, and the phone's motion sensors, and can match the position to offline road maps.
