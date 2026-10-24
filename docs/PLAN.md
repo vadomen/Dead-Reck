@@ -198,7 +198,14 @@ Every check still open from the sections added by prompts 28 and 30-41 below, gr
 - [ ] About → Data and services credits the demo map data; Record start during the demo says "The demo drive is running. Stop it to record."; the demo cannot start while Record runs (prompt 36)
 
 **Prompt 42**
-- [ ] (filled at the end of prompt 42)
+- [ ] Map with a pack in use on a notched phone with real tiles: the OSM credit is right-aligned, does not touch Apple's Maps logo or Legal link, and stays visible with the OBD, Finding position, Restored, roads warning, offer and mount cards up, in uk and en (prompt 42)
+- [ ] AX3 with several banners: the bottom stack shows at most 2 items and how far it reaches toward the speed card is acceptable (prompt 42)
+- [ ] Ukrainian phone: Settings → Мова opens the app's page in iOS Settings; that page shows a Language entry once two preferred languages are set; the footer names («Параметри iOS → Загальні → Мова й регіон») match the real iOS names (prompt 42)
+- [ ] Phone with one preferred language: the Language row still opens the app page, and the footer makes clear a second language must be added (prompt 42)
+- [ ] VoiceOver: map rail, HUD summary, banner reading order, Settings rows incl. the Language row ("Мова, Українська" + hint); car and track markers are not read (prompt 42)
+- [ ] Real Location, Motion and Bluetooth prompts and each denied state: no crash, what the map/HUD says; re-grant after returning from iOS Settings; the adapter screen's "Open iOS Settings" button when Bluetooth is denied (prompt 42)
+- [ ] Dynamic Type AX3 through a real drive, plus the Sessions list rows (Export/Delete) at AX3 (prompt 42)
+- [ ] Contrast of the map HUD and banners in sunlight (prompt 42)
 
 ### Resolved by the bench test (2026-10-07, Car Scanner terminal, `docs/BENCH_TEST_2026-10-07.md`)
 - **Protocol:** `ATDPN` = `6`, ISO 15765-4 CAN 11-bit 500 kbaud. Expect `A6` after the app's own `ATSP0`.
