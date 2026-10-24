@@ -259,8 +259,11 @@ enum MapLayout {
 
     /// Gap between the screen's bottom (safe area) and the rail / bottom zone.
     static func bottomInset(slot: Double = bottomSlotHeight) -> Double {
-        attributionBand + 8 + slot
+        attributionBand + aboveCreditGap + slot
     }
+
+    /// Space between the credit band and the lowest rail button / stack item.
+    static let aboveCreditGap: Double = 8
 
     /// Height from the top of the map covered by the safe area and the HUD
     /// card (speed, indicators): the ellipse fit keeps clear of it.

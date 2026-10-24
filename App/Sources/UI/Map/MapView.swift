@@ -689,8 +689,6 @@ struct GPSMapView: View {
         .onChange(of: gpsVoiceRun) { _, _ in onGPSState(gpsHUD, gpsVoiceRun) }
         // A new run: the previous run's engine state must not show for even one frame.
         .onChange(of: run) { _, _ in navigation?.clearGPS() }
-        // Right rail: North up / Heading up, Following, Settings.
-        .overlay(alignment: .bottomTrailing) { rail }
         // REL-DEMO: the badge and Stop demo, top right, only while it runs.
         .overlay(alignment: .topTrailing) {
             if let demo {
@@ -699,11 +697,25 @@ struct GPSMapView: View {
                     .padding(.top, 8)
             }
         }
-        // Bottom-left zone, left of the rail, stacked upward.
-        .overlay(alignment: .bottomLeading) { bottomZone }
-        // UX-33: the OSM credit, one line at the very bottom edge.
-        .overlay(alignment: .bottom) {
-            if roadsAttribution { MapAttributionLine() }
+        // One column at the bottom (`MapBottomLayout`): the stack and the rail
+        // above, the OSM credit (UX-33) in the lowest band, never covered.
+        .overlay(alignment: .bottom) { bottomArea }
+    }
+
+    /// Bottom-left zone, left of the rail, stacked upward; the right rail
+    /// (North up / Heading up, Following, Settings); under both the credit band.
+    private var bottomArea: some View {
+        VStack(spacing: 0) {
+            ZStack(alignment: .bottomTrailing) {
+                bottomZone
+                rail
+            }
+            HStack(spacing: 0) {
+                Spacer(minLength: 0)
+                if roadsAttribution { MapAttributionLine() }
+            }
+            .padding(.trailing, MapLayout.edgeInset)
+            .frame(height: MapLayout.attributionBand, alignment: .top)
         }
     }
 
@@ -780,7 +792,7 @@ struct GPSMapView: View {
             HUDRailButton(symbol: "gearshape", label: String(localized: "Settings"), active: false, action: onOpenSettings)
         }
         .padding(.trailing, MapLayout.edgeInset)
-        .padding(.bottom, MapLayout.bottomInset())
+        .padding(.bottom, MapLayout.aboveCreditGap)
     }
 
     private var bottomItems: [MapBottomItem] {
@@ -792,14 +804,14 @@ struct GPSMapView: View {
     }
 
     private var bottomZone: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: MapBottomLayout.itemGap) {
             ForEach(bottomItems, id: \.self) { item in
                 bottomView(item)
             }
         }
         .padding(.leading, MapLayout.edgeInset)
         .padding(.trailing, MapLayout.railReserved)
-        .padding(.bottom, MapLayout.bottomInset())
+        .padding(.bottom, MapLayout.aboveCreditGap)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 

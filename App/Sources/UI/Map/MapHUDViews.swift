@@ -197,9 +197,8 @@ struct MapAttributionLine: View {
             .foregroundStyle(HUDColors.text)
             .lineLimit(1)
             .padding(.horizontal, 8)
-            .frame(height: 18)
+            .frame(height: MapBottomLayout.creditHeight)
             .background(HUDColors.card, in: Capsule())
-            .padding(.bottom, 4)
             .accessibilityLabel(MapAttribution.text)
     }
 }
