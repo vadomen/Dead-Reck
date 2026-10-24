@@ -7,6 +7,19 @@ struct RecordingScreen: View {
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
+        #if DEBUG
+        // `-uiFakeRecord recording|calibrating|failed|idle|mark` (screenshots): the screen from plain values.
+        if let fake = RecordingFake.parse(UserDefaults.standard.string(forKey: "uiFakeRecord")) {
+            RecordingFakeHost(fake: fake)
+        } else {
+            live
+        }
+        #else
+        live
+        #endif
+    }
+
+    private var live: some View {
         RecordingContent(
             state: model.dashboard,
             gate: model.gate,
@@ -150,8 +163,8 @@ struct AdapterRow: View {
 }
 
 struct SpeedTile: View {
-    let title: String
-    let subtitle: String?
+    let title: LocalizedStringKey
+    let subtitle: LocalizedStringKey?
     let value: String
     let tone: Tone
 
@@ -188,7 +201,7 @@ struct StatsRow: View {
         }
     }
 
-    private func stat(_ title: String, _ value: String) -> some View {
+    private func stat(_ title: LocalizedStringKey, _ value: String) -> some View {
         VStack(spacing: 0) {
             Text(value).font(.title2.weight(.bold).monospacedDigit()).minimumScaleFactor(0.7).lineLimit(1)
             Text(title).font(.caption).foregroundStyle(.secondary)
@@ -290,7 +303,7 @@ struct ControlBar: View {
     var body: some View {
         VStack(spacing: 6) {
             if let lastMark {
-                Text("Marked: \(lastMark)").font(.callout.weight(.semibold)).foregroundStyle(.green)
+                Text("Marked: \(MarkPreset.label(for: lastMark))").font(.callout.weight(.semibold)).foregroundStyle(.green)
             }
             if state.isActive {
                 HStack(spacing: 12) {
@@ -320,7 +333,7 @@ struct ControlBar: View {
 }
 
 struct BigButton: View {
-    let title: String
+    let title: LocalizedStringKey
     let systemImage: String
     let tint: Color
     let action: () -> Void
@@ -330,6 +343,9 @@ struct BigButton: View {
         Button(action: action) {
             Label(title, systemImage: systemImage)
                 .font(.system(size: 28, weight: .heavy, design: .rounded))
+                // "ПОЗНАЧКА" is longer than "MARK": shrink to one line, never break a word.
+                .lineLimit(1)
+                .minimumScaleFactor(0.55)
                 .frame(maxWidth: .infinity, minHeight: 72)
                 .foregroundStyle(.white)
                 .background(RoundedRectangle(cornerRadius: 18).fill(isEnabled ? tint : Color.gray.opacity(0.5)))
@@ -352,7 +368,7 @@ struct MarkSheet: View {
                     LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                         ForEach(MarkPreset.all, id: \.self) { preset in
                             Button { onMark(preset) } label: {
-                                Text(preset.capitalized)
+                                Text(MarkPreset.label(for: preset))
                                     .font(.title3.weight(.bold))
                                     .frame(maxWidth: .infinity, minHeight: 64)
                                     .foregroundStyle(.white)
@@ -388,6 +404,37 @@ struct MarkSheet: View {
 
 // MARK: - Previews
 
+#if DEBUG
+/// `-uiFakeRecord`: states for simulator screenshots (no recording runs).
+enum RecordingFake: String {
+    case recording, calibrating, failed, idle, mark
+
+    static func parse(_ value: String?) -> RecordingFake? { value.flatMap(RecordingFake.init(rawValue:)) }
+}
+
+private struct RecordingFakeHost: View {
+    let fake: RecordingFake
+    @State private var checklist = PreDriveChecklist(mountConfirmed: true, orientationConfirmed: true)
+    @State private var sheet = false
+
+    private var state: DashboardState {
+        switch fake {
+        case .recording, .mark: .preview(notices: [.init(text: String(localized: "Low disk space (\(DisplayFormat.bytes(180_000_000)) free). Recording stops automatically when it runs out."), tone: .bad)])
+        case .calibrating: .preview(phase: .calibrating(secondsLeft: 4), obd: "0", gps: "--")
+        case .failed: .preview(phase: .failed(reason: "no space left on device", unwrittenEvents: 21), adapter: .idle, obd: "--", gps: "--")
+        case .idle: .preview(phase: .idle, obd: "0", gps: "--")
+        }
+    }
+
+    var body: some View {
+        RecordingContent(
+            state: state, gate: fake == .idle ? .ready : .checklistIncomplete, checklist: $checklist,
+            lastMark: fake == .recording ? "tunnel" : nil, isMarkSheetPresented: $sheet)
+            .task { if fake == .mark { sheet = true } }
+    }
+}
+#endif
+
 extension DashboardState {
     static func preview(
         phase: Phase = .recording,
@@ -404,10 +451,10 @@ extension DashboardState {
         s.obdSpeed = obd
         s.gpsSpeed = gps
         s.obdTone = s.adapter.isPolling ? .good : (s.isActive ? .bad : .neutral)
-        s.obdHz = "9.8"
-        s.motionHz = "99.7"
+        s.obdHz = DisplayFormat.hz(9.8)
+        s.motionHz = DisplayFormat.hz(99.7)
         s.elapsed = "12:34"
-        s.fileSize = "48.2 MB"
+        s.fileSize = DisplayFormat.bytes(48_200_000)
         s.notices = notices
         s.blocker = blocker
         s.simulationBadge = badge
@@ -459,7 +506,7 @@ private struct RecordingPreviewHost: View {
 }
 
 #Preview("Low disk") {
-    RecordingPreviewHost(state: .preview(notices: [.init(text: "Low disk space (180 MB free). Recording stops automatically when it runs out.", tone: .bad)]))
+    RecordingPreviewHost(state: .preview(notices: [.init(text: String(localized: "Low disk space (\(DisplayFormat.bytes(180_000_000)) free). Recording stops automatically when it runs out."), tone: .bad)]))
 }
 
 #Preview("Failed") {

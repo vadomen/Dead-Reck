@@ -1,5 +1,22 @@
 import Foundation
 
+/// The Bluetooth availability reasons are on-disk text in the log's link rows
+/// (`BLEAvailability.Reason`: never reworded there), so the screens translate
+/// the known ones here, by comparing with the same constants. Any other reason
+/// (a failure text from a service) is shown as the service wrote it.
+enum LinkReasonText {
+    static func display(_ reason: String) -> String {
+        switch reason {
+        case BLEAvailability.Reason.poweredOff: String(localized: "Bluetooth is off")
+        case BLEAvailability.Reason.unauthorized: String(localized: "Bluetooth permission denied")
+        case BLEAvailability.Reason.unsupported: String(localized: "Bluetooth LE is not supported on this device")
+        case BLEAvailability.Reason.resetting: String(localized: "Bluetooth is resetting")
+        case BLEAvailability.Reason.unknown: String(localized: "Bluetooth state unknown")
+        default: reason
+        }
+    }
+}
+
 /// The adapter line shown on the dashboard and the console.
 struct AdapterStatus: Hashable, Sendable {
     var title: String
@@ -10,53 +27,56 @@ struct AdapterStatus: Hashable, Sendable {
     init(_ state: OBDLinkState) {
         switch state {
         case .unavailable(let reason):
-            title = "Bluetooth unavailable"
-            detail = reason
+            title = String(localized: "Bluetooth unavailable")
+            detail = LinkReasonText.display(reason)
             tone = .bad
             isPolling = false
         case .idle:
-            title = "Adapter not connected"
-            detail = "Pick one in Settings → OBD adapter"
+            title = String(localized: "Adapter not connected")
+            detail = String(localized: "Pick one in Settings → OBD adapter")
             tone = .bad
             isPolling = false
         case .scanning:
-            title = "Scanning for adapter"
+            title = String(localized: "Scanning for adapter")
             detail = nil
             tone = .caution
             isPolling = false
         case .connecting:
-            title = "Connecting"
+            title = String(localized: "Connecting")
             detail = nil
             tone = .caution
             isPolling = false
         case .discoveringServices:
-            title = "Connecting"
-            detail = "discovering services"
+            title = String(localized: "Connecting")
+            detail = String(localized: "discovering services")
             tone = .caution
             isPolling = false
         case .initialising:
-            title = "Initialising adapter"
+            title = String(localized: "Initialising adapter")
             detail = nil
             tone = .caution
             isPolling = false
         case .ready:
-            title = "Adapter ready"
-            detail = "not polling yet"
+            title = String(localized: "Adapter ready")
+            detail = String(localized: "not polling yet")
             tone = .caution
             isPolling = false
         case .polling(let proto, let voltage):
-            title = "Polling OBD"
-            detail = (["protocol \(proto)"] + [DisplayFormat.voltage(voltage)].compactMap { $0 })
-                .joined(separator: " · ")
+            title = String(localized: "Polling OBD")
+            if let volts = DisplayFormat.voltage(voltage) {
+                detail = String(localized: "protocol \(proto) · \(volts)")
+            } else {
+                detail = String(localized: "protocol \(proto)")
+            }
             tone = .good
             isPolling = true
         case .reconnecting(let attempt):
-            title = "Adapter lost"
-            detail = "reconnecting, attempt \(attempt)"
+            title = String(localized: "Adapter lost")
+            detail = String(localized: "reconnecting, attempt \(attempt)")
             tone = .bad
             isPolling = false
         case .failed(let reason):
-            title = "Adapter failed"
+            title = String(localized: "Adapter failed")
             detail = reason
             tone = .bad
             isPolling = false

@@ -307,7 +307,7 @@ struct MapsRowsTests {
     func texts() {
         let rows = Self.rows(downloads: .init(states: ["region-a": .downloading(received: 1, total: 4)]))
         let row = rows.listed.first { $0.id == "region-a" }!
-        #expect(MapsText.detail(row) == "31.0 MB · OSM 2025-10-09 · Downloading 25 %")
+        #expect(MapsText.detail(row) == "31.0 MB · OSM 2025-10-09 · Downloading 25%")
         #expect(MapsText.stateText(.notInstalled) == "Not installed")
         #expect(MapsText.stateText(.queued) == "Queued")
         #expect(MapsText.stateText(.waitingForWiFi) == "Waiting for Wi-Fi")

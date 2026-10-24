@@ -9,6 +9,9 @@ name: DriveLogger
 
 options:
   minimumXcodeGenVersion: "2.38"
+  # UX-15: English is the development language, Ukrainian is added. The catalogs
+  # below carry both; the app follows the phone's language (no in-app switch).
+  developmentLanguage: en
   deploymentTarget:
     iOS: "17.0"
   createIntermediateGroups: true
@@ -62,6 +65,10 @@ targets:
       # Listed explicitly rather than globbing App/Resources so Info.plist is
       # not also copied in as a bundle resource.
       - path: App/Resources/Assets.xcassets
+      # String catalogs (UX-15): UI text and the permission purpose strings,
+      # en + uk. Written by hand (xcodebuild does not write extracted keys back).
+      - path: App/Resources/Localizable.xcstrings
+      - path: App/Resources/InfoPlist.xcstrings
       # Privacy manifest (App Store): a bundle resource at the app's root.
       - path: App/Resources/PrivacyInfo.xcprivacy
         buildPhase: resources
@@ -116,6 +123,10 @@ schemes:
     test:
       config: Debug
       gatherCoverageData: true
+      # UX-15: tests pin English text and en_US number formats whatever the
+      # simulator's language is; uk is tested with explicit locales/bundles.
+      language: en
+      region: US
       targets:
         - DriveLoggerAppTests
     profile:

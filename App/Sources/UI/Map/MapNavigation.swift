@@ -242,7 +242,7 @@ enum FollowTarget {
 /// under the finger is precise.
 enum PinPrecision {
     static let maxSpanM = 300.0
-    static let hint = "Zoom in to place the pin precisely"
+    static let hint = String(localized: "Zoom in to place the pin precisely")
 
     /// An unknown span (no camera report yet) is not precise. The span is the
     /// one before the double tap's own zoom.

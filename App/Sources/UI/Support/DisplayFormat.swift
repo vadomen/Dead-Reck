@@ -1,7 +1,9 @@
 import Foundation
 
-/// Pure text formatting for the screens. Locale-independent on purpose: the
-/// numbers are read at a glance in a car, and the tests pin the exact text.
+/// Pure text formatting for the screens. Whole-number speeds and `m:ss` clocks
+/// are the same in every language (read at a glance in a car). Decimals, sizes
+/// and units go through `FormatStyle` with an explicit `locale` (default: the
+/// current one), so the tests pin the text for a fixed locale.
 enum DisplayFormat {
     /// Whole km/h, or `--` when there is no reading.
     static func speed(_ kmh: Double?) -> String {
@@ -9,9 +11,9 @@ enum DisplayFormat {
         return String(Int(max(0, kmh).rounded()))
     }
 
-    static func hz(_ value: Double) -> String {
+    static func hz(_ value: Double, locale: Locale = .current) -> String {
         guard value.isFinite else { return "--" }
-        return String(format: "%.1f", max(0, value))
+        return max(0, value).formatted(.number.precision(.fractionLength(1)).grouping(.never).locale(locale))
     }
 
     /// `m:ss`, or `h:mm:ss` from one hour.
@@ -31,22 +33,27 @@ enum DisplayFormat {
         return elapsed(seconds)
     }
 
-    /// Decimal units (1 KB = 1000 B), like the Files app.
-    static func bytes(_ count: Int64) -> String {
-        let n = Double(max(0, count))
-        switch n {
-        case ..<1_000: return "\(Int(n)) B"
-        case ..<1_000_000: return String(format: "%.0f KB", n / 1_000)
-        case ..<1_000_000_000: return String(format: "%.1f MB", n / 1_000_000)
-        default: return String(format: "%.2f GB", n / 1_000_000_000)
-        }
+    /// Decimal units (1 KB = 1000 B), like the Files app, in the locale's unit names.
+    static func bytes(_ count: Int64, locale: Locale = .current) -> String {
+        Int64(max(0, count)).formatted(ByteCountFormatStyle(
+            style: .decimal, allowedUnits: [.bytes, .kb, .mb, .gb], spellsOutZero: false,
+            includesActualByteCount: false, locale: locale))
     }
 
-    static func bytes(_ count: Int) -> String { bytes(Int64(count)) }
+    static func bytes(_ count: Int, locale: Locale = .current) -> String { bytes(Int64(count), locale: locale) }
 
-    static func voltage(_ volts: Double?) -> String? {
+    /// Map sizes (always MB): one decimal in the locale's separator. The unit
+    /// comes from the catalog ("MB" -> "МБ").
+    static func megabytes(_ bytes: Int64, locale: Locale = .current) -> String {
+        let mb = Double(max(0, bytes)) / 1_000_000
+        return String(localized: "\(mb.formatted(.number.precision(.fractionLength(1)).grouping(.never).locale(locale))) MB")
+    }
+
+    /// "12.4 V" ("12,4 В" in Ukrainian).
+    static func voltage(_ volts: Double?, locale: Locale = .current) -> String? {
         guard let volts, volts.isFinite else { return nil }
-        return String(format: "%.1f V", volts)
+        let number = volts.formatted(.number.precision(.fractionLength(1)).grouping(.never).locale(locale))
+        return String(localized: "\(number) V")
     }
 
     /// Whole seconds left in a countdown, rounded up so it never shows 0

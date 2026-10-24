@@ -17,11 +17,11 @@ extension AccuracyBand {
 enum ThermalText {
     static func label(_ state: ProcessInfo.ThermalState) -> String {
         switch state {
-        case .nominal: "nominal"
-        case .fair: "fair"
-        case .serious: "serious"
-        case .critical: "critical"
-        @unknown default: "unknown"
+        case .nominal: String(localized: "nominal")
+        case .fair: String(localized: "fair")
+        case .serious: String(localized: "serious")
+        case .critical: String(localized: "critical")
+        @unknown default: String(localized: "unknown")
         }
     }
 
@@ -102,7 +102,7 @@ struct MapScreen: View {
             run: model.runKey,
             runGeneration: session.currentRunGeneration,
             cachedLocation: cachedLocation,
-            navigation: fake.nav.map(MapPreviewData.fakeNav)
+            navigation: fake.nav.map { MapPreviewData.fakeNav($0, restored: fake.restored) }
                 ?? (fake.debugStrip ? NavigationFeed(display: nil, stats: MapPreviewData.navStats) : navigation),
             showsEstimate: status.showsEstimate || fake.nav != nil,
             showNavStats: fake.debugStrip ? .constant(true) : $showNavStats,
@@ -763,17 +763,17 @@ struct GPSMapView: View {
             .opacity(gps.enabled ? 1 : 0.45)
             HUDRailButton(
                 symbol: headingUp ? "location.north.line.fill" : "n.circle",
-                label: headingUp ? "Heading up" : "North up", active: headingUp
+                label: headingUp ? String(localized: "Heading up") : String(localized: "North up"), active: headingUp
             ) { headingUp.toggle() }
             HUDRailButton(
                 symbol: follow.isFollowing ? "location.fill" : "location",
-                label: follow.isFollowing ? "Following" : "Follow", active: follow.isFollowing
+                label: follow.isFollowing ? String(localized: "Following") : String(localized: "Follow"), active: follow.isFollowing
             ) {
                 let was = follow.isFollowing
                 updateFollow { $0.followTapped(at: ContinuousClock.now) }
                 if follow.isFollowing, !was { moveCameraToCar(duration: 0.8) }
             }
-            HUDRailButton(symbol: "gearshape", label: "Settings", active: false, action: onOpenSettings)
+            HUDRailButton(symbol: "gearshape", label: String(localized: "Settings"), active: false, action: onOpenSettings)
         }
         .padding(.trailing, MapLayout.edgeInset)
         .padding(.bottom, MapLayout.bottomInset())
@@ -966,8 +966,8 @@ struct GPSMapView: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel(download.buttonText)
                     HStack(spacing: 8) {
-                        bannerAnswer(PackOfferText.notNow, label: "Not now", action: onRoadsWarningNotNow)
-                        bannerAnswer(PackOfferText.never, label: "Never offer maps for \(download.title)", action: onRoadsWarningNever)
+                        bannerAnswer(PackOfferText.notNow, label: String(localized: "Not now"), action: onRoadsWarningNotNow)
+                        bannerAnswer(PackOfferText.never, label: String(localized: "Never offer maps for \(download.title)"), action: onRoadsWarningNever)
                     }
                 case .queued:
                     Label(download.queuedText, systemImage: "arrow.down.circle")
@@ -998,12 +998,13 @@ struct GPSMapView: View {
         Button(action: onRoadsWarningTap) {
             Label(text, systemImage: "road.lanes")
                 .font(.subheadline.weight(.semibold))
-                .lineLimit(2)
-                .minimumScaleFactor(0.8)
+                // Wraps in full (Ukrainian is longer; large Dynamic Type longer still): never cut.
                 .padding(.horizontal, 16)
+                .padding(.vertical, 6)
                 .frame(minHeight: 44)
-                .hudSurface(Capsule())
-                .overlay(Capsule().strokeBorder(HUDColors.warn, lineWidth: 2))
+                .hudSurface(RoundedRectangle(cornerRadius: 22))
+                .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(HUDColors.warn, lineWidth: 2))
+                .dynamicTypeSize(...DynamicTypeSize.accessibility2)
         }
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1380,17 +1381,20 @@ enum MapPreviewData {
     /// The synthetic estimate of `-uiFakeHUD navFinding|navEllipse|navRoad`
     /// (screenshots, near (0, 0): no real place). Heading 40 degrees.
     @MainActor
-    static func fakeNav(_ mode: HUDFakes.FakeNav) -> NavigationFeed {
+    static func fakeNav(_ mode: HUDFakes.FakeNav, restored: Bool = false) -> NavigationFeed {
+        let restore = restored ? RestoreDisplay(status: .unconfirmed, ageAtStartS: 720) : nil
         let position = GeoPoint(latitude: 0.0004, longitude: 0.0004)
         switch mode {
         case .finding:
             return NavigationFeed(display: NavDisplay(
-                position: position, semiMajorM: 2_400, semiMinorM: 1_800, orientationDeg: 20, converged: false))
+                position: position, semiMajorM: 2_400, semiMinorM: 1_800, orientationDeg: 20, converged: false),
+                restore: restore)
         case .ellipse:
             // 90 x 20 m, its long axis across a 40-degree heading.
             return NavigationFeed(display: NavDisplay(
                 position: position, semiMajorM: 90, semiMinorM: 20, orientationDeg: 130, headingDeg: 40,
-                headingStdDeg: 3, converged: true))
+                headingStdDeg: 3, converged: true),
+                restore: restore)
         case .road:
             let along = 150.0 / NavGeometry.metersPerDegree
             let (s, c) = (sin(40 * Double.pi / 180), cos(40 * Double.pi / 180))
@@ -1404,7 +1408,7 @@ enum MapPreviewData {
                 display: NavDisplay(
                     position: position, semiMajorM: 8, semiMinorM: 4, orientationDeg: 40, headingDeg: 40,
                     headingStdDeg: 2, converged: true),
-                stats: stats, matchedEdge: edge)
+                stats: stats, matchedEdge: edge, restore: restore)
         }
     }
 

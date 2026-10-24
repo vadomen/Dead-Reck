@@ -71,15 +71,13 @@ struct StartBlockerNotice: Equatable, Sendable {
         case nil, .recordingInProgress?:
             return nil
         case .lowDiskSpace(let available, let required)?:
-            message = "Not enough free space: \(DisplayFormat.bytes(available)) free, "
-                + "\(DisplayFormat.bytes(required)) needed. Delete old sessions first."
+            message = String(localized: "Not enough free space: \(DisplayFormat.bytes(available)) free, \(DisplayFormat.bytes(required)) needed. Delete old sessions first.")
             offersRecordWithoutOBD = false
         case .obdNotReady?:
-            message = "The OBD adapter is not polling. Connect it in Settings → OBD adapter, "
-                + "or choose to record without OBD."
+            message = String(localized: "The OBD adapter is not polling. Connect it in Settings → OBD adapter, or choose to record without OBD.")
             offersRecordWithoutOBD = true
         case .demoDriveRunning?:
-            message = "The demo drive is running. Stop it to record."
+            message = String(localized: "The demo drive is running. Stop it to record.")
             offersRecordWithoutOBD = false
         }
     }
@@ -90,10 +88,10 @@ enum StartErrorText {
     static func message(for error: any Error) -> String {
         if let blocker = error as? RecordingStartBlocker {
             switch blocker {
-            case .recordingInProgress: return "A recording is already running."
-            default: return StartBlockerNotice(blocker)?.message ?? "Cannot start."
+            case .recordingInProgress: return String(localized: "A recording is already running.")
+            default: return StartBlockerNotice(blocker)?.message ?? String(localized: "Cannot start.")
             }
         }
-        return "Could not start: \(error.localizedDescription)"
+        return String(localized: "Could not start: \(error.localizedDescription)")
     }
 }

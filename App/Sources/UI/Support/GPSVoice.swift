@@ -11,6 +11,8 @@ enum GPSVoiceSetting {
     static let key = "voice.gpsChanges"
 }
 
+/// The raw values are the phrases' identity (English, stable); the spoken text
+/// is `spoken` / `spoken(language:)`, from the catalog.
 enum GPSPhrase: String, CaseIterable, Hashable, Sendable {
     /// "GPS" to "No GPS": the fixes stopped or became unusable, after having been in use.
     case lost = "GPS lost"
@@ -19,6 +21,25 @@ enum GPSPhrase: String, CaseIterable, Hashable, Sendable {
     case back = "GPS back"
     /// The driver's switch went off (their own tap, said back to them).
     case off = "GPS off"
+
+    /// Catalog entry of the spoken text (also quoted by the Settings footer).
+    var resource: LocalizedStringResource {
+        switch self {
+        case .lost: LocalizedStringResource("GPS lost")
+        case .back: LocalizedStringResource("GPS back")
+        case .off: LocalizedStringResource("GPS off")
+        }
+    }
+
+    /// What is said, in the app language.
+    var spoken: String { spoken(language: nil) }
+
+    /// The text in `language` ("uk", "en"); nil: the app language.
+    func spoken(language: String?) -> String {
+        var r = resource
+        if let language { r.locale = Locale(identifier: language) }
+        return String(localized: r)
+    }
 }
 
 /// Which phrase, if any, a new HUD GPS state calls for. One per run; it is
@@ -106,7 +127,7 @@ final class GPSVoiceAnnouncer {
     func note(_ state: HUDGPS, run: Int?, enabled: Bool) -> GPSPhrase? {
         guard let phrase = tracker.note(state, run: run), enabled,
               limiter.allow(phrase, now: now()) else { return nil }
-        speaker.speak(phrase.rawValue)
+        speaker.speak(phrase.spoken)
         return phrase
     }
 }
@@ -133,7 +154,12 @@ final class SystemSpeech: NSObject, GPSSpeaking, @preconcurrency AVSpeechSynthes
             return
         }
         pending += 1
-        synthesizer.speak(AVSpeechUtterance(string: text))
+        let utterance = AVSpeechUtterance(string: text)
+        // The voice of the app language: a Ukrainian phrase read by the default
+        // English voice is gibberish.
+        utterance.voice = AVSpeechSynthesisVoice(language: AppLanguage.voiceLanguage(
+            appLanguage: AppLanguage.code, systemVoiceLanguage: AVSpeechSynthesisVoice.currentLanguageCode()))
+        synthesizer.speak(utterance)
     }
 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) { finished() }

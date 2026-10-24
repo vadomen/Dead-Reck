@@ -142,8 +142,8 @@ struct DemoControls: View {
     /// DEBUG `-uiDemoClock 1` only: demo seconds, for reproducible screenshots.
     var elapsed: () -> Double? = { nil }
 
-    static let badgeText = "DEMO"
-    static let stopText = "Stop demo"
+    static let badgeText = String(localized: "DEMO")
+    static let stopText = String(localized: "Stop demo")
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 8) {

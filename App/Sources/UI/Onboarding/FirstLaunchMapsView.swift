@@ -3,27 +3,33 @@ import SwiftUI
 /// Wording of the first-launch maps step (UX-8 (1)). Pure functions, so the
 /// button text per network state is testable.
 enum FirstLaunchMapsText {
-    static let title = "Road maps"
-    static let why = "Maps help navigation when GPS is poor. Nothing downloads until you tap the button."
-    static let allowLocation = "Allow location to suggest your region's map. It stays on the phone."
-    static let lookingForRegion = "Looking for your region…"
-    static let later = "Download maps later"
-    static let laterNote = "Later, everything is in Settings → Maps."
-    static let useCellular = "Use cellular data"
-    static let loading = "Loading the list of maps…"
-    static let noListTitle = "The list of maps is not available"
-    static let noListDetail = "There is no connection. Navigation works without maps; you can download them later in Settings → Maps."
-    static let nearby = "Nearby"
-    static let installed = "Installed"
-    static let offlineNote = "No connection. The download starts when you are online."
-    static let cellularNote = "You are on cellular data. The download waits for Wi-Fi."
+    static let title = String(localized: "Road maps")
+    static let why = String(localized: "Maps help navigation when GPS is poor. Nothing downloads until you tap the button.")
+    static let allowLocation = String(localized: "Allow location to suggest your region's map. It stays on the phone.")
+    static let lookingForRegion = String(localized: "Looking for your region…")
+    static let later = String(localized: "Download maps later")
+    static let laterNote = String(localized: "Later, everything is in Settings → Maps.")
+    static let useCellular = String(localized: "Use cellular data")
+    static let loading = String(localized: "Loading the list of maps…")
+    static let noListTitle = String(localized: "The list of maps is not available")
+    static let noListDetail = String(localized: "There is no connection. Navigation works without maps; you can download them later in Settings → Maps.")
+    static let nearby = String(localized: "Nearby")
+    static let installed = String(localized: "Installed")
+    static let offlineNote = String(localized: "No connection. The download starts when you are online.")
+    static let cellularNote = String(localized: "You are on cellular data. The download waits for Wi-Fi.")
 
-    static func maps(_ count: Int) -> String { count == 1 ? "1 map" : "\(count) maps" }
+    /// "1 map" / "2 maps" (catalog plural; Ukrainian one / few / many / other).
+    static func maps(_ count: Int) -> String { String(localized: "\(count) maps") }
 
-    /// "Download 2 maps · 61.0 MB", with " on Wi-Fi" when it will wait for Wi-Fi.
-    static func confirmTitle(count: Int, bytes: Int64, network: FirstLaunchMapsModel.Network) -> String {
-        let base = "Download \(maps(count)) · \(MapsText.size(bytes))"
-        return network == .waitsForWiFi ? base + " on Wi-Fi" : base
+    /// "Download 2 maps · 61.0 MB", "... on Wi-Fi" when it will wait for Wi-Fi.
+    /// Two whole keys, each with the plural, not a suffix added in code.
+    static func confirmTitle(
+        count: Int, bytes: Int64, network: FirstLaunchMapsModel.Network, locale: Locale = .current
+    ) -> String {
+        let size = MapsText.size(bytes, locale: locale)
+        return network == .waitsForWiFi
+            ? String(localized: "Download \(count) maps · \(size) on Wi-Fi")
+            : String(localized: "Download \(count) maps · \(size)")
     }
 
     /// The line under the button for a network that will not start at once.
@@ -90,6 +96,9 @@ struct FirstLaunchMapsContent: View {
             }
             .padding(.horizontal, 24)
             .padding(.top, 24)
+            // Never cut the explanation to make room: the list scrolls instead
+            // (Ukrainian runs a line or two longer than English).
+            .fixedSize(horizontal: false, vertical: true)
             middle
             footer
         }
@@ -189,8 +198,14 @@ struct FirstLaunchMapsRow: View {
         .buttonStyle(.plain)
         .disabled(row.isInstalled)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(row.title), \(MapsText.size(row.sizeBytes))" + (FirstLaunchMapsText.caption(row).map { ", \($0)" } ?? ""))
+        .accessibilityLabel(accessibilityText)
         .accessibilityAddTraits(row.isSelected ? [.isButton, .isSelected] : .isButton)
+    }
+
+    private var accessibilityText: String {
+        let size = MapsText.size(row.sizeBytes)
+        guard let caption = FirstLaunchMapsText.caption(row) else { return String(localized: "\(row.title), \(size)") }
+        return String(localized: "\(row.title), \(size), \(caption)")
     }
 
     private var icon: String {

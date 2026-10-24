@@ -61,13 +61,13 @@ enum NetworkDiagnosticsText {
     /// - Parameter setting: the "Use cellular data" UserDefault.
     static func rows(_ snapshot: PackDownloader.Snapshot, setting: Bool) -> [Row] {
         var rows = [
-            Row(label: "Path", value: path(snapshot)),
-            Row(label: "Maps connection", value: connection(snapshot.connection)),
-            Row(label: "Cellular switch",
+            Row(label: String(localized: "Path"), value: path(snapshot)),
+            Row(label: String(localized: "Maps connection"), value: connection(snapshot.connection)),
+            Row(label: String(localized: "Cellular switch"),
                 value: "setting \(onOff(setting)) · downloader \(onOff(snapshot.cellularAllowed))"
                     + (setting == snapshot.cellularAllowed ? "" : " · MISMATCH"),
                 isProblem: setting != snapshot.cellularAllowed),
-            Row(label: "Policy", value: policy(snapshot.policy)),
+            Row(label: String(localized: "Policy"), value: policy(snapshot.policy)),
         ]
         for name in snapshot.states.keys.sorted() {
             guard let state = snapshot.states[name] else { continue }

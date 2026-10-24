@@ -57,14 +57,14 @@ enum DemoDriveRow: Equatable {
     /// Disabled; the reason is shown under the row.
     case blocked(String)
 
-    static let recordActiveText = "Stop the recording to run the demo."
+    static let recordActiveText = String(localized: "Stop the recording to run the demo.")
 
     static func make(_ blocker: DemoDriveStartBlocker?) -> DemoDriveRow {
         switch blocker {
         case nil: .ready
         case .recordActive?: .blocked(recordActiveText)
         case .running?: .ready   // Stop demo is on the map; a second tap just returns to it
-        case .unavailable?: .blocked("The demo is not available in this build.")
+        case .unavailable?: .blocked(String(localized: "The demo is not available in this build."))
         }
     }
 }

@@ -18,9 +18,9 @@ enum HUDGPS: Hashable, Sendable {
 
     var label: String {
         switch self {
-        case .ok: "GPS"
-        case .none: "No GPS"
-        case .off: "GPS off"
+        case .ok: String(localized: "GPS")
+        case .none: String(localized: "No GPS")
+        case .off: String(localized: "GPS off")
         }
     }
 
@@ -40,9 +40,9 @@ enum HUDOBD: Hashable, Sendable {
 
     var label: String {
         switch self {
-        case .connected: "OBD"
-        case .lost: "OBD lost"
-        case .none: "No OBD"
+        case .connected: String(localized: "OBD")
+        case .lost: String(localized: "OBD lost")
+        case .none: String(localized: "No OBD")
         }
     }
 
@@ -109,8 +109,8 @@ struct MapHUDState: Equatable, Sendable {
             label: gps.label, failed: gps.isFailed, emphasised: speed.source == .gps, switchedOff: gps == .off)
         let obdIndicator = HUDIndicator(
             label: obd.label, failed: obd.isFailed, emphasised: speed.source == .obd, absent: obd == .none)
-        let thermalText: String? = thermal == .nominal ? nil : "Thermal " + ThermalText.label(thermal)
-        var parts = ["\(speed.valueText) km/h", gpsIndicator.label, obdIndicator.label]
+        let thermalText: String? = thermal == .nominal ? nil : String(localized: "Thermal \(ThermalText.label(thermal))")
+        var parts = [String(localized: "\(speed.valueText) km/h"), gpsIndicator.label, obdIndicator.label]
         if let thermalText { parts.append(thermalText) }
         return MapHUDState(
             speedText: speed.valueText, gps: gpsIndicator, obd: obdIndicator,
@@ -173,15 +173,18 @@ struct GPSSwitchControl: Equatable, Sendable {
     var enabled: Bool
 
     static func make(switchOn: Bool, runActive: Bool) -> GPSSwitchControl {
-        switchOn
-            ? GPSSwitchControl(
-                symbol: "location.circle", caption: "GPS off",
-                accessibilityLabel: "Turn GPS off, dead reckoning only", inputLabels: ["GPS off"],
+        if switchOn {
+            let caption = String(localized: "GPS off (rail caption)", comment: "Under the rail's GPS button. The rail is 80 pt wide, so the Ukrainian caption is the short form; the HUD label and the spoken phrase are the full «GPS вимкнено».")
+            return GPSSwitchControl(
+                symbol: "location.circle", caption: caption,
+                accessibilityLabel: String(localized: "Turn GPS off, dead reckoning only"), inputLabels: [caption],
                 active: false, enabled: runActive)
-            : GPSSwitchControl(
-                symbol: "location.slash.circle", caption: "Use GPS",
-                accessibilityLabel: "Turn GPS back on", inputLabels: ["Use GPS"],
-                active: true, enabled: runActive)
+        }
+        let caption = String(localized: "Use GPS (rail caption)", comment: "Under the rail's GPS button; short Ukrainian form «Увімк. GPS» (80 pt rail).")
+        return GPSSwitchControl(
+            symbol: "location.slash.circle", caption: caption,
+            accessibilityLabel: String(localized: "Turn GPS back on"), inputLabels: [caption],
+            active: true, enabled: runActive)
     }
 }
 
@@ -377,6 +380,8 @@ struct HUDFakes: Equatable, Sendable {
     var stopped = false
     /// A synthetic estimate on the map (screenshots; `MapPreviewData.fakeNav`).
     var nav: FakeNav?
+    /// UX-15 screenshots: the "Restored · n min ago · not yet confirmed" line (12 min), on `navEllipse`.
+    var restored = false
 
     /// `navFinding`: not converged, a km-wide ellipse. `navEllipse`: converged,
     /// 90 x 20 m across the track. `navRoad`: converged on a road, with the matched edge.
@@ -398,12 +403,14 @@ struct HUDFakes: Equatable, Sendable {
             case "scatter": out.isActive = true; out.scatter = true
             case "calibrating": out.isActive = true; out.calibrating = true
             case "stopped": out.isActive = true; out.stopped = true
+            case "restored": out.isActive = true; out.restored = true
             case "navFinding", "navEllipse", "navRoad":
                 out.isActive = true
                 out.nav = FakeNav(rawValue: token)
             default: break
             }
         }
+        if out.restored, out.nav == nil { out.nav = .ellipse }
         return out
     }
 

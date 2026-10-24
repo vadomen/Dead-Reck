@@ -3,31 +3,37 @@ import SwiftUI
 /// Wording of the at-a-stop offer card (UX-8 (2), compact form R68.1-3).
 enum PackOfferText {
     /// The one line: what is missing and what it costs.
-    static func summary(sizeBytes: Int64) -> String {
-        "No road map here · \(MapsText.size(sizeBytes))"
+    static func summary(sizeBytes: Int64, locale: Locale = .current) -> String {
+        String(localized: "No road map here · \(MapsText.size(sizeBytes, locale: locale))")
     }
     /// The same line with the region, used when it fits on one line.
-    static func summary(title: String, sizeBytes: Int64) -> String {
-        summary(sizeBytes: sizeBytes) + " · " + title
+    static func summary(title: String, sizeBytes: Int64, locale: Locale = .current) -> String {
+        String(localized: "No road map here · \(MapsText.size(sizeBytes, locale: locale)) · \(title)")
     }
     /// B4: the run has the national pack only.
-    static func summary(sizeBytes: Int64, context: PackOfferMonitor.Offer.Context) -> String {
+    static func summary(sizeBytes: Int64, context: PackOfferMonitor.Offer.Context, locale: Locale = .current) -> String {
         switch context {
-        case .noRoadMap: summary(sizeBytes: sizeBytes)
-        case .onlyMainRoads: "Only main roads here \u{00B7} \(MapsText.size(sizeBytes))"
+        case .noRoadMap: summary(sizeBytes: sizeBytes, locale: locale)
+        case .onlyMainRoads: String(localized: "Only main roads here · \(MapsText.size(sizeBytes, locale: locale))")
         }
     }
-    static func summary(title: String, sizeBytes: Int64, context: PackOfferMonitor.Offer.Context) -> String {
-        summary(sizeBytes: sizeBytes, context: context) + " \u{00B7} " + title
+    static func summary(
+        title: String, sizeBytes: Int64, context: PackOfferMonitor.Offer.Context, locale: Locale = .current
+    ) -> String {
+        switch context {
+        case .noRoadMap: summary(title: title, sizeBytes: sizeBytes, locale: locale)
+        case .onlyMainRoads:
+            String(localized: "Only main roads here · \(MapsText.size(sizeBytes, locale: locale)) · \(title)")
+        }
     }
-    static let download = "Download"
+    static let download = String(localized: "Download")
     /// The primary action's label: the region is named where the line does not
     /// carry the cost of the missing map (B4: "Download <region>").
     static func downloadLabel(title: String, context: PackOfferMonitor.Offer.Context) -> String {
-        context == .onlyMainRoads ? "\(download) \(title)" : download
+        context == .onlyMainRoads ? String(localized: "Download \(title)") : download
     }
-    static let notNow = "Not now"
-    static let never = "Never"
+    static let notNow = String(localized: "Not now")
+    static let never = String(localized: "Never")
 }
 
 /// The three answers to the offer, one wiring for the card and for the roads
@@ -109,12 +115,17 @@ struct PackOfferCardView: View {
                 }
                 .fixedSize(horizontal: false, vertical: true)
             }
-            // Three actions in one row; in the accessibility sizes they stack
-            // instead (three words no longer fit beside each other there).
+            // Three actions in one row. Where they do not fit at their natural width
+            // (Ukrainian "Завантажити" beside "Не зараз" and "Ніколи" on a 375 pt
+            // phone), Download takes its own row above the two answers; in the
+            // accessibility sizes all three stack.
             if typeSize.isAccessibilitySize {
-                VStack(spacing: 8) { actions }
+                VStack(spacing: 8) { download(wraps: true); answers(stacked: true) }
             } else {
-                HStack(spacing: 8) { actions }
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) { download(wraps: false); answers(stacked: false) }
+                    VStack(spacing: 8) { download(wraps: true); HStack(spacing: 8) { answers(stacked: true) } }
+                }
             }
         }
         .padding(12)
@@ -124,20 +135,28 @@ struct PackOfferCardView: View {
         .accessibilityElement(children: .contain)
     }
 
-    /// Download takes the width the two short actions leave; all are 48 pt tall.
+    /// The primary action, 48 pt tall. `wraps`: the label may take two lines (a long region).
     @ViewBuilder
-    private var actions: some View {
-        let stacked = typeSize.isAccessibilitySize
+    private func download(wraps: Bool) -> some View {
         Button(action: onDownload) {
             Text(PackOfferText.downloadLabel(title: offer.title, context: offer.context)).font(.callout.bold())
-                .lineLimit(1).minimumScaleFactor(0.7)
+                .lineLimit(wraps ? 2 : 1)
+                .multilineTextAlignment(.center)
+                .minimumScaleFactor(wraps ? 0.8 : 1)
+                .fixedSize(horizontal: !wraps, vertical: false)
+                .padding(.horizontal, 8)
                 .frame(maxWidth: .infinity, minHeight: 48)
         }
         .buttonStyle(OfferActionStyle(prominent: true))
         .accessibilityLabel("Download \(offer.title), \(MapsText.size(offer.sizeBytes))")
+    }
+
+    /// "Not now" and "Never": quiet faces, each at least 48 pt tall.
+    @ViewBuilder
+    private func answers(stacked: Bool) -> some View {
         Button(action: onNotNow) {
             Text(PackOfferText.notNow).font(.callout.weight(.semibold)).lineLimit(1)
-                .padding(.horizontal, stacked ? 0 : 10)
+                .padding(.horizontal, stacked ? 0 : 8)
                 .frame(maxWidth: stacked ? .infinity : nil, minHeight: 48)
         }
         .buttonStyle(OfferActionStyle(prominent: false))
@@ -145,7 +164,7 @@ struct PackOfferCardView: View {
         .accessibilityLabel("Not now")
         Button(action: onNever) {
             Text(PackOfferText.never).font(.callout.weight(.semibold)).lineLimit(1)
-                .padding(.horizontal, stacked ? 0 : 10)
+                .padding(.horizontal, stacked ? 0 : 8)
                 .frame(maxWidth: stacked ? .infinity : nil, minHeight: 48)
         }
         .buttonStyle(OfferActionStyle(prominent: false))

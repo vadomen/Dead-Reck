@@ -68,11 +68,11 @@ struct AdapterSettingsContent: View {
         Form {
             Section {
                 statusRow
-                if isSimulated { SimulationBadge(text: "SIMULATED ADAPTER") }
+                if isSimulated { SimulationBadge(text: String(localized: "SIMULATED ADAPTER")) }
             }
             Section("Paired adapter") {
                 if hasRemembered || controls.canDisconnect {
-                    LabeledContent("Name", value: adapterName ?? "Name not known yet")
+                    LabeledContent("Name", value: adapterName ?? String(localized: "Name not known yet"))
                         .frame(minHeight: 44)
                 } else {
                     Text("None yet. Scan to find yours.")
@@ -113,7 +113,7 @@ struct AdapterSettingsContent: View {
                         .frame(minHeight: 44)
                         .contentShape(Rectangle())
                     }
-                    .accessibilityHint(adapter.id == remembered ? "Paired adapter" : "Connect to this adapter")
+                    .accessibilityHint(adapter.id == remembered ? Text("Paired adapter") : Text("Connect to this adapter"))
                 }
             } header: {
                 Text("Find an adapter")
@@ -158,7 +158,7 @@ struct AdapterSettingsContent: View {
     }
 
     private func rowButton(
-        _ title: String, systemImage: String, role: ButtonRole? = nil, action: @escaping () -> Void
+        _ title: LocalizedStringKey, systemImage: String, role: ButtonRole? = nil, action: @escaping () -> Void
     ) -> some View {
         Button(role: role, action: action) {
             Label(title, systemImage: systemImage)
@@ -177,6 +177,8 @@ private struct BulletLabelStyle: LabelStyle {
         }
     }
 }
+
+// MARK: - Fakes
 
 extension AdapterSettingsContent {
     /// DEBUG `-uiFakeAdapter`: the screen from fake inputs, inert controls.
