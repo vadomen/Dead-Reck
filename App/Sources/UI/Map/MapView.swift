@@ -105,7 +105,7 @@ struct MapScreen: View {
             navigation: fake.nav.map { MapPreviewData.fakeNav($0, restored: fake.restored) }
                 ?? (fake.debugStrip ? NavigationFeed(display: nil, stats: MapPreviewData.navStats) : navigation),
             showsEstimate: status.showsEstimate || fake.nav != nil,
-            showNavStats: fake.debugStrip ? .constant(true) : $showNavStats,
+            showNavStats: fake.debugStrip ? .constant(true) : (StoreScreenshotMode.current.showsDebugStrip(setting: true) ? $showNavStats : .constant(false)),
             roadsWarning: warningText,
             roadsWarningDownload: warningDownload,
             onRoadsWarningDownload: { offerActions?.download() },
@@ -692,7 +692,7 @@ struct GPSMapView: View {
         .onChange(of: run) { _, _ in navigation?.clearGPS() }
         // REL-DEMO: the badge and Stop demo, top right, only while it runs.
         .overlay(alignment: .topTrailing) {
-            if let demo {
+            if let demo, StoreScreenshotMode.current.showsDemoControls {
                 DemoControls(onStop: demo.onStop, elapsed: demo.elapsed)
                     .padding(.trailing, MapLayout.edgeInset)
                     .padding(.top, 8)

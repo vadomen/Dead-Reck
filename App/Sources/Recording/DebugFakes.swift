@@ -28,6 +28,39 @@ enum DebugFakes {
             refresh: connection == .none ? .failed(offline: true) : .ok)
     }
 
+    /// `-uiFakeMapsStore 1` (App Store screenshots): a calm list, no failure and
+    /// no developer pack: national and two regions installed, one downloading,
+    /// two not installed. Names are made up.
+    @MainActor
+    static var storeMapsModel: MapsModel {
+        var downloads = PackDownloader.Snapshot(connection: .unmetered, cellularAllowed: false)
+        downloads.states = ["region-c": .downloading(received: 14_700_000, total: 35_000_000)]
+        return MapsModel(
+            status: RoadPackLibrary.Status(
+                packs: [
+                    .preview("national", bytes: 41_000_000, hash: "0f0e0d0c", coverage: false),
+                    .preview("region-a", hash: "a1b2c3d4"),
+                    .preview("region-b", hash: "5e6f7a8b"),
+                ],
+                scansCompleted: 1, storeBytes: 136_000_000),
+            manifest: storeManifest, downloads: downloads, refresh: .ok)
+    }
+
+    /// `MapsPreviewData.manifest` with Ukrainian titles of its own, so the uk
+    /// screenshot has no English row names.
+    static var storeManifest: PackManifest {
+        let base = MapsPreviewData.manifest
+        let uk = ["national": "Національні дороги", "region-a": "Регіон А", "region-b": "Регіон Б",
+                  "region-c": "Регіон В", "region-d": "Регіон Г", "region-e": "Регіон Д"]
+        var manifest = base
+        manifest.packs = base.packs.map { pack in
+            PackManifest.Pack(name: pack.name, kind: pack.kind, titleUK: uk[pack.name] ?? pack.titleUK, titleEN: pack.titleEN,
+                 bbox: pack.bbox, url: pack.url, size: pack.size, sha256: pack.sha256, contentHash: pack.contentHash,
+                 formatVersion: pack.formatVersion, osmDate: pack.osmDate, osmTimestamp: pack.osmTimestamp)
+        }
+        return manifest
+    }
+
     /// `-uiFakeRemovalPending 1`: one pack marked for removal and a run
     /// active (B5): the row offers Download again, and Remove warns that
     /// navigation loses the map until the app restarts.
