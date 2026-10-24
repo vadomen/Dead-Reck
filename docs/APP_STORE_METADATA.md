@@ -62,7 +62,6 @@ WHAT IT DOES AND DOES NOT DO
 • Without GPS the position is a calculation and can be wrong. Accuracy depends on the car, the mount and the route.
 • It only reads data from the car, and cannot change anything in it or clear fault codes.
 • Road maps are an optional free download (OpenStreetMap data). Without them the app still works, just without matching to roads. Once downloaded, they work without internet.
-• Recording a drive is optional. Recordings stay on your iPhone.
 • No accounts, no ads, no analytics.
 
 SAFETY
@@ -85,10 +84,10 @@ Road data © OpenStreetMap contributors, ODbL.
 Тримайте авто на карті, коли GPS зникає чи стрибає. FuGPS бере швидкість з авто через OBD-II адаптер і датчики iPhone. Безкоштовно, без облікових записів і реклами.
 ```
 
-**Ключові слова** (97 зі 100 байтів UTF-8)
+**Ключові слова** (95 зі 100 байтів UTF-8)
 
 ```
-розрахунок,OBD2,ELM327,без GPS,швидкість,авто,тунель,дороги
+навігація,OBD2,ELM327,без GPS,швидкість,авто,тунель,дороги
 ```
 
 **Опис**
@@ -109,7 +108,6 @@ FuGPS показує, де ваше авто, коли GPS зникає або �
 • Без GPS позиція — це розрахунок, він може помилятися. Точність залежить від авто, тримача й маршруту.
 • Лише читає дані з авто: нічого в ньому змінити чи стерти коди помилок не може.
 • Карти доріг — необовʼязкове безкоштовне завантаження (дані OpenStreetMap). Без них застосунок працює, але без привʼязки до доріг. Після завантаження вони працюють без інтернету.
-• Запис поїздки — на вашу вимогу. Записи лишаються на вашому iPhone.
 • Без облікових записів, реклами й аналітики.
 
 БЕЗПЕКА
@@ -132,7 +130,7 @@ Normal use needs an OBD-II Bluetooth LE adapter (ELM327-compatible) in the car, 
 4. Tap Stop demo to return to the normal map.
 The demo works offline and stores nothing. A video of a real drive: <VIDEO LINK>
 
-Bluetooth is used only to talk to the OBD-II adapter. Location (When In Use) gives the map position and GPS fixes. Navigate keeps a background location activity session so the position continues while the screen is locked during a drive. No personal data leaves the phone. The map uses Apple Maps (MapKit); road maps are downloaded from our website, which reveals the requested region and the IP address. There are no accounts or analytics. Road maps are optional OpenStreetMap data downloaded from our website.
+Bluetooth is used only to talk to the OBD-II adapter. Location (When In Use) gives the map position and GPS fixes. Navigate keeps a background location activity session so the position continues while the screen is locked during a drive. No personal data leaves the phone. The map uses Apple Maps (MapKit); road maps are downloaded from our website, which reveals the requested region and the IP address. There are no accounts or analytics.
 ```
 
 Ukrainian translation, for reference only (App Review reads the English text above; do not paste this into App Store Connect).
@@ -147,18 +145,18 @@ FuGPS розраховує позицію авто, коли GPS зникає а
 4. Торкніться «Зупинити демо», щоб повернутися до звичайної карти.
 Демо працює без інтернету й нічого не зберігає. Відео реальної поїздки: <VIDEO LINK>
 
-Bluetooth використовується лише для звʼязку з OBD-II адаптером. Геолокація (під час використання застосунку) дає позицію на карті та дані GPS. Під час навігації застосунок тримає фонову сесію геолокації, щоб позиція не переривалася із заблокованим екраном у поїздці. Особисті дані не залишають телефон. Карта використовує Apple Maps (MapKit); карти доріг завантажуються з нашого сайту, який бачить запитаний регіон та IP-адресу. Облікових записів і аналітики немає. Карти доріг — необовʼязкові дані OpenStreetMap, що завантажуються з нашого сайту.
+Bluetooth використовується лише для звʼязку з OBD-II адаптером. Геолокація (під час використання застосунку) дає позицію на карті та дані GPS. Під час навігації застосунок тримає фонову сесію геолокації, щоб позиція не переривалася із заблокованим екраном у поїздці. Особисті дані не залишають телефон. Карта використовує Apple Maps (MapKit); карти доріг завантажуються з нашого сайту, який бачить запитаний регіон та IP-адресу. Облікових записів і аналітики немає.
 ```
 
 ## Open points
 
-1. Routing: the description says the app does not plan routes or give turn-by-turn directions. RELEASE_PLAN and the site describe a position display only, but the draft Review Notes and D7 call background use "turn-by-turn-style navigation" (guideline 2.5.4). Confirm that the app has no routing and settle one wording for the background justification.
+1. Routing: resolved (prompt 41 follow-ups). The app shows a live position on the map and does not plan routes; RELEASE_PLAN D7 now justifies the background modes as "live position on the map while driving".
 2. Demo path: the Review Notes steps (Settings -> Developer -> Demo drive, "Stop demo") are copied from the draft. Check them against the Release build: Developer must be reachable without the 7-tap gate, and the UK labels must match the final catalog. Same for «Зупинити демо» in the UK translation (the glossary has «Демо-поїздка (імітація авто)» only).
-3. "Recording a drive is optional" is in the description because the task asked for it, but RELEASE_PLAN says Record is behind the 7-tap gate in Release. Drop that line if Record is not visible to App Review and users.
-4. Site wording differs from this draft: the site (en and uk) says GPS is "jammed or spoofed" and the UK landing page uses place names. This draft follows RELEASE_PLAN 2.4 ("absent or distorted"; no electronic-warfare framing). Align the site (prompt 41 item 8).
-5. Apostrophe: the UK text here uses ʼ (U+02BC) throughout, per the glossary. The UK site pages still use ASCII `'`.
-6. App Privacy label "Data Not Collected" vs the pack server seeing the IP address and region (RELEASE_PLAN 2.5 asks to reflect server logs in the questionnaire). Check what Cloudflare Pages/R2 logs and answer accordingly.
-7. Counts were made by hand. Subtitle 25/26, promotional text 158/164, keywords 91 chars (EN) and 97 bytes (UK). Recount before pasting.
+3. "Recording a drive is optional": resolved, the line is dropped from both descriptions (Record and Sessions are developer-only in Release).
+4. Site wording differs from this draft: the site says GPS is "jammed or spoofed" (en) and «глушать», «підміненим сигналом» (uk); this draft follows RELEASE_PLAN 2.4 ("absent or distorted").
+5. Apostrophe: resolved; the UK text here and the UK site pages use ʼ (U+02BC).
+6. App Privacy label: Data Not Collected. No analytics on the site, no server logs kept; the user checks that Cloudflare Web Analytics is off for the site.
+7. Counts checked by script: subtitle 25/26 characters, promotional text 158/164 characters, keywords 91 bytes (EN) and 95 bytes (UK). Recount in App Store Connect when pasting.
 8. Name availability (D1), legal copyright holder, video link, screenshots (no real coordinates) and the optional App Preview are not in this file.
-9. The UK keywords "розрахунок" stands for dead reckoning (prose term in the glossary); consider whether users would search for it.
+9. UK keyword «розрахунок»: resolved, replaced by «навігація».
 

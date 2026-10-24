@@ -540,7 +540,7 @@ struct RecordingSessionTests {
         // Allowing location now doesn't give this recording a background
         // session: its source never started. No second row.
         location.availability = .available
-        #expect(session.backgroundRiskWarning == "\(prefix) referenceLocation did not start.")
+        #expect(session.backgroundRiskWarning == "\(prefix) GPS did not start.")
         await session.stop()
         // Idle, and location is available: no warning for the next one.
         #expect(session.backgroundRiskWarning == nil)
@@ -593,7 +593,7 @@ struct RecordingSessionTests {
         #expect(session.backgroundRiskWarning == nil)
         try await session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
         let url = try #require(session.currentFile)
-        #expect(session.backgroundRiskWarning?.hasSuffix("referenceLocation did not start.") == true)
+        #expect(session.backgroundRiskWarning?.hasSuffix("GPS did not start.") == true)
         await session.stop()
         #expect(session.backgroundRiskWarning == nil)
 
@@ -1146,7 +1146,7 @@ struct RecordingSessionDisplayTextTests {
         ]
         #expect(RecordingSession.backgroundRiskText(reasons, language: "en")
             == "No background location session, so the recording may pause while the phone is locked. "
-            + "Location access is restricted on this device. referenceLocation did not start. Some other reason.")
+            + "Location access is restricted on this device. GPS did not start. Some other reason.")
         #expect(RecordingSession.backgroundRiskText(reasons) == RecordingSession.backgroundRiskText(reasons, language: "en"))
         #expect(RecordingSession.backgroundRiskText(reasons, language: "uk")
             == "Немає фонового сеансу геолокації, тому запис може призупинитися, поки телефон заблоковано. "
