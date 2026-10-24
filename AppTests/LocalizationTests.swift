@@ -58,7 +58,7 @@ enum LocalizationAllowlist {
 /// helpers named here take one too; `String(localized:)` and
 /// `LocalizedStringResource` are the String-typed ways in).
 private let acceptingCalls = [
-    "SpeedTile(title:", "subtitle:", "BigButton(title:", "stat(", "linkRow(", "rowButton(",
+    "SpeedTile(title:", "subtitle:", "resolved(", "BigButton(title:", "stat(", "linkRow(", "rowButton(",
     "String(localized:", "LocalizedStringResource(", "Text(", "Button(", "Label(", "Toggle(", "Section(",
     "LabeledContent(", ".navigationTitle(", ".accessibilityLabel(", ".accessibilityHint(", ".accessibilityValue(",
     ".confirmationDialog(", "ContentUnavailableView(", "TextField(", "Link(", "Picker(", "Menu(",
@@ -114,6 +114,15 @@ struct LocalizationScanTests {
         #expect(stale.isEmpty, "Allowlist entries nothing matches any more: \(stale.map { LocalizationAllowlist.entries[$0].file + " " + (LocalizationAllowlist.entries[$0].needle ?? "*") })")
     }
 
+    @Test("The path helper resolves symlinks: /tmp and /private/tmp spellings give the same relative paths")
+    func pathsAreRobust() {
+        let files = LocalizationRepo.allSourceFiles()
+        #expect(files.contains("App/Sources/UI/Map/MapView.swift") && files.contains("App/Sources/Link/OBDLinkService.swift"))
+        #expect(files.allSatisfy { !$0.hasPrefix("/") && !$0.contains("..") })
+        #expect(Set(LocalizationRepo.uiSourceFiles()).isSubset(of: Set(files)))
+        #expect(LocalizationRepo.root.path == LocalizationRepo.root.resolvingSymlinksInPath().path)
+    }
+
     @Test("The scanner finds a bare literal and accepts a localising call (guards the scan itself)")
     func scannerSelfCheck() {
         let source = """
@@ -140,7 +149,8 @@ struct LocalizationScanTests {
         let catalog = try StringCatalog(path: "App/Resources/Localizable.xcstrings")
         let known = catalog.normalizedKeys
         var missing: [String] = []
-        for file in LocalizationRepo.uiSourceFiles() {
+        // All of App/Sources, services included (link, sensors, record, maps reasons).
+        for file in LocalizationRepo.allSourceFiles() {
             let scanned = SwiftLiteralScanner.scan(try LocalizationRepo.text(file))
             for literal in scanned.literals where !scanned.skippedLines.contains(literal.line) {
                 guard acceptingCall(literal.context) != nil, !literal.content.isEmpty, !literal.isMultiline else { continue }
@@ -501,5 +511,29 @@ struct LocalizedDataTests {
         let feed = MapPreviewData.fakeNav(.ellipse, restored: true)
         #expect(RestoreStatus.line(feed.restore) == "Restored · 12 min ago · not yet confirmed")
         #expect(MapPreviewData.fakeNav(.ellipse).restore == nil)
+    }
+
+    @Test("The background-risk sentence names the sensor in uk and keeps the identifier in en (pinned text)")
+    func backgroundRiskNamesSensor() {
+        let reasons: [RecordingSession.BackgroundRiskReason] = [.didNotStart(source: "referenceLocation")]
+        #expect(RecordingSession.backgroundRiskText(reasons, language: "en").hasSuffix("referenceLocation did not start."))
+        let uk = RecordingSession.backgroundRiskText(reasons, language: "uk")
+        #expect(uk.hasSuffix("GPS: не запущено."), "\(uk)")
+        #expect(!uk.contains("referenceLocation"))
+    }
+
+    @Test("Service reasons shown on the Record and adapter screens go through the catalog")
+    func serviceReasonsOnScreens() {
+        let reason = SensorUnavailableReason.motionDenied
+        let notice = DashboardState.make(DashboardState.Inputs(
+            state: .idle, live: LiveStatus(), link: .idle, startBlocker: nil, allowsRecordingWithoutOBD: false,
+            backgroundRisk: nil, lastStopReason: nil, unavailableSensors: [(name: "deviceMotion", reason: reason.rawValue)],
+            simulatedAdapter: false, simulatedSensors: false, calibrationSeconds: 5)).notices.first?.text
+        #expect(notice == "Motion unavailable: \(reason.display(language: "en"))")
+        let uk = reason.display(language: "uk")
+        #expect(uk.contains("Параметри iOS") && !uk.contains("налаштуван"))
+        let failed = AdapterSettingsText.status(link: .failed(reason: LinkReason.noServices.text), adapterName: nil,
+                                                hasRemembered: false, foundAdapter: false, waitedLong: false)
+        #expect(failed.detail == LinkReason.noServices.display)
     }
 }

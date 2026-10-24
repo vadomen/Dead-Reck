@@ -407,7 +407,7 @@ struct MarkSheet: View {
 #if DEBUG
 /// `-uiFakeRecord`: states for simulator screenshots (no recording runs).
 enum RecordingFake: String {
-    case recording, calibrating, failed, idle, mark
+    case recording, calibrating, failed, idle, mark, sensors
 
     static func parse(_ value: String?) -> RecordingFake? { value.flatMap(RecordingFake.init(rawValue:)) }
 }
@@ -423,6 +423,11 @@ private struct RecordingFakeHost: View {
         case .calibrating: .preview(phase: .calibrating(secondsLeft: 4), obd: "0", gps: "--")
         case .failed: .preview(phase: .failed(reason: "no space left on device", unwrittenEvents: 21), adapter: .idle, obd: "--", gps: "--")
         case .idle: .preview(phase: .idle, obd: "0", gps: "--")
+        case .sensors:
+            .preview(notices: [
+                .init(text: String(localized: "\(SensorNames.display("deviceMotion")) unavailable: \(SensorUnavailableReason.display(SensorUnavailableReason.motionDenied.rawValue))"), tone: .caution),
+                .init(text: RecordingSession.backgroundRiskText([.unavailable(reason: SensorUnavailableReason.locationDenied.rawValue), .didNotStart(source: "referenceLocation")]), tone: .caution),
+            ])
         }
     }
 

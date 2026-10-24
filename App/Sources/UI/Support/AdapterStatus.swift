@@ -2,8 +2,10 @@ import Foundation
 
 /// The Bluetooth availability reasons are on-disk text in the log's link rows
 /// (`BLEAvailability.Reason`: never reworded there), so the screens translate
-/// the known ones here, by comparing with the same constants. Any other reason
-/// (a failure text from a service) is shown as the service wrote it.
+/// the known ones here, by comparing with the same constants. The link
+/// services' failure texts are read back as a typed `LinkReason` and shown
+/// as its `display`. Any other reason (an `ELMSession` failure from Core,
+/// an iOS error text) is shown as the service wrote it.
 enum LinkReasonText {
     static func display(_ reason: String) -> String {
         switch reason {
@@ -12,7 +14,7 @@ enum LinkReasonText {
         case BLEAvailability.Reason.unsupported: String(localized: "Bluetooth LE is not supported on this device")
         case BLEAvailability.Reason.resetting: String(localized: "Bluetooth is resetting")
         case BLEAvailability.Reason.unknown: String(localized: "Bluetooth state unknown")
-        default: reason
+        default: LinkReason(text: reason)?.display ?? reason
         }
     }
 }
@@ -77,7 +79,7 @@ struct AdapterStatus: Hashable, Sendable {
             isPolling = false
         case .failed(let reason):
             title = String(localized: "Adapter failed")
-            detail = reason
+            detail = LinkReasonText.display(reason)
             tone = .bad
             isPolling = false
         }

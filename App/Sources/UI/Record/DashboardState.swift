@@ -124,7 +124,7 @@ struct DashboardState: Equatable {
             notices.append(Notice(text: risk, tone: .caution))
         }
         for sensor in i.unavailableSensors {
-            notices.append(Notice(text: String(localized: "\(SensorNames.display(sensor.name)) unavailable: \(sensor.reason)"), tone: .caution))
+            notices.append(Notice(text: String(localized: "\(SensorNames.display(sensor.name)) unavailable: \(SensorUnavailableReason.display(sensor.reason))"), tone: .caution))
         }
         s.notices = notices
 

@@ -268,6 +268,16 @@ enum MapLayout {
     /// Height above the bottom inset covered by the offer card (the compact
     /// card, its three actions in one row): the fit keeps clear of it.
     static let offerCardReserved: Double = 140
+    /// Clear space kept above the card (the old 140 pt was a ~120 pt card plus this).
+    static let offerCardGap: Double = 20
+
+    /// What the offer or in-car card covers: its measured height plus the gap;
+    /// the default until it has been measured. The Ukrainian offer card stacks
+    /// Download above the two answers and is about 60 pt taller than English.
+    static func offerReserved(cardHeight: Double?) -> Double {
+        guard let cardHeight, cardHeight.isFinite, cardHeight > 0 else { return offerCardReserved }
+        return cardHeight + offerCardGap
+    }
 
     /// Rail: four 56 pt buttons (GPS switch, North up, Following, Settings), gaps, and the GPS caption.
     static let railButtonCount = 4

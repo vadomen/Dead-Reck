@@ -364,11 +364,11 @@ final class BLECentral: NSObject, BLECentralClient, Sendable {
     private func finishDiscovery(_ peripheral: CBPeripheral) {
         let table = Self.table(of: peripheral)
         guard let choice = GATTDetection.select(from: table) else {
-            giveUp(peripheral, table: table, reason: "no notify + write characteristic pair in \(table.count) service(s)")
+            giveUp(peripheral, table: table, reason: LinkReason.noUARTPair(services: table.count).text)
             return
         }
         guard let notify = Self.characteristic(choice.notify, service: choice.service, in: peripheral) else {
-            giveUp(peripheral, table: table, reason: "characteristic \(choice.notify) vanished")
+            giveUp(peripheral, table: table, reason: LinkReason.characteristicVanished(choice.notify).text)
             return
         }
         lock.withLock {
@@ -380,7 +380,7 @@ final class BLECentral: NSObject, BLECentralClient, Sendable {
 
     private func notificationsEnabled(_ peripheral: CBPeripheral, discovery: Discovery, choice: GATTChoice) {
         guard let write = Self.characteristic(choice.write, service: choice.service, in: peripheral) else {
-            giveUp(peripheral, table: discovery.table, reason: "characteristic \(choice.write) vanished")
+            giveUp(peripheral, table: discovery.table, reason: LinkReason.characteristicVanished(choice.write).text)
             return
         }
         let type: CBCharacteristicWriteType = choice.writeType == .withResponse ? .withResponse : .withoutResponse
@@ -458,7 +458,7 @@ extension BLECentral: CBCentralManagerDelegate {
         case .unsupported: .unavailable(BLEAvailability.Reason.unsupported)
         case .resetting: .unavailable(BLEAvailability.Reason.resetting)
         case .unknown: .unavailable(BLEAvailability.Reason.unknown)
-        @unknown default: .unavailable("Bluetooth state \(central.state.rawValue)")
+        @unknown default: .unavailable(LinkReason.bluetoothState(central.state.rawValue).text)
         }
         if case .unavailable(let reason) = availability {
             // Connections are gone without a didDisconnect callback.
@@ -551,12 +551,12 @@ extension BLECentral: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: (any Error)?) {
         guard isDiscovering(peripheral) else { return }
         if let error {
-            giveUp(peripheral, table: Self.table(of: peripheral), reason: "service discovery failed: \(error.localizedDescription)")
+            giveUp(peripheral, table: Self.table(of: peripheral), reason: LinkReason.serviceDiscoveryFailed(error.localizedDescription).text)
             return
         }
         let services = peripheral.services ?? []
         guard !services.isEmpty else {
-            giveUp(peripheral, table: [], reason: "no GATT services")
+            giveUp(peripheral, table: [], reason: LinkReason.noServices.text)
             return
         }
         lock.withLock { discovery?.pendingServices = services.count }
@@ -578,8 +578,8 @@ extension BLECentral: CBPeripheralDelegate {
         guard isDiscovering(peripheral), let current = lock.withLock({ discovery }), let choice = current.choice,
               GATTDetection.normalise(characteristic.uuid.uuidString) == choice.notify else { return }
         guard error == nil, characteristic.isNotifying else {
-            let detail = error?.localizedDescription ?? "not notifying"
-            giveUp(peripheral, table: current.table, reason: "notifications on \(choice.notify) refused: \(detail)")
+            let reason = LinkReason.notificationsRefused(characteristic: choice.notify, error: error?.localizedDescription)
+            giveUp(peripheral, table: current.table, reason: reason.text)
             return
         }
         notificationsEnabled(peripheral, discovery: current, choice: choice)

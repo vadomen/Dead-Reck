@@ -31,6 +31,17 @@
         }
       }
     },
+    "%@ did not start" : {
+      "comment" : "One reason inside the background-risk notice (RecordingSession.backgroundRiskText). %@: the source identifier, e.g. referenceLocation.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@: не запущено"
+          }
+        }
+      }
+    },
     "%@ downloads after the recording" : {
       "localizations" : {
         "uk" : {
@@ -127,6 +138,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@, ODbL 1.0. Дані карти демо-поїздки: дані OSM від 2026-10-08 (витяг Geofabrik), вбудовані в застосунок."
+          }
+        }
+      }
+    },
+    "%@, larger than the %@ limit" : {
+      "comment" : "Settings → Maps, a download/install/remove failure reason after «Failed: » or «Could not remove …: » (lower-case fragment). PackFailure.resource, App/Sources/Navigation/RoadPackInstaller.swift. %1$@: the file's size, %2$@: the limit; formatted sizes (\"150 MB\").",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@, більше за ліміт %2$@"
           }
         }
       }
@@ -452,7 +474,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Дозвольте його для застосунку в Параметри iOS → Приватність і безпека → Bluetooth."
+            "value" : "Дозвольте його для застосунку в Параметрах iOS → Приватність і безпека → Bluetooth."
           }
         }
       }
@@ -573,6 +595,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Доступ до Bluetooth заборонено"
+          }
+        }
+      }
+    },
+    "Bluetooth state %lld" : {
+      "comment" : "Bluetooth unavailable: a Bluetooth state this build does not know; %lld is its number. LinkReason.bluetoothState. UK wording proposed by the link agent (not in UX15_SERVICE_STRINGS.md): please confirm",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Стан Bluetooth %lld"
           }
         }
       }
@@ -1047,6 +1080,17 @@
         }
       }
     },
+    "Device motion is unavailable on this device" : {
+      "comment" : "Sensor unavailable reason (SensorUnavailableReason, Sensors/SensorSuite.swift), shown in Record notices as the reason of “%@ unavailable: %@” and in the background-risk notice. The log keeps the English.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Рух пристрою недоступний на цьому пристрої"
+          }
+        }
+      }
+    },
     "Diagnostics" : {
       "localizations" : {
         "uk" : {
@@ -1317,6 +1361,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Відключити OBD?"
+          }
+        }
+      }
+    },
+    "ELM session failed" : {
+      "comment" : "Adapter failed: the ELM327 session failed without a reason of its own. LinkReason.sessionFailed",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "збій сеансу ELM"
           }
         }
       }
@@ -1708,6 +1763,28 @@
         }
       }
     },
+    "Location access is denied, or Location Services are off (Settings → Privacy & Security → Location Services)" : {
+      "comment" : "Sensor unavailable reason (SensorUnavailableReason, Sensors/SensorSuite.swift), shown in Record notices as the reason of “%@ unavailable: %@” and in the background-risk notice. The log keeps the English. iOS Settings path: check the UK names on a phone set to Ukrainian.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Доступ до геолокації заборонено або служби геолокації вимкнено (Параметри iOS → Приватність і безпека → Служби геолокації)"
+          }
+        }
+      }
+    },
+    "Location access is restricted on this device" : {
+      "comment" : "Sensor unavailable reason (SensorUnavailableReason, Sensors/SensorSuite.swift), shown in Record notices as the reason of “%@ unavailable: %@” and in the background-risk notice. The log keeps the English.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Доступ до геолокації обмежено на цьому пристрої"
+          }
+        }
+      }
+    },
     "Looking for your region…" : {
       "localizations" : {
         "uk" : {
@@ -1844,6 +1921,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Рух"
+          }
+        }
+      }
+    },
+    "Motion & Fitness access is denied (Settings → Privacy & Security → Motion & Fitness)" : {
+      "comment" : "Sensor unavailable reason (SensorUnavailableReason, Sensors/SensorSuite.swift), shown in Record notices as the reason of “%@ unavailable: %@” and in the background-risk notice. The log keeps the English. iOS Settings path: check the UK names on a phone set to Ukrainian.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Доступ до «Рух і фітнес» заборонено (Параметри iOS → Приватність і безпека → Рух і фітнес)"
+          }
+        }
+      }
+    },
+    "Motion & Fitness access is restricted on this device" : {
+      "comment" : "Sensor unavailable reason (SensorUnavailableReason, Sensors/SensorSuite.swift), shown in Record notices as the reason of “%@ unavailable: %@” and in the background-risk notice. The log keeps the English.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Доступ до «Рух і фітнес» обмежено на цьому пристрої"
           }
         }
       }
@@ -2024,6 +2123,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Адаптер не знайдено"
+          }
+        }
+      }
+    },
+    "No background location session, so the recording may pause while the phone is locked. %@" : {
+      "comment" : "Record notice (RecordingSession.backgroundRiskText). %@: one or more reasons, each a full sentence ending in a period, joined by spaces. Not logged.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Немає фонового сеансу геолокації, тому запис може призупинитися, поки телефон заблоковано. %@"
           }
         }
       }
@@ -2563,7 +2673,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Вставте адаптер у розʼєм OBD в авто, а потім один раз звʼяжіть його в Налаштування → OBD-адаптер. Після цього навігація запускається сама, щойно адаптер підключиться."
+            "value" : "Вставте адаптер у розʼєм OBD в авто, а потім один раз оберіть його в Налаштування → OBD-адаптер. Після цього навігація запускається сама, щойно адаптер підключиться."
           }
         }
       }
@@ -2734,6 +2844,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Записи зʼявляться тут після зупинки."
+          }
+        }
+      }
+    },
+    "Reference frame xArbitraryZVertical is unavailable" : {
+      "comment" : "Sensor unavailable reason (SensorUnavailableReason, Sensors/SensorSuite.swift), shown in Record notices as the reason of “%@ unavailable: %@” and in the background-risk notice. The log keeps the English.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Система координат xArbitraryZVertical недоступна"
           }
         }
       }
@@ -3278,6 +3399,17 @@
         }
       }
     },
+    "The accelerometer is unavailable on this device" : {
+      "comment" : "Sensor unavailable reason (SensorUnavailableReason, Sensors/SensorSuite.swift), shown in Record notices as the reason of “%@ unavailable: %@” and in the background-risk notice. The log keeps the English.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Акселерометр недоступний на цьому пристрої"
+          }
+        }
+      }
+    },
     "The app will stop reconnecting to it. The recording continues without OBD for the rest of the drive." : {
       "localizations" : {
         "uk" : {
@@ -3304,6 +3436,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Стрілка зʼявляється, щойно FuGPS дізнається ваш напрямок. Карти доріг і повороти допомагають визначити його під час руху. Пасажир може це пришвидшити: на прямій ділянці двічі торкнутися карти там, де зараз авто. Мітка, поставлена на стоянці, уточнює лише позицію, а не напрямок."
+          }
+        }
+      }
+    },
+    "The barometer is unavailable on this device" : {
+      "comment" : "Sensor unavailable reason (SensorUnavailableReason, Sensors/SensorSuite.swift), shown in Record notices as the reason of “%@ unavailable: %@” and in the background-risk notice. The log keeps the English.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Барометр недоступний на цьому пристрої"
           }
         }
       }
@@ -3354,6 +3497,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Під час першої навігації FuGPS один раз спитає, чи закріплено телефон."
+          }
+        }
+      }
+    },
+    "The gyroscope is unavailable on this device" : {
+      "comment" : "Sensor unavailable reason (SensorUnavailableReason, Sensors/SensorSuite.swift), shown in Record notices as the reason of “%@ unavailable: %@” and in the background-risk notice. The log keeps the English.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Гіроскоп недоступний на цьому пристрої"
           }
         }
       }
@@ -3523,7 +3677,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Увімкніть його в Пункті керування чи в налаштуваннях iOS."
+            "value" : "Увімкніть його в Пункті керування чи в Параметрах iOS."
           }
         }
       }
@@ -3777,6 +3931,138 @@
         }
       }
     },
+    "already finished" : {
+      "comment" : "Write-failure reason (RecordingSession.display): the file was already closed. Lower case: it follows a colon.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "уже завершено"
+          }
+        }
+      }
+    },
+    "cannot copy the file: %@" : {
+      "comment" : "Settings → Maps, a download/install/remove failure reason after «Failed: » or «Could not remove …: » (lower-case fragment). PackFailure.resource, App/Sources/Navigation/RoadPackInstaller.swift. %@: the system's error text.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "не вдалося скопіювати файл: %@"
+          }
+        }
+      }
+    },
+    "cannot create the store: %@" : {
+      "comment" : "Settings → Maps, a download/install/remove failure reason after «Failed: » or «Could not remove …: » (lower-case fragment). PackFailure.resource, App/Sources/Navigation/RoadPackInstaller.swift. %@: the system's error text.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "не вдалося створити сховище: %@"
+          }
+        }
+      }
+    },
+    "cannot mark for removal: %@" : {
+      "comment" : "Settings → Maps, a download/install/remove failure reason after «Failed: » or «Could not remove …: » (lower-case fragment). PackFailure.resource, App/Sources/Navigation/RoadPackInstaller.swift. %@: the system's error text.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "не вдалося позначити для видалення: %@"
+          }
+        }
+      }
+    },
+    "cannot read the file: %@" : {
+      "comment" : "Settings → Maps, a download/install/remove failure reason after «Failed: » or «Could not remove …: » (lower-case fragment). PackFailure.resource, App/Sources/Navigation/RoadPackInstaller.swift. %@: the system's error text.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "не вдалося прочитати файл: %@"
+          }
+        }
+      }
+    },
+    "cannot store the file: %@" : {
+      "comment" : "Settings → Maps, a download/install/remove failure reason after «Failed: » or «Could not remove …: » (lower-case fragment). PackFailure.resource, App/Sources/Navigation/RoadPackInstaller.swift. %@: the system's error text.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "не вдалося зберегти файл: %@"
+          }
+        }
+      }
+    },
+    "cannot write the file: %@" : {
+      "comment" : "Settings → Maps, a download/install/remove failure reason after «Failed: » or «Could not remove …: » (lower-case fragment). PackFailure.resource, App/Sources/Navigation/RoadPackInstaller.swift. %@: the system's error text.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "не вдалося записати файл: %@"
+          }
+        }
+      }
+    },
+    "characteristic %@ vanished" : {
+      "comment" : "Adapter failed: a Bluetooth characteristic disappeared; %@ is its UUID. LinkReason.characteristicVanished",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "характеристика %@ зникла"
+          }
+        }
+      }
+    },
+    "checksum mismatch" : {
+      "comment" : "Settings → Maps, a download/install/remove failure reason after «Failed: » or «Could not remove …: » (lower-case fragment). PackFailure.resource, App/Sources/Navigation/RoadPackInstaller.swift.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "контрольна сума не збігається"
+          }
+        }
+      }
+    },
+    "content hash %@ does not match the manifest (%@)" : {
+      "comment" : "Settings → Maps, a download/install/remove failure reason after «Failed: » or «Could not remove …: » (lower-case fragment). PackFailure.resource, App/Sources/Navigation/RoadPackInstaller.swift. %1$@: the file's content hash, %2$@: the manifest's (16 hex digits each).",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "хеш вмісту %1$@ не збігається зі списком карт (%2$@)"
+          }
+        }
+      }
+    },
+    "could not create %@: %@" : {
+      "comment" : "Write-failure reason (RecordingSession.display). %1$@: a file path; %2$@: the error description. Lower case: it follows a colon.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "не вдалося створити %1$@: %2$@"
+          }
+        }
+      }
+    },
+    "could not encode %@: %@" : {
+      "comment" : "Write-failure reason (RecordingSession.display). %1$@: the event kind identifier (e.g. mag); %2$@: the error description. Lower case: it follows a colon.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "не вдалося закодувати %1$@: %2$@"
+          }
+        }
+      }
+    },
     "critical" : {
       "localizations" : {
         "uk" : {
@@ -3797,12 +4083,67 @@
         }
       }
     },
+    "disk full" : {
+      "comment" : "Write-failure reason (RecordingSession.display(LogWriteError)), shown as the reason of “Writing failed: %@. %lld events were not written.” Lower case: it follows a colon. The log keeps the English.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "диск заповнено"
+          }
+        }
+      }
+    },
     "fair" : {
       "localizations" : {
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "підвищена"
+          }
+        }
+      }
+    },
+    "file exists: %@" : {
+      "comment" : "Write-failure reason (RecordingSession.display). %@: a file path. Lower case: it follows a colon.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "файл уже існує: %@"
+          }
+        }
+      }
+    },
+    "incomplete download" : {
+      "comment" : "Settings → Maps, a download/install/remove failure reason after «Failed: » or «Could not remove …: » (lower-case fragment). PackFailure.resource, App/Sources/Navigation/RoadPackInstaller.swift.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "завантаження не завершено"
+          }
+        }
+      }
+    },
+    "invalid pack name" : {
+      "comment" : "Settings → Maps, a download/install/remove failure reason after «Failed: » or «Could not remove …: » (lower-case fragment). PackFailure.resource, App/Sources/Navigation/RoadPackInstaller.swift.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "недійсна назва карти"
+          }
+        }
+      }
+    },
+    "invalid pack name (1–%lld of a–z, 0–9, _ and -)" : {
+      "comment" : "Settings → Maps, a download/install/remove failure reason after «Failed: » or «Could not remove …: » (lower-case fragment). PackFailure.resource, App/Sources/Navigation/RoadPackInstaller.swift. %lld: the maximum name length.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "недійсна назва карти (1–%lld символів: a–z, 0–9, _ і -)"
           }
         }
       }
@@ -3817,12 +4158,89 @@
         }
       }
     },
+    "more bytes than the manifest says" : {
+      "comment" : "Settings → Maps, a download/install/remove failure reason after «Failed: » or «Could not remove …: » (lower-case fragment). PackFailure.resource, App/Sources/Navigation/RoadPackInstaller.swift.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "байтів більше, ніж у списку карт"
+          }
+        }
+      }
+    },
+    "no GATT services" : {
+      "comment" : "Adapter failed: the adapter offers no Bluetooth services. LinkReason.noServices",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "адаптер не має служб GATT"
+          }
+        }
+      }
+    },
+    "no notify + write characteristic pair (services: %lld)" : {
+      "comment" : "Adapter failed: the adapter's Bluetooth layout has no usable notify + write pair; %lld is the number of services found. LinkReason.noUARTPair (App/Sources/Link/OBDLinkServicing.swift)",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "немає пари характеристик notify і write (служб: %lld)"
+          }
+        }
+      }
+    },
+    "no road pack store" : {
+      "comment" : "Settings → Maps, a download/install/remove failure reason after «Failed: » or «Could not remove …: » (lower-case fragment). PackFailure.resource, App/Sources/Navigation/RoadPackInstaller.swift.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "немає сховища карт доріг"
+          }
+        }
+      }
+    },
     "nominal" : {
       "localizations" : {
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "норма"
+          }
+        }
+      }
+    },
+    "not a regular file" : {
+      "comment" : "Settings → Maps, a download/install/remove failure reason after «Failed: » or «Could not remove …: » (lower-case fragment). PackFailure.resource, App/Sources/Navigation/RoadPackInstaller.swift.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "це не звичайний файл"
+          }
+        }
+      }
+    },
+    "not an HTTP response" : {
+      "comment" : "Settings → Maps, a download/install/remove failure reason after «Failed: » or «Could not remove …: » (lower-case fragment). PackFailure.resource, App/Sources/Navigation/RoadPackInstaller.swift.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "відповідь сервера не є HTTP"
+          }
+        }
+      }
+    },
+    "not notifying" : {
+      "comment" : "Adapter failed: notifications did not turn on and iOS gave no error; fills %2$@ of 'notifications on %@ refused: %@'. LinkReason.notificationsRefused",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "сповіщення не ввімкнено"
           }
         }
       }
@@ -3843,6 +4261,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "непридатна"
+          }
+        }
+      }
+    },
+    "not verified" : {
+      "comment" : "Settings → Maps, a download/install/remove failure reason after «Failed: » or «Could not remove …: » (lower-case fragment). PackFailure.resource, App/Sources/Navigation/RoadPackInstaller.swift.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "не перевірено"
+          }
+        }
+      }
+    },
+    "notifications on %@ refused: %@" : {
+      "comment" : "Adapter failed: the adapter refused notifications; %1$@ characteristic UUID, %2$@ iOS error text or 'not notifying'. LinkReason.notificationsRefused",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "адаптер відхилив сповіщення на %1$@: %2$@"
           }
         }
       }
@@ -3903,6 +4343,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "висока"
+          }
+        }
+      }
+    },
+    "service discovery failed: %@" : {
+      "comment" : "Adapter failed: Bluetooth service discovery failed; %@ is the iOS error text. LinkReason.serviceDiscoveryFailed",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "не вдалося знайти служби: %@"
+          }
+        }
+      }
+    },
+    "the server sent more than %@" : {
+      "comment" : "Settings → Maps, a download/install/remove failure reason after «Failed: » or «Could not remove …: » (lower-case fragment). PackFailure.resource, App/Sources/Navigation/RoadPackInstaller.swift. %@: a formatted size (\"48 MB\"), ByteCountFormatStyle.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "сервер надіслав більше ніж %@"
           }
         }
       }

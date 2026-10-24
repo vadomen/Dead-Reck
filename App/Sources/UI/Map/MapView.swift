@@ -394,6 +394,8 @@ struct GPSMapView: View {
     /// The offer is actually showing (not just wired): while it is, the car is
     /// centred instead of sitting in the lower third under the card (R68.1-3).
     var offerShown = false
+    /// The card's measured height, so the ellipse fit keeps clear of its real size.
+    @State private var offerCardHeight: Double?
     /// The recording row in the top-left card. A view of its own (it reads
     /// the recorder's 16 Hz status), so this view stays plain values.
     var recordingControl: AnyView?
@@ -529,7 +531,8 @@ struct GPSMapView: View {
     private func applyViewport() {
         guard mapGeometry.size.width > 0, mapGeometry.size.height > 0 else { return }
         headingState.zoom.viewport = EllipseFit.Viewport.make(
-            size: mapGeometry.size, safeBottom: mapGeometry.safeBottom, offerShown: offerShown)
+            size: mapGeometry.size, safeBottom: mapGeometry.safeBottom, offerShown: offerShown,
+            offerHeight: offerCardHeight)
     }
 
     var body: some View {
@@ -585,6 +588,7 @@ struct GPSMapView: View {
                 await frameOnOpen()
                 await runLoop()
             }
+            .onChange(of: offerCardHeight) { applyViewport() }
             // R68.1-3: the car moves to the middle while the offer card is up
             // and back when it goes (heading-up only; north-up is centred).
             .onChange(of: offerShown, initial: true) { _, shown in
@@ -802,7 +806,8 @@ struct GPSMapView: View {
     @ViewBuilder
     private func bottomView(_ item: MapBottomItem) -> some View {
         switch item {
-        case .offerCard: offerCard
+        case .offerCard:
+            offerCard.onGeometryChange(for: Double.self, of: { Double($0.size.height) }) { offerCardHeight = $0 }
         case .toast: if let toast { toastView(toast) }
         case .statusLine: statusLine
         case .positionStatus: if let estimate { PositionStatusLine(feed: estimate) }

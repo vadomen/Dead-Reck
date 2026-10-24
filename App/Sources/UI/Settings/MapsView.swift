@@ -174,7 +174,7 @@ enum MapsText {
         case .deleted: nil
         case .removalPending: String(localized: "\(packName): Removal takes effect after the app restarts.")
         case .notInstalled: String(localized: "\(packName) is not installed.")
-        case .failed(let reason): String(localized: "Could not remove \(packName): \(reason)")
+        case .failed(let reason): String(localized: "Could not remove \(packName): \(reason.display)")
         }
     }
 
@@ -273,7 +273,7 @@ enum MapsText {
             case .pausedForRecording: return .pausedForRecording
             case .downloading(let received, let total): return .downloading(percent: percent(received: received, total: total))
             case .verifying: return .verifying
-            case .failed(let reason): return .failed(reason)
+            case .failed(let reason): return .failed(reason.display)
             }
         }
         guard let installed else { return .notInstalled }
@@ -909,7 +909,7 @@ enum MapsPreviewData {
         }
         snapshot.states = [
             "region-c": waiting ?? .downloading(received: 14_700_000, total: 35_000_000),
-            "region-d": .failed("checksum mismatch"),
+            "region-d": .failed(.checksumMismatch),
             "region-e": waiting ?? .queued,
         ]
         return snapshot

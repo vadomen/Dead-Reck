@@ -69,10 +69,10 @@ enum EllipseFit {
 
         /// The viewport for a map of `size` (points) under `safeBottom`, with
         /// the offer card (or the in-car card) up or not.
-        static func make(size: CGSize, safeBottom: Double, offerShown: Bool) -> Viewport {
+        static func make(size: CGSize, safeBottom: Double, offerShown: Bool, offerHeight: Double? = nil) -> Viewport {
             Viewport(
                 width: size.width, height: size.height, top: MapLayout.hudReserved,
-                bottom: MapLayout.bottomInset() + safeBottom + (offerShown ? MapLayout.offerCardReserved : 0),
+                bottom: MapLayout.bottomInset() + safeBottom + (offerShown ? MapLayout.offerReserved(cardHeight: offerHeight) : 0),
                 leading: MapLayout.edgeInset, trailing: MapLayout.railReserved)
         }
     }

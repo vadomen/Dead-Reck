@@ -262,7 +262,7 @@ struct PackNetworkPolicyTests {
     @Test("Diagnostics rows: path flags, both switch values with a mismatch flagged, policy, queued jobs")
     func diagnostics() {
         var snapshot = PackDownloader.Snapshot(
-            states: ["region-b": .waitingMeteredWiFi, "region-a": .queued, "region-c": .failed("404")],
+            states: ["region-b": .waitingMeteredWiFi, "region-a": .queued, "region-c": .failed(.other("404"))],
             connection: .meteredWiFi, cellularAllowed: false,
             path: PackPath(satisfied: true, usesWiFi: true, expensive: true))
         var rows = NetworkDiagnosticsText.rows(snapshot, setting: false)
@@ -320,7 +320,7 @@ struct PackNetworkPolicyTests {
         await downloader.start(old)
         await downloader.waitUntilIdle()
         #expect(asked.count == 1 && oldStub.requests.count == 1 && newStub.requests.count == 1)
-        #expect(await downloader.snapshot().states["region-a"] == .failed("404: the pack is not on the server"))
+        #expect(await downloader.snapshot().states["region-a"] == .failed(.other("404: the pack is not on the server")))
         #expect(env.installedFiles.isEmpty)
     }
 
@@ -334,7 +334,7 @@ struct PackNetworkPolicyTests {
         await downloader.start(old)
         await downloader.waitUntilIdle()
         #expect(asked.count == 1 && oldStub.requests.count == 1 && newStub.requests.isEmpty)
-        #expect(await downloader.snapshot().states["region-a"] == .failed("404: the pack is not on the server"))
+        #expect(await downloader.snapshot().states["region-a"] == .failed(.other("404: the pack is not on the server")))
     }
 
     @Test("404 and the refresh returns the same entry: fails without another request")
@@ -346,7 +346,7 @@ struct PackNetworkPolicyTests {
         await downloader.start(old)
         await downloader.waitUntilIdle()
         #expect(oldStub.requests.count == 1)
-        #expect(await downloader.snapshot().states["region-a"] == .failed("404: the pack is not on the server"))
+        #expect(await downloader.snapshot().states["region-a"] == .failed(.other("404: the pack is not on the server")))
     }
 
     @Test("Without a refresh hook a 404 fails as before")
@@ -357,6 +357,6 @@ struct PackNetworkPolicyTests {
         await downloader.start(old)
         await downloader.waitUntilIdle()
         #expect(oldStub.requests.count == 1)
-        #expect(await downloader.snapshot().states["region-a"] == .failed("404: the pack is not on the server"))
+        #expect(await downloader.snapshot().states["region-a"] == .failed(.other("404: the pack is not on the server")))
     }
 }

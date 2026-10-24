@@ -121,7 +121,7 @@ actor RoadPackLibrary {
         /// No file of that name is installed (or there is no store).
         case notInstalled
         /// The files could not be deleted or marked; the reason.
-        case failed(String)
+        case failed(PackFailure)
     }
 
     /// What selection works from: the open, verified packs, and the files
@@ -432,11 +432,11 @@ actor RoadPackLibrary {
                 try store.mark(files)
                 outcome = .removalPending(files)
             } catch {
-                outcome = .failed("cannot mark for removal: \(error.localizedDescription)")
+                outcome = .failed(.cannotMarkForRemoval(error.localizedDescription))
             }
         } else {
             let failures = store.delete(files)
-            outcome = failures.isEmpty ? .deleted(files) : .failed(failures.joined(separator: "; "))
+            outcome = failures.isEmpty ? .deleted(files) : .failed(.other(failures.joined(separator: "; ")))
         }
         await rescan()
         return outcome
@@ -477,7 +477,7 @@ actor RoadPackLibrary {
     /// `expectedContentHash` (the manifest's) is checked against the verified
     /// header before the rename; nil (the inbox path) accepts any.
     func install(from source: URL, name: String, expectedContentHash: String? = nil) async -> RoadPackInstaller.Outcome {
-        guard let store else { return .refused("no road pack store") }
+        guard let store else { return .refused(.noStore) }
         await firstScanFinished()
         let installer = store.installer
         let outcome = await Task.detached(priority: .utility) { installer.install(from: source, name: name, expectedContentHash: expectedContentHash) }.value

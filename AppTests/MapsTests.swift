@@ -61,7 +61,7 @@ struct MapsTextTests {
         #expect(MapsText.notice(.removalPending(["x"]), packName: "region-a")
                 == "region-a: Removal takes effect after the app restarts.")
         #expect(MapsText.notice(.notInstalled, packName: "region-a") == "region-a is not installed.")
-        #expect(MapsText.notice(.failed("disk"), packName: "region-a") == "Could not remove region-a: disk")
+        #expect(MapsText.notice(.failed(.other("disk")), packName: "region-a") == "Could not remove region-a: disk")
     }
 
     @Test("Developer verify line: cached, verified in, not verified")
@@ -275,7 +275,7 @@ struct MapsRowsTests {
     func downloadStates() {
         let snapshot = PackDownloader.Snapshot(states: [
             "national": .queued, "region-a": .downloading(received: 42, total: 100),
-            "region-b": .failed("checksum mismatch"), "region-c": .waitingForWiFi,
+            "region-b": .failed(.checksumMismatch), "region-c": .waitingForWiFi,
         ])
         let rows = Self.rows(downloads: snapshot)
         func row(_ id: String) -> MapsRow { rows.listed.first { $0.id == id }! }
@@ -417,5 +417,109 @@ struct DeveloperGateTests {
         for i in 0..<7 { gate.tapVersion(at: Self.t0.addingTimeInterval(20 + Double(i) * 0.3)) }
         #expect(!gate.showsDiagnostics && gate.toast == "Developer diagnostics hidden")
         #expect(!DeveloperGate(isDebug: false, defaults: store).showsDiagnostics)
+    }
+}
+
+// UX-15: the downloader's, installer's and store's failure reasons. `text` is
+// the English wording Diagnostics and the recording's `roadPacks` row carry:
+// frozen here. Settings → Maps shows `display`, from the catalog.
+@Suite("Maps failure reasons: text frozen, display from the catalog")
+struct PackFailureTests {
+    /// One of each case, with payloads as the services produce them.
+    static let every: [PackFailure] = [
+        .invalidPackName, .invalidInstallName(maxLength: 64), .cannotCreateStore("disk"), .moreBytesThanManifest,
+        .incompleteDownload, .checksumMismatch, .notHTTPResponse, .cannotWriteFile("disk"),
+        .serverSentMore(limit: 48_000_000), .cannotReadFile("disk"), .notRegularFile, .cannotCopyFile("disk"),
+        .notVerified, .contentHashMismatch(found: "00000000000000aa", expected: "00000000000000bb"),
+        .cannotStoreFile("disk"), .tooLarge(bytes: 150_000_001, limit: 150_000_000), .cannotMarkForRemoval("disk"),
+        .noStore, .other("404: the pack is not on the server"),
+    ]
+
+    @Test("The English text is byte-identical to the strings the services always wrote")
+    func textFrozen() {
+        #expect(PackFailure.invalidPackName.text == "invalid pack name")
+        #expect(PackFailure.invalidInstallName(maxLength: 64).text == "invalid pack name (1–64 of a–z, 0–9, _ and -)")
+        #expect(PackFailure.cannotCreateStore("disk").text == "cannot create the store: disk")
+        #expect(PackFailure.moreBytesThanManifest.text == "more bytes than the manifest says")
+        #expect(PackFailure.incompleteDownload.text == "incomplete download")
+        #expect(PackFailure.checksumMismatch.text == "checksum mismatch")
+        #expect(PackFailure.notHTTPResponse.text == "not an HTTP response")
+        #expect(PackFailure.cannotWriteFile("disk").text == "cannot write the file: disk")
+        #expect(PackFailure.serverSentMore(limit: 48_000_000).text == "the server sent more than 48000000 bytes")
+        #expect(PackFailure.cannotReadFile("disk").text == "cannot read the file: disk")
+        #expect(PackFailure.notRegularFile.text == "not a regular file")
+        #expect(PackFailure.cannotCopyFile("disk").text == "cannot copy the file: disk")
+        #expect(PackFailure.notVerified.text == "not verified")
+        #expect(PackFailure.contentHashMismatch(found: "00000000000000aa", expected: "00000000000000bb").text
+                == "content hash 00000000000000aa does not match the manifest (00000000000000bb)")
+        #expect(PackFailure.cannotStoreFile("disk").text == "cannot store the file: disk")
+        #expect(PackFailure.tooLarge(bytes: 150_000_001, limit: 150_000_000).text
+                == "150000001 bytes, larger than the 150000000 byte limit")
+        #expect(PackFailure.cannotMarkForRemoval("disk").text == "cannot mark for removal: disk")
+        #expect(PackFailure.noStore.text == "no road pack store")
+        #expect(PackFailure.other("server: 416").text == "server: 416")
+        // A missed `display` still shows English, as before UX-15.
+        #expect("\(PackFailure.checksumMismatch)" == "checksum mismatch")
+    }
+
+    @Test("In English the display is the text; byte counts are formatted sizes; other text passes through")
+    func englishDisplay() {
+        for failure in Self.every {
+            switch failure {
+            case .serverSentMore, .tooLarge: continue
+            default: #expect(failure.display(language: "en") == failure.text, "\(failure.text)")
+            }
+        }
+        let en = Locale(identifier: "en")
+        #expect(PackFailure.serverSentMore(limit: 48_000_000).display(language: "en")
+                == "the server sent more than \(DisplayFormat.bytes(48_000_000, locale: en))")
+        #expect(PackFailure.tooLarge(bytes: 151_000_000, limit: 150_000_000).display(language: "en")
+                == "\(DisplayFormat.bytes(151_000_000, locale: en)), larger than the \(DisplayFormat.bytes(150_000_000, locale: en)) limit")
+        #expect(!PackFailure.tooLarge(bytes: 151_000_000, limit: 150_000_000).display.contains("bytes"))
+        #expect(PackFailure.other("server: 416").resource() == nil)
+        #expect(PackFailure.other("server: 416").display(language: "uk") == "server: 416", "not ours to translate")
+    }
+
+    @Test("Settings → Maps shows display; Network diagnostics and the remove notice pick their own text")
+    func wiring() {
+        let failure = PackFailure.serverSentMore(limit: 48_000_000)
+        let status = MapsText.status(pack: nil, installed: nil, download: .failed(failure), updatedNextStart: false)
+        #expect(status == .failed(failure.display))
+        #expect(MapsText.stateText(status) == "Failed: " + failure.display)
+        #expect(NetworkDiagnosticsText.job(.failed(failure)) == "failed: the server sent more than 48000000 bytes",
+                "Diagnostics keep the English text")
+        #expect(MapsText.notice(.failed(.cannotMarkForRemoval("disk")), packName: "region-a")
+                == "Could not remove region-a: cannot mark for removal: disk")
+        let large = PackFailure.tooLarge(bytes: 151_000_000, limit: 150_000_000)
+        #expect(MapsText.notice(.failed(large), packName: "region-a") == "Could not remove region-a: " + large.display)
+    }
+
+    @Test("The installer refuses with a typed reason and keeps the English refusal")
+    func installerOutcome() {
+        let outcome = RoadPackInstaller.Outcome.refused(.notRegularFile)
+        #expect(outcome.failure == .notRegularFile && outcome.refusal == "not a regular file" && outcome.installed == nil)
+    }
+
+    // Both below need the keys in Localizable.xcstrings (UX-15 merge).
+    @Test("Every reason's key is in the catalog with a translated uk value")
+    func keysInCatalog() throws {
+        let catalog = try StringCatalog(path: "App/Resources/Localizable.xcstrings")
+        for failure in Self.every {
+            guard let key = failure.resource()?.key else { continue }
+            let entry = catalog.entries[key]
+            #expect(entry?.state("uk") == "translated" && entry?.value("uk")?.isEmpty == false, "missing uk: \(key)")
+        }
+    }
+
+    @Test("Ukrainian display: lower-case fragments after «Збій: »")
+    func ukrainianDisplay() {
+        let uk = Locale(identifier: "uk")
+        #expect(PackFailure.checksumMismatch.display(language: "uk") == "контрольна сума не збігається")
+        #expect(PackFailure.cannotCreateStore("x").display(language: "uk") == "не вдалося створити сховище: x")
+        #expect(PackFailure.contentHashMismatch(found: "aa", expected: "bb").display(language: "uk")
+                == "хеш вмісту aa не збігається зі списком карт (bb)")
+        #expect(PackFailure.tooLarge(bytes: 151_000_000, limit: 150_000_000).display(language: "uk")
+                == "\(DisplayFormat.bytes(151_000_000, locale: uk)), більше за ліміт \(DisplayFormat.bytes(150_000_000, locale: uk))")
+        #expect(PackFailure.noStore.display(language: "uk") == "немає сховища карт доріг")
     }
 }

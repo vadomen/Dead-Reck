@@ -684,7 +684,7 @@ class OBDLinkService: OBDLinkServicing, OBDLinkHolding {
             state = .polling(protocolNumber: lastInfo?.protocolNumber ?? "", voltage: lastInfo?.voltage)
         case .failed:
             // A reconnect, if one follows, sets `.reconnecting`.
-            state = .failed(reason: reason ?? "ELM session failed")
+            state = .failed(reason: reason ?? LinkReason.sessionFailed.text)
             pollHz = 0
         case .idle:
             break

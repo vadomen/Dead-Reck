@@ -143,7 +143,7 @@ enum AdapterSettingsText {
                              ?? String(localized: "Reconnecting to your adapter"),
                          tone: .bad, symbol: "exclamationmark.triangle", showsHelp: false)
         case .failed:
-            return .init(phase: phase, title: String(localized: "Connection failed"), detail: reason,
+            return .init(phase: phase, title: String(localized: "Connection failed"), detail: reason.map(LinkReasonText.display),
                          tone: .bad, symbol: "xmark.octagon", showsHelp: false)
         }
     }
@@ -194,7 +194,7 @@ enum AdapterSettingsText {
 
 // MARK: - Fakes
 
-/// DEBUG `-uiFakeAdapter connected|notfound|searching|bluetoothOff`: plain
+/// DEBUG `-uiFakeAdapter connected|notfound|searching|failed|bluetoothOff`: plain
 /// inputs for simulator screenshots, with a generic adapter name. Applied by
 /// `RootView` in DEBUG builds only; parsed here so it is testable.
 struct AdapterFake: Equatable, Sendable {
@@ -223,6 +223,10 @@ struct AdapterFake: Equatable, Sendable {
                 link: .scanning, name: nil, hasRemembered: false,
                 discovered: [DiscoveredAdapter(id: UUID(uuidString: "00000000-0000-4000-8000-000000000002")!,
                                                name: genericName, rssi: -55)])
+        case "failed":
+            // A typed link failure as the service writes it (English in the log, shown through `LinkReasonText`).
+            return AdapterFake(link: .failed(reason: LinkReason.noUARTPair(services: 3).text), name: genericName,
+                               hasRemembered: true)
         case "bluetoothOff":
             return AdapterFake(link: .unavailable(reason: BLEAvailability.Reason.poweredOff), name: genericName,
                                hasRemembered: true)

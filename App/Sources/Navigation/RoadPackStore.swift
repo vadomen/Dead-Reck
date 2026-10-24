@@ -252,7 +252,7 @@ struct RoadPackStore: Sendable {
                 case .alreadyInstalled(let pack):
                     report.alreadyInstalled.append(pack.fileName)
                 case .refused(let reason):
-                    report.inboxRefused.append(InboxRefusal(fileName: fileName, reason: reason))
+                    report.inboxRefused.append(InboxRefusal(fileName: fileName, reason: reason.text))
                     continue
                 }
                 if let pack = outcome.installed {

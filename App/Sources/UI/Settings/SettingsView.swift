@@ -386,7 +386,7 @@ private var previewInbox: RoadPackLibrary.PackStatus {
                          roadSetHashPrefix: "0f0f0f0f", activeAtSessionS: 12, onRoadShare: 0.93),
             footprintBytes: 210_000_000),
         network: NetworkDiagnosticsText.rows(
-            PackDownloader.Snapshot(states: ["region-a": .waitingMeteredWiFi, "region-b": .failed("404")],
+            PackDownloader.Snapshot(states: ["region-a": .waitingMeteredWiFi, "region-b": .failed(.other("404"))],
                                     connection: .meteredWiFi, cellularAllowed: false,
                                     path: PackPath(satisfied: true, usesWiFi: true, expensive: true)),
             setting: true)

@@ -54,7 +54,7 @@ enum NetworkDiagnosticsText {
         case .pausedForRecording: "paused (recording)"
         case .downloading: "downloading"
         case .verifying: "verifying"
-        case .failed(let reason): "failed: \(reason)"
+        case .failed(let reason): "failed: \(reason.text)"
         }
     }
 

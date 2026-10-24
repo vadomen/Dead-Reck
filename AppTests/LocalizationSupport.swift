@@ -5,7 +5,8 @@ import Foundation
 /// "nothing user-facing bypasses the catalog" rule.
 enum LocalizationRepo {
     /// The repository root, from this file's own path (AppTests/ is one level down).
-    static let root: URL = URL(fileURLWithPath: #filePath)
+    /// Symlinks resolved (/tmp is /private/tmp), so paths compare and strip reliably in worktrees.
+    static let root: URL = URL(fileURLWithPath: #filePath).resolvingSymlinksInPath()
         .deletingLastPathComponent().deletingLastPathComponent()
 
     static func file(_ path: String) -> URL { root.appendingPathComponent(path) }
@@ -17,14 +18,22 @@ enum LocalizationRepo {
     /// Every `.swift` file under `App/Sources/UI`, plus `RootView.swift`: the places
     /// where text meets the screen. Relative paths, sorted.
     static func uiSourceFiles() -> [String] {
-        let base = file("App/Sources/UI")
+        sourceFiles(under: "App/Sources/UI") + ["App/Sources/RootView.swift"]
+    }
+
+    /// Every `.swift` file under `App/Sources` (services too): where catalog keys can be used.
+    static func allSourceFiles() -> [String] { sourceFiles(under: "App/Sources") }
+
+    private static func sourceFiles(under directory: String) -> [String] {
+        let base = file(directory).resolvingSymlinksInPath()
         var out: [String] = []
         if let walker = FileManager.default.enumerator(at: base, includingPropertiesForKeys: nil) {
             for case let url as URL in walker where url.pathExtension == "swift" {
-                out.append(String(url.path.dropFirst(root.path.count + 1)))
+                let path = url.resolvingSymlinksInPath().standardizedFileURL.path
+                guard path.hasPrefix(root.path + "/") else { continue }
+                out.append(String(path.dropFirst(root.path.count + 1)))
             }
         }
-        out.append("App/Sources/RootView.swift")
         return out.sorted()
     }
 }
