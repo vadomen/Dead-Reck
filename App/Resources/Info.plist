@@ -9,6 +9,13 @@
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<!-- UX-15: the languages the app ships; Bundle.main.preferredLocalizations
+	     resolves to uk on a phone set to Ukrainian, else en. -->
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>uk</string>
+	</array>
 	<key>CFBundleDisplayName</key>
 	<string>FuGPS</string>
 	<key>CFBundleExecutable</key>

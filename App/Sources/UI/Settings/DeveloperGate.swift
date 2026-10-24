@@ -69,7 +69,7 @@ final class DeveloperGate {
         guard counter.tap(at: time) else { return }
         unlocked.toggle()
         defaults.set(unlocked, forKey: Self.defaultsKey)
-        toast = unlocked ? "Developer diagnostics shown" : "Developer diagnostics hidden"
+        toast = unlocked ? String(localized: "Developer diagnostics shown") : String(localized: "Developer diagnostics hidden")
     }
 
     func dismissToast() { toast = nil }

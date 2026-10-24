@@ -125,9 +125,9 @@ struct NavigateStatusLabel: View {
                     detailView(font: .headline.weight(.bold).monospacedDigit())
                 }
                 VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 10) {
+                    HStack(alignment: .top, spacing: 10) {
                         icon
-                        Text(text).font(.headline).lineLimit(2)
+                        Text(text).font(.headline).fixedSize(horizontal: false, vertical: true)
                         Spacer(minLength: 0)
                     }
                     detailView(font: .title3.weight(.bold).monospacedDigit())
@@ -138,6 +138,8 @@ struct NavigateStatusLabel: View {
             .frame(minHeight: 56)
             .hudSurface(RoundedRectangle(cornerRadius: 14))
             .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(status.tone.color, lineWidth: 2))
+            // Like the offer and mount cards: it must not grow over the map at AX3+ (R67.1-5).
+            .dynamicTypeSize(...DynamicTypeSize.accessibility2)
             .accessibilityElement(children: .combine)
         }
     }

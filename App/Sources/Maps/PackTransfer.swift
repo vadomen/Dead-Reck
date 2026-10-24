@@ -51,7 +51,7 @@ final class PackTransfer: NSObject, URLSessionDataDelegate, @unchecked Sendable 
         /// Core says the partial cannot continue: delete it, retry without `Range`.
         case restart(String)
         /// This attempt ends; the partial is kept.
-        case failed(String)
+        case failed(PackFailure)
         /// `cancel()` was called.
         case cancelled
         /// The connection failed.
@@ -175,7 +175,7 @@ final class PackTransfer: NSObject, URLSessionDataDelegate, @unchecked Sendable 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
                     completionHandler: @escaping @Sendable (URLSession.ResponseDisposition) -> Void) {
         guard let http = response as? HTTPURLResponse else {
-            decide(.failed("not an HTTP response"))
+            decide(.failed(.notHTTPResponse))
             completionHandler(.cancel)
             return
         }
@@ -191,7 +191,7 @@ final class PackTransfer: NSObject, URLSessionDataDelegate, @unchecked Sendable 
             decide(.restart(reason))
             completionHandler(.cancel)
         case .fail(let reason):
-            decide(http.statusCode == 404 ? .notFound(reason) : .failed(reason))
+            decide(http.statusCode == 404 ? .notFound(reason) : .failed(.other(reason)))
             completionHandler(.cancel)
         case .append:
             do {
@@ -210,7 +210,7 @@ final class PackTransfer: NSObject, URLSessionDataDelegate, @unchecked Sendable 
                 }
                 completionHandler(.allow)
             } catch {
-                decide(.failed("cannot write the file: \(error.localizedDescription)"))
+                decide(.failed(.cannotWriteFile(error.localizedDescription)))
                 completionHandler(.cancel)
             }
         case .writeFromZero(let etag):
@@ -221,7 +221,7 @@ final class PackTransfer: NSObject, URLSessionDataDelegate, @unchecked Sendable 
                 files.writeMetadata(PackDownloadRules.PartialMetadata(pack: pack, etag: etag))
                 completionHandler(.allow)
             } catch {
-                decide(.failed("cannot write the file: \(error.localizedDescription)"))
+                decide(.failed(.cannotWriteFile(error.localizedDescription)))
                 completionHandler(.cancel)
             }
         }
@@ -232,7 +232,7 @@ final class PackTransfer: NSObject, URLSessionDataDelegate, @unchecked Sendable 
         guard let file else { return }
         let total = lock.withLock { written + Int64(data.count) }
         if total > pack.size {
-            decide(.failed("the server sent more than \(pack.size) bytes"))
+            decide(.failed(.serverSentMore(limit: pack.size)))
             dataTask.cancel()
             return
         }
@@ -240,7 +240,7 @@ final class PackTransfer: NSObject, URLSessionDataDelegate, @unchecked Sendable 
             try file.write(contentsOf: data)
             lock.withLock { written = total }
         } catch {
-            decide(.failed("cannot write the file: \(error.localizedDescription)"))
+            decide(.failed(.cannotWriteFile(error.localizedDescription)))
             dataTask.cancel()
         }
     }

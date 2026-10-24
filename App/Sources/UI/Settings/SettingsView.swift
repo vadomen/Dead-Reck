@@ -19,7 +19,7 @@ enum SettingsRow: Hashable {
 /// diagnostics"): Test drive recording, Sessions and, in Release only behind
 /// the Diagnostics gate, Console.
 enum SettingsRows {
-    static let developerFooter = "For test drives and diagnostics"
+    static let developerFooter = String(localized: "For test drives and diagnostics")
 
     static func driver(adapterAvailable: Bool = SettingsRoute.adapterRowAvailable) -> [SettingsRow] {
         var rows: [SettingsRow] = []
@@ -28,10 +28,23 @@ enum SettingsRows {
         return rows
     }
 
-    static let speakGPSTitle = "Speak GPS changes"
-    static let speakGPSFootnote = "While navigating or recording, says \"GPS lost\", \"GPS back\" or \"GPS off\", at most once every 5 minutes each."
+    static let speakGPSTitle = String(localized: "Speak GPS changes")
+    /// The footer quotes the spoken phrases themselves (`GPSPhrase.spoken`), so the
+    /// words in the footer and in the voice are one source. `language`: "uk" / "en"
+    /// for tests; nil is the app language.
+    static func speakGPSFootnote(language: String? = nil) -> String {
+        let lost = GPSPhrase.lost.spoken(language: language)
+        let back = GPSPhrase.back.spoken(language: language)
+        let off = GPSPhrase.off.spoken(language: language)
+        var text = LocalizedStringResource(
+            "While navigating or recording, says \"\(lost)\", \"\(back)\" or \"\(off)\", at most once every 5 minutes each.")
+        if let language { text.locale = Locale(identifier: language) }
+        return String(localized: text)
+    }
 
-    static let demoDriveTitle = "Demo drive (simulated car)"
+    static var speakGPSFootnote: String { speakGPSFootnote(language: nil) }
+
+    static let demoDriveTitle = String(localized: "Demo drive (simulated car)")
 
     /// The Developer group by build and gate (REL-EXPORT): Debug shows
     /// everything; Release shows only Demo drive until the 7-tap gate is
@@ -333,12 +346,12 @@ extension SettingsRoute {
 
     var title: String {
         switch self {
-        case .recording: "Test drive recording"
-        case .sessions: "Sessions"
-        case .maps: "Maps"
-        case .adapter: "OBD adapter"
-        case .console: "Console"
-        case .about: "About"
+        case .recording: String(localized: "Test drive recording")
+        case .sessions: String(localized: "Sessions")
+        case .maps: String(localized: "Maps")
+        case .adapter: String(localized: "OBD adapter")
+        case .console: String(localized: "Console")
+        case .about: String(localized: "About")
         }
     }
 
@@ -373,7 +386,7 @@ private var previewInbox: RoadPackLibrary.PackStatus {
                          roadSetHashPrefix: "0f0f0f0f", activeAtSessionS: 12, onRoadShare: 0.93),
             footprintBytes: 210_000_000),
         network: NetworkDiagnosticsText.rows(
-            PackDownloader.Snapshot(states: ["region-a": .waitingMeteredWiFi, "region-b": .failed("404")],
+            PackDownloader.Snapshot(states: ["region-a": .waitingMeteredWiFi, "region-b": .failed(.other("404"))],
                                     connection: .meteredWiFi, cellularAllowed: false,
                                     path: PackPath(satisfied: true, usesWiFi: true, expensive: true)),
             setting: true)

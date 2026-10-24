@@ -498,8 +498,9 @@ final class RecordingSession {
     /// each is unavailable (location denied or restricted) or, during a
     /// recording, did not start. The text is user-facing: a sentence that
     /// begins "No background location session" followed by each source's
-    /// reason. Always nil when no source provides background execution (the
-    /// simulator suite).
+    /// reason, in the app language (`backgroundRiskText`; never logged, the
+    /// row is `backgroundRiskDetail`). Always nil when no source provides
+    /// background execution (the simulator suite).
     ///
     /// Kept current without the UI's help: refreshed at init, whenever such
     /// a source reports an availability change (the location prompt
@@ -1308,18 +1309,52 @@ final class RecordingSession {
     private func currentBackgroundRisk() -> String? {
         let keepers = sources.filter { $0 is any BackgroundExecutionProviding }
         guard !keepers.isEmpty else { return nil }
-        var reasons: [String] = []
+        var reasons: [BackgroundRiskReason] = []
         for keeper in keepers {
             if case .unavailable(let reason) = keeper.availability {
-                reasons.append(reason)
+                reasons.append(.unavailable(reason: reason))
             } else if let rec = recording, !rec.backgroundSources.contains(ObjectIdentifier(keeper)) {
-                reasons.append("\(keeper.name) did not start")
+                reasons.append(.didNotStart(source: keeper.name))
             } else {
                 return nil
             }
         }
-        let because = reasons.map { $0.hasSuffix(".") ? $0 : $0 + "." }.joined(separator: " ")
-        return "No background location session, so the recording may pause while the phone is locked. \(because)"
+        return Self.backgroundRiskText(reasons)
+    }
+
+    /// Why one background-execution source cannot keep the app running.
+    enum BackgroundRiskReason: Hashable, Sendable {
+        /// Its `availability` reason (on-disk text; shown through
+        /// `SensorUnavailableReason.display`).
+        case unavailable(reason: String)
+        /// It was available but did not start in this recording. `source`
+        /// is the source's `name`.
+        case didNotStart(source: String)
+    }
+
+    /// A source identifier ("referenceLocation") means nothing to a driver: other
+    /// languages name the sensor. English keeps the identifier (the pinned text).
+    nonisolated private static func sourceLabel(_ source: String, language: String?) -> String {
+        (language ?? AppLanguage.code).hasPrefix("en") ? source : SensorNames.display(source)
+    }
+
+    /// The `backgroundRiskWarning` sentence in `language` ("uk", "en"); nil:
+    /// the app language. Screen text only: the log's row is the constant
+    /// `backgroundRiskDetail`, so nothing here reaches the file (UX-15).
+    nonisolated static func backgroundRiskText(_ reasons: [BackgroundRiskReason], language: String? = nil) -> String {
+        func resolved(_ resource: LocalizedStringResource) -> String {
+            var r = resource
+            if let language { r.locale = Locale(identifier: language) }
+            return String(localized: r)
+        }
+        let because = reasons.map { reason in
+            let text = switch reason {
+            case .unavailable(let reason): SensorUnavailableReason.display(reason, language: language)
+            case .didNotStart(let source): resolved("\(Self.sourceLabel(source, language: language)) did not start")
+            }
+            return text.hasSuffix(".") ? text : text + "."
+        }.joined(separator: " ")
+        return resolved("No background location session, so the recording may pause while the phone is locked. \(because)")
     }
 
     /// Starts every source on the session's clock and sink, a recording's
@@ -1544,7 +1579,7 @@ final class RecordingSession {
         finishRecording(rec)
         lastStopReason = nil
         state = .failed(
-            reason: Self.describe(failure),
+            reason: Self.display(failure),
             unwrittenEvents: summary.unwrittenEvents + rec.sink.dropped
         )
     }
@@ -1965,6 +2000,8 @@ final class RecordingSession {
 
     // MARK: - Formatting
 
+    /// The failure as the log's `write failed: …` row says it: on-disk
+    /// text, English, never reworded. The screen uses `display(_:)`.
     static func describe(_ failure: LogWriteError) -> String {
         switch failure {
         case .diskFull: "disk full"
@@ -1973,6 +2010,27 @@ final class RecordingSession {
         case .fileExists(let path): "file exists: \(path)"
         case .couldNotCreate(let path, let description): "could not create \(path): \(description)"
         case .alreadyFinished: "already finished"
+        }
+    }
+
+    /// The failure as `RecordingState.failed(reason:)` shows it ("Writing
+    /// failed: <reason>…"), in `language` ("uk", "en"); nil: the app
+    /// language. In English it equals `describe(_:)`. A `writeFailed`
+    /// description, a path and a system error description are shown as they
+    /// come (UX-15).
+    nonisolated static func display(_ failure: LogWriteError, language: String? = nil) -> String {
+        func resolved(_ resource: LocalizedStringResource) -> String {
+            var r = resource
+            if let language { r.locale = Locale(identifier: language) }
+            return String(localized: r)
+        }
+        return switch failure {
+        case .diskFull: resolved("disk full")
+        case .writeFailed(let description): description
+        case .encodingFailed(let kind, let description): resolved("could not encode \(kind): \(description)")
+        case .fileExists(let path): resolved("file exists: \(path)")
+        case .couldNotCreate(let path, let description): resolved("could not create \(path): \(description)")
+        case .alreadyFinished: resolved("already finished")
         }
     }
 

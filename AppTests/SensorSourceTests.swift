@@ -301,3 +301,85 @@ struct SensorSourceTests {
         #endif
     }
 }
+
+// MARK: - UX-15: unavailable reasons
+
+@Suite("Sensor unavailable reasons: English in the log, catalog text on screen (UX-15)", .serialized)
+@MainActor
+struct SensorUnavailableReasonTests {
+    /// On-disk text: `RecordingSession` writes "<source> unavailable: <reason>"
+    /// as an `error` row. Pinned here so a translation can never reach the file.
+    static let logged = [
+        "Device motion is unavailable on this device",
+        "Reference frame xArbitraryZVertical is unavailable",
+        "The accelerometer is unavailable on this device",
+        "The gyroscope is unavailable on this device",
+        "The barometer is unavailable on this device",
+        "Motion & Fitness access is denied (Settings → Privacy & Security → Motion & Fitness)",
+        "Motion & Fitness access is restricted on this device",
+        "Location access is denied, or Location Services are off (Settings → Privacy & Security → Location Services)",
+        "Location access is restricted on this device",
+    ]
+
+    /// `logs/UK_GLOSSARY.md` / UX15_SERVICE_STRINGS §1, in `logged` order.
+    static let ukrainian = [
+        "Рух пристрою недоступний на цьому пристрої",
+        "Система координат xArbitraryZVertical недоступна",
+        "Акселерометр недоступний на цьому пристрої",
+        "Гіроскоп недоступний на цьому пристрої",
+        "Барометр недоступний на цьому пристрої",
+        "Доступ до «Рух і фітнес» заборонено (Параметри iOS → Приватність і безпека → Рух і фітнес)",
+        "Доступ до «Рух і фітнес» обмежено на цьому пристрої",
+        "Доступ до геолокації заборонено або служби геолокації вимкнено (Параметри iOS → Приватність і безпека → Служби геолокації)",
+        "Доступ до геолокації обмежено на цьому пристрої",
+    ]
+
+    @Test("The reasons the sources report are the pinned English text")
+    func loggedTextIsPinned() {
+        #expect(SensorUnavailableReason.allCases.map(\.rawValue) == Self.logged)
+        for reason in SensorUnavailableReason.allCases {
+            #expect(reason.availability == .unavailable(reason: reason.rawValue))
+        }
+        #if targetEnvironment(simulator)
+        // A real source on the simulator (no motion hardware) reports the enum's text.
+        #expect(DeviceMotionSource().availability == SensorUnavailableReason.deviceMotionUnsupported.availability)
+        #endif
+    }
+
+    @Test("In English the screen text is the logged text; other reasons are shown as they are")
+    func englishDisplay() {
+        for reason in SensorUnavailableReason.allCases {
+            #expect(reason.display(language: "en") == reason.rawValue)
+            #expect(SensorUnavailableReason.display(reason.rawValue) == reason.rawValue, "the test scheme runs in English")
+        }
+        #expect(SensorUnavailableReason.display("no gyroscope", language: "uk") == "no gyroscope")
+    }
+
+    @Test("In Ukrainian the screen text is the catalog's")
+    func ukrainianDisplay() {
+        for (reason, uk) in zip(SensorUnavailableReason.allCases, Self.ukrainian) {
+            #expect(reason.display(language: "uk") == uk)
+            #expect(SensorUnavailableReason.display(reason.rawValue, language: "uk") == uk)
+        }
+        #expect(Self.ukrainian.count == SensorUnavailableReason.allCases.count)
+    }
+
+    @Test("A recording logs the English reason whatever the screen shows")
+    func recordingLogsEnglish() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let location = FakeBackgroundSource(name: "referenceLocation")
+        location.availability = SensorUnavailableReason.locationDenied.availability
+        let session = RecordingFixtures.session(sources: [FakeSource(), location], store: scratch.store)
+        try await session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
+        let url = try #require(session.currentFile)
+        await session.stop()
+
+        let (_, events, _) = try RecordingFixtures.read(url)
+        let errors = RecordingFixtures.lifecycle(events).map(\.sample).filter { $0.event == "error" }.map(\.detail)
+        #expect(errors == [
+            "referenceLocation unavailable: Location access is denied, or Location Services are off (Settings → Privacy & Security → Location Services)",
+            RecordingSession.backgroundRiskDetail,
+        ])
+    }
+}

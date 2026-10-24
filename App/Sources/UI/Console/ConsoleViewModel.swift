@@ -40,21 +40,22 @@ enum ConsoleText {
         case .forbiddenCommand:
             return ManualResult(
                 kind: .rejected,
-                title: "Rejected: \(command)",
-                detail: "Not sent. The console only allows ATI, AT@1, ATDP, ATDPN, ATRV and mode 01 requests such as 010D."
+                title: String(localized: "Rejected: \(command)"),
+                detail: String(localized: "Not sent. The console only allows ATI, AT@1, ATDP, ATDPN, ATRV and mode 01 requests such as 010D.")
             )
         case .desynchronised:
             return ManualResult(
                 kind: .desynchronised,
-                title: "Link out of sync",
-                detail: "A reply was lost, so answers cannot be matched to commands. Nothing was sent. Re-initialise the adapter, then retry."
+                title: String(localized: "Link out of sync"),
+                detail: String(localized: "A reply was lost, so answers cannot be matched to commands. Nothing was sent. Re-initialise the adapter, then retry.")
             )
         case .notInitialised:
-            return ManualResult(kind: .failure, title: "Adapter not ready", detail: "Connect and wait for polling first.")
+            return ManualResult(kind: .failure, title: String(localized: "Adapter not ready"),
+                                  detail: String(localized: "Connect and wait for polling first."))
         case .cancelled:
-            return ManualResult(kind: .failure, title: "Cancelled", detail: "The connection closed while waiting.")
+            return ManualResult(kind: .failure, title: String(localized: "Cancelled"), detail: String(localized: "The connection closed while waiting."))
         default:
-            return ManualResult(kind: .failure, title: "Failed: \(command)", detail: "\(error)")
+            return ManualResult(kind: .failure, title: String(localized: "Failed: \(command)"), detail: "\(error)")
         }
     }
 
@@ -67,7 +68,7 @@ enum ConsoleText {
             if let proto = adapter.protocolNumber { parts.append("protocol \(proto)") }
         }
         if let plan { parts.append("poll \(plan.primaryCommand.wireFormat)") }
-        if pollHz > 0 { parts.append("\(DisplayFormat.hz(pollHz)) Hz") }
+        if pollHz > 0 { parts.append("\(DisplayFormat.hz(pollHz, locale: Locale(identifier: "en_US"))) Hz") }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
@@ -101,7 +102,7 @@ enum LinkChange: Equatable {
 
 extension ConsoleText {
     /// Shown whenever a confirmation concerns a recording in progress.
-    static let recordingWarning = "The recording continues without OBD for the rest of the drive."
+    static let recordingWarning = String(localized: "The recording continues without OBD for the rest of the drive.")
 
     static func isRecordingActive(_ state: RecordingState) -> Bool {
         switch state {
@@ -145,20 +146,20 @@ extension ConsoleText {
     ) -> LinkChangeDialog {
         if case .connect = change, !holdsConnection(link) {
             return LinkChangeDialog(
-                title: "Connect to \(adapterName ?? "this adapter")?",
-                message: "The recording gains OBD from now on. Earlier parts of it stay without.",
-                confirm: "Connect", cancel: "Cancel", confirmIsDestructive: false)
+                title: adapterName.map { String(localized: "Connect to \($0)?") } ?? String(localized: "Connect to this adapter?"),
+                message: String(localized: "The recording gains OBD from now on. Earlier parts of it stay without."),
+                confirm: String(localized: "Connect"), cancel: String(localized: "Cancel"), confirmIsDestructive: false)
         }
         return LinkChangeDialog(
-            title: "Drop the OBD connection?", message: recordingWarning,
-            confirm: "Drop OBD", cancel: "Keep connection", confirmIsDestructive: true)
+            title: String(localized: "Drop the OBD connection?"), message: recordingWarning,
+            confirm: String(localized: "Drop OBD"), cancel: String(localized: "Keep connection"), confirmIsDestructive: true)
     }
 
     /// The Forget confirmation's message, in Console and in Settings → OBD adapter.
     static func forgetMessage(isRecording: Bool) -> String {
         isRecording
-            ? "The app will stop reconnecting to it. \(recordingWarning)"
-            : "The app will stop reconnecting to it. You can pick it again from a scan."
+            ? String(localized: "The app will stop reconnecting to it. The recording continues without OBD for the rest of the drive.")
+            : String(localized: "The app will stop reconnecting to it. You can pick it again from a scan.")
     }
 
     /// Scan only finds an adapter: not while one is held, not while recording.

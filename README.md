@@ -179,6 +179,16 @@ On the simulator the adapter and sensors are simulated and labelled so;
 Bluetooth or a sensor being unavailable is shown as a red or orange state, not
 a crash.
 
+**Language.** The app is localised: English is the development language,
+Ukrainian is added, and it follows the iPhone's language (Ukrainian on a phone
+set to Ukrainian, English otherwise; no in-app switch). Every screen string
+goes through the string catalogs `App/Resources/Localizable.xcstrings` and
+`App/Resources/InfoPlist.xcstrings` (permission texts); the Ukrainian wording
+follows `logs/UK_GLOSSARY.md` (git-ignored). The names above are the English
+ones. What is written to files and the wire stays English in both languages:
+the log and sidecar, marker presets as logged, Console protocol lines (TX, RX,
+ELM status) and diagnostic values.
+
 ## Using it
 
 ### Navigate (daily)
@@ -594,9 +604,10 @@ own: [docs/NAV_SIDECAR.md](docs/NAV_SIDECAR.md).
    open.
 4. **Live navigation in the app** (N4, Navigate mode) — done in code; device
    checks open.
-5. **Next:** Ukrainian localization (UX-15), navigation without OBD
-   (NAV-NOOBD → UX-7), a switch for spoofed GNSS (UX-9), then TestFlight and
-   the App Store as FuGPS.
+5. **Ukrainian localization** (UX-15) — done in code; the check on a phone
+   set to Ukrainian is open.
+6. **Next:** navigation without OBD (NAV-NOOBD → UX-7), a switch for spoofed
+   GNSS (UX-9), then TestFlight and the App Store as FuGPS.
 
 ## Privacy
 

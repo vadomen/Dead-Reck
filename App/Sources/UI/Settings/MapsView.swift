@@ -64,13 +64,13 @@ struct MapsRows: Hashable, Sendable {
 
 /// Pure text and rules for Settings → Maps.
 enum MapsText {
-    static let empty = "No road maps installed"
-    static let emptyDetail = "Road maps are optional. Navigation works without them."
-    static let emptyNoList = "Pull down to load the list of maps."
-    static let restartNote = "Removal takes effect after the app restarts."
-    static let checking = "Checking maps…"
-    static let cellularToggle = "Use cellular data"
-    static let cellularFooter = "Maps download over Wi-Fi only unless this is on."
+    static let empty = String(localized: "No road maps installed")
+    static let emptyDetail = String(localized: "Road maps are optional. Navigation works without them.")
+    static let emptyNoList = String(localized: "Pull down to load the list of maps.")
+    static let restartNote = String(localized: "Removal takes effect after the app restarts.")
+    static let checking = String(localized: "Checking maps…")
+    static let cellularToggle = String(localized: "Use cellular data")
+    static let cellularFooter = String(localized: "Maps download over Wi-Fi only unless this is on.")
 
     /// The one-line network state at the top of Settings → Maps (UX-16).
     struct NetworkLine: Hashable, Sendable {
@@ -85,28 +85,28 @@ enum MapsText {
     static func networkLine(connection: PackDownloadRules.Connection, cellularAllowed: Bool) -> NetworkLine {
         switch connection {
         case .none:
-            NetworkLine(text: "Offline", tone: .caution, symbol: "wifi.slash")
+            NetworkLine(text: String(localized: "Offline"), tone: .caution, symbol: "wifi.slash")
         case .unmetered:
-            NetworkLine(text: "On Wi-Fi", tone: .good, symbol: "wifi")
+            NetworkLine(text: String(localized: "On Wi-Fi"), tone: .good, symbol: "wifi")
         case .cellular:
             cellularAllowed
-                ? NetworkLine(text: "On cellular", tone: .good, symbol: "antenna.radiowaves.left.and.right")
-                : NetworkLine(text: "On cellular — maps wait for Wi-Fi", tone: .caution,
+                ? NetworkLine(text: String(localized: "On cellular"), tone: .good, symbol: "antenna.radiowaves.left.and.right")
+                : NetworkLine(text: String(localized: "On cellular — maps wait for Wi-Fi"), tone: .caution,
                               symbol: "antenna.radiowaves.left.and.right")
         case .meteredWiFi:
             cellularAllowed
-                ? NetworkLine(text: "On metered Wi-Fi", tone: .good, symbol: "wifi")
-                : NetworkLine(text: "On metered Wi-Fi — maps wait for unmetered Wi-Fi", tone: .caution, symbol: "wifi")
+                ? NetworkLine(text: String(localized: "On metered Wi-Fi"), tone: .good, symbol: "wifi")
+                : NetworkLine(text: String(localized: "On metered Wi-Fi — maps wait for unmetered Wi-Fi"), tone: .caution, symbol: "wifi")
         }
     }
 
     static func networkLine(_ snapshot: PackDownloader.Snapshot) -> NetworkLine {
         networkLine(connection: snapshot.connection, cellularAllowed: snapshot.cellularAllowed)
     }
-    static let otherSection = "Other"
-    static let neverSection = "Not offered on the road"
-    static let neverFooter = "You chose Never for these regions. Reset to be offered a map again at a stop."
-    static let resetAll = "Reset all"
+    static let otherSection = String(localized: "Other")
+    static let neverSection = String(localized: "Not offered on the road")
+    static let neverFooter = String(localized: "You chose Never for these regions. Reset to be offered a map again at a stop.")
+    static let resetAll = String(localized: "Reset all")
 
     /// A region the at-a-stop offer must not mention again.
     struct NeverRow: Identifiable, Hashable, Sendable {
@@ -122,19 +122,23 @@ enum MapsText {
         return names.map { NeverRow(name: $0, title: titles[$0] ?? $0) }
     }
 
-    static func size(_ bytes: Int64?) -> String {
-        bytes.map { String(format: "%.1f MB", Double($0) / 1_000_000) } ?? "-- MB"
+    static func size(_ bytes: Int64?, locale: Locale = .current) -> String {
+        bytes.map { DisplayFormat.megabytes($0, locale: locale) } ?? String(localized: "-- MB")
     }
 
     /// "OSM 2026-10-01", or "OSM date unknown" (Unix seconds, UTC).
     static func osmDate(timestamp: Int64?) -> String {
-        guard let ts = timestamp, ts > 0 else { return "OSM date unknown" }
-        return "OSM " + Date(timeIntervalSince1970: TimeInterval(ts)).formatted(.iso8601.year().month().day())
+        guard let ts = timestamp, ts > 0 else { return String(localized: "OSM date unknown") }
+        // The ISO date is fixed on purpose: it is a data stamp, not a calendar date.
+        let date = Date(timeIntervalSince1970: TimeInterval(ts)).formatted(.iso8601.year().month().day())
+        return String(localized: "OSM \(date)")
     }
 
     static func osmDate(_ pack: RoadPackLibrary.PackStatus) -> String { osmDate(timestamp: pack.osmTimestamp) }
 
-    static func totalStorage(_ bytes: Int64?) -> String { "Storage used: " + size(bytes) }
+    static func totalStorage(_ bytes: Int64?, locale: Locale = .current) -> String {
+        String(localized: "Storage used: \(size(bytes, locale: locale))")
+    }
 
     /// The credit under the list: the manifest's own text when it has one.
     static func attribution(manifest: PackManifest?) -> String {
@@ -147,27 +151,30 @@ enum MapsText {
         pack.packName != nil && !pack.pendingRemoval && !pack.inInbox
     }
 
-    static func confirmationTitle(_ row: MapsRow) -> String { "Remove \(row.title)?" }
+    static func confirmationTitle(_ row: MapsRow) -> String { String(localized: "Remove \(row.title)?") }
 
     /// Shown in the confirmation while a Navigate or Record run is active: the
     /// pack is only marked then; the running session keeps using it until the
     /// app restarts, and the file is deleted at the next launch (B5).
-    static let removeDuringRunWarning = "This map stays in use until you restart the app, then it is removed."
+    static let removeDuringRunWarning = String(localized: "This map stays in use until you restart the app, then it is removed.")
 
-    static func confirmationMessage(_ row: MapsRow, runActive: Bool = false) -> String {
-        let base = "Frees \(size(row.installed?.sizeBytes ?? row.sizeBytes)). Recordings are not affected."
-        return runActive ? removeDuringRunWarning + " " + base : base
+    static func confirmationMessage(_ row: MapsRow, runActive: Bool = false, locale: Locale = .current) -> String {
+        let freed = size(row.installed?.sizeBytes ?? row.sizeBytes, locale: locale)
+        // Two full keys, not two sentences joined in code.
+        return runActive
+            ? String(localized: "This map stays in use until you restart the app, then it is removed. Frees \(freed). Recordings are not affected.")
+            : String(localized: "Frees \(freed). Recordings are not affected.")
     }
 
-    static let downloadAgain = "Download again"
+    static let downloadAgain = String(localized: "Download again")
 
     /// The notice after Remove, nil when nothing needs saying.
     static func notice(_ outcome: RoadPackLibrary.RemoveOutcome, packName: String) -> String? {
         switch outcome {
         case .deleted: nil
-        case .removalPending: "\(packName): " + restartNote
-        case .notInstalled: "\(packName) is not installed."
-        case .failed(let reason): "Could not remove \(packName): \(reason)"
+        case .removalPending: String(localized: "\(packName): Removal takes effect after the app restarts.")
+        case .notInstalled: String(localized: "\(packName) is not installed.")
+        case .failed(let reason): String(localized: "Could not remove \(packName): \(reason.display)")
         }
     }
 
@@ -179,34 +186,39 @@ enum MapsText {
     /// saved list is shown (nil without one): "Offline" appears once.
     static func listNote(_ refresh: PackManifestService.Refresh, connection: PackDownloadRules.Connection = .unmetered,
                          hasManifest: Bool) -> String? {
-        if connection == .none { return hasManifest ? "Showing the saved list." : nil }
+        if connection == .none { return hasManifest ? String(localized: "Showing the saved list.") : nil }
         var offline = false
         if case .failed(let failedOffline) = refresh {
             offline = offline || failedOffline
         } else {
             return nil
         }
-        let kept = hasManifest ? " Showing the saved list." : ""
-        return (offline ? "Offline." : "Couldn't update the list.") + kept
+        switch (offline, hasManifest) {
+        case (true, true): return String(localized: "Offline. Showing the saved list.")
+        case (true, false): return String(localized: "Offline.")
+        case (false, true): return String(localized: "Couldn't update the list. Showing the saved list.")
+        case (false, false): return String(localized: "Couldn't update the list.")
+        }
     }
 
     // MARK: Row state
 
-    static func stateText(_ status: MapsRow.Status) -> String {
+    static func stateText(_ status: MapsRow.Status, locale: Locale = .current) -> String {
         switch status {
-        case .notInstalled: "Not installed"
-        case .queued: "Queued"
-        case .waitingForWiFi: "Waiting for Wi-Fi"
-        case .waitingMeteredWiFi: "Waiting — this Wi-Fi is metered"
-        case .offline: "Waiting for network"
-        case .downloading(let percent): "Downloading \(percent) %"
-        case .pausedForRecording: "Paused (recording)"
-        case .verifying: "Verifying"
-        case .installed: "Installed"
-        case .updateAvailable: "Update available · from next start"
-        case .updatedNextStart: "Updated · used from the next start"
-        case .failed(let reason): "Failed: \(reason)"
-        case .removalPending: "Removal pending"
+        case .notInstalled: String(localized: "Not installed")
+        case .queued: String(localized: "Queued")
+        case .waitingForWiFi: String(localized: "Waiting for Wi-Fi")
+        case .waitingMeteredWiFi: String(localized: "Waiting — this Wi-Fi is metered")
+        case .offline: String(localized: "Waiting for network")
+        case .downloading(let percent):
+            String(localized: "Downloading \((Double(percent) / 100).formatted(.percent.precision(.fractionLength(0)).locale(locale)))")
+        case .pausedForRecording: String(localized: "Paused (recording)")
+        case .verifying: String(localized: "Verifying")
+        case .installed: String(localized: "Installed")
+        case .updateAvailable: String(localized: "Update available · from next start")
+        case .updatedNextStart: String(localized: "Updated · used from the next start")
+        case .failed(let reason): String(localized: "Failed: \(reason)")
+        case .removalPending: String(localized: "Removal pending")
         }
     }
 
@@ -220,13 +232,14 @@ enum MapsText {
     }
 
     /// "48.0 MB · OSM 2026-10-01 · Installed".
-    static func detail(_ row: MapsRow) -> String {
-        [size(row.sizeBytes), osmDate(timestamp: row.osmTimestamp), stateText(row.status)].joined(separator: " · ")
+    static func detail(_ row: MapsRow, locale: Locale = .current) -> String {
+        [size(row.sizeBytes, locale: locale), osmDate(timestamp: row.osmTimestamp), stateText(row.status, locale: locale)]
+            .joined(separator: " · ")
     }
 
     /// The part of `detail` before the state: the state gets its own colour.
-    static func detailPrefix(_ row: MapsRow) -> String {
-        [size(row.sizeBytes), osmDate(timestamp: row.osmTimestamp)].joined(separator: " · ")
+    static func detailPrefix(_ row: MapsRow, locale: Locale = .current) -> String {
+        [size(row.sizeBytes, locale: locale), osmDate(timestamp: row.osmTimestamp)].joined(separator: " · ")
     }
 
     /// Download progress in whole percent, 0...100.
@@ -238,10 +251,10 @@ enum MapsText {
     /// The icon-only action button's accessibility label.
     static func actionLabel(_ action: MapsRow.Action, title: String) -> String {
         switch action {
-        case .download: "Download \(title)"
-        case .cancel: "Cancel download of \(title)"
-        case .update: "Update \(title)"
-        case .downloadAgain: "Download \(title) again"
+        case .download: String(localized: "Download \(title)")
+        case .cancel: String(localized: "Cancel download of \(title)")
+        case .update: String(localized: "Update \(title)")
+        case .downloadAgain: String(localized: "Download \(title) again")
         }
     }
 
@@ -260,12 +273,12 @@ enum MapsText {
             case .pausedForRecording: return .pausedForRecording
             case .downloading(let received, let total): return .downloading(percent: percent(received: received, total: total))
             case .verifying: return .verifying
-            case .failed(let reason): return .failed(reason)
+            case .failed(let reason): return .failed(reason.display)
             }
         }
         guard let installed else { return .notInstalled }
         if installed.pendingRemoval { return .removalPending }
-        if !installed.verified { return .failed(installed.refusal ?? "not usable") }
+        if !installed.verified { return .failed(installed.refusal ?? String(localized: "not usable")) }
         let update = pack.map {
             PackManifest.updateAvailable(
                 installedContentHash: RoadPackStoreRules.parseFileName(installed.name)?.contentHash,
@@ -376,7 +389,7 @@ final class MapsModel {
          defaults: UserDefaults = .standard,
          runActive: @escaping @MainActor () -> Bool = { false },
          cancelRemoval: (@Sendable (String) async -> Bool)? = nil,
-         preferredLanguages: @escaping @Sendable () -> [String] = { Locale.preferredLanguages }) {
+         preferredLanguages: @escaping @Sendable () -> [String] = { AppLanguage.preferredLanguages }) {
         self.defaults = defaults
         runActiveCheck = runActive
         self.cancelRemoval = cancelRemoval
@@ -391,7 +404,7 @@ final class MapsModel {
     init(status: RoadPackLibrary.Status, notice: String? = nil, manifest: PackManifest? = nil,
          downloads: PackDownloader.Snapshot = .init(), refresh: PackManifestService.Refresh = .idle,
          runActive: Bool = false,
-         preferredLanguages: @escaping @Sendable () -> [String] = { Locale.preferredLanguages }) {
+         preferredLanguages: @escaping @Sendable () -> [String] = { AppLanguage.preferredLanguages }) {
         runActiveCheck = { runActive }
         cancelRemoval = nil
         self.status = status
@@ -511,7 +524,7 @@ struct MapsScreen: View {
             networkLine: MapsText.networkLine(model.downloads), notice: model.notice, listNote: model.listNote, hasManifest: model.manifest != nil,
             attribution: MapsText.attribution(manifest: model.manifest), cellularAllowed: $cellularAllowed,
             neverRows: MapsText.neverRows(names: offers?.neverNames ?? [], manifest: model.manifest,
-                                          preferredLanguages: Locale.preferredLanguages),
+                                          preferredLanguages: AppLanguage.preferredLanguages),
             onResetNever: { offers?.resetNever($0) }, onResetAllNever: { offers?.resetAllNever() },
             onRemove: { confirming = $0 }, onAction: { action, row in Task { await model.perform(action, on: row) } },
             onDismissNotice: { model.dismissNotice() }
@@ -896,7 +909,7 @@ enum MapsPreviewData {
         }
         snapshot.states = [
             "region-c": waiting ?? .downloading(received: 14_700_000, total: 35_000_000),
-            "region-d": .failed("checksum mismatch"),
+            "region-d": .failed(.checksumMismatch),
             "region-e": waiting ?? .queued,
         ]
         return snapshot

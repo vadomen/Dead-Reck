@@ -137,9 +137,9 @@ final class ReferenceLocationSource: SensorSource, LiveReferenceFixReporting, Ba
     var availability: SensorAvailability {
         switch authorization.authorizationStatus {
         case .denied:
-            .unavailable(reason: "Location access is denied, or Location Services are off (Settings → Privacy & Security → Location Services)")
+            SensorUnavailableReason.locationDenied.availability
         case .restricted:
-            .unavailable(reason: "Location access is restricted on this device")
+            SensorUnavailableReason.locationRestricted.availability
         case .notDetermined, .authorizedWhenInUse, .authorizedAlways:
             .available
         @unknown default:

@@ -51,10 +51,10 @@ final class DeviceMotionSource: SensorSource {
     var availability: SensorAvailability {
         let manager = SharedMotionManager.manager
         guard manager.isDeviceMotionAvailable else {
-            return .unavailable(reason: "Device motion is unavailable on this device")
+            return SensorUnavailableReason.deviceMotionUnsupported.availability
         }
         guard CMMotionManager.availableAttitudeReferenceFrames().contains(Self.referenceFrame) else {
-            return .unavailable(reason: "Reference frame xArbitraryZVertical is unavailable")
+            return SensorUnavailableReason.referenceFrameUnsupported.availability
         }
         return .available
     }
@@ -116,10 +116,10 @@ final class RawIMUSource: SensorSource {
     var availability: SensorAvailability {
         let manager = SharedMotionManager.manager
         guard manager.isAccelerometerAvailable else {
-            return .unavailable(reason: "The accelerometer is unavailable on this device")
+            return SensorUnavailableReason.accelerometerUnsupported.availability
         }
         guard manager.isGyroAvailable else {
-            return .unavailable(reason: "The gyroscope is unavailable on this device")
+            return SensorUnavailableReason.gyroscopeUnsupported.availability
         }
         return .available
     }
@@ -208,13 +208,13 @@ final class AltimeterSource: SensorSource {
 
     var availability: SensorAvailability {
         guard CMAltimeter.isRelativeAltitudeAvailable() else {
-            return .unavailable(reason: "The barometer is unavailable on this device")
+            return SensorUnavailableReason.barometerUnsupported.availability
         }
         switch CMAltimeter.authorizationStatus() {
         case .denied:
-            return .unavailable(reason: "Motion & Fitness access is denied (Settings → Privacy & Security → Motion & Fitness)")
+            return SensorUnavailableReason.motionDenied.availability
         case .restricted:
-            return .unavailable(reason: "Motion & Fitness access is restricted on this device")
+            return SensorUnavailableReason.motionRestricted.availability
         case .notDetermined, .authorized:
             return .available
         @unknown default:

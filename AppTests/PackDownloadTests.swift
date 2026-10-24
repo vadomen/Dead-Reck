@@ -285,12 +285,12 @@ struct PackDownloaderTests {
             Issue.record("expected a failed state")
             return
         }
-        #expect(reason.contains("503"))
+        #expect(reason.text.contains("503"))
         #expect(files.partialBytes() == Int64(half), "the partial is kept, byte for byte")
         #expect(files.readMetadata()?.matches(pack) == true)
         #expect(env.installedFiles.isEmpty)
         // The row offers Download again; it resumes from the kept bytes.
-        #expect(MapsText.action(status: .failed(reason), hasPack: true, hasInstalled: false, downloadFailed: true) == .download)
+        #expect(MapsText.action(status: .failed(reason.display), hasPack: true, hasInstalled: false, downloadFailed: true) == .download)
         await downloader.start(pack)
         await downloader.waitUntilIdle()
         #expect(stub.requests.count == 2)
@@ -342,7 +342,7 @@ struct PackDownloaderTests {
         let downloader = env.downloader()
         await downloader.start(pack)
         await downloader.waitUntilIdle()
-        #expect(await downloader.snapshot().states["region-a"] == .failed("checksum mismatch"))
+        #expect(await downloader.snapshot().states["region-a"] == .failed(.checksumMismatch))
         #expect(env.installedFiles.isEmpty && env.downloadFiles.isEmpty)
         #expect(env.storeEntries().filter { RoadPackStoreRules.isTemporaryFileName($0) }.isEmpty)
     }
@@ -361,7 +361,12 @@ struct PackDownloaderTests {
             Issue.record("expected a failed state")
             return
         }
-        #expect(reason.contains("does not match the manifest"))
+        guard case .contentHashMismatch(_, let expected) = reason else {
+            Issue.record("expected a content hash mismatch, got \(reason.text)")
+            return
+        }
+        #expect(expected == "0123456789abcdef")
+        #expect(reason.text.contains("does not match the manifest"))
         #expect(env.storeEntries().filter { !$0.hasPrefix("RoadPackStoreState") }.isEmpty,
                 "no pack, partial or temporary file left: \(env.storeEntries())")
     }

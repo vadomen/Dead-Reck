@@ -187,6 +187,19 @@ struct EllipseFitTests {
         #expect(abs(widened - EllipseFit.distance(forSpanM: span)) < 1e-9)
     }
 
+    @Test("The fit reserves the card's measured height (the stacked Ukrainian card is taller), and 140 until it is measured")
+    func offerCardMeasuredHeight() {
+        let size = CGSize(width: 393, height: 852)
+        let free = EllipseFit.Viewport.make(size: size, safeBottom: 34, offerShown: false)
+        let unmeasured = EllipseFit.Viewport.make(size: size, safeBottom: 34, offerShown: true)
+        let tall = EllipseFit.Viewport.make(size: size, safeBottom: 34, offerShown: true, offerHeight: 200)
+        #expect(unmeasured.bottom == free.bottom + MapLayout.offerCardReserved)
+        #expect(tall.bottom == free.bottom + 200 + MapLayout.offerCardGap)
+        #expect(MapLayout.offerReserved(cardHeight: 0) == MapLayout.offerCardReserved)
+        #expect(MapLayout.offerReserved(cardHeight: .nan) == MapLayout.offerCardReserved)
+        #expect(EllipseFit.Viewport.make(size: size, safeBottom: 34, offerShown: false, offerHeight: 200).bottom == free.bottom)
+    }
+
     @Test("The offer card (car centred, card over the lower part) asks for a wider view than a free screen")
     func offerCard() {
         let free = EllipseFit.Viewport.make(size: CGSize(width: 393, height: 852), safeBottom: 34, offerShown: false)

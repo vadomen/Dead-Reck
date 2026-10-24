@@ -18,7 +18,7 @@ enum RestoreStatus {
     static func line(_ restore: RestoreDisplay?) -> String? {
         guard let restore, restore.status == .unconfirmed else { return nil }
         let age = age(seconds: restore.ageAtStartS)
-        return String(localized: "Restored \u{00B7} \(age) \u{00B7} not yet confirmed")
+        return String(localized: "Restored · \(age) · not yet confirmed")
     }
 }
 
@@ -40,11 +40,13 @@ struct RestoreStatusLabel: View {
         if let text {
             Label(text, systemImage: "clock.arrow.circlepath")
                 .font(.subheadline.weight(.semibold))
-                .lineLimit(2)
-                .minimumScaleFactor(0.8)
+                // Wraps in full (Ukrainian is longer; large Dynamic Type longer still): never cut.
                 .padding(.horizontal, 16)
+                .padding(.vertical, 6)
                 .frame(minHeight: 44)
-                .hudSurface(Capsule())
+                .hudSurface(RoundedRectangle(cornerRadius: 22))
+                // Like the other map cards: wraps in full, but does not grow past AX2 (R67.1-5).
+                .dynamicTypeSize(...DynamicTypeSize.accessibility2)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityLabel(text)
                 .transition(.opacity)

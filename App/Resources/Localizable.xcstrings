@@ -1,0 +1,4384 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "%@ (%@) will be permanently deleted. This cannot be undone." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ (%2$@) буде видалено назавжди. Цю дію не можна скасувати."
+          }
+        }
+      }
+    },
+    "%@ MB" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ МБ"
+          }
+        }
+      }
+    },
+    "%@ V" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ В"
+          }
+        }
+      }
+    },
+    "%@ did not start" : {
+      "comment" : "One reason inside the background-risk notice (RecordingSession.backgroundRiskText). %@: the source identifier, e.g. referenceLocation.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@: не запущено"
+          }
+        }
+      }
+    },
+    "%@ downloads after the recording" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ завантажиться після запису"
+          }
+        }
+      }
+    },
+    "%@ is not installed." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ не встановлено."
+          }
+        }
+      }
+    },
+    "%@ km/h" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ км/год"
+          }
+        }
+      }
+    },
+    "%@ km/h · %@" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ км/год · %2$@"
+          }
+        }
+      }
+    },
+    "%@ not found" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ не знайдено"
+          }
+        }
+      }
+    },
+    "%@ unavailable: %@" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Недоступно: %1$@ — %2$@"
+          }
+        }
+      }
+    },
+    "%@ · reading the car" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ · зчитування даних авто"
+          }
+        }
+      }
+    },
+    "%@, %@" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@, %2$@"
+          }
+        }
+      }
+    },
+    "%@, %@, %@" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@, %2$@, %3$@"
+          }
+        }
+      }
+    },
+    "%@, ODbL 1.0. Demo drive map data: OSM data of 2026-10-08 (Geofabrik extract), bundled in the app." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@, ODbL 1.0. Дані карти демо-поїздки: дані OSM від 2026-10-08 (витяг Geofabrik), вбудовані в застосунок."
+          }
+        }
+      }
+    },
+    "%@, larger than the %@ limit" : {
+      "comment" : "Settings → Maps, a download/install/remove failure reason after «Failed: » or «Could not remove …: » (lower-case fragment). PackFailure.resource, App/Sources/Navigation/RoadPackInstaller.swift. %1$@: the file's size, %2$@: the limit; formatted sizes (\"150 MB\").",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@, більше за ліміт %2$@"
+          }
+        }
+      }
+    },
+    "%@: Removal takes effect after the app restarts." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@: видалення спрацює після перезапуску застосунку."
+          }
+        }
+      }
+    },
+    "%lld dBm" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld дБм"
+          }
+        }
+      }
+    },
+    "%lld h ago" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld h ago"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld h ago"
+                }
+              }
+            }
+          }
+        },
+        "uk" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld год тому"
+                }
+              },
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld год тому"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld год тому"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld год тому"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld maps" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld map"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld maps"
+                }
+              }
+            }
+          }
+        },
+        "uk" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld карта"
+                }
+              },
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld карти"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld карт"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld карти"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld min ago" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld min ago"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld min ago"
+                }
+              }
+            }
+          }
+        },
+        "uk" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld хв тому"
+                }
+              },
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld хв тому"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld хв тому"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld хв тому"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "-- MB" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "-- МБ"
+          }
+        }
+      }
+    },
+    "<1 min ago" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "<1 хв тому"
+          }
+        }
+      }
+    },
+    "A Bluetooth OBD-II adapter reads your car's exact speed. The phone's sensors feel every turn. Road maps keep your position on the road. GPS helps when it's available; when it's jammed, FuGPS keeps going without it." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bluetooth-адаптер OBD-II зчитує точну швидкість авто. Датчики телефона відчувають кожен поворот. Карти доріг тримають вашу позицію на дорозі. GPS допомагає, коли він є; а коли його глушать, FuGPS працює далі без нього."
+          }
+        }
+      }
+    },
+    "A recording is already running." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запис уже триває."
+          }
+        }
+      }
+    },
+    "A reply was lost, so answers cannot be matched to commands. Nothing was sent. Re-initialise the adapter, then retry." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Одну відповідь втрачено, тому відповіді не можна зіставити з командами. Нічого не надіслано. Ініціалізуйте адаптер знову й повторіть."
+          }
+        }
+      }
+    },
+    "About" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Про застосунок"
+          }
+        }
+      }
+    },
+    "Adapter failed" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Збій адаптера"
+          }
+        }
+      }
+    },
+    "Adapter lost" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Адаптер втрачено"
+          }
+        }
+      }
+    },
+    "Adapter not connected" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Адаптер не підключено"
+          }
+        }
+      }
+    },
+    "Adapter not found" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Адаптер не знайдено"
+          }
+        }
+      }
+    },
+    "Adapter not ready" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Адаптер не готовий"
+          }
+        }
+      }
+    },
+    "Adapter ready" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Адаптер готовий"
+          }
+        }
+      }
+    },
+    "Add marker" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Додати позначку"
+          }
+        }
+      }
+    },
+    "After Start, keep the car and phone still for 5 s while it calibrates." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Після старту тримайте авто й телефон нерухомо 5 с, поки триває калібрування."
+          }
+        }
+      }
+    },
+    "Allow it for this app in iOS Settings → Privacy & Security → Bluetooth." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Дозвольте його для застосунку в Параметрах iOS → Приватність і безпека → Bluetooth."
+          }
+        }
+      }
+    },
+    "Allow location to suggest your region's map. It stays on the phone." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Дозвольте доступ до геолокації, щоб ми запропонували карту вашого регіону. Дані лишаються на телефоні."
+          }
+        }
+      }
+    },
+    "Already recorded, not undone" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Уже записано, скасувати не можна"
+          }
+        }
+      }
+    },
+    "Apple Maps" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apple Maps"
+          }
+        }
+      }
+    },
+    "Bad road" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Погана дорога"
+          }
+        }
+      }
+    },
+    "Barometer" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Барометр"
+          }
+        }
+      }
+    },
+    "Before you drive" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перед поїздкою"
+          }
+        }
+      }
+    },
+    "Bluetooth LE is not supported on this device" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bluetooth LE не підтримується на цьому пристрої"
+          }
+        }
+      }
+    },
+    "Bluetooth is off" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bluetooth вимкнено"
+          }
+        }
+      }
+    },
+    "Bluetooth is resetting" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bluetooth перезавантажується"
+          }
+        }
+      }
+    },
+    "Bluetooth not allowed" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bluetooth не дозволено"
+          }
+        }
+      }
+    },
+    "Bluetooth not available" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bluetooth недоступний"
+          }
+        }
+      }
+    },
+    "Bluetooth permission denied" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Доступ до Bluetooth заборонено"
+          }
+        }
+      }
+    },
+    "Bluetooth state %lld" : {
+      "comment" : "Bluetooth unavailable: a Bluetooth state this build does not know; %lld is its number. LinkReason.bluetoothState. UK wording proposed by the link agent (not in UX15_SERVICE_STRINGS.md): please confirm",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Стан Bluetooth %lld"
+          }
+        }
+      }
+    },
+    "Bluetooth state unknown" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Стан Bluetooth невідомий"
+          }
+        }
+      }
+    },
+    "Bluetooth unavailable" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bluetooth недоступний"
+          }
+        }
+      }
+    },
+    "Build" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Збірка"
+          }
+        }
+      }
+    },
+    "Calibrating heading" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Калібрування напрямку"
+          }
+        }
+      }
+    },
+    "Cancel" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скасувати"
+          }
+        }
+      }
+    },
+    "Cancel download of %@" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скасувати завантаження %@"
+          }
+        }
+      }
+    },
+    "Cancelled" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скасовано"
+          }
+        }
+      }
+    },
+    "Cannot start." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не вдалося почати."
+          }
+        }
+      }
+    },
+    "Card %lld of %lld" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Картка %1$lld з %2$lld"
+          }
+        }
+      }
+    },
+    "Cellular switch" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Мобільний інтернет"
+          }
+        }
+      }
+    },
+    "Checking maps…" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перевіряємо карти…"
+          }
+        }
+      }
+    },
+    "Close other OBD apps: the adapter talks to one app at a time." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Закрийте інші застосунки OBD: адаптер працює лише з одним за раз."
+          }
+        }
+      }
+    },
+    "Confirm both checks above to start" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Щоб почати, підтвердьте обидва пункти вище"
+          }
+        }
+      }
+    },
+    "Connect" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Підключити"
+          }
+        }
+      }
+    },
+    "Connect OBD for navigation without GPS" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Підключіть OBD для навігації без GPS"
+          }
+        }
+      }
+    },
+    "Connect and wait for polling first." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Спершу підключіть і дочекайтеся опитування."
+          }
+        }
+      }
+    },
+    "Connect to %@?" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Підключитися до %@?"
+          }
+        }
+      }
+    },
+    "Connect to this adapter" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Підключитися до цього адаптера"
+          }
+        }
+      }
+    },
+    "Connect to this adapter?" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Підключитися до цього адаптера?"
+          }
+        }
+      }
+    },
+    "Connect to use %@ again." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Підключіть %@, щоб користуватися знову."
+          }
+        }
+      }
+    },
+    "Connect to use your adapter again." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Підключіть адаптер, щоб користуватися знову."
+          }
+        }
+      }
+    },
+    "Connect your adapter" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Підключіть адаптер"
+          }
+        }
+      }
+    },
+    "Connected" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Підключено"
+          }
+        }
+      }
+    },
+    "Connecting" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Підключення"
+          }
+        }
+      }
+    },
+    "Connecting to %@" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Підключення до %@"
+          }
+        }
+      }
+    },
+    "Connecting to your adapter" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Підключення до адаптера"
+          }
+        }
+      }
+    },
+    "Connection failed" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Збій підключення"
+          }
+        }
+      }
+    },
+    "Connects when you stop it." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Підключиться, коли ви її зупините."
+          }
+        }
+      }
+    },
+    "Console" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Консоль"
+          }
+        }
+      }
+    },
+    "Continue" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Продовжити"
+          }
+        }
+      }
+    },
+    "Could not delete: %@" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не вдалося видалити: %@"
+          }
+        }
+      }
+    },
+    "Could not read recordings: %@" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не вдалося прочитати записи: %@"
+          }
+        }
+      }
+    },
+    "Could not remove %@: %@" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не вдалося видалити %1$@: %2$@"
+          }
+        }
+      }
+    },
+    "Could not start: %@" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не вдалося почати: %@"
+          }
+        }
+      }
+    },
+    "Couldn't update the list." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не вдалося оновити список."
+          }
+        }
+      }
+    },
+    "Couldn't update the list. Showing the saved list." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не вдалося оновити список. Показано збережений список."
+          }
+        }
+      }
+    },
+    "Custom marker" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Своя позначка"
+          }
+        }
+      }
+    },
+    "DEMO" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "DEMO"
+          }
+        }
+      }
+    },
+    "Data and services" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Дані та сервіси"
+          }
+        }
+      }
+    },
+    "Delete" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Видалити"
+          }
+        }
+      }
+    },
+    "Delete %@?" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Видалити %@?"
+          }
+        }
+      }
+    },
+    "Delete recording?" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Видалити запис?"
+          }
+        }
+      }
+    },
+    "Demo drive (simulated car)" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Демо-поїздка (імітація авто)"
+          }
+        }
+      }
+    },
+    "Demo drive, simulated car" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Демо-поїздка, імітація авто"
+          }
+        }
+      }
+    },
+    "Developer" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Розробник"
+          }
+        }
+      }
+    },
+    "Developer diagnostics hidden" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Діагностику розробника приховано"
+          }
+        }
+      }
+    },
+    "Developer diagnostics shown" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Діагностику розробника показано"
+          }
+        }
+      }
+    },
+    "Device motion is unavailable on this device" : {
+      "comment" : "Sensor unavailable reason (SensorUnavailableReason, Sensors/SensorSuite.swift), shown in Record notices as the reason of “%@ unavailable: %@” and in the background-risk notice. The log keeps the English.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Рух пристрою недоступний на цьому пристрої"
+          }
+        }
+      }
+    },
+    "Diagnostics" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Діагностика"
+          }
+        }
+      }
+    },
+    "Disconnect" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Відключити"
+          }
+        }
+      }
+    },
+    "Disconnect first to look for another adapter." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Щоб шукати інший адаптер, спершу відключіть цей."
+          }
+        }
+      }
+    },
+    "Don't pair it in iOS Settings: pick it here after a scan." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не створюйте пару в Параметрах iOS: оберіть адаптер тут після пошуку."
+          }
+        }
+      }
+    },
+    "Don't use the phone while driving. Set it up before you set off." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не користуйтеся телефоном за кермом. Налаштуйте все до виїзду."
+          }
+        }
+      }
+    },
+    "Done" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Готово"
+          }
+        }
+      }
+    },
+    "Download" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Завантажити"
+          }
+        }
+      }
+    },
+    "Download %@" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Завантажити %@"
+          }
+        }
+      }
+    },
+    "Download %@ after recording" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Завантажити %@ після запису"
+          }
+        }
+      }
+    },
+    "Download %@ again" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Завантажити %@ знову"
+          }
+        }
+      }
+    },
+    "Download %@, %@" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Завантажити %1$@, %2$@"
+          }
+        }
+      }
+    },
+    "Download %lld maps · %@" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Download %lld map · %@"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Download %lld maps · %@"
+                }
+              }
+            }
+          }
+        },
+        "uk" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Завантажити %lld карту · %@"
+                }
+              },
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Завантажити %lld карти · %@"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Завантажити %lld карт · %@"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Завантажити %lld карти · %@"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Download %lld maps · %@ on Wi-Fi" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Download %lld map · %@ on Wi-Fi"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Download %lld maps · %@ on Wi-Fi"
+                }
+              }
+            }
+          }
+        },
+        "uk" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Завантажити %lld карту · %@ через Wi-Fi"
+                }
+              },
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Завантажити %lld карти · %@ через Wi-Fi"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Завантажити %lld карт · %@ через Wi-Fi"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Завантажити %lld карти · %@ через Wi-Fi"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Download again" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Завантажити знову"
+          }
+        }
+      }
+    },
+    "Download maps later" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Завантажити карти пізніше"
+          }
+        }
+      }
+    },
+    "Downloading %@" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Завантаження %@"
+          }
+        }
+      }
+    },
+    "Downloading %@…" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Завантаження %@…"
+          }
+        }
+      }
+    },
+    "Drop OBD" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Відключити OBD"
+          }
+        }
+      }
+    },
+    "Drop the OBD connection?" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Відключити OBD?"
+          }
+        }
+      }
+    },
+    "ELM session failed" : {
+      "comment" : "Adapter failed: the ELM327 session failed without a reason of its own. LinkReason.sessionFailed",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "збій сеансу ELM"
+          }
+        }
+      }
+    },
+    "Export" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Експортувати"
+          }
+        }
+      }
+    },
+    "Failed: %@" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Збій: %@"
+          }
+        }
+      }
+    },
+    "File" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Файл"
+          }
+        }
+      }
+    },
+    "Find an adapter" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Знайти адаптер"
+          }
+        }
+      }
+    },
+    "Finding your position… · keep driving" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Визначаємо позицію… · їдьте далі"
+          }
+        }
+      }
+    },
+    "Fix recorded" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Мітку записано"
+          }
+        }
+      }
+    },
+    "Follow" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Стежити"
+          }
+        }
+      }
+    },
+    "Following" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Стежить"
+          }
+        }
+      }
+    },
+    "For test drives and diagnostics" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Для тестових поїздок і діагностики"
+          }
+        }
+      }
+    },
+    "Forget" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Забути"
+          }
+        }
+      }
+    },
+    "Forget adapter" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Забути адаптер"
+          }
+        }
+      }
+    },
+    "Forget this adapter?" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Забути цей адаптер?"
+          }
+        }
+      }
+    },
+    "Frees %@. Recordings are not affected." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Звільнить %@. Записів це не торкнеться."
+          }
+        }
+      }
+    },
+    "FuGPS works with ELM327 Bluetooth LE adapters." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FuGPS працює з адаптерами ELM327 Bluetooth LE."
+          }
+        }
+      }
+    },
+    "GPS" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GPS"
+          }
+        }
+      }
+    },
+    "GPS back" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GPS відновлено"
+          }
+        }
+      }
+    },
+    "GPS lost" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GPS втрачено"
+          }
+        }
+      }
+    },
+    "GPS off" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GPS вимкнено"
+          }
+        }
+      }
+    },
+    "GPS off (rail caption)" : {
+      "comment" : "Under the rail GPS button; the rail is 80 pt wide, so uk uses the short form (HUD label and spoken phrase use the full word).",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GPS off"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GPS вимк."
+          }
+        }
+      }
+    },
+    "Get the road data" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отримати дані доріг"
+          }
+        }
+      }
+    },
+    "Getting the arrow fast" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Як швидко отримати стрілку"
+          }
+        }
+      }
+    },
+    "Heading up" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "За курсом"
+          }
+        }
+      }
+    },
+    "Held for the demo drive" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Зайнято демо-поїздкою"
+          }
+        }
+      }
+    },
+    "Hold still — calibrating" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не рушайте — калібрування"
+          }
+        }
+      }
+    },
+    "How FuGPS works" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Як працює FuGPS"
+          }
+        }
+      }
+    },
+    "If your adapter isn't found" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Якщо адаптер не знайдено"
+          }
+        }
+      }
+    },
+    "Initialising adapter" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ініціалізація адаптера"
+          }
+        }
+      }
+    },
+    "Installed" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Встановлено"
+          }
+        }
+      }
+    },
+    "Junction" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перехрестя"
+          }
+        }
+      }
+    },
+    "KEEP STILL  %lld s" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "НЕ РУШАЙТЕ  %lld с"
+          }
+        }
+      }
+    },
+    "Keep Bluetooth on." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не вимикайте Bluetooth."
+          }
+        }
+      }
+    },
+    "Keep Wi-Fi on: it helps the position when GPS is jammed." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Тримайте Wi-Fi увімкненим: він допомагає визначати позицію, коли GPS глушать."
+          }
+        }
+      }
+    },
+    "Keep connection" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Залишити зʼєднання"
+          }
+        }
+      }
+    },
+    "Keep recording" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Продовжити запис"
+          }
+        }
+      }
+    },
+    "Keep your eyes on the road; set up the app before you drive." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Стежте за дорогою; налаштуйте застосунок до поїздки."
+          }
+        }
+      }
+    },
+    "Later, everything is in Settings → Maps." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пізніше все буде в Налаштування → Карти."
+          }
+        }
+      }
+    },
+    "Link out of sync" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Збій синхронізації зʼєднання"
+          }
+        }
+      }
+    },
+    "Loading the list of maps…" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Завантажуємо список карт…"
+          }
+        }
+      }
+    },
+    "Location access is denied, or Location Services are off (Settings → Privacy & Security → Location Services)" : {
+      "comment" : "Sensor unavailable reason (SensorUnavailableReason, Sensors/SensorSuite.swift), shown in Record notices as the reason of “%@ unavailable: %@” and in the background-risk notice. The log keeps the English. iOS Settings path: check the UK names on a phone set to Ukrainian.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Доступ до геолокації заборонено або служби геолокації вимкнено (Параметри iOS → Приватність і безпека → Служби геолокації)"
+          }
+        }
+      }
+    },
+    "Location access is restricted on this device" : {
+      "comment" : "Sensor unavailable reason (SensorUnavailableReason, Sensors/SensorSuite.swift), shown in Record notices as the reason of “%@ unavailable: %@” and in the background-risk notice. The log keeps the English.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Доступ до геолокації обмежено на цьому пристрої"
+          }
+        }
+      }
+    },
+    "Looking for your region…" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Шукаємо ваш регіон…"
+          }
+        }
+      }
+    },
+    "Low disk space (%@ free). Recording stops automatically when it runs out." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Мало місця на диску (вільно %@). Запис зупиниться автоматично, коли воно закінчиться."
+          }
+        }
+      }
+    },
+    "Low disk space. Recording stops automatically when it runs out." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Мало місця на диску. Запис зупиниться автоматично, коли воно закінчиться."
+          }
+        }
+      }
+    },
+    "MARK" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ПОЗНАЧКА"
+          }
+        }
+      }
+    },
+    "Magnetometer/barometer" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Магнітометр/барометр"
+          }
+        }
+      }
+    },
+    "Map downloads network" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Мережа для завантаження карт"
+          }
+        }
+      }
+    },
+    "Maps" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Карти"
+          }
+        }
+      }
+    },
+    "Maps connection" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Звʼязок для карт"
+          }
+        }
+      }
+    },
+    "Maps download over Wi-Fi only unless this is on." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Карти завантажуються лише через Wi-Fi, якщо це не ввімкнено."
+          }
+        }
+      }
+    },
+    "Maps help navigation when GPS is poor. Nothing downloads until you tap the button." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Карти допомагають навігації, коли GPS працює погано. Нічого не завантажується, доки ви не натиснете кнопку."
+          }
+        }
+      }
+    },
+    "Mark" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Позначити"
+          }
+        }
+      }
+    },
+    "Marked: %@" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Позначка: %@"
+          }
+        }
+      }
+    },
+    "Memory" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Памʼять"
+          }
+        }
+      }
+    },
+    "Motion" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Рух"
+          }
+        }
+      }
+    },
+    "Motion & Fitness access is denied (Settings → Privacy & Security → Motion & Fitness)" : {
+      "comment" : "Sensor unavailable reason (SensorUnavailableReason, Sensors/SensorSuite.swift), shown in Record notices as the reason of “%@ unavailable: %@” and in the background-risk notice. The log keeps the English. iOS Settings path: check the UK names on a phone set to Ukrainian.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Доступ до «Рух і фітнес» заборонено (Параметри iOS → Приватність і безпека → Рух і фітнес)"
+          }
+        }
+      }
+    },
+    "Motion & Fitness access is restricted on this device" : {
+      "comment" : "Sensor unavailable reason (SensorUnavailableReason, Sensors/SensorSuite.swift), shown in Record notices as the reason of “%@ unavailable: %@” and in the background-risk notice. The log keeps the English.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Доступ до «Рух і фітнес» обмежено на цьому пристрої"
+          }
+        }
+      }
+    },
+    "Motion Hz" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Рух Гц"
+          }
+        }
+      }
+    },
+    "Mount and orientation" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Тримач і орієнтація"
+          }
+        }
+      }
+    },
+    "Mount note (e.g. vent clip, portrait)" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нотатка про тримач (напр., затискач на дефлекторі, портрет)"
+          }
+        }
+      }
+    },
+    "Mount the phone" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Закріпіть телефон"
+          }
+        }
+      }
+    },
+    "Mounted" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Закріплено"
+          }
+        }
+      }
+    },
+    "NOT RECORDING" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ЗАПИС НЕ ТРИВАЄ"
+          }
+        }
+      }
+    },
+    "Name" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Назва"
+          }
+        }
+      }
+    },
+    "Name not known yet" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Назва ще невідома"
+          }
+        }
+      }
+    },
+    "Navigation debug on map" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Налагодження навігації на карті"
+          }
+        }
+      }
+    },
+    "Nearby" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поблизу"
+          }
+        }
+      }
+    },
+    "Needs Bluetooth." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Потрібен Bluetooth."
+          }
+        }
+      }
+    },
+    "Never" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ніколи"
+          }
+        }
+      }
+    },
+    "Never offer maps for %@" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Більше не пропонувати карти для %@"
+          }
+        }
+      }
+    },
+    "Next" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Далі"
+          }
+        }
+      }
+    },
+    "No GPS" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Без GPS"
+          }
+        }
+      }
+    },
+    "No OBD" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Без OBD"
+          }
+        }
+      }
+    },
+    "No adapter chosen" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Адаптер не обрано"
+          }
+        }
+      }
+    },
+    "No adapter found" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Адаптер не знайдено"
+          }
+        }
+      }
+    },
+    "No background location session, so the recording may pause while the phone is locked. %@" : {
+      "comment" : "Record notice (RecordingSession.backgroundRiskText). %@: one or more reasons, each a full sentence ending in a period, joined by spaces. Not logged.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Немає фонового сеансу геолокації, тому запис може призупинитися, поки телефон заблоковано. %@"
+          }
+        }
+      }
+    },
+    "No connection. The download starts when you are online." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Немає звʼязку. Завантаження почнеться, щойно зʼявиться інтернет."
+          }
+        }
+      }
+    },
+    "No recordings yet" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Записів поки немає"
+          }
+        }
+      }
+    },
+    "No road map here · %@" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Тут немає карти доріг · %@"
+          }
+        }
+      }
+    },
+    "No road map here · %@ · %@" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Тут немає карти доріг · %1$@ · %2$@"
+          }
+        }
+      }
+    },
+    "No road maps installed" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Карт доріг не встановлено"
+          }
+        }
+      }
+    },
+    "No road pack covers this area — roads off" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Для цього району немає карти доріг — навігація без доріг"
+          }
+        }
+      }
+    },
+    "No road packs — roads off" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Немає карт доріг — навігація без доріг"
+          }
+        }
+      }
+    },
+    "No traffic yet" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обміну даними ще не було"
+          }
+        }
+      }
+    },
+    "None yet. Scan to find yours." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поки жодного. Скористайтеся пошуком."
+          }
+        }
+      }
+    },
+    "North up" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Північ угорі"
+          }
+        }
+      }
+    },
+    "Not connected" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не підключено"
+          }
+        }
+      }
+    },
+    "Not enough free space: %@ free, %@ needed. Delete old sessions first." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Недостатньо місця: вільно %1$@, потрібно %2$@. Спершу видаліть старі записи."
+          }
+        }
+      }
+    },
+    "Not installed" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не встановлено"
+          }
+        }
+      }
+    },
+    "Not now" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не зараз"
+          }
+        }
+      }
+    },
+    "Not offered on the road" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не пропонувати в дорозі"
+          }
+        }
+      }
+    },
+    "Not sent. The console only allows ATI, AT@1, ATDP, ATDPN, ATRV and mode 01 requests such as 010D." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не надіслано. Консоль дозволяє лише ATI, AT@1, ATDP, ATDPN, ATRV і запити режиму 01, наприклад 010D."
+          }
+        }
+      }
+    },
+    "OBD" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OBD"
+          }
+        }
+      }
+    },
+    "OBD Hz" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OBD Гц"
+          }
+        }
+      }
+    },
+    "OBD SPEED" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ШВИДКІСТЬ OBD"
+          }
+        }
+      }
+    },
+    "OBD adapter" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OBD-адаптер"
+          }
+        }
+      }
+    },
+    "OBD lost" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OBD втрачено"
+          }
+        }
+      }
+    },
+    "OBD lost — reconnecting" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OBD втрачено — підключаємо знову"
+          }
+        }
+      }
+    },
+    "ODbL 1.0 licence" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ліцензія ODbL 1.0"
+          }
+        }
+      }
+    },
+    "OK" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OK"
+          }
+        }
+      }
+    },
+    "OSM %@" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OSM %@"
+          }
+        }
+      }
+    },
+    "OSM date unknown" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Дата OSM невідома"
+          }
+        }
+      }
+    },
+    "Offer maps again for all regions" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Знову пропонувати карти для всіх регіонів"
+          }
+        }
+      }
+    },
+    "Offer maps for %@ again" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Знову пропонувати карти для %@"
+          }
+        }
+      }
+    },
+    "Offline" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Без інтернету"
+          }
+        }
+      }
+    },
+    "Offline." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Немає інтернету."
+          }
+        }
+      }
+    },
+    "Offline. Showing the saved list." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Немає інтернету. Показано збережений список."
+          }
+        }
+      }
+    },
+    "On Wi-Fi" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Через Wi-Fi"
+          }
+        }
+      }
+    },
+    "On cellular" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Через мобільний інтернет"
+          }
+        }
+      }
+    },
+    "On cellular — maps wait for Wi-Fi" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Через мобільний інтернет — карти чекають на Wi-Fi"
+          }
+        }
+      }
+    },
+    "On metered Wi-Fi" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Через Wi-Fi з обмеженим трафіком"
+          }
+        }
+      }
+    },
+    "On metered Wi-Fi — maps wait for unmetered Wi-Fi" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Через Wi-Fi з обмеженням — карти чекають на Wi-Fi без обмежень"
+          }
+        }
+      }
+    },
+    "On road" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "На дорозі"
+          }
+        }
+      }
+    },
+    "On the map: speed, GPS and OBD status at the top left; Settings is the gear." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "На карті: швидкість, стан GPS і OBD угорі ліворуч; налаштування — шестірня."
+          }
+        }
+      }
+    },
+    "Only main roads here · %@" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Тут лише головні дороги · %@"
+          }
+        }
+      }
+    },
+    "Only main roads here · %@ · %@" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Тут лише головні дороги · %1$@ · %2$@"
+          }
+        }
+      }
+    },
+    "Open-source licences" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ліцензії відкритого коду"
+          }
+        }
+      }
+    },
+    "OpenStreetMap" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenStreetMap"
+          }
+        }
+      }
+    },
+    "OpenStreetMap copyright" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Авторські права OpenStreetMap"
+          }
+        }
+      }
+    },
+    "Orientation is fixed for the whole drive" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Орієнтація незмінна протягом усієї поїздки"
+          }
+        }
+      }
+    },
+    "Other" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Інші"
+          }
+        }
+      }
+    },
+    "Paired" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Збережено"
+          }
+        }
+      }
+    },
+    "Paired adapter" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ваш адаптер"
+          }
+        }
+      }
+    },
+    "Parking" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Парковка"
+          }
+        }
+      }
+    },
+    "Path" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Шлях"
+          }
+        }
+      }
+    },
+    "Paused (recording)" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Призупинено (триває запис)"
+          }
+        }
+      }
+    },
+    "Phone is in a rigid mount" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Телефон у жорсткому тримачі"
+          }
+        }
+      }
+    },
+    "Phone mounted and won't move?" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Телефон надійно закріплено?"
+          }
+        }
+      }
+    },
+    "Pick one in Settings → OBD adapter" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Оберіть його в Налаштування → OBD-адаптер"
+          }
+        }
+      }
+    },
+    "Plug the adapter into the car's OBD port, then pair it once in Settings → OBD adapter. After that, navigation starts by itself whenever the adapter connects." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вставте адаптер у розʼєм OBD в авто, а потім один раз оберіть його в Налаштування → OBD-адаптер. Після цього навігація запускається сама, щойно адаптер підключиться."
+          }
+        }
+      }
+    },
+    "Plug the adapter into the car's OBD port, under the dashboard." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вставте адаптер у розʼєм OBD в авто, під панеллю приладів."
+          }
+        }
+      }
+    },
+    "Policy" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Політика"
+          }
+        }
+      }
+    },
+    "Polling OBD" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Опитування OBD"
+          }
+        }
+      }
+    },
+    "Privacy policy" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Політика конфіденційності"
+          }
+        }
+      }
+    },
+    "Pull down to load the list of maps." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Потягніть вниз, щоб завантажити список карт."
+          }
+        }
+      }
+    },
+    "Queued" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "У черзі"
+          }
+        }
+      }
+    },
+    "RECORDING" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ЗАПИС"
+          }
+        }
+      }
+    },
+    "RECORDING FAILED" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ЗБІЙ ЗАПИСУ"
+          }
+        }
+      }
+    },
+    "Re-centre in %lld s" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Повернення через %lld с"
+          }
+        }
+      }
+    },
+    "Re-initialise" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ініціалізувати знову"
+          }
+        }
+      }
+    },
+    "Reconnecting to %@" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Повторне підключення до %@"
+          }
+        }
+      }
+    },
+    "Reconnecting to your adapter" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Повторне підключення до адаптера"
+          }
+        }
+      }
+    },
+    "Record without OBD" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Записувати без OBD"
+          }
+        }
+      }
+    },
+    "Recording" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запис"
+          }
+        }
+      }
+    },
+    "Recording now" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Триває запис"
+          }
+        }
+      }
+    },
+    "Recording, %@. Double tap to stop." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Триває запис, %@. Двічі торкніться, щоб зупинити."
+          }
+        }
+      }
+    },
+    "Recordings appear here after you stop." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Записи зʼявляться тут після зупинки."
+          }
+        }
+      }
+    },
+    "Reference frame xArbitraryZVertical is unavailable" : {
+      "comment" : "Sensor unavailable reason (SensorUnavailableReason, Sensors/SensorSuite.swift), shown in Record notices as the reason of “%@ unavailable: %@” and in the background-risk notice. The log keeps the English.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Система координат xArbitraryZVertical недоступна"
+          }
+        }
+      }
+    },
+    "Rejected: %@" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Відхилено: %@"
+          }
+        }
+      }
+    },
+    "Removal pending" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Очікує видалення"
+          }
+        }
+      }
+    },
+    "Removal takes effect after the app restarts." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Видалення спрацює після перезапуску застосунку."
+          }
+        }
+      }
+    },
+    "Remove" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Видалити"
+          }
+        }
+      }
+    },
+    "Remove %@?" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Видалити %@?"
+          }
+        }
+      }
+    },
+    "Reset" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скинути"
+          }
+        }
+      }
+    },
+    "Reset all" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скинути все"
+          }
+        }
+      }
+    },
+    "Restored · %@ · not yet confirmed" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Відновлено · %@ · ще не підтверджено"
+          }
+        }
+      }
+    },
+    "Road data © OpenStreetMap contributors, available under the Open Database License (ODbL) 1.0." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Дані доріг © OpenStreetMap contributors, доступні за ліцензією Open Database License (ODbL) 1.0."
+          }
+        }
+      }
+    },
+    "Road maps" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Карти доріг"
+          }
+        }
+      }
+    },
+    "Road maps are optional. Navigation works without them." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Карти доріг необовʼязкові. Навігація працює й без них."
+          }
+        }
+      }
+    },
+    "Road packs refused — see Maps" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Карти доріг не пройшли перевірку — див. Карти"
+          }
+        }
+      }
+    },
+    "Roads" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Дороги"
+          }
+        }
+      }
+    },
+    "Roads in use" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Дороги в роботі"
+          }
+        }
+      }
+    },
+    "SIMULATED ADAPTER" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ІМІТОВАНИЙ АДАПТЕР"
+          }
+        }
+      }
+    },
+    "SIMULATED ADAPTER · SIMULATED SENSORS" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ІМІТОВАНИЙ АДАПТЕР · ІМІТОВАНІ ДАТЧИКИ"
+          }
+        }
+      }
+    },
+    "SIMULATED SENSORS" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ІМІТОВАНІ ДАТЧИКИ"
+          }
+        }
+      }
+    },
+    "START" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ПОЧАТИ"
+          }
+        }
+      }
+    },
+    "STOP" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "СТОП"
+          }
+        }
+      }
+    },
+    "STOPPING" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ЗУПИНЯЄМО"
+          }
+        }
+      }
+    },
+    "Scan" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Шукати"
+          }
+        }
+      }
+    },
+    "Scan for adapters" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Шукати адаптери"
+          }
+        }
+      }
+    },
+    "Scan to find your OBD adapter." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Знайдіть свій OBD-адаптер пошуком."
+          }
+        }
+      }
+    },
+    "Scanning for adapter" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пошук адаптера"
+          }
+        }
+      }
+    },
+    "Scanning is off while recording." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Під час запису пошук вимкнено."
+          }
+        }
+      }
+    },
+    "Searching for adapters" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пошук адаптерів"
+          }
+        }
+      }
+    },
+    "See which cars and adapters work" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Які авто й адаптери підходять"
+          }
+        }
+      }
+    },
+    "Send" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Надіслати"
+          }
+        }
+      }
+    },
+    "Sessions" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Записи"
+          }
+        }
+      }
+    },
+    "Setting up %@" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Налаштування %@"
+          }
+        }
+      }
+    },
+    "Setting up your adapter" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Налаштування адаптера"
+          }
+        }
+      }
+    },
+    "Settings" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Налаштування"
+          }
+        }
+      }
+    },
+    "Showing the saved list." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Показано збережений список."
+          }
+        }
+      }
+    },
+    "Skip" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пропустити"
+          }
+        }
+      }
+    },
+    "Speak GPS changes" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Озвучувати зміни GPS"
+          }
+        }
+      }
+    },
+    "Still searching. Yours may have another name: check the list." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пошук триває. Назва вашого може бути іншою: перегляньте список."
+          }
+        }
+      }
+    },
+    "Still waiting. It connects as soon as it is in range." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Очікуємо. Підключення відбудеться, щойно адаптер буде в зоні дії."
+          }
+        }
+      }
+    },
+    "Stop" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Зупинка"
+          }
+        }
+      }
+    },
+    "Stop demo" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Зупинити демо"
+          }
+        }
+      }
+    },
+    "Stop recording" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Зупинити запис"
+          }
+        }
+      }
+    },
+    "Stop recording?" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Зупинити запис?"
+          }
+        }
+      }
+    },
+    "Stop scan" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Зупинити пошук"
+          }
+        }
+      }
+    },
+    "Stop scanning" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Зупинити пошук"
+          }
+        }
+      }
+    },
+    "Stop the recording to run the demo." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Зупиніть запис, щоб запустити демо."
+          }
+        }
+      }
+    },
+    "Stopped automatically: disk space ran low." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Зупинено автоматично: закінчується місце на диску."
+          }
+        }
+      }
+    },
+    "Stops in %@" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Зупиниться через %@"
+          }
+        }
+      }
+    },
+    "Storage used: %@" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Використано памʼяті: %@"
+          }
+        }
+      }
+    },
+    "Support" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Підтримка"
+          }
+        }
+      }
+    },
+    "Switch the ignition on." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Увімкніть запалювання."
+          }
+        }
+      }
+    },
+    "Talking to the car." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обмін даними з авто."
+          }
+        }
+      }
+    },
+    "Tap your adapter when it appears." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Торкніться свого адаптера, щойно він зʼявиться."
+          }
+        }
+      }
+    },
+    "Test drive recording" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запис тестової поїздки"
+          }
+        }
+      }
+    },
+    "That file is not in the recordings folder." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Цього файлу немає в теці записів."
+          }
+        }
+      }
+    },
+    "The OBD adapter is not polling. Connect it in Settings → OBD adapter, or choose to record without OBD." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OBD-адаптер не опитує авто. Підключіть його в Налаштування → OBD-адаптер або оберіть запис без OBD."
+          }
+        }
+      }
+    },
+    "The accelerometer is unavailable on this device" : {
+      "comment" : "Sensor unavailable reason (SensorUnavailableReason, Sensors/SensorSuite.swift), shown in Record notices as the reason of “%@ unavailable: %@” and in the background-risk notice. The log keeps the English.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Акселерометр недоступний на цьому пристрої"
+          }
+        }
+      }
+    },
+    "The app will stop reconnecting to it. The recording continues without OBD for the rest of the drive." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Застосунок більше не підключатиметься до нього. Запис триватиме без OBD до кінця поїздки."
+          }
+        }
+      }
+    },
+    "The app will stop reconnecting to it. You can pick it again from a scan." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Застосунок більше не підключатиметься до нього. Його можна знову обрати після пошуку."
+          }
+        }
+      }
+    },
+    "The arrow appears once FuGPS knows your direction. Road maps and turns help it work this out while you drive. A passenger can speed it up: double-tap the map where you are while moving on a straight road. A pin while stopped fixes the position only, not the direction." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Стрілка зʼявляється, щойно FuGPS дізнається ваш напрямок. Карти доріг і повороти допомагають визначити його під час руху. Пасажир може це пришвидшити: на прямій ділянці двічі торкнутися карти там, де зараз авто. Мітка, поставлена на стоянці, уточнює лише позицію, а не напрямок."
+          }
+        }
+      }
+    },
+    "The barometer is unavailable on this device" : {
+      "comment" : "Sensor unavailable reason (SensorUnavailableReason, Sensors/SensorSuite.swift), shown in Record notices as the reason of “%@ unavailable: %@” and in the background-risk notice. The log keeps the English.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Барометр недоступний на цьому пристрої"
+          }
+        }
+      }
+    },
+    "The connection closed while waiting." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Зʼєднання закрилося під час очікування."
+          }
+        }
+      }
+    },
+    "The demo drive is running. Stop it to record." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Триває демо-поїздка. Зупиніть її, щоб почати запис."
+          }
+        }
+      }
+    },
+    "The demo is not available in this build." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "У цій збірці демо недоступне."
+          }
+        }
+      }
+    },
+    "The file is closed and saved." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Файл закрито й збережено."
+          }
+        }
+      }
+    },
+    "The first time you navigate, FuGPS asks once whether the phone is mounted." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Під час першої навігації FuGPS один раз спитає, чи закріплено телефон."
+          }
+        }
+      }
+    },
+    "The gyroscope is unavailable on this device" : {
+      "comment" : "Sensor unavailable reason (SensorUnavailableReason, Sensors/SensorSuite.swift), shown in Record notices as the reason of “%@ unavailable: %@” and in the background-risk notice. The log keeps the English.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Гіроскоп недоступний на цьому пристрої"
+          }
+        }
+      }
+    },
+    "The list of maps is not available" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Список карт недоступний"
+          }
+        }
+      }
+    },
+    "The map picture comes from Apple Maps (MapKit)." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Зображення карти надає Apple Maps (MapKit)."
+          }
+        }
+      }
+    },
+    "The recording continues without OBD for the rest of the drive." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запис триватиме без OBD до кінця поїздки."
+          }
+        }
+      }
+    },
+    "The recording gains OBD from now on. Earlier parts of it stay without." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Відтепер у записі буде OBD. Попередні частини лишаться без нього."
+          }
+        }
+      }
+    },
+    "The road packs are a derived database; get the data on the site's data page." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Карти доріг — похідна база даних; отримати дані можна на сторінці даних сайту."
+          }
+        }
+      }
+    },
+    "There is no connection. Navigation works without maps; you can download them later in Settings → Maps." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Немає звʼязку. Навігація працює й без карт; завантажити їх можна пізніше в Налаштування → Карти."
+          }
+        }
+      }
+    },
+    "Thermal %@" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Температура: %@"
+          }
+        }
+      }
+    },
+    "Thermal state" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Температура пристрою"
+          }
+        }
+      }
+    },
+    "This app bundles no third-party code." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Застосунок не містить стороннього коду."
+          }
+        }
+      }
+    },
+    "This map stays in use until you restart the app, then it is removed." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ця карта працюватиме до перезапуску застосунку, а потім буде видалена."
+          }
+        }
+      }
+    },
+    "This map stays in use until you restart the app, then it is removed. Frees %@. Recordings are not affected." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ця карта працюватиме до перезапуску застосунку, а потім буде видалена. Звільнить %@. Записів це не торкнеться."
+          }
+        }
+      }
+    },
+    "This recording is still running. Stop it first." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Цей запис ще триває. Спершу зупиніть його."
+          }
+        }
+      }
+    },
+    "Traffic jam" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Затор"
+          }
+        }
+      }
+    },
+    "Tunnel" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Тунель"
+          }
+        }
+      }
+    },
+    "Turn GPS back on" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Увімкнути GPS знову"
+          }
+        }
+      }
+    },
+    "Turn GPS off, dead reckoning only" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вимкнути GPS, лише розрахунок позиції"
+          }
+        }
+      }
+    },
+    "Turn it on in Control Centre or iOS Settings." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Увімкніть його в Пункті керування чи в Параметрах iOS."
+          }
+        }
+      }
+    },
+    "Undo" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скасувати"
+          }
+        }
+      }
+    },
+    "Update %@" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Оновити %@"
+          }
+        }
+      }
+    },
+    "Update available · from next start" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Є оновлення · з наступного запуску"
+          }
+        }
+      }
+    },
+    "Updated · used from the next start" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Оновлено · діятиме з наступного запуску"
+          }
+        }
+      }
+    },
+    "Use GPS (rail caption)" : {
+      "comment" : "Under the rail GPS button; short uk form because of the 80 pt rail.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use GPS"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Увімк. GPS"
+          }
+        }
+      }
+    },
+    "Use a rigid mount and keep the phone in the same position for the whole drive. The sensors can only measure the car if the phone doesn't move on its own." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Користуйтеся жорстким тримачем і не змінюйте положення телефона протягом усієї поїздки. Датчики можуть виміряти рух авто лише тоді, коли телефон не рухається сам по собі."
+          }
+        }
+      }
+    },
+    "Use cellular data" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Використовувати мобільний інтернет"
+          }
+        }
+      }
+    },
+    "Vehicle note (e.g. Touareg 2025)" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нотатка про авто (напр., модель і рік)"
+          }
+        }
+      }
+    },
+    "Verifying" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перевірка"
+          }
+        }
+      }
+    },
+    "Version" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Версія"
+          }
+        }
+      }
+    },
+    "Waiting for Wi-Fi" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Очікуємо Wi-Fi"
+          }
+        }
+      }
+    },
+    "Waiting for network" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Очікуємо мережу"
+          }
+        }
+      }
+    },
+    "Waiting — this Wi-Fi is metered" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Очікуємо — цей Wi-Fi з обмеженням"
+          }
+        }
+      }
+    },
+    "While navigating or recording, says \"%@\", \"%@\" or \"%@\", at most once every 5 minutes each." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Під час навігації або запису озвучує «%1$@», «%2$@» чи «%3$@» — не частіше ніж раз на 5 хвилин кожне."
+          }
+        }
+      }
+    },
+    "Writing failed: %@. %lld events were not written." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Writing failed: %1$@. %#@n@"
+          },
+          "substitutions" : {
+            "n" : {
+              "argNum" : 2,
+              "formatSpecifier" : "lld",
+              "variations" : {
+                "plural" : {
+                  "one" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg event was not written."
+                    }
+                  },
+                  "other" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg events were not written."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Помилка запису: %1$@. %#@n@"
+          },
+          "substitutions" : {
+            "n" : {
+              "argNum" : 2,
+              "formatSpecifier" : "lld",
+              "variations" : {
+                "plural" : {
+                  "one" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "Не записано %arg подію."
+                    }
+                  },
+                  "few" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "Не записано %arg події."
+                    }
+                  },
+                  "many" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "Не записано %arg подій."
+                    }
+                  },
+                  "other" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "Не записано %arg події."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "You are on cellular data. The download waits for Wi-Fi." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ви на мобільному інтернеті. Завантаження чекатиме на Wi-Fi."
+          }
+        }
+      }
+    },
+    "You chose Never for these regions. Reset to be offered a map again at a stop." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Для цих регіонів ви обрали «Ніколи». Скиньте, щоб карту знову пропонували під час зупинки."
+          }
+        }
+      }
+    },
+    "Zoom in to place the pin precisely" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Наблизьте карту, щоб точно поставити мітку"
+          }
+        }
+      }
+    },
+    "already finished" : {
+      "comment" : "Write-failure reason (RecordingSession.display): the file was already closed. Lower case: it follows a colon.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "уже завершено"
+          }
+        }
+      }
+    },
+    "cannot copy the file: %@" : {
+      "comment" : "Settings → Maps, a download/install/remove failure reason after «Failed: » or «Could not remove …: » (lower-case fragment). PackFailure.resource, App/Sources/Navigation/RoadPackInstaller.swift. %@: the system's error text.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "не вдалося скопіювати файл: %@"
+          }
+        }
+      }
+    },
+    "cannot create the store: %@" : {
+      "comment" : "Settings → Maps, a download/install/remove failure reason after «Failed: » or «Could not remove …: » (lower-case fragment). PackFailure.resource, App/Sources/Navigation/RoadPackInstaller.swift. %@: the system's error text.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "не вдалося створити сховище: %@"
+          }
+        }
+      }
+    },
+    "cannot mark for removal: %@" : {
+      "comment" : "Settings → Maps, a download/install/remove failure reason after «Failed: » or «Could not remove …: » (lower-case fragment). PackFailure.resource, App/Sources/Navigation/RoadPackInstaller.swift. %@: the system's error text.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "не вдалося позначити для видалення: %@"
+          }
+        }
+      }
+    },
+    "cannot read the file: %@" : {
+      "comment" : "Settings → Maps, a download/install/remove failure reason after «Failed: » or «Could not remove …: » (lower-case fragment). PackFailure.resource, App/Sources/Navigation/RoadPackInstaller.swift. %@: the system's error text.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "не вдалося прочитати файл: %@"
+          }
+        }
+      }
+    },
+    "cannot store the file: %@" : {
+      "comment" : "Settings → Maps, a download/install/remove failure reason after «Failed: » or «Could not remove …: » (lower-case fragment). PackFailure.resource, App/Sources/Navigation/RoadPackInstaller.swift. %@: the system's error text.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "не вдалося зберегти файл: %@"
+          }
+        }
+      }
+    },
+    "cannot write the file: %@" : {
+      "comment" : "Settings → Maps, a download/install/remove failure reason after «Failed: » or «Could not remove …: » (lower-case fragment). PackFailure.resource, App/Sources/Navigation/RoadPackInstaller.swift. %@: the system's error text.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "не вдалося записати файл: %@"
+          }
+        }
+      }
+    },
+    "characteristic %@ vanished" : {
+      "comment" : "Adapter failed: a Bluetooth characteristic disappeared; %@ is its UUID. LinkReason.characteristicVanished",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "характеристика %@ зникла"
+          }
+        }
+      }
+    },
+    "checksum mismatch" : {
+      "comment" : "Settings → Maps, a download/install/remove failure reason after «Failed: » or «Could not remove …: » (lower-case fragment). PackFailure.resource, App/Sources/Navigation/RoadPackInstaller.swift.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "контрольна сума не збігається"
+          }
+        }
+      }
+    },
+    "content hash %@ does not match the manifest (%@)" : {
+      "comment" : "Settings → Maps, a download/install/remove failure reason after «Failed: » or «Could not remove …: » (lower-case fragment). PackFailure.resource, App/Sources/Navigation/RoadPackInstaller.swift. %1$@: the file's content hash, %2$@: the manifest's (16 hex digits each).",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "хеш вмісту %1$@ не збігається зі списком карт (%2$@)"
+          }
+        }
+      }
+    },
+    "could not create %@: %@" : {
+      "comment" : "Write-failure reason (RecordingSession.display). %1$@: a file path; %2$@: the error description. Lower case: it follows a colon.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "не вдалося створити %1$@: %2$@"
+          }
+        }
+      }
+    },
+    "could not encode %@: %@" : {
+      "comment" : "Write-failure reason (RecordingSession.display). %1$@: the event kind identifier (e.g. mag); %2$@: the error description. Lower case: it follows a colon.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "не вдалося закодувати %1$@: %2$@"
+          }
+        }
+      }
+    },
+    "critical" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "критична"
+          }
+        }
+      }
+    },
+    "discovering services" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "пошук служб"
+          }
+        }
+      }
+    },
+    "disk full" : {
+      "comment" : "Write-failure reason (RecordingSession.display(LogWriteError)), shown as the reason of “Writing failed: %@. %lld events were not written.” Lower case: it follows a colon. The log keeps the English.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "диск заповнено"
+          }
+        }
+      }
+    },
+    "fair" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "підвищена"
+          }
+        }
+      }
+    },
+    "file exists: %@" : {
+      "comment" : "Write-failure reason (RecordingSession.display). %@: a file path. Lower case: it follows a colon.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "файл уже існує: %@"
+          }
+        }
+      }
+    },
+    "incomplete download" : {
+      "comment" : "Settings → Maps, a download/install/remove failure reason after «Failed: » or «Could not remove …: » (lower-case fragment). PackFailure.resource, App/Sources/Navigation/RoadPackInstaller.swift.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "завантаження не завершено"
+          }
+        }
+      }
+    },
+    "invalid pack name" : {
+      "comment" : "Settings → Maps, a download/install/remove failure reason after «Failed: » or «Could not remove …: » (lower-case fragment). PackFailure.resource, App/Sources/Navigation/RoadPackInstaller.swift.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "недійсна назва карти"
+          }
+        }
+      }
+    },
+    "invalid pack name (1–%lld of a–z, 0–9, _ and -)" : {
+      "comment" : "Settings → Maps, a download/install/remove failure reason after «Failed: » or «Could not remove …: » (lower-case fragment). PackFailure.resource, App/Sources/Navigation/RoadPackInstaller.swift. %lld: the maximum name length.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "недійсна назва карти (1–%lld символів: a–z, 0–9, _ і -)"
+          }
+        }
+      }
+    },
+    "km/h" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "км/год"
+          }
+        }
+      }
+    },
+    "more bytes than the manifest says" : {
+      "comment" : "Settings → Maps, a download/install/remove failure reason after «Failed: » or «Could not remove …: » (lower-case fragment). PackFailure.resource, App/Sources/Navigation/RoadPackInstaller.swift.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "байтів більше, ніж у списку карт"
+          }
+        }
+      }
+    },
+    "no GATT services" : {
+      "comment" : "Adapter failed: the adapter offers no Bluetooth services. LinkReason.noServices",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "адаптер не має служб GATT"
+          }
+        }
+      }
+    },
+    "no notify + write characteristic pair (services: %lld)" : {
+      "comment" : "Adapter failed: the adapter's Bluetooth layout has no usable notify + write pair; %lld is the number of services found. LinkReason.noUARTPair (App/Sources/Link/OBDLinkServicing.swift)",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "немає пари характеристик notify і write (служб: %lld)"
+          }
+        }
+      }
+    },
+    "no road pack store" : {
+      "comment" : "Settings → Maps, a download/install/remove failure reason after «Failed: » or «Could not remove …: » (lower-case fragment). PackFailure.resource, App/Sources/Navigation/RoadPackInstaller.swift.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "немає сховища карт доріг"
+          }
+        }
+      }
+    },
+    "nominal" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "норма"
+          }
+        }
+      }
+    },
+    "not a regular file" : {
+      "comment" : "Settings → Maps, a download/install/remove failure reason after «Failed: » or «Could not remove …: » (lower-case fragment). PackFailure.resource, App/Sources/Navigation/RoadPackInstaller.swift.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "це не звичайний файл"
+          }
+        }
+      }
+    },
+    "not an HTTP response" : {
+      "comment" : "Settings → Maps, a download/install/remove failure reason after «Failed: » or «Could not remove …: » (lower-case fragment). PackFailure.resource, App/Sources/Navigation/RoadPackInstaller.swift.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "відповідь сервера не є HTTP"
+          }
+        }
+      }
+    },
+    "not notifying" : {
+      "comment" : "Adapter failed: notifications did not turn on and iOS gave no error; fills %2$@ of 'notifications on %@ refused: %@'. LinkReason.notificationsRefused",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "сповіщення не ввімкнено"
+          }
+        }
+      }
+    },
+    "not polling yet" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "опитування ще не почалося"
+          }
+        }
+      }
+    },
+    "not usable" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "непридатна"
+          }
+        }
+      }
+    },
+    "not verified" : {
+      "comment" : "Settings → Maps, a download/install/remove failure reason after «Failed: » or «Could not remove …: » (lower-case fragment). PackFailure.resource, App/Sources/Navigation/RoadPackInstaller.swift.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "не перевірено"
+          }
+        }
+      }
+    },
+    "notifications on %@ refused: %@" : {
+      "comment" : "Adapter failed: the adapter refused notifications; %1$@ characteristic UUID, %2$@ iOS error text or 'not notifying'. LinkReason.notificationsRefused",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "адаптер відхилив сповіщення на %1$@: %2$@"
+          }
+        }
+      }
+    },
+    "protocol %@" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "протокол %@"
+          }
+        }
+      }
+    },
+    "protocol %@ · %@" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "протокол %1$@ · %2$@"
+          }
+        }
+      }
+    },
+    "reading the car" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "зчитування даних авто"
+          }
+        }
+      }
+    },
+    "reconnecting, attempt %lld" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "повторне підключення, спроба %lld"
+          }
+        }
+      }
+    },
+    "reference" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "еталон"
+          }
+        }
+      }
+    },
+    "serious" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "висока"
+          }
+        }
+      }
+    },
+    "service discovery failed: %@" : {
+      "comment" : "Adapter failed: Bluetooth service discovery failed; %@ is the iOS error text. LinkReason.serviceDiscoveryFailed",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "не вдалося знайти служби: %@"
+          }
+        }
+      }
+    },
+    "the server sent more than %@" : {
+      "comment" : "Settings → Maps, a download/install/remove failure reason after «Failed: » or «Could not remove …: » (lower-case fragment). PackFailure.resource, App/Sources/Navigation/RoadPackInstaller.swift. %@: a formatted size (\"48 MB\"), ByteCountFormatStyle.",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "сервер надіслав більше ніж %@"
+          }
+        }
+      }
+    },
+    "unknown" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "невідомо"
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

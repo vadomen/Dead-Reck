@@ -4,7 +4,22 @@ import Observation
 
 /// Mark presets offered on the mark sheet.
 enum MarkPreset {
+    /// The values written to the log. Always English: they are data.
     static let all = ["tunnel", "traffic jam", "junction", "bad road", "parking", "stop"]
+
+    /// What the button and the "Marked:" line say for a logged value, in the
+    /// app language. A value that is not a preset (the custom marker) is shown as typed.
+    static func label(for value: String) -> String {
+        switch value {
+        case "tunnel": String(localized: "Tunnel")
+        case "traffic jam": String(localized: "Traffic jam")
+        case "junction": String(localized: "Junction")
+        case "bad road": String(localized: "Bad road")
+        case "parking": String(localized: "Parking")
+        case "stop": String(localized: "Stop")
+        default: value
+        }
+    }
 }
 
 /// State and actions of the Record tab. Reads the session and link, exposes a

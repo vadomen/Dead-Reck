@@ -143,7 +143,7 @@ final class FirstLaunchMapsModel {
          authorization: @escaping @MainActor () -> CoarseAuthorization = { .allowed },
          requestAuthorization: @escaping @MainActor () async -> CoarseAuthorization = { .allowed },
          askDelay: Duration = .seconds(1.5),
-         preferredLanguages: @escaping @Sendable () -> [String] = { Locale.preferredLanguages },
+         preferredLanguages: @escaping @Sendable () -> [String] = { AppLanguage.preferredLanguages },
          locale: Locale = .current, now: @escaping @MainActor () -> Date = { Date() }, forced: Bool = false) {
         self.store = store
         manifestService = manifest

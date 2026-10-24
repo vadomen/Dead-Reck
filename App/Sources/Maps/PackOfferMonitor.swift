@@ -127,7 +127,7 @@ final class PackOfferMonitor {
 
     init(sources: Sources, neverStore: PackOfferNeverStore = PackOfferNeverStore(),
          config: PackOfferRule.Config = .default,
-         preferredLanguages: @escaping @Sendable () -> [String] = { Locale.preferredLanguages }) {
+         preferredLanguages: @escaping @Sendable () -> [String] = { AppLanguage.preferredLanguages }) {
         self.sources = sources
         self.neverStore = neverStore
         self.config = config

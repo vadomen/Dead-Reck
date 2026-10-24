@@ -90,30 +90,19 @@ struct ConsoleContent: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if isSimulated { SimulationBadge(text: "SIMULATED ADAPTER") }
+            if isSimulated { SimulationBadge(text: String(localized: "SIMULATED ADAPTER")) }
             AdapterRow(status: status)
             if let summary {
                 Text(summary).font(.caption.monospaced()).foregroundStyle(.secondary)
             }
-            HStack {
-                if state == .scanning {
-                    Button("Stop scan", action: actions.stopScan)
-                } else {
-                    Button("Scan", action: actions.scan)
-                        .disabled(!canScan)
-                }
-                Button("Disconnect", action: actions.disconnect)
-                    .disabled(!ConsoleText.holdsAdapter(state))
-                Button("Forget", role: .destructive) { isForgetConfirmationPresented = true }
-                    .disabled(remembered == nil)
-                Spacer(minLength: 0)
-                Button("Re-initialise", action: actions.reinitialise)
-                    .disabled(!canReinitialise)
+            // One row; where the labels do not fit (Ukrainian), Re-initialise moves to its own row.
+            ViewThatFits(in: .horizontal) {
+                HStack { linkButtons; Spacer(minLength: 0); reinitialiseButton }
+                VStack(alignment: .leading, spacing: 8) { HStack { linkButtons }; reinitialiseButton }
             }
             .buttonStyle(.bordered)
             .controlSize(.regular)
             .lineLimit(1)
-            .minimumScaleFactor(0.8)
             if !discovered.isEmpty {
                 ForEach(discovered) { adapter in
                     Button { actions.connect(adapter.id) } label: {
@@ -134,6 +123,25 @@ struct ConsoleContent: View {
         .padding(.vertical, 8)
     }
 
+    @ViewBuilder
+    private var linkButtons: some View {
+        if state == .scanning {
+            Button("Stop scan", action: actions.stopScan)
+        } else {
+            Button("Scan", action: actions.scan)
+                .disabled(!canScan)
+        }
+        Button("Disconnect", action: actions.disconnect)
+            .disabled(!ConsoleText.holdsAdapter(state))
+        Button("Forget", role: .destructive) { isForgetConfirmationPresented = true }
+            .disabled(remembered == nil)
+    }
+
+    private var reinitialiseButton: some View {
+        Button("Re-initialise", action: actions.reinitialise)
+            .disabled(!canReinitialise)
+    }
+
     // MARK: Manual command
 
     private var manualSection: some View {
@@ -151,7 +159,7 @@ struct ConsoleContent: View {
                 }
             }
             HStack {
-                TextField("ATI, AT@1, ATDP, ATDPN, ATRV, 010D", text: $commandText)
+                TextField(text: $commandText, prompt: Text(verbatim: "ATI, AT@1, ATDP, ATDPN, ATRV, 010D")) { Text(verbatim: "") }
                     .font(.body.monospaced())
                     .textInputAutocapitalization(.characters)
                     .autocorrectionDisabled()

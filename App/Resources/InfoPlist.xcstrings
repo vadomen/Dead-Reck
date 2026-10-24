@@ -1,0 +1,70 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "CFBundleDisplayName" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FuGPS"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FuGPS"
+          }
+        }
+      }
+    },
+    "NSBluetoothAlwaysUsageDescription" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FuGPS connects to your car's OBD-II Bluetooth adapter to read its speed and engine data, so it can keep estimating your position when GPS is jammed. If you record a drive, this data is saved in the recording on your phone."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FuGPS підключається до Bluetooth-адаптера OBD-II у вашому авто, щоб зчитувати швидкість і дані двигуна й продовжувати визначати позицію, коли GPS глушать. Якщо ви записуєте поїздку, ці дані зберігаються в записі на вашому телефоні."
+          }
+        }
+      }
+    },
+    "NSLocationWhenInUseUsageDescription" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FuGPS uses your location to show where you are and to keep estimating your position when GPS is jammed, also with the screen locked while you drive, and to pick the road map for your area. If you record a drive, your route is saved in the recording on your phone."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FuGPS використовує вашу геолокацію, щоб показувати, де ви перебуваєте, продовжувати визначати позицію, коли GPS глушать (також із заблокованим екраном під час руху), і вибирати карту доріг для вашого району. Якщо ви записуєте поїздку, ваш маршрут зберігається в записі на вашому телефоні."
+          }
+        }
+      }
+    },
+    "NSMotionUsageDescription" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FuGPS uses your phone's motion sensors to follow the car's turns, braking and acceleration, so it can keep estimating your position when GPS is jammed. If you record a drive, this data is saved in the recording on your phone."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FuGPS використовує датчики руху телефона, щоб відстежувати повороти, гальмування й прискорення авто та продовжувати визначати позицію, коли GPS глушать. Якщо ви записуєте поїздку, ці дані зберігаються в записі на вашому телефоні."
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

@@ -25,13 +25,14 @@ struct DisplayFormatTests {
         #expect(DisplayFormat.duration(nil) == "--")
     }
 
-    @Test("Bytes use decimal units")
+    @Test("Bytes use decimal units, in the locale's unit names (UX-15)")
     func bytes() {
-        #expect(DisplayFormat.bytes(0) == "0 B")
-        #expect(DisplayFormat.bytes(999) == "999 B")
-        #expect(DisplayFormat.bytes(1_500) == "2 KB")
-        #expect(DisplayFormat.bytes(48_200_000) == "48.2 MB")
-        #expect(DisplayFormat.bytes(2_500_000_000 as Int64) == "2.50 GB")
+        let en = Locale(identifier: "en_US")
+        #expect(DisplayFormat.bytes(0, locale: en) == "0 bytes")
+        #expect(DisplayFormat.bytes(10, locale: en) == "10 bytes")
+        #expect(DisplayFormat.bytes(1_500, locale: en) == "2 kB")
+        #expect(DisplayFormat.bytes(48_200_000, locale: en) == "48.2 MB")
+        #expect(DisplayFormat.bytes(2_500_000_000 as Int64, locale: en) == "2.5 GB")
     }
 
     @Test("Hz and voltage")
@@ -139,7 +140,7 @@ struct DashboardStateTests {
         var live = LiveStatus()
         live.lowDiskSpaceWarning = true
         live.availableDiskBytes = 150_000_000
-        #expect(DashboardState.make(inputs(state: .recording, live: live)).notices.first?.text.contains("150.0 MB") == true)
+        #expect(DashboardState.make(inputs(state: .recording, live: live)).notices.first?.text.contains("150 MB") == true)
         #expect(DashboardState.make(inputs(state: .idle, live: live)).notices.isEmpty)
 
         var i = inputs()
@@ -194,7 +195,7 @@ struct StartFlowTests {
     func blockers() {
         let disk = StartBlockerNotice(.lowDiskSpace(availableBytes: 120_000_000, requiredBytes: 200_000_000))
         #expect(disk?.offersRecordWithoutOBD == false)
-        #expect(disk?.message.contains("120.0 MB") == true && disk?.message.contains("200.0 MB") == true)
+        #expect(disk?.message.contains("120 MB") == true && disk?.message.contains("200 MB") == true)
         #expect(StartBlockerNotice(.obdNotReady)?.offersRecordWithoutOBD == true)
         #expect(StartBlockerNotice(.recordingInProgress) == nil)
         #expect(StartBlockerNotice(nil) == nil)
@@ -380,7 +381,7 @@ struct SessionsTextTests {
         #expect(SessionsText.summary(for: file) == "20:40 · 42.1 MB")
         #expect(SessionsText.title(for: file) == "a.jsonl.gz")
         let broken = RecordingFile(url: file.url, name: "a.jsonl.gz", sizeBytes: 10, startedAt: nil, duration: nil)
-        #expect(SessionsText.summary(for: broken) == "-- · 10 B")
+        #expect(SessionsText.summary(for: broken) == "-- · 10 bytes")
     }
 
     @Test("Deleting the active recording is explained")

@@ -45,7 +45,8 @@ actor PackDownloader {
         case downloading(received: Int64, total: Int64)
         /// Hashing and installing.
         case verifying
-        case failed(String)
+        /// English `text` for Diagnostics, `display` for Settings → Maps.
+        case failed(PackFailure)
 
         /// Queued, waiting, running or paused: Cancel applies.
         var isActive: Bool {
@@ -186,7 +187,7 @@ actor PackDownloader {
         let name = pack.name
         if running?.job.pack.name == name || queue.contains(where: { $0.pack.name == name }) { return }
         guard PackPartialFiles(directory: directory, pack: pack) != nil else {
-            states[name] = .failed("invalid pack name")
+            states[name] = .failed(.invalidPackName)
             return
         }
         updatedForNextStart.remove(name)
@@ -368,7 +369,7 @@ actor PackDownloader {
 
     private func stopped() -> Bool { running?.stop != nil }
 
-    private func fail(_ job: Job, _ reason: String) {
+    private func fail(_ job: Job, _ reason: PackFailure) {
         states[job.pack.name] = .failed(reason)
     }
 
@@ -379,12 +380,12 @@ actor PackDownloader {
     private func run(_ job: Job, retriedNotFound: Bool = false) async {
         let pack = job.pack
         guard let files = PackPartialFiles(directory: directory, pack: pack) else {
-            return fail(job, "invalid pack name")
+            return fail(job, .invalidPackName)
         }
         do {
             try RoadPackStore.prepareDirectory(directory)
         } catch {
-            return fail(job, "cannot create the store: \(error.localizedDescription)")
+            return fail(job, .cannotCreateStore(error.localizedDescription))
         }
         var restarted = false
         while true {
@@ -427,7 +428,7 @@ actor PackDownloader {
                 case .completed:
                     break
                 case .restart(let reason):
-                    if restarted { return fail(job, "server: " + reason) }
+                    if restarted { return fail(job, .other("server: " + reason)) }
                     restarted = true
                     files.delete()
                     continue
@@ -438,10 +439,10 @@ actor PackDownloader {
                     // R67.1-7: the cached manifest may name a file a later
                     // publish pruned. One forced refresh, one retry with the
                     // fresh entry of the same name; gone or unchanged → fail.
-                    guard !retriedNotFound, let hook = freshEntry else { return fail(job, reason) }
+                    guard !retriedNotFound, let hook = freshEntry else { return fail(job, .other(reason)) }
                     let fresh = await hook(pack.name)
                     if stopped() { return setStopOutcome(job, files: files) }
-                    guard let fresh, fresh != pack else { return fail(job, reason) }
+                    guard let fresh, fresh != pack else { return fail(job, .other(reason)) }
                     files.delete()
                     let next = Job(pack: fresh, isUpdate: job.isUpdate)
                     running?.job = next
@@ -458,7 +459,7 @@ actor PackDownloader {
                     return setStopOutcome(job, files: files)
                 case .transport(let message):
                     if stopped() { return setStopOutcome(job, files: files) }
-                    return fail(job, message)
+                    return fail(job, .other(message))
                 }
                 if stopped() { return setStopOutcome(job, files: files) }
             }
@@ -467,9 +468,9 @@ actor PackDownloader {
             let bytes = files.partialBytes() ?? 0
             if bytes > pack.size {
                 files.delete()
-                return fail(job, "more bytes than the manifest says")
+                return fail(job, .moreBytesThanManifest)
             }
-            if bytes < pack.size { return fail(job, "incomplete download") }
+            if bytes < pack.size { return fail(job, .incompleteDownload) }
             await verifyAndInstall(job, files: files)
             return
         }
@@ -510,7 +511,7 @@ actor PackDownloader {
         let digest: String
         switch hashed {
         case .failure(let error):
-            return fail(job, "cannot read the file: \(error.localizedDescription)")
+            return fail(job, .cannotReadFile(error.localizedDescription))
         case .success(nil):
             return setStopOutcome(job, files: files)
         case .success(let value?):
@@ -519,7 +520,7 @@ actor PackDownloader {
         if stopped() { return setStopOutcome(job, files: files) }
         guard digest == pack.sha256 else {
             files.delete()
-            return fail(job, "checksum mismatch")
+            return fail(job, .checksumMismatch)
         }
         if recordActive { return setStopOutcome(job, files: files) }
         let outcome = await library.install(from: files.partial, name: pack.name, expectedContentHash: pack.contentHash)
@@ -528,7 +529,7 @@ actor PackDownloader {
             states[pack.name] = nil
             if job.isUpdate, await runActive() { updatedForNextStart.insert(pack.name) }
         } else {
-            fail(job, outcome.refusal ?? "refused")
+            fail(job, outcome.failure ?? .other("refused"))
         }
     }
 

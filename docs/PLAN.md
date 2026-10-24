@@ -440,6 +440,14 @@ Items 1-7 above (demo pipeline) and the airplane-mode check (item 1) cover the d
 2. **Record started before Navigate has any position:** no estimate on the map yet (for example before the first fix with GPS off or jammed): the recording has no `navPrior` row (`Nav prior none (navigation started fresh)`) and Record starts fresh.
 3. **Record started while Navigate shows "Finding your position":** the recording has one `navPrior` row with `converged: false`, and Record keeps searching from that estimate (no restart from nothing).
 
+### Added by UX-15 localisation (prompt 41, branch `ux15-localization`) — not verified on a device
+1. **Phone set to Ukrainian:** every screen is in Ukrainian, nothing is truncated on the HUD, the rail or the offer card, and the permission prompts are in Ukrainian.
+2. **Spoken GPS phrases:** with a Ukrainian voice installed they are spoken in Ukrainian, and the quoted phrases in the Settings footer match what is spoken.
+3. **iOS Settings path names:** the paths named in the app («Параметри iOS → Приватність і безпека → …», Bluetooth, Рух і фітнес, Служби геолокації) match the real iOS Ukrainian names.
+4. **Failure texts:** a failed map download, a Bluetooth failure and a denied Motion permission show Ukrainian text on screen, while the recording's error rows stay English.
+5. **Another language:** an iPhone set to another language (for example German) shows the English UI; pack titles follow the app language.
+6. **`replay_nav --start-at` on a v5 file:** run `replay_nav --start-at <X>` on the first real v5 recording that has a `navPrior` row: the Prior line shows the estimate at the cut, and the label is `-from-X-prior`.
+
 ### Added by run 60, push_packs.sh app guard (not verified on a device)
 1. **Process list shape:** with the phone connected and unlocked and the app open, save `xcrun devicectl device info processes --device <id> --json-output -` and check that `result.runningProcesses[].executable` holds a `file:///…/DriveLogger.app/DriveLogger` URL (the parser's shape was inferred from devicectl's strings, never seen in real output). If the shape differs, the guard refuses ("cannot tell whether the app is running"); fix the parser rather than using `--force` by habit.
 2. **Suspended app:** leave the app in the app switcher (not swiped away) and run `scripts/push_packs.sh --dry-run`: Guard 1 reports it would refuse. Swipe it away: Guard 1 is clear.

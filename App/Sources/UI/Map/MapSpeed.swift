@@ -32,16 +32,16 @@ struct MapSpeedReadout: Hashable, Sendable {
     /// The chip: `OBD`, `GPS`, or nil when there is no speed.
     var sourceText: String? {
         switch source {
-        case .obd: "OBD"
-        case .gps: "GPS"
+        case .obd: String(localized: "OBD")
+        case .gps: String(localized: "GPS")
         case .none: nil
         }
     }
 
     /// One line, for accessibility and logs of the rule: `54 km/h · OBD`, `— km/h`.
     var summary: String {
-        guard let chip = sourceText else { return "\(valueText) km/h" }
-        return "\(valueText) km/h · \(chip)"
+        guard let chip = sourceText else { return String(localized: "\(valueText) km/h") }
+        return String(localized: "\(valueText) km/h · \(chip)")
     }
 }
 

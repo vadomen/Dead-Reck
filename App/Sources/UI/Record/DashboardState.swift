@@ -26,10 +26,10 @@ struct DashboardState: Equatable {
     var gpsSpeed = "--"
     /// The OBD tile is red while recording without a polling adapter.
     var obdTone: Tone = .neutral
-    var obdHz = "0.0"
-    var motionHz = "0.0"
+    var obdHz = DisplayFormat.hz(0)
+    var motionHz = DisplayFormat.hz(0)
     var elapsed = "0:00"
-    var fileSize = "0 B"
+    var fileSize = DisplayFormat.bytes(0)
     var notices: [Notice] = []
     var blocker: StartBlockerNotice?
     var allowsRecordingWithoutOBD = false
@@ -53,11 +53,11 @@ struct DashboardState: Equatable {
     /// Big banner text and colour.
     var headline: (text: String, tone: Tone) {
         switch phase {
-        case .idle: ("NOT RECORDING", .bad)
-        case .calibrating(let left): ("KEEP STILL  \(left) s", .caution)
-        case .recording: ("RECORDING", .good)
-        case .stopping: ("STOPPING", .caution)
-        case .failed: ("RECORDING FAILED", .bad)
+        case .idle: (String(localized: "NOT RECORDING"), .bad)
+        case .calibrating(let left): (String(localized: "KEEP STILL  \(left) s"), .caution)
+        case .recording: (String(localized: "RECORDING"), .good)
+        case .stopping: (String(localized: "STOPPING"), .caution)
+        case .failed: (String(localized: "RECORDING FAILED"), .bad)
         }
     }
 
@@ -105,29 +105,33 @@ struct DashboardState: Equatable {
         var notices: [Notice] = []
         switch s.phase {
         case .failed(let reason, let unwritten):
-            notices.append(Notice(text: "Writing failed: \(reason). \(unwritten) events were not written.", tone: .bad))
+            notices.append(Notice(text: String(localized: "Writing failed: \(reason). \(unwritten) events were not written."), tone: .bad))
         case .idle:
             if i.lastStopReason == .lowDiskSpace {
-                notices.append(Notice(text: "Stopped automatically: disk space ran low.", tone: .bad))
+                notices.append(Notice(text: String(localized: "Stopped automatically: disk space ran low."), tone: .bad))
             }
         default: break
         }
         if i.live.lowDiskSpaceWarning, s.isActive {
-            let free = i.live.availableDiskBytes.map { " (\(DisplayFormat.bytes($0)) free)" } ?? ""
-            notices.append(Notice(text: "Low disk space\(free). Recording stops automatically when it runs out.", tone: .bad))
+            let text = if let available = i.live.availableDiskBytes {
+                String(localized: "Low disk space (\(DisplayFormat.bytes(available)) free). Recording stops automatically when it runs out.")
+            } else {
+                String(localized: "Low disk space. Recording stops automatically when it runs out.")
+            }
+            notices.append(Notice(text: text, tone: .bad))
         }
         if let risk = i.backgroundRisk {
             notices.append(Notice(text: risk, tone: .caution))
         }
         for sensor in i.unavailableSensors {
-            notices.append(Notice(text: "\(SensorNames.display(sensor.name)) unavailable: \(sensor.reason)", tone: .caution))
+            notices.append(Notice(text: String(localized: "\(SensorNames.display(sensor.name)) unavailable: \(SensorUnavailableReason.display(sensor.reason))"), tone: .caution))
         }
         s.notices = notices
 
         switch (i.simulatedAdapter, i.simulatedSensors) {
-        case (true, true): s.simulationBadge = "SIMULATED ADAPTER · SIMULATED SENSORS"
-        case (true, false): s.simulationBadge = "SIMULATED ADAPTER"
-        case (false, true): s.simulationBadge = "SIMULATED SENSORS"
+        case (true, true): s.simulationBadge = String(localized: "SIMULATED ADAPTER · SIMULATED SENSORS")
+        case (true, false): s.simulationBadge = String(localized: "SIMULATED ADAPTER")
+        case (false, true): s.simulationBadge = String(localized: "SIMULATED SENSORS")
         case (false, false): s.simulationBadge = nil
         }
         return s
@@ -138,10 +142,10 @@ struct DashboardState: Equatable {
 enum SensorNames {
     static func display(_ name: String) -> String {
         switch name {
-        case "deviceMotion", "rawIMU", "simulatedMotion": "Motion"
-        case "altimeter": "Barometer"
-        case "referenceLocation", "simulatedLocation": "GPS"
-        case "simulatedMagBaro": "Magnetometer/barometer"
+        case "deviceMotion", "rawIMU", "simulatedMotion": String(localized: "Motion")
+        case "altimeter": String(localized: "Barometer")
+        case "referenceLocation", "simulatedLocation": String(localized: "GPS")
+        case "simulatedMagBaro": String(localized: "Magnetometer/barometer")
         default: name
         }
     }

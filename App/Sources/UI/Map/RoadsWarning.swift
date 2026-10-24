@@ -5,9 +5,9 @@ import Observation
 /// The one-line map warning for "roads are off and the driver can fix it".
 /// Pure: the rule is unit-tested; `RoadsWarningModel` only feeds it.
 enum RoadsWarning {
-    static let noPacks = "No road packs \u{2014} roads off"
-    static let noneCovering = "No road pack covers this area \u{2014} roads off"
-    static let refused = "Road packs refused \u{2014} see Maps"
+    static let noPacks = String(localized: "No road packs — roads off")
+    static let noneCovering = String(localized: "No road pack covers this area — roads off")
+    static let refused = String(localized: "Road packs refused — see Maps")
 
     /// The line to show, or nil.
     ///
@@ -85,12 +85,12 @@ struct RoadsWarningDownload: Equatable, Sendable {
 
     /// The button's label.
     var buttonText: String {
-        recording ? "Download \(title) after recording" : "Download \(title)"
+        recording ? String(localized: "Download \(title) after recording") : String(localized: "Download \(title)")
     }
 
     /// The line that replaces the button once it was tapped.
     var queuedText: String {
-        recording ? "\(title) downloads after the recording" : "Downloading \(title)\u{2026}"
+        recording ? String(localized: "\(title) downloads after the recording") : String(localized: "Downloading \(title)…")
     }
 }
 

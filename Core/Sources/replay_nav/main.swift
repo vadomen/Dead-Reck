@@ -24,6 +24,13 @@ import Foundation
 // --no-prior ignores it (a printed note: the run starts fresh, not as the
 // live run did). A recording without the row (every recording before v5)
 // replays exactly as before; --no-prior then changes nothing.
+// R78.2-2, --start-at X on a file with the row (no --prior, no
+// --no-prior): the cut starts from the estimate at X, the hand-over the app
+// would write from this replay's run (same flags, started from the row) of
+// the inputs before X (`ReplayRecordedPrior.atCut`; label -from-X-prior);
+// with no estimate there the cut starts fresh, with a note. A cut before
+// the row's start input keeps the row's prior. --no-prior --start-at X:
+// the fresh cut.
 //
 // UX-20 restore, replay only (one log): --save-prior writes the restore
 // state (`NavigationRestoreState`, the app's persisted form) captured at
@@ -688,9 +695,10 @@ for path in paths {
     inputs = baseOptions.fileOrder ? NavigationReplay.fileOrderInputs(from: events) : NavigationReplay.inputs(from: events)
     // Prompt 40: the recording's navPrior row, the live run's start
     // condition (absent: everything below is exactly as before v5).
-    let recordedPrior = ReplayRecordedPrior.choose(row: NavigationReplay.recordedPrior(in: events),
+    var recordedPrior = ReplayRecordedPrior.choose(row: NavigationReplay.recordedPrior(in: events),
                                                    explicitPrior: priorPath != nil, noPrior: noPrior)
-    if let note = recordedPrior.note(firstInput: recordedPrior.startInput(in: inputs)) { print(note) }
+    // With --start-at the note describes the cut (below).
+    if startAt == nil, let note = recordedPrior.note(firstInput: recordedPrior.startInput(in: inputs)) { print(note) }
     if case .absent = recordedPrior, noPrior { print("note: --no-prior: \(name) has no navPrior row; nothing to ignore") }
     if let writeSidecarPath {
         // Exactly the app's loop: file order, header seed, default config,
@@ -729,6 +737,16 @@ for path in paths {
         print("note: no truth entry for \(name)")
     }
     options.startAtS = startAt
+    if let startAt {
+        // R78.2-2: a cut past the row's start input starts from the
+        // estimate at the cut (this replay's run of the inputs before it,
+        // handed over as the app would), or fresh when there is none;
+        // never from the drive-start prior grown over the cut.
+        recordedPrior = recordedPrior.atCut(startAtS: startAt, inputs: inputs, options: options,
+                                            clock: SessionClock(header: header))
+        let cutInputs = inputs.filter { $0.arrival >= MonotonicTimestamp(seconds: startAt) }
+        if let note = recordedPrior.note(firstInput: recordedPrior.startInput(in: cutInputs)) { print(note) }
+    }
     if let prior = recordedPrior.prior {
         options.prior = prior
         options.priorSource = .recording

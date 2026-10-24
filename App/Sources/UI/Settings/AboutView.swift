@@ -13,16 +13,16 @@ enum AboutContent {
     static let odblURL = URL(string: "https://opendatacommons.org/licenses/odbl/1-0/")!
 
     /// Every data source the build uses. Nothing else is fetched or bundled.
-    static let osmCredit = "Road data © OpenStreetMap contributors, available under the Open Database License (ODbL) 1.0."
-    static let osmHowToGet = "The road packs are a derived database; get the data on the site's data page."
+    static let osmCredit = String(localized: "Road data © OpenStreetMap contributors, available under the Open Database License (ODbL) 1.0.")
+    static let osmHowToGet = String(localized: "The road packs are a derived database; get the data on the site's data page.")
     /// The roads of the demo drive, bundled in the app (REL-DEMO): OSM data of
     /// 2026-10-08, a Geofabrik extract. No place name. Starts with the same
     /// credit the map shows during the demo (`DemoDriveRoads.attribution`).
-    static let demoMapCredit = DemoDriveRoads.attribution + ", ODbL 1.0. Demo drive map data: OSM data of 2026-10-08 (Geofabrik extract), bundled in the app."
-    static let mapsCredit = "The map picture comes from Apple Maps (MapKit)."
+    static let demoMapCredit = String(localized: "\(DemoDriveRoads.attribution), ODbL 1.0. Demo drive map data: OSM data of 2026-10-08 (Geofabrik extract), bundled in the app.")
+    static let mapsCredit = String(localized: "The map picture comes from Apple Maps (MapKit).")
     /// Core's package has no dependencies and project.yml adds none.
-    static let licences = "This app bundles no third-party code."
-    static let attention = "Keep your eyes on the road; set up the app before you drive."
+    static let licences = String(localized: "This app bundles no third-party code.")
+    static let attention = String(localized: "Keep your eyes on the road; set up the app before you drive.")
 }
 
 /// Settings → About (UX-31). The Version row keeps the 7-tap Diagnostics
@@ -56,6 +56,8 @@ struct AboutScreen: View {
                     Text(AboutContent.demoMapCredit).foregroundStyle(.secondary)
                 }
                 .font(.subheadline)
+                // The credits are long sentences (longer still in Ukrainian): never cut one.
+                .fixedSize(horizontal: false, vertical: true)
                 linkRow("Get the road data", systemImage: "arrow.down.circle", url: AboutContent.dataURL)
                 linkRow("OpenStreetMap copyright", systemImage: "c.circle", url: AboutContent.osmCopyrightURL)
                 linkRow("ODbL 1.0 licence", systemImage: "doc.text", url: AboutContent.odblURL)
@@ -64,6 +66,7 @@ struct AboutScreen: View {
                     Text(AboutContent.mapsCredit)
                 }
                 .font(.subheadline)
+                .fixedSize(horizontal: false, vertical: true)
             }
             Section("Open-source licences") {
                 Text(AboutContent.licences).font(.subheadline)
@@ -77,7 +80,7 @@ struct AboutScreen: View {
         .navigationBarTitleDisplayMode(.inline)
     }
 
-    private func linkRow(_ title: String, systemImage: String, url: URL) -> some View {
+    private func linkRow(_ title: LocalizedStringKey, systemImage: String, url: URL) -> some View {
         Link(destination: url) {
             Label(title, systemImage: systemImage)
                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)

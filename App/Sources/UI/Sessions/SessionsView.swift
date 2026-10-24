@@ -49,7 +49,7 @@ struct SessionsContent: View {
         .navigationTitle("Sessions")
         .navigationBarTitleDisplayMode(.inline)
         .confirmationDialog(
-            pendingDelete.map(SessionsText.confirmationTitle(for:)) ?? "Delete recording?",
+            pendingDelete.map(SessionsText.confirmationTitle(for:)) ?? String(localized: "Delete recording?"),
             isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
             titleVisibility: .visible,
             presenting: pendingDelete

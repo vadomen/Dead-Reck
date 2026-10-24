@@ -42,7 +42,7 @@ final class SessionsViewModel {
             files = []
             let ns = error as NSError
             errorMessage = ns.domain == NSCocoaErrorDomain && ns.code == NSFileReadNoSuchFileError
-                ? nil : "Could not read recordings: \(error.localizedDescription)"
+                ? nil : String(localized: "Could not read recordings: \(error.localizedDescription)")
         }
     }
 
@@ -63,11 +63,11 @@ enum SessionsText {
     static func deleteError(_ error: any Error) -> String {
         if let store = error as? LogStoreError {
             switch store {
-            case .recordingInProgress: return "This recording is still running. Stop it first."
-            case .notInStore: return "That file is not in the recordings folder."
+            case .recordingInProgress: return String(localized: "This recording is still running. Stop it first.")
+            case .notInStore: return String(localized: "That file is not in the recordings folder.")
             }
         }
-        return "Could not delete: \(error.localizedDescription)"
+        return String(localized: "Could not delete: \(error.localizedDescription)")
     }
 
     static func title(for file: RecordingFile) -> String {
@@ -80,6 +80,6 @@ enum SessionsText {
     }
 
     static func confirmationTitle(for file: RecordingFile) -> String {
-        "Delete \(title(for: file))?"
+        String(localized: "Delete \(title(for: file))?")
     }
 }

@@ -1094,3 +1094,62 @@ private final class OnDemandSource: SensorSource {
         gate.deliver(LogEvent(timestamp: gate.clock.now(), payload: .accelerometer(Vector3(x: 0, y: -1, z: 0))))
     }
 }
+
+// MARK: - UX-15: screen text vs log text
+
+@Suite("RecordingSession screen text: translated on screen, English in the log (UX-15)")
+struct RecordingSessionDisplayTextTests {
+    static let failures: [LogWriteError] = [
+        .diskFull,
+        .writeFailed(description: "fsync failed: errno 5"),
+        .encodingFailed(kind: "mag", description: "deflate failed"),
+        .fileExists(path: "/x/a.jsonl.gz"),
+        .couldNotCreate(path: "/x/a.jsonl.gz", description: "EACCES"),
+        .alreadyFinished,
+    ]
+
+    @Test("The log's write-failure text is pinned English; the English screen text equals it")
+    @MainActor
+    func writeFailureEnglish() {
+        #expect(Self.failures.map(RecordingSession.describe) == [
+            "disk full",
+            "fsync failed: errno 5",
+            "could not encode mag: deflate failed",
+            "file exists: /x/a.jsonl.gz",
+            "could not create /x/a.jsonl.gz: EACCES",
+            "already finished",
+        ])
+        for failure in Self.failures {
+            #expect(RecordingSession.display(failure, language: "en") == RecordingSession.describe(failure))
+            #expect(RecordingSession.display(failure) == RecordingSession.describe(failure), "the test scheme runs in English")
+        }
+    }
+
+    @Test("The write-failure screen text in Ukrainian; descriptions and paths pass through")
+    func writeFailureUkrainian() {
+        #expect(Self.failures.map { RecordingSession.display($0, language: "uk") } == [
+            "диск заповнено",
+            "fsync failed: errno 5",
+            "не вдалося закодувати mag: deflate failed",
+            "файл уже існує: /x/a.jsonl.gz",
+            "не вдалося створити /x/a.jsonl.gz: EACCES",
+            "уже завершено",
+        ])
+    }
+
+    @Test("The background-risk sentence in English (unchanged) and Ukrainian")
+    func backgroundRisk() {
+        let reasons: [RecordingSession.BackgroundRiskReason] = [
+            .unavailable(reason: SensorUnavailableReason.locationRestricted.rawValue),
+            .didNotStart(source: "referenceLocation"),
+            .unavailable(reason: "Some other reason."),
+        ]
+        #expect(RecordingSession.backgroundRiskText(reasons, language: "en")
+            == "No background location session, so the recording may pause while the phone is locked. "
+            + "Location access is restricted on this device. referenceLocation did not start. Some other reason.")
+        #expect(RecordingSession.backgroundRiskText(reasons) == RecordingSession.backgroundRiskText(reasons, language: "en"))
+        #expect(RecordingSession.backgroundRiskText(reasons, language: "uk")
+            == "Немає фонового сеансу геолокації, тому запис може призупинитися, поки телефон заблоковано. "
+            + "Доступ до геолокації обмежено на цьому пристрої. GPS: не запущено. Some other reason.")
+    }
+}

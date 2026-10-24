@@ -70,7 +70,7 @@ struct RoadPackInstaller: Sendable {
         /// file was left untouched and the copy deleted.
         case alreadyInstalled(Installed)
         /// Not installed; nothing was left in the store.
-        case refused(String)
+        case refused(PackFailure)
 
         var installed: Installed? {
             switch self {
@@ -79,7 +79,10 @@ struct RoadPackInstaller: Sendable {
             }
         }
 
-        var refusal: String? {
+        /// The English reason (the inbox report, diagnostics).
+        var refusal: String? { failure?.text }
+
+        var failure: PackFailure? {
             if case .refused(let reason) = self { return reason }
             return nil
         }
@@ -90,34 +93,34 @@ struct RoadPackInstaller: Sendable {
     ///   path) accepts any.
     func install(from source: URL, name: String, expectedContentHash: String? = nil) -> Outcome {
         guard RoadPackStoreRules.isValidName(name) else {
-            return .refused("invalid pack name (1–\(RoadPackStoreRules.maxNameLength) of a–z, 0–9, _ and -)")
+            return .refused(.invalidInstallName(maxLength: RoadPackStoreRules.maxNameLength))
         }
         let fileManager = FileManager.default
         let attributes: [FileAttributeKey: Any]
         do {
             attributes = try fileManager.attributesOfItem(atPath: source.path)
         } catch {
-            return .refused("cannot read the file: \(error.localizedDescription)")
+            return .refused(.cannotReadFile(error.localizedDescription))
         }
-        guard attributes[.type] as? FileAttributeType == .typeRegular else { return .refused("not a regular file") }
+        guard attributes[.type] as? FileAttributeType == .typeRegular else { return .refused(.notRegularFile) }
         let size = (attributes[.size] as? NSNumber)?.int64Value ?? 0
         if let reason = sizeRefusal(size) { return .refused(reason) }
 
         do {
             try RoadPackStore.prepareDirectory(storeDirectory)
         } catch {
-            return .refused("cannot create the store: \(error.localizedDescription)")
+            return .refused(.cannotCreateStore(error.localizedDescription))
         }
         let temp = storeDirectory.appendingPathComponent(
             RoadPackStoreRules.temporaryFileName(token: UUID().uuidString))
-        func refuse(_ reason: String) -> Outcome {
+        func refuse(_ reason: PackFailure) -> Outcome {
             try? fileManager.removeItem(at: temp)
             return .refused(reason)
         }
         do {
             try fileManager.copyItem(at: source, to: temp)
         } catch {
-            return refuse("cannot copy the file: \(error.localizedDescription)")
+            return refuse(.cannotCopyFile(error.localizedDescription))
         }
         // The source may have grown between the check and the copy.
         let copied = ((try? fileManager.attributesOfItem(atPath: temp.path))?[.size] as? NSNumber)?.int64Value ?? 0
@@ -130,16 +133,16 @@ struct RoadPackInstaller: Sendable {
         try? tempURL.setResourceValues(values)
 
         let catalog = RoadPackCatalog(urls: [temp], cache: RoadPackVerificationCache())
-        guard let entry = catalog.entries.first else { return refuse("not verified") }
+        guard let entry = catalog.entries.first else { return refuse(.notVerified) }
         guard entry.isUsable, let verification = entry.verification, let identity = entry.identity else {
-            return refuse(entry.refusal ?? "refused")
+            return refuse(.other(entry.refusal ?? "refused"))
         }
         guard let hash = verification.contentHash,
               let fileName = RoadPackStoreRules.fileName(name: name, contentHash: hash) else {
-            return refuse("no valid content hash")
+            return refuse(.other("no valid content hash"))
         }
         if let expected = expectedContentHash, hash != expected {
-            return refuse("content hash \(hash) does not match the manifest (\(expected))")
+            return refuse(.contentHashMismatch(found: hash, expected: expected))
         }
         let final = storeDirectory.appendingPathComponent(fileName)
         if renamex_np(temp.path, final.path, UInt32(RENAME_EXCL)) != 0 {
@@ -149,7 +152,7 @@ struct RoadPackInstaller: Sendable {
                 return .alreadyInstalled(Installed(name: name, fileName: fileName, url: final, contentHash: hash,
                                                    cacheEntry: nil))
             }
-            return refuse("cannot store the file: \(String(cString: strerror(code)))")
+            return refuse(.cannotStoreFile(String(cString: strerror(code))))
         }
         // The verified identity, under the final name; checked against the
         // stored file so a cache entry never vouches for other bytes.
@@ -161,8 +164,108 @@ struct RoadPackInstaller: Sendable {
                                     cacheEntry: entryForStore))
     }
 
-    private func sizeRefusal(_ size: Int64) -> String? {
+    private func sizeRefusal(_ size: Int64) -> PackFailure? {
         guard size > maxBytes else { return nil }
-        return "\(size) bytes, larger than the \(maxBytes) byte limit"
+        return .tooLarge(bytes: size, limit: maxBytes)
     }
+}
+
+/// Why a road pack could not be downloaded, installed or removed (UX-15).
+/// `text` is the English wording, unchanged: it goes into the recording's
+/// `roadPacks` row (inbox refusals), Diagnostics and tests, and is never
+/// reworded. `display` is the catalog text for Settings → Maps ("Failed:
+/// <reason>", "Could not remove <pack>: <reason>"): a lower-case fragment.
+/// Reasons that come from elsewhere (Core's rules and verification, the
+/// server, URLSession) are `other` and shown as they are.
+enum PackFailure: Hashable, Sendable, CustomStringConvertible {
+    /// The downloader's pack name check (`PackPartialFiles`, `enqueue`).
+    case invalidPackName
+    /// The installer's name check.
+    case invalidInstallName(maxLength: Int)
+    case cannotCreateStore(String)
+    case moreBytesThanManifest
+    case incompleteDownload
+    case checksumMismatch
+    case notHTTPResponse
+    case cannotWriteFile(String)
+    case serverSentMore(limit: Int64)
+    case cannotReadFile(String)
+    case notRegularFile
+    case cannotCopyFile(String)
+    case notVerified
+    case contentHashMismatch(found: String, expected: String)
+    case cannotStoreFile(String)
+    case tooLarge(bytes: Int64, limit: Int64)
+    case cannotMarkForRemoval(String)
+    case noStore
+    /// Text that is not this file's to translate.
+    case other(String)
+
+    /// English, as written before UX-15 (diagnostics, the recording).
+    var text: String {
+        switch self {
+        case .invalidPackName: "invalid pack name"
+        case .invalidInstallName(let maxLength): "invalid pack name (1–\(maxLength) of a–z, 0–9, _ and -)"
+        case .cannotCreateStore(let error): "cannot create the store: \(error)"
+        case .moreBytesThanManifest: "more bytes than the manifest says"
+        case .incompleteDownload: "incomplete download"
+        case .checksumMismatch: "checksum mismatch"
+        case .notHTTPResponse: "not an HTTP response"
+        case .cannotWriteFile(let error): "cannot write the file: \(error)"
+        case .serverSentMore(let limit): "the server sent more than \(limit) bytes"
+        case .cannotReadFile(let error): "cannot read the file: \(error)"
+        case .notRegularFile: "not a regular file"
+        case .cannotCopyFile(let error): "cannot copy the file: \(error)"
+        case .notVerified: "not verified"
+        case .contentHashMismatch(let found, let expected): "content hash \(found) does not match the manifest (\(expected))"
+        case .cannotStoreFile(let error): "cannot store the file: \(error)"
+        case .tooLarge(let bytes, let limit): "\(bytes) bytes, larger than the \(limit) byte limit"
+        case .cannotMarkForRemoval(let error): "cannot mark for removal: \(error)"
+        case .noStore: "no road pack store"
+        case .other(let text): text
+        }
+    }
+
+    /// The catalog entry of `display` (the key is the English text); nil
+    /// for `other`, which is shown as it is. Byte counts go through
+    /// `DisplayFormat.bytes` in `locale` (no plural keys: units do not decline).
+    func resource(locale: Locale = .current) -> LocalizedStringResource? {
+        switch self {
+        case .invalidPackName: "invalid pack name"
+        case .invalidInstallName(let maxLength): "invalid pack name (1–\(maxLength) of a–z, 0–9, _ and -)"
+        case .cannotCreateStore(let error): "cannot create the store: \(error)"
+        case .moreBytesThanManifest: "more bytes than the manifest says"
+        case .incompleteDownload: "incomplete download"
+        case .checksumMismatch: "checksum mismatch"
+        case .notHTTPResponse: "not an HTTP response"
+        case .cannotWriteFile(let error): "cannot write the file: \(error)"
+        case .serverSentMore(let limit): "the server sent more than \(DisplayFormat.bytes(limit, locale: locale))"
+        case .cannotReadFile(let error): "cannot read the file: \(error)"
+        case .notRegularFile: "not a regular file"
+        case .cannotCopyFile(let error): "cannot copy the file: \(error)"
+        case .notVerified: "not verified"
+        case .contentHashMismatch(let found, let expected): "content hash \(found) does not match the manifest (\(expected))"
+        case .cannotStoreFile(let error): "cannot store the file: \(error)"
+        case .tooLarge(let bytes, let limit):
+            "\(DisplayFormat.bytes(bytes, locale: locale)), larger than the \(DisplayFormat.bytes(limit, locale: locale)) limit"
+        case .cannotMarkForRemoval(let error): "cannot mark for removal: \(error)"
+        case .noStore: "no road pack store"
+        case .other: nil
+        }
+    }
+
+    /// What Settings → Maps shows, in the app language.
+    var display: String { display(language: nil) }
+
+    /// The text in `language` ("uk", "en"); nil: the app language.
+    func display(language: String?) -> String {
+        let locale = language.map(Locale.init(identifier:)) ?? .current
+        guard var r = resource(locale: locale) else { return text }
+        if language != nil { r.locale = locale }
+        return String(localized: r)
+    }
+
+    /// The English `text`, so an interpolation that misses `display` shows
+    /// what it showed before UX-15.
+    var description: String { text }
 }

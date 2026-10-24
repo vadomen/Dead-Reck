@@ -673,9 +673,11 @@ Core type: `NavPriorSample`.
 Placement: at most one row, written right after the `start` row and before
 the start-up init replay (which can contain `obd` rows), so before every
 engine input (`motion`, `location`, `obd`). No row means the recording
-started fresh (no initialised Navigate estimate, or Navigate was still
-finding its position); the file is then exactly what it would have been
-without this kind. The row is not a navigation input and is not tapped.
+started fresh: there was no initialised Navigate estimate (Navigate was not
+running, or had no position yet); the file is then exactly what it would
+have been without this kind. An initialised but unconverged estimate (Navigate
+still showing "Finding your position") is written, with `converged: false`.
+The row is not a navigation input and is not tapped.
 
 Semantics: the row maps one to one to the engine's prior with `handOver`
 set. At its first input the engine grows the prior over

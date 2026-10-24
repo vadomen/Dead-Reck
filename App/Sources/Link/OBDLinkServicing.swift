@@ -26,6 +26,114 @@ enum OBDLinkState: Hashable, Sendable {
     case failed(reason: String)
 }
 
+/// The reasons the link services give for `OBDLinkState.failed(reason:)`
+/// (and the `Bluetooth state <n>` fallback of `.unavailable`), typed.
+///
+/// `text` is what the services write: the state's string, the `ble` link
+/// rows and the console lines. It is on-disk English: never reword it (the
+/// tests pin every form). `display` is the same reason in the app's
+/// language, for the screen only. The state keeps carrying the English
+/// string, so the screens read it back with `init?(text:)` (through
+/// `LinkReasonText.display`); a reason that is not one of these (an
+/// `ELMSession` failure from Core, an iOS error text) is shown as written.
+enum LinkReason: Hashable, Sendable {
+    /// GATT discovery found no notify + write pair (`GATTDetection.select`).
+    case noUARTPair(services: Int)
+    /// The chosen characteristic (normalised UUID) was gone when needed.
+    case characteristicVanished(String)
+    /// `didDiscoverServices` with an error (its `localizedDescription`).
+    case serviceDiscoveryFailed(String)
+    case noServices
+    /// Notifications on the chosen characteristic did not turn on: the
+    /// error's `localizedDescription`, nil when there was no error but the
+    /// characteristic is not notifying.
+    case notificationsRefused(characteristic: String, error: String?)
+    /// The ELM session failed without a reason of its own.
+    case sessionFailed
+    /// A `CBManagerState` raw value newer than this build knows.
+    case bluetoothState(Int)
+
+    var text: String {
+        switch self {
+        case .noUARTPair(let services): "no notify + write characteristic pair in \(services) service(s)"
+        case .characteristicVanished(let uuid): "characteristic \(uuid) vanished"
+        case .serviceDiscoveryFailed(let error): "service discovery failed: \(error)"
+        case .noServices: "no GATT services"
+        case .notificationsRefused(let uuid, let error): "notifications on \(uuid) refused: \(error ?? Self.notNotifying)"
+        case .sessionFailed: "ELM session failed"
+        case .bluetoothState(let raw): "Bluetooth state \(raw)"
+        }
+    }
+
+    var display: String {
+        switch self {
+        case .noUARTPair(let services):
+            String(localized: "no notify + write characteristic pair (services: \(services))",
+                   comment: "Adapter failed: the adapter's Bluetooth layout has no usable notify + write pair")
+        case .characteristicVanished(let uuid):
+            String(localized: "characteristic \(uuid) vanished",
+                   comment: "Adapter failed: a Bluetooth characteristic (UUID) disappeared")
+        case .serviceDiscoveryFailed(let error):
+            String(localized: "service discovery failed: \(error)",
+                   comment: "Adapter failed: Bluetooth service discovery failed; %@ is the iOS error text")
+        case .noServices:
+            String(localized: "no GATT services", comment: "Adapter failed: the adapter offers no Bluetooth services")
+        case .notificationsRefused(let uuid, let error):
+            notificationsRefused(uuid, error ?? String(localized: "not notifying", comment: "Adapter failed: notifications did not turn on, no error given"))
+        case .sessionFailed:
+            String(localized: "ELM session failed", comment: "Adapter failed: the ELM327 session failed without a reason")
+        case .bluetoothState(let raw):
+            String(localized: "Bluetooth state \(raw)", comment: "Bluetooth unavailable: a Bluetooth state this build does not know; %lld is its number")
+        }
+    }
+
+    /// Reads a `text` back; nil for any other string.
+    init?(text: String) {
+        if text == Self.noServicesText { self = .noServices; return }
+        if text == Self.sessionFailedText { self = .sessionFailed; return }
+        if let middle = Self.between(text, "no notify + write characteristic pair in ", " service(s)"),
+           let services = Int(middle), String(services) == middle {
+            self = .noUARTPair(services: services); return
+        }
+        if let uuid = Self.between(text, "characteristic ", " vanished"), Self.isUUID(uuid) {
+            self = .characteristicVanished(uuid); return
+        }
+        if text.hasPrefix("service discovery failed: ") {
+            self = .serviceDiscoveryFailed(String(text.dropFirst("service discovery failed: ".count))); return
+        }
+        if text.hasPrefix("notifications on "), let refused = text.range(of: " refused: ") {
+            let uuid = String(text[text.index(text.startIndex, offsetBy: "notifications on ".count)..<refused.lowerBound])
+            let error = String(text[refused.upperBound...])
+            guard Self.isUUID(uuid) else { return nil }
+            self = .notificationsRefused(characteristic: uuid, error: error == Self.notNotifying ? nil : error); return
+        }
+        if let middle = Self.between(text, "Bluetooth state ", ""), let raw = Int(middle), String(raw) == middle {
+            self = .bluetoothState(raw); return
+        }
+        return nil
+    }
+
+    private func notificationsRefused(_ uuid: String, _ detail: String) -> String {
+        String(localized: "notifications on \(uuid) refused: \(detail)",
+               comment: "Adapter failed: the adapter refused notifications; %1$@ characteristic UUID, %2$@ iOS error text or 'not notifying'")
+    }
+
+    private static let notNotifying = "not notifying"
+    private static let noServicesText = LinkReason.noServices.text
+    private static let sessionFailedText = LinkReason.sessionFailed.text
+
+    /// The text strictly between `prefix` and `suffix`, nil if empty or absent.
+    private static func between(_ text: String, _ prefix: String, _ suffix: String) -> String? {
+        guard text.hasPrefix(prefix), text.hasSuffix(suffix), text.count > prefix.count + suffix.count else { return nil }
+        return String(text.dropFirst(prefix.count).dropLast(suffix.count))
+    }
+
+    /// A normalised characteristic UUID: hex digits and dashes only.
+    private static func isUUID(_ s: String) -> Bool {
+        !s.isEmpty && s.unicodeScalars.allSatisfy { $0 == "-" || ("0"..."9").contains($0) || ("A"..."F").contains($0) }
+    }
+}
+
 /// One line in the debug console.
 struct ConsoleLine: Identifiable, Hashable, Sendable {
     enum Direction: Hashable, Sendable {
