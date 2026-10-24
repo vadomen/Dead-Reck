@@ -111,12 +111,19 @@ struct MapBottomLimitTests {
         #expect(out.count == MapBottomZone.accessibilityLimit)
     }
 
-    @Test("accessibility sizes: dropped least important first (debug, resume, restore, position, roads, toast)")
+    @Test("accessibility sizes: dropped least important first (position, debug, resume, restore, roads, toast)")
     func dropOrder() {
         #expect(MapBottomZone.limited([.statusLine, .positionStatus, .roadsWarning], accessibilitySize: true) == [.statusLine, .roadsWarning])
         #expect(MapBottomZone.limited([.toast, .statusLine, .roadsWarning], accessibilitySize: true) == [.toast, .statusLine])
         #expect(MapBottomZone.limited([.offerCard, .toast, .statusLine], accessibilitySize: true) == [.offerCard, .statusLine])
-        #expect(MapBottomZone.limited([.restoreStatus, .positionStatus, .resumeHint, .debugStrip], accessibilitySize: true) == [.restoreStatus, .positionStatus])
+        #expect(MapBottomZone.limited([.restoreStatus, .positionStatus, .resumeHint, .debugStrip], accessibilitySize: true) == [.restoreStatus, .resumeHint])
+    }
+
+    @Test("accessibility sizes: an empty position-status slot goes first and never costs a visible line (R80.1-1)")
+    func emptyPositionSlotDroppedFirst() {
+        // Converged restored estimate, no road pack: positionStatus is in items but draws nothing.
+        #expect(MapBottomZone.limited([.restoreStatus, .positionStatus, .roadsWarning], accessibilitySize: true) == [.restoreStatus, .roadsWarning])
+        #expect(MapBottomZone.limited([.positionStatus, .roadsWarning, .resumeHint], accessibilitySize: true) == [.roadsWarning, .resumeHint])
     }
 
     @Test("accessibility sizes: an empty offer-card shell does not use up a place")

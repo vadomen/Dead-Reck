@@ -1112,3 +1112,17 @@ Tests at round 1: Core 1201 tests in 147 suites passed (36 known issues); App 81
 ### Run 79 summary
 
 1 round; 0 fixed; 0 rejected; 2 deferred (R79.1-1, R79.1-2). Final tests: Core 1201 tests in 147 suites passed (36 known issues); App 819 tests in 123 suites passed.
+
+## Run 80: Prompt 42 release QA (OSM credit bottom band, Settings Language row, status refresh and v1.0 device checklist, simulator QA fixes incl. AX3 stack cap, App Store screenshot mode and script) (main..release-qa: fe995c7..c6d72e3), started 2026-10-24
+
+### Round 1
+
+Reviewers: one opus reviewer (a first attempt stopped without reviewing and was not counted). Result: 0 BLOCKER, 1 MAJOR (CONFIRMED, fixed), 2 MINOR (DEFERRED). No mutations: no Core logic changed. The reviewer ran a standalone copy of `limited()` on the scenario inputs.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R80.1-1 | MAJOR | `App/Sources/UI/Map/MapView.swift:806`, `App/Sources/UI/Map/MapHUD.swift:236-252`: at accessibility sizes `MapBottomZone.limited` counts the `.positionStatus` slot (present whenever an estimate exists) even when `PositionStatusLine` draws nothing (converged estimate), and drops `.restoreStatus` first. Restored converged estimate + no pack → only the roads line shows, and "Restored · not yet confirmed" is lost (UX-20); the resume hint is dropped similarly. | FIXED | CONFIRMED against the code. Fix: `.positionStatus` first in the drop order (an empty slot goes at no cost; the map body still does not observe `display`). Regression test `MapBottomLimitTests.emptyPositionSlotDroppedFirst` (failed before the fix); `dropOrder` case updated. |
+| R80.1-2 | MINOR | `scripts/store_screenshots.sh:107-116`: the EXIT trap that restores the simulator's global AppleLocale/AppleLanguages is installed only after the writes and the first reboot; Ctrl-C or a failing `simctl boot` there leaves the simulator at en_US, and the next run saves en_US as the "old" value. | DEFERRED | BACKLOG. Fix: install the trap right after reading the old values; make restore steps `\|\| true`. |
+| R80.1-3 | MINOR | `AppTests/MapBottomLayoutTests.swift:95`, `App/Sources/UI/Settings/AdapterSettings.swift:43`: comments cite R-QA42-1 / R-QA42-3, which in BACKLOG_UX are different open rows (map motion/location denied; developer screens at AX3). The MapHUD.swift:231 one was corrected in round 1. | DEFERRED | BACKLOG. Fix: drop the IDs or say "prompt 42 QA". |
+
+Tests at round 1: Core 1201 tests in 147 suites passed (36 known issues); App 836 tests in 127 suites passed. After the fix: App 837 tests in 127 suites passed.

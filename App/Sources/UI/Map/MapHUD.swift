@@ -228,14 +228,17 @@ enum MapBottomZone {
         return out
     }
 
-    /// Most items the stack shows at an accessibility Dynamic Type size (R-QA42-1): each
+    /// Most items the stack shows at an accessibility Dynamic Type size (prompt 42 QA): each
     /// one wraps to several lines there, and a taller stack grows over the speed card.
     static let accessibilityLimit = 2
 
     /// Least important first. The OBD / calibration banner and the offer card (it also
-    /// hosts the mount card) are never dropped.
+    /// hosts the mount card) are never dropped. `.positionStatus` goes first: its slot is
+    /// in `items` whenever there is an estimate but draws nothing once converged, so
+    /// dropping it first never costs a visible line (R80.1-1); when it does draw,
+    /// "Restored ... not yet confirmed" conveys the same uncertainty and stays.
     private static let dropOrder: [MapBottomItem] = [
-        .debugStrip, .resumeHint, .restoreStatus, .positionStatus, .roadsWarning, .toast,
+        .positionStatus, .debugStrip, .resumeHint, .restoreStatus, .roadsWarning, .toast,
     ]
 
     /// `items` as shown: unchanged at normal sizes; at accessibility sizes cut to
