@@ -229,6 +229,137 @@ struct NavigationHandOverTests {
         #expect(options.label == "use-as-live-prior")
     }
 
+    // MARK: replay_nav --start-at on a v5 file (R78.2-2)
+
+    /// The row's prior started from Record's first live input over the
+    /// recording's inputs arriving before `cutS`, handed over as the app
+    /// would at its last step: LiveNavigationRun's own path, not the replay's.
+    static func appHandOver(from prior: NavigationPrior, before cutS: Double) throws -> NavigationPrior {
+        var run = LiveNavigationRun(sessionID: UUID(), config: recordConfig, appBuild: "test", prior: prior)
+        for input in S.inputs(recordEvents()) where input.arrival < S.ms(cutS) { run.ingest(input) { _ in } }
+        var state = try #require(run.restoreState(clock: recordClock, bootSessionID: nil, engineOff: false))
+        if run.engine.restore.status == .unconfirmed { state.converged = false }
+        return try #require(NavPriorSample(handOver: state, clock: recordClock)?.navigationPrior)
+    }
+
+    @Test("--start-at past the row's start input: the cut starts from the estimate at the cut (the app's hand-over of the run before it, bit-exact), confirmed at once and on the truth; the drive-start prior grown over the cut would be unconverged and ~700 m wide; the note describes the cut")
+    func startAtCutStartsFromTheEstimateAtTheCut() throws {
+        let row = try Self.handOverRow(ageS: 1)
+        let prior = try #require(row.navigationPrior)
+        let inputs = S.inputs(Self.recordEvents())
+        let cutS = 30.0
+        let options = ReplayOptions(gps: .use, config: Self.recordConfig)
+        let choice = ReplayRecordedPrior.used(prior).atCut(startAtS: cutS, inputs: inputs, options: options,
+                                                           clock: Self.recordClock)
+        guard case .cut(let cutPrior, let atS) = choice else {
+            Issue.record("expected the estimate at the cut, got \(choice)")
+            return
+        }
+        #expect(atS == cutS && choice.prior == cutPrior)
+        #expect(cutPrior == (try Self.appHandOver(from: prior, before: cutS)), "the row the app would have written at the cut")
+        #expect(cutPrior.savedT < S.ms(cutS) && cutPrior.savedT.seconds > cutS - 0.2, "the last step before the cut: \(cutPrior.savedT.seconds)")
+        #expect(cutPrior.handOver && cutPrior.converged && cutPrior.restoreClass == .moving)
+        #expect(abs(cutPrior.lastSpeedMps - Self.speed) < 0.5)
+        #expect(choice == ReplayRecordedPrior.used(prior).atCut(startAtS: cutS, inputs: inputs, options: options,
+                                                                 clock: Self.recordClock), "deterministic")
+
+        // The cut from it: confirmed at once, near the truth from its first input.
+        let cutInputs = inputs.filter { $0.arrival >= S.ms(cutS) }
+        let times = [cutS + 0.05, cutS + 1, cutS + 10, 89.0]
+        var fromCut = LiveNavigationRun(sessionID: UUID(), config: Self.recordConfig, appBuild: "test", prior: cutPrior)
+        let cut = Self.sample(&fromCut, cutInputs, at: times)
+        #expect(fromCut.engine.restore.status == .confirmed && fromCut.engine.restore.reason == .handOver)
+        // The uncut Record run (the row's prior, every input) at the same times.
+        var uncut = LiveNavigationRun(sessionID: UUID(), config: Self.recordConfig, appBuild: "test", prior: prior)
+        let continued = Self.sample(&uncut, inputs, at: times)
+        var rows: [String] = []
+        for (k, t) in times.enumerated() {
+            let e = try #require(cut[k]), u = try #require(continued[k])
+            let error = Self.drive.error(e, at: t + Self.switchT)
+            let distance = Self.offset(u, e).distance
+            #expect(error < 30 && e.converged, "t \(t): \(error) m from the truth")
+            #expect(distance < 5, "t \(t): \(distance) m from the uncut run (σ \(Self.sigma(e)) m)")
+            rows.append(String(format: "t %5.2f s: vs truth %5.1f m, vs uncut %5.1f m, σ %5.1f m", t, error, distance, Self.sigma(e)))
+        }
+        print("R78.2-2 cut at \(cutS) s from the estimate at the cut:\n" + rows.joined(separator: "\n"))
+        // Before R78.2-2: the drive-start prior grown over ~31 s.
+        var stale = LiveNavigationRun(sessionID: UUID(), config: Self.recordConfig, appBuild: "test", prior: prior)
+        let staleFirst = try #require(Self.sample(&stale, cutInputs, at: [cutS + 0.05])[0])
+        #expect(Self.sigma(staleFirst) > 300 && !staleFirst.converged, "stale: σ \(Self.sigma(staleFirst)) m")
+        print(String(format: "R78.2-2 stale drive-start prior at the cut: σ %.0f m, converged %@", Self.sigma(staleFirst),
+                     staleFirst.converged ? "true" : "false"))
+        #expect(stale.engine.restore.reason != .handOver)
+
+        // The replay's cut run, labelled -from-30-prior.
+        var cutOptions = options
+        cutOptions.startAtS = cutS
+        cutOptions.prior = choice.prior
+        cutOptions.priorSource = .recording
+        let result = NavigationReplay.run(logName: "handover", inputs: inputs, options: cutOptions)
+        #expect(result.mode == "use-from-30-prior")
+        #expect(result.restore?.status == .confirmed && result.restore?.reason == .handOver)
+
+        // The note: the cut's inputs, not the uncut start (1.10 s).
+        let note = try #require(choice.note(firstInput: choice.startInput(in: cutInputs)))
+        #expect(note.contains("estimate at the cut") && note.contains("--start-at 30 s"))
+        #expect(note.contains("before the input the cut starts at (t \(String(format: "%.2f", cutInputs[0].arrival.seconds)) s)"), "\(note)")
+        #expect(!note.contains("1.10 s before") && note.contains("converged true"))
+        #expect(!note.contains(String(format: "%.4f", cutPrior.latitude)), "no position printed")
+    }
+
+    @Test("--start-at: a cut at or before the row's start input keeps the row's prior; no row, --prior, --no-prior and an invalid row are unchanged by a cut")
+    func startAtCutBeforeTheStartInputAndOtherChoices() throws {
+        let row = try Self.handOverRow(ageS: 1)
+        let prior = try #require(row.navigationPrior)
+        let inputs = S.inputs(Self.recordEvents())
+        let options = ReplayOptions(gps: .use, config: Self.recordConfig)
+        let start = try #require(ReplayRecordedPrior.used(prior).startInput(in: inputs))
+        // -10 drops only the init replay's reading (older than the estimate).
+        for cutS in [-50, -10, start.seconds] {
+            #expect(ReplayRecordedPrior.used(prior).atCut(startAtS: cutS, inputs: inputs, options: options,
+                                                          clock: Self.recordClock) == .used(prior), "cut at \(cutS) s")
+        }
+        let cutS = start.seconds + 0.001
+        #expect(ReplayRecordedPrior.used(prior).atCut(startAtS: cutS, inputs: inputs, options: options,
+                                                      clock: Self.recordClock).prior != prior)
+        for choice in [ReplayRecordedPrior.absent, .overridden, .ignored, .invalid(field: "restoreClass")] {
+            #expect(choice.atCut(startAtS: 30, inputs: inputs, options: options, clock: Self.recordClock) == choice)
+        }
+    }
+
+    @Test("--start-at: an unconverged row hands over unconverged at the cut (the run is an unconfirmed restore); a run with no position before the cut starts the cut fresh, with a note")
+    func startAtCutUnconvergedAndNoEstimate() throws {
+        let inputs = S.inputs(Self.recordEvents())
+        let options = ReplayOptions(gps: .use, config: Self.recordConfig)
+        // Navigate still "finding its position": converged false, no fix
+        // after it, so the restore stays unconfirmed through the cut.
+        var unconverged = try Self.handOverRow(ageS: 1)
+        unconverged.converged = false
+        let prior = try #require(unconverged.navigationPrior)
+        let choice = ReplayRecordedPrior.used(prior).atCut(startAtS: 30, inputs: inputs, options: options,
+                                                           clock: Self.recordClock)
+        let cutPrior = try #require(choice.prior)
+        #expect(cutPrior.savedT.seconds > 29.8 && !cutPrior.converged && cutPrior.handOver)
+        #expect(cutPrior == (try Self.appHandOver(from: prior, before: 30)))
+        #expect(cutPrior.headingStdDeg < 30, "the run itself has a heading; only `converged` is withheld")
+
+        // A row 5 min old: the grown prior is over 1.5 km, the run starts
+        // fresh and, jammed, has no position before the cut.
+        var old = try Self.handOverRow(ageS: 1)
+        old.estimateT = MonotonicTimestamp(seconds: -300)
+        let oldPrior = try #require(old.navigationPrior)
+        let none = ReplayRecordedPrior.used(oldPrior).atCut(startAtS: 30, inputs: inputs, options: options,
+                                                            clock: Self.recordClock)
+        #expect(none == .noEstimateAtCut(atS: 30) && none.prior == nil)
+        #expect(none.startInput(in: inputs) == nil)
+        let note = try #require(none.note(firstInput: nil))
+        #expect(note.contains("--start-at 30 s") && note.contains("no estimate at the cut") && note.contains("fresh"))
+        var cutOptions = options
+        cutOptions.startAtS = 30
+        cutOptions.prior = none.prior
+        #expect(cutOptions.label == "use-from-30")
+    }
+
     @Test("A synthetic v5 recording with a navPrior row: the app path's sidecar (the tap into LiveNavigationRun started from the feed's row) equals replay_nav --as-live --compare exactly; without the row's prior it does not")
     func liveSidecarWithNavPriorMatchesAsLive() async throws {
         let scratch = try ScratchDirectory()

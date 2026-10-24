@@ -819,6 +819,28 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   `--compare` then fails). A recording without the row (every recording
   before v5, every acceptance drive) replays exactly as before;
   `--no-prior` then changes nothing.
+  - **A cut of such a recording** (`--start-at X`, no `--prior`, no
+    `--no-prior`; R78.2-2): the cut starts from the **estimate at the cut**,
+    not from the drive-start row grown over X (unconverged and hundreds of
+    metres wide after half a minute). It is what a Record started at X
+    from Navigate would get: this replay (same flags, seed, config, GPS
+    mode, roads, order) runs the inputs arriving before X from the row,
+    and its estimate at the last step before X is handed over exactly as
+    the app writes a `navPrior` row (`NavigationReplay.handOverState`,
+    `NavPriorSample(handOver:clock:)`: `converged` false while that run is
+    an unconfirmed restore). `ReplayRecordedPrior.atCut`. Causal: nothing
+    at or after X is seen. The `Prior` line describes the cut (`the
+    estimate at the cut (--start-at X s …)`, its time, the gap to the cut's
+    first input, class, `converged`, heading σ); label `-from-X-prior`.
+    When that run has no position before X (no fix, no pin, the row too
+    old to use), the cut starts fresh, as `--no-prior`, with a note
+    saying so (label `-from-X`). A cut at or before the row's start input
+    (the first input at or after its `estimateT`) drops nothing the engine
+    uses: the row's prior is kept. `--no-prior --start-at X` is the fresh
+    column of a cut; `--prior` still wins. Why not the `.nav.jsonl`
+    sidecar's live estimate at X: its `estimate` lines have no speed, no
+    restore class and only a 95 % ellipse, the file is optional, and its
+    seed and config are the live run's, not this replay's.
 
 - **Restore (UX-20), replay only, one log**: the same Core code as the
   app (`NavigationRestoreState`, `NavigationEngine(config:roads:prior:)`).
@@ -833,7 +855,9 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   no prior, as in the app. `--prior-offset dE,dN` moves the saved position
   by metres first (a car moved while the app was not running).
   `--start-at` drops every input arriving before it (the app was not
-  running), and works without `--prior` (the fresh column of a cut). Labels:
+  running), and works without `--prior`: the fresh column of a cut for a
+  recording without a `navPrior` row (or with `--no-prior`); with a row,
+  the cut starts from the estimate at the cut (above). Labels:
   `-from-<s>`, `-restored`; the summary and `metrics.json` (`restore`) give
   the restore's status, reason and decision time. Refused with
   `--compare` and `--write-sidecar`.

@@ -180,6 +180,16 @@ public enum ReplayRecordedPrior: Hashable, Sendable {
     /// The row starts nothing (`NavPriorSample.invalidField`), live and in
     /// the replay alike.
     case invalid(field: String)
+    /// R78.2-2, `--start-at` past the row's start input (`atCut`): the
+    /// estimate at the cut starts the cut, as a Record started at `atS`
+    /// from Navigate would: the hand-over the app would write
+    /// (`NavPriorSample(handOver:clock:)`) from this replay's run of the
+    /// inputs before `atS`, started from the row.
+    case cut(NavigationPrior, atS: Double)
+    /// R78.2-2: the run before the cut had no estimate to hand over (no
+    /// position before `atS`, or its state not a valid row): the cut starts
+    /// fresh, as `--no-prior`, never from the stale drive-start prior.
+    case noEstimateAtCut(atS: Double)
 
     /// The choice for `row` (`NavigationReplay.recordedPrior(in:)`).
     /// `explicitPrior`: `--prior` was given; `noPrior`: `--no-prior`.
@@ -194,7 +204,46 @@ public enum ReplayRecordedPrior: Hashable, Sendable {
 
     /// The prior the run starts from because of the row; nil otherwise.
     public var prior: NavigationPrior? {
-        if case .used(let prior) = self { prior } else { nil }
+        switch self {
+        case .used(let prior), .cut(let prior, _): prior
+        default: nil
+        }
+    }
+
+    /// R78.2-2: the choice for a replay cut at `startAtS` (`--start-at`):
+    /// `.used` whose prior applies at an input before the cut becomes the
+    /// estimate at the cut (`.cut`), or `.noEstimateAtCut` when there is
+    /// none; anything else is returned unchanged (`.used` with nothing the
+    /// engine uses before the cut: the cut keeps the row's prior; no row,
+    /// `--prior`, `--no-prior`, an invalid row: as without the cut).
+    /// The estimate comes from `NavigationReplay.run` over `inputs`
+    /// arriving before the cut with `options` (the cut's: same config,
+    /// seed, GPS mode, roads, order; `startAtS`, `savePrior` and the prior
+    /// replaced) started from the row, captured at its last step as the
+    /// app's hand-over (`ReplaySavePrior.handOver`) and converted as the
+    /// app writes a `navPrior` row (`NavPriorSample(handOver:clock:)`),
+    /// on `clock` (the recording's, `SessionClock(header:)`). Causal: the
+    /// run sees nothing at or after the cut. Replay only.
+    public func atCut(startAtS: Double, inputs: [NavigationInput], options: ReplayOptions,
+                      clock: SessionClock) -> Self {
+        guard case .used(let prior) = self else { return self }
+        let cut = MonotonicTimestamp(seconds: startAtS)
+        guard let start = startInput(in: inputs), start < cut else { return self }
+        var before = options
+        before.startAtS = nil
+        before.prior = prior
+        before.priorSource = .recording
+        var save = ReplaySavePrior(atS: .infinity, referenceUptimeSeconds: clock.referenceUptimeSeconds,
+                                   wallClockStart: clock.wallClockStart)
+        save.handOver = true
+        before.savePrior = save
+        let result = NavigationReplay.run(logName: "before-cut", inputs: inputs.filter { $0.arrival < cut },
+                                          options: before)
+        guard let state = result.savedRestoreState,
+              let handed = NavPriorSample(handOver: state, clock: clock)?.navigationPrior else {
+            return .noEstimateAtCut(atS: startAtS)
+        }
+        return .cut(handed, atS: startAtS)
     }
 
     /// The input the prior is applied at: the first one (not a
@@ -224,6 +273,18 @@ public enum ReplayRecordedPrior: Hashable, Sendable {
             return "note: --no-prior: the recording's navPrior row is ignored; the run starts fresh (not as live)"
         case .invalid(let field):
             return "note: the recording's navPrior row is invalid (\(field)): no prior, as the live run"
+        case .cut(let prior, let atS):
+            let gap = firstInput.map { String(format: ", %.2f s before the input the cut starts at (t %.2f s)",
+                                              $0.seconds - prior.savedT.seconds, $0.seconds) } ?? ""
+            return "Prior         the estimate at the cut (--start-at \(GPSMode.format(atS)) s, hand-over from this replay's run "
+                + "of the inputs before it, started from the recording's navPrior row): estimate at t "
+                + String(format: "%.3f s", prior.savedT.seconds) + gap
+                + ", class \(prior.restoreClass.rawValue), converged \(prior.converged)"
+                + String(format: ", σhead %.1f°", prior.headingStdDeg)
+        case .noEstimateAtCut(let atS):
+            return "note: --start-at \(GPSMode.format(atS)) s: no estimate at the cut (the run of the inputs before it, "
+                + "started from the recording's navPrior row, had no position to hand over); the cut starts fresh, "
+                + "as --no-prior, not from the drive-start prior"
         }
     }
 }
@@ -238,6 +299,12 @@ public struct ReplaySavePrior: Hashable, Sendable {
     public var wallClockStart: Date
     /// The car's engine is known to be off (`restoreClass`).
     public var engineOff: Bool
+    /// R78.2-2: capture as the app's Navigate → Record hand-over does
+    /// (`NavigationService.publishHandOver`): stamped at the engine's last
+    /// step (`lastStepTime`), not at `atS`; nothing before initialisation;
+    /// `converged` false while the run is itself an unconfirmed restore.
+    /// `ReplayRecordedPrior.atCut` uses it; false: as before.
+    public var handOver = false
 
     public init(atS: Double, referenceUptimeSeconds: Double, wallClockStart: Date, engineOff: Bool = false) {
         self.atS = atS
@@ -424,6 +491,18 @@ public enum NavigationReplay {
             return .heldOut
         }
         return nil
+    }
+
+    /// The state a Navigate run hands to a Record started now, as the app's
+    /// `NavigationService.publishHandOver`: the engine's estimate at its
+    /// last step (`lastStepTime`), nil before initialisation; `converged`
+    /// false while the run is itself an unconfirmed restore (Record then
+    /// stays unconfirmed). Replay only (`ReplaySavePrior.handOver`, R78.2-2).
+    public static func handOverState(_ engine: NavigationEngine, clock: SessionClock) -> NavigationRestoreState? {
+        guard engine.isInitialized, let t = engine.lastStepTime else { return nil }
+        var state = NavigationRestoreState.capture(engine, at: t, clock: clock, bootSessionID: nil, engineOff: false)
+        if engine.restore.status == .unconfirmed { state?.converged = false }
+        return state
     }
 
     /// The recording's `navPrior` row (format v5, prompt 40): the first one
@@ -1241,6 +1320,10 @@ private struct ReplayRun {
     mutating func captureRestoreState(at t: MonotonicTimestamp) {
         guard let save = options.savePrior else { return }
         restoreStateCaptured = true
+        if save.handOver {
+            savedRestoreState = NavigationReplay.handOverState(engine, clock: save.clock)
+            return
+        }
         savedRestoreState = NavigationRestoreState.capture(engine, at: t, clock: save.clock, bootSessionID: nil,
                                                            engineOff: save.engineOff)
     }
