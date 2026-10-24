@@ -1126,3 +1126,18 @@ Reviewers: one opus reviewer (a first attempt stopped without reviewing and was 
 | R80.1-3 | MINOR | `AppTests/MapBottomLayoutTests.swift:95`, `App/Sources/UI/Settings/AdapterSettings.swift:43`: comments cite R-QA42-1 / R-QA42-3, which in BACKLOG_UX are different open rows (map motion/location denied; developer screens at AX3). The MapHUD.swift:231 one was corrected in round 1. | DEFERRED | BACKLOG. Fix: drop the IDs or say "prompt 42 QA". |
 
 Tests at round 1: Core 1201 tests in 147 suites passed (36 known issues); App 836 tests in 127 suites passed. After the fix: App 837 tests in 127 suites passed.
+
+### Round 2
+
+Reviewers: one fresh opus reviewer. Result: 0 BLOCKER, 0 MAJOR, 2 MINOR (both DEFERRED). R80.1-1 fix verified: an empty `.positionStatus` slot can no longer cost a visible line; `.offerCard` is the only other slot that can be empty, and `offerVisible` covers it. No mutations: Core is unchanged and the findings were settled by reading the code.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R80.2-1 | MINOR | `App/Sources/UI/Map/MapHUD.swift:236-242`: the R80.1-1 order also drops a visible "Finding your position… · keep driving" before the resume hint and the debug strip. The comment's reason (the Restored line conveys the same uncertainty) holds only when a restore exists. At AX sizes, a fresh run with no restore and the estimate not converged, with the status line up and the map panned: [statusLine, positionStatus, resumeHint] gives [statusLine, resumeHint]. | DEFERRED | BACKLOG. Fix: a `positionVisible` flag (a cheap observed Bool on the feed, so the map body does not observe `display`) and the round-1 order back; or correct the comment. |
+| R80.2-2 | MINOR | `docs/PLAN.md:180`: the v1.0 checklist group C line "Settings order: OBD adapter, Maps, Mount and orientation; About; Developer" omits the new Language section between the top group and About. | DEFERRED | BACKLOG, next docs pass. Fix: "…; Language; About; Developer". |
+
+Tests at round 2: Core 1201 tests in 147 suites passed (36 known issues); App 837 tests in 127 suites passed.
+
+### Run 80 summary
+
+2 rounds; 1 fixed (R80.1-1); 0 rejected; 4 deferred (R80.1-2, R80.1-3, R80.2-1, R80.2-2). Final tests: Core 1201 tests in 147 suites passed (36 known issues); App 837 tests in 127 suites passed.
