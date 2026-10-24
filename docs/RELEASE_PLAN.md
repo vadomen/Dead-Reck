@@ -154,6 +154,7 @@ Also: `NSPrivacyTracking = false`, no tracking domains, `NSPrivacyCollectedDataT
 
 ## Phase 6. App Store page
 - [ ] iPhone 6.9" screenshots (1320×2868 or 1290×2796), 3–10 of them: map with the ellipse, route along roads, onboarding, OBD connection. No real user coordinates: demo mode or a neutral route.
+  - Captured (prompt 42): 10 files (5 per language) in `logs/appstore/`; list, regeneration command and the open "GPS off" button note are in `docs/APP_STORE_METADATA.md`, section "Screenshots (6.9", 1320×2868)".
 - [ ] Description, keywords (100 characters), promotional text, uk + en: draft in `docs/APP_STORE_METADATA.md` (open points in the Status table).
 - [ ] Optional: App Preview video (15–30 s).
 - [ ] Review Notes: what the app is, how to test without a car (demo mode), the video link, an explanation of background modes and Bluetooth.
