@@ -129,7 +129,7 @@ struct DashboardStateTests {
     func failed() {
         let s = DashboardState.make(inputs(state: .failed(reason: "no space left", unwrittenEvents: 42)))
         #expect(s.headline == ("RECORDING FAILED", .bad))
-        let notice = try? #require(s.notices.first)
+        let notice = s.notices.first
         #expect(notice?.tone == .bad)
         #expect(notice?.text.contains("no space left") == true)
         #expect(notice?.text.contains("42") == true)
