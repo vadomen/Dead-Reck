@@ -38,6 +38,8 @@ enum LocalizationAllowlist {
         .init(file: "Record/PreDriveChecklist.swift", needle: "rigid mount, fixed orientation", reason: "Written into the log header (`mount`): data, English"),
         .init(file: "Record/RecordingViewModel.swift", needle: "traffic jam", reason: "Mark preset: the value written to the log"),
         .init(file: "Record/RecordingViewModel.swift", needle: "bad road", reason: "Mark preset: the value written to the log"),
+        .init(file: "Support/AppLanguage.swift", needle: "Українська", reason: "A language's own name (endonym): the same in every app language"),
+        .init(file: "Support/AppLanguage.swift", needle: "English", reason: "A language's own name (endonym): the same in every app language"),
         .init(file: "Support/GPSVoice.swift", needle: "GPS ", reason: "GPSPhrase raw values: the phrase's identity (spoken text is `spoken`, from the catalog)"),
         .init(file: "Settings/NetworkDiagnostics.swift", needle: nil, reason: "Developer-only diagnostic values (English by decision); the row labels are String(localized:)"),
         .init(file: "Settings/RoadsDiagnostics.swift", needle: nil, reason: "navigation-engineer's developer diagnostic values and the OSM credit, English in both languages by decision"),
@@ -535,5 +537,32 @@ struct LocalizedDataTests {
         let failed = AdapterSettingsText.status(link: .failed(reason: LinkReason.noServices.text), adapterName: nil,
                                                 hasRemembered: false, foundAdapter: false, waitedLong: false)
         #expect(failed.detail == LinkReason.noServices.display)
+    }
+}
+
+@Suite("App language name (Settings → Language)")
+struct AppLanguageNameTests {
+    @Test("Own names for the shipped languages, regional codes included")
+    func shipped() {
+        #expect(AppLanguage.displayName(code: "en") == "English")
+        #expect(AppLanguage.displayName(code: "uk") == "Українська")
+        #expect(AppLanguage.displayName(code: "uk-UA") == "Українська")
+        #expect(AppLanguage.displayName(code: "en-GB") == "English")
+    }
+
+    @Test("An unknown code falls back to the system's name, else the code itself")
+    func fallback() {
+        #expect(AppLanguage.displayName(code: "de") == "Deutsch")
+        #expect(AppLanguage.displayName(code: "zzzz-QQ") == "zzzz-QQ")
+        #expect(AppLanguage.displayName(code: "") == "")
+    }
+
+    @Test("The row's VoiceOver label names the current language; the footer and hint are in the catalog in uk")
+    func rowTexts() {
+        #expect(SettingsRows.languageAccessibilityLabel(name: "English") == "\(SettingsRows.languageTitle), English")
+        #expect(resolved(LocalizedStringResource("Language"), "uk") == "Мова")
+        #expect(resolved(LocalizedStringResource("Language"), "en") == "Language")
+        #expect(resolved(LocalizedStringResource("To switch, add the other language in iOS Settings → General → Language & Region; then choose it here."), "uk")
+            .hasPrefix("Щоб перемкнути, додайте другу мову в Параметри iOS"))
     }
 }
