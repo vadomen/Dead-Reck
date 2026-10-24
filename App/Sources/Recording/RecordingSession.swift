@@ -1332,10 +1332,10 @@ final class RecordingSession {
         case didNotStart(source: String)
     }
 
-    /// A source identifier ("referenceLocation") means nothing to a driver: other
-    /// languages name the sensor. English keeps the identifier (the pinned text).
-    nonisolated private static func sourceLabel(_ source: String, language: String?) -> String {
-        (language ?? AppLanguage.code).hasPrefix("en") ? source : SensorNames.display(source)
+    /// A source identifier ("referenceLocation") means nothing to a driver: the
+    /// sentence names the sensor ("GPS") in every language.
+    nonisolated private static func sourceLabel(_ source: String) -> String {
+        SensorNames.display(source)
     }
 
     /// The `backgroundRiskWarning` sentence in `language` ("uk", "en"); nil:
@@ -1350,7 +1350,7 @@ final class RecordingSession {
         let because = reasons.map { reason in
             let text = switch reason {
             case .unavailable(let reason): SensorUnavailableReason.display(reason, language: language)
-            case .didNotStart(let source): resolved("\(Self.sourceLabel(source, language: language)) did not start")
+            case .didNotStart(let source): resolved("\(Self.sourceLabel(source)) did not start")
             }
             return text.hasSuffix(".") ? text : text + "."
         }.joined(separator: " ")

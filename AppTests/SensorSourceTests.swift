@@ -323,7 +323,7 @@ struct SensorUnavailableReasonTests {
 
     /// `logs/UK_GLOSSARY.md` / UX15_SERVICE_STRINGS §1, in `logged` order.
     static let ukrainian = [
-        "Рух пристрою недоступний на цьому пристрої",
+        "Датчики руху недоступні на цьому пристрої",
         "Система координат xArbitraryZVertical недоступна",
         "Акселерометр недоступний на цьому пристрої",
         "Гіроскоп недоступний на цьому пристрої",

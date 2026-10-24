@@ -23,7 +23,7 @@ Done / in code / open, per item. "In code (prompt 35)" = branch `release-blocker
 | Demo mode for App Review (Phase 1 item 5) | done in code (prompt 36, branch `rel-demo`); device checks open (PLAN §6) | REL-DEMO |
 | Export of recordings vs the privacy-manifest reason codes (2.2) | done in code (prompt 36): codes kept, Record, Sessions and Console behind the 7-tap gate in Release; device checks open (PLAN §6) | REL-EXPORT |
 | Ukrainian + English localisation (D5, 2.3) | done in code (prompt 41, branch `ux15-localization`); device checks open (PLAN §6) | UX-15 |
-| App Store metadata draft (uk + en) | draft in `docs/APP_STORE_METADATA.md`. Open points: routing wording vs "turn-by-turn-style" in the Review Notes for 2.5.4; privacy label vs pack-server IP/region logs; demo steps not yet checked on a Release build; name availability, copyright holder, video, screenshots | UX-15 |
+| App Store metadata draft (uk + en) | draft in `docs/APP_STORE_METADATA.md`. Routing settled (no routing; background modes justified as live position on the map while driving); privacy label Data Not Collected (no site analytics, no server logs kept; check Cloudflare Web Analytics is off). Open points: demo steps not yet checked on a Release build; name availability, copyright holder, video, screenshots | UX-15 |
 | First launch as instructions (Phase 1 item 3) | in code (prompt 32, UX-18) | UX-18 |
 | Manual "GPS off" + GPS state chip (D8) | open | UX-9 (a) + UX-22 |
 | Restore the estimate after a relaunch (D8) | open | UX-20 |
@@ -61,7 +61,7 @@ Starting decisions (from the user, 2026-10-16):
 | D5 | Languages | Ukrainian and English (String Catalog; `SWIFT_EMIT_LOC_STRINGS` is already YES). |
 | D6 | Pack hosting | GitHub Releases, Cloudflare R2 or S3+CDN. The index is signed (UX-8). The server sees the IP of whoever downloads; this must be reflected in the privacy policy. |
 | D7 | Whether Navigate needs background location | If Navigate works with the screen locked, the `location` mode stays and is justified in the Review Notes. If not, it can be removed, reducing the risk of rejection under 2.5.4. |
-| D7 revised (2026-10-20) | **Background operation stays** (decided by the user) | `UIBackgroundModes` keeps `location` and `bluetooth-central`. Navigate, not only Record, keeps running with the screen locked (the 2026-10-20 drive survived a 2.6 min lock and a phone call in Record). Review Notes justify it as turn-by-turn-style navigation while driving. Supersedes the "No background location" decision of 2026-10-16. |
+| D7 revised (2026-10-20) | **Background operation stays** (decided by the user) | `UIBackgroundModes` keeps `location` and `bluetooth-central`. Navigate, not only Record, keeps running with the screen locked (the 2026-10-20 drive survived a 2.6 min lock and a phone call in Record). Review Notes justify it as live position on the map while driving. Supersedes the "No background location" decision of 2026-10-16. |
 | D8 (2026-10-20) | **v1.0 scope** (decided by the user) | UX-18, UX-9 (a) + UX-22, UX-20, UX-15 and the release blockers. **UX-21 (speed cameras) moves to 1.1.** |
 | D9 (2026-10-20) | **Developer account** (decided by the user) | The Apple Developer Program account (individual) already exists. |
 
@@ -103,7 +103,7 @@ Also: `NSPrivacyTracking = false`, no tracking domains, `NSPrivacyCollectedDataT
 
 ### 2.3 Info.plist: permission texts and background modes
 - [ ] Rewrite the purpose strings for an ordinary user instead of "for dead-reckoning research", for example: "…to estimate your position when GPS is unavailable or jammed". Translate the texts (InfoPlist.xcstrings).
-- [ ] `UIBackgroundModes` (D7 revised, 2026-10-20): keeps `location` and `bluetooth-central`. Navigate and Record both keep running with the screen locked. Authorisation stays **When In Use**; a `CLBackgroundActivitySession` (with `allowsBackgroundLocationUpdates`) makes it work in the background, so there is no Always prompt. `NSLocationAlwaysAndWhenInUseUsageDescription` is removed, because nothing requests Always. The session is held while Navigate or Record runs and released when it stops (Navigate also auto-stops after 5 min without OBD). The display-only location feed (map without OBD) stays foreground-only. Review Notes justify the modes as turn-by-turn-style navigation while driving (2.5.4). Device check in PLAN §6 (lock during Navigate; battery over 1 h, locked vs on). The `lifecycle` event for entering the background is already written.
+- [ ] `UIBackgroundModes` (D7 revised, 2026-10-20): keeps `location` and `bluetooth-central`. Navigate and Record both keep running with the screen locked. Authorisation stays **When In Use**; a `CLBackgroundActivitySession` (with `allowsBackgroundLocationUpdates`) makes it work in the background, so there is no Always prompt. `NSLocationAlwaysAndWhenInUseUsageDescription` is removed, because nothing requests Always. The session is held while Navigate or Record runs and released when it stops (Navigate also auto-stops after 5 min without OBD). The display-only location feed (map without OBD) stays foreground-only. Review Notes justify the modes as live position on the map while driving (2.5.4). Device check in PLAN §6 (lock during Navigate; battery over 1 h, locked vs on). The `lifecycle` event for entering the background is already written.
 - [ ] `UIFileSharingEnabled`: keep (this is how Record logs reach Files), but make sure Documents holds nothing technical: packs move to Application Support.
 
 ### 2.4 App Review Guidelines: risky points
@@ -171,7 +171,7 @@ Normal use needs an OBD-II Bluetooth LE adapter (ELM327-compatible) in the car, 
 4. Tap Stop demo to return to the normal map.
 The demo works offline and stores nothing. A video of a real drive: <VIDEO LINK>
 
-Bluetooth is used only to talk to the OBD-II adapter. Location (When In Use) gives the map position and GPS fixes. Navigate keeps a background location activity session so the position continues while the screen is locked during a drive. No personal data leaves the phone. The map uses Apple Maps (MapKit); road maps are downloaded from our website, which reveals the requested region and the IP address. There are no accounts or analytics. Road maps are optional OpenStreetMap data downloaded from our website.
+Bluetooth is used only to talk to the OBD-II adapter. Location (When In Use) gives the map position and GPS fixes. Navigate keeps a background location activity session so the position continues while the screen is locked during a drive. No personal data leaves the phone. The map uses Apple Maps (MapKit); road maps are downloaded from our website, which reveals the requested region and the IP address. There are no accounts or analytics.
 ```
 
 ## Phase 7. Submission and release

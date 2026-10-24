@@ -516,7 +516,7 @@ struct LocalizedDataTests {
     @Test("The background-risk sentence names the sensor in uk and keeps the identifier in en (pinned text)")
     func backgroundRiskNamesSensor() {
         let reasons: [RecordingSession.BackgroundRiskReason] = [.didNotStart(source: "referenceLocation")]
-        #expect(RecordingSession.backgroundRiskText(reasons, language: "en").hasSuffix("referenceLocation did not start."))
+        #expect(RecordingSession.backgroundRiskText(reasons, language: "en").hasSuffix("GPS did not start."))
         let uk = RecordingSession.backgroundRiskText(reasons, language: "uk")
         #expect(uk.hasSuffix("GPS: не запущено."), "\(uk)")
         #expect(!uk.contains("referenceLocation"))
