@@ -1095,3 +1095,20 @@ Reviewers: one opus reviewer, whole range f6d73b9..772cfb9. Result: 0 BLOCKER, 0
 ### Run 78 summary
 
 2 rounds; 2 fixed (R78.1-1, R78.1-2); 0 rejected; 2 deferred (R78.2-1, R78.2-2). Engine output bit-identical to f6d73b9 without a prior (110-cell matrix by the author; clean drive, seed 1, roads on/off by reviewers each round). Final tests: Core 1198 tests in 147 suites passed (36 known issues); App 769 tests in 112 suites passed.
+
+## Run 79: Prompt 41 UX-15 Ukrainian + English localisation (String Catalogs, service reasons localised for the screen, App Store metadata draft, UK site wording), R78.2-1/R78.2-2 (main..ux15-localization: 2f1d9cf..9f7338d), started 2026-10-24
+
+### Round 1
+
+Reviewers: three opus reviewers in parallel: A Core/replay, B App UI/catalogs, C App services/docs/site. Result: 0 BLOCKER, 0 MAJOR, 2 MINOR (both DEFERRED). Reviewer A: no findings; bit-identity re-run (clean drive, `--gps mask-after 230 --seed 1`, `--start-at 300` roads off and `--start-at 100` roads on, base 2f1d9cf vs HEAD): GeoJSON byte-identical, metrics differ only in ms/step and max ingest. Mutations: the author's `arrival < cut` to `<=` killed; dropping the `engine.isInitialized` guard in `handOverState` survived as an equivalent mutant (`estimate(at:)` is already nil without a tangent plane); deleting `save.handOver = true` killed.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R79.1-1 | MINOR | `AppTests/LocalizationTests.swift:24-31,84-85`: the catalog-bypass scan has holes: ConsoleViewModel allowlist needles ("AT", "poll", "protocol", " Hz") are substring matches over the whole file, and `looksLikeText` skips single lower-case word literals; reverting ConsoleViewModel.swift:54 "Connect and wait for polling first." or MapView.swift:20 "nominal" to bare literals passes the scan (shown with a standalone build of the scanner). | DEFERRED | BACKLOG, next prompt. Fix: scope allowlist entries to the exact literal/prefix or line/function; flag single-word literals returned from String switches/returns in UI files, with an explicit identifier allowlist. |
+| R79.1-2 | MINOR | `docs/APP_STORE_METADATA.md:158-159`: open points 4 and 5 are stale: the UK landing page has no place names and 9f7338d already switched UK site apostrophes to ʼ; point 4 also wrongly attributes this to prompt 41 item 8. | DEFERRED | BACKLOG, next docs pass. Fix: drop point 5; reduce point 4 to the remaining "jammed or spoofed" (EN) / «глушать», «підміненим сигналом» (UK) site wording, without the item-8 reference. |
+
+Tests at round 1: Core 1201 tests in 147 suites passed (36 known issues); App 819 tests in 123 suites passed.
+
+### Run 79 summary
+
+1 round; 0 fixed; 0 rejected; 2 deferred (R79.1-1, R79.1-2). Final tests: Core 1201 tests in 147 suites passed (36 known issues); App 819 tests in 123 suites passed.
