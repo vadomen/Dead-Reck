@@ -91,19 +91,44 @@ APP="$DD/Build/Products/Debug-iphonesimulator/DriveLogger.app"
 run xcrun simctl uninstall "$SIM" "$BUNDLE" 2>/dev/null || true
 run xcrun simctl install "$SIM" "$APP"
 
+# --- the simulator's own locale: a 12-hour one, so the status bar reads 9:41 (the apps' language is per
+# launch, below). The previous values are restored, and the simulator rebooted, when the script ends.
+sim_defaults() { xcrun simctl spawn "$SIM" defaults "$@"; }
+reboot_sim() { xcrun simctl shutdown "$SIM" 2>/dev/null || true; xcrun simctl boot "$SIM"; xcrun simctl bootstatus "$SIM" -b >/dev/null 2>&1; }
+OLD_LOCALE=""; OLD_LANGS=()
+if [[ $DRY -eq 1 ]]; then
+  echo "+ (save the simulator's AppleLocale/AppleLanguages) xcrun simctl spawn $SIM defaults write -g AppleLocale en_US"
+  echo "+ xcrun simctl spawn $SIM defaults write -g AppleLanguages -array en"
+  echo "+ (reboot the simulator; on exit restore the saved values and reboot again)"
+else
+  OLD_LOCALE="$(sim_defaults read -g AppleLocale 2>/dev/null || true)"
+  while IFS= read -r l; do OLD_LANGS+=("$l"); done < <(sim_defaults read -g AppleLanguages 2>/dev/null \
+    | sed -nE 's/^ *"?([^",()]+)"?,? *$/\1/p')
+  sim_defaults write -g AppleLocale en_US
+  sim_defaults write -g AppleLanguages -array en
+  reboot_sim
+  restore_locale() {
+    xcrun simctl status_bar "$SIM" clear >/dev/null 2>&1 || true
+    if [[ -n "$OLD_LOCALE" ]]; then sim_defaults write -g AppleLocale "$OLD_LOCALE"; else sim_defaults delete -g AppleLocale 2>/dev/null || true; fi
+    if [[ ${#OLD_LANGS[@]} -gt 0 ]]; then sim_defaults write -g AppleLanguages -array "${OLD_LANGS[@]}"; else sim_defaults delete -g AppleLanguages 2>/dev/null || true; fi
+    reboot_sim
+  }
+  trap restore_locale EXIT
+fi
+
 # --- clean look
 run xcrun simctl ui "$SIM" appearance light
 run xcrun simctl ui "$SIM" content_size large
 run xcrun simctl status_bar "$SIM" override --time 9:41 --batteryState charged --batteryLevel 100 \
   --cellularMode active --cellularBars 4 --wifiMode active --wifiBars 3 --dataNetwork wifi --operatorName ""
-trap 'xcrun simctl status_bar "$SIM" clear >/dev/null 2>&1 || true' EXIT
 
 shoot() { # lang scene
   local lang="$1" scene="$2" locale file ready
   case "$lang" in en) locale=en_US ;; uk) locale=uk_UA ;; *) echo "error: language $lang" >&2; exit 2 ;; esac
   file="$OUT/$lang-$scene.png"
   local args=(-AppleLanguages "($lang)" -AppleLocale "$locale" -storeScreenshots 1)
-  local seen=(-onboarding.cardsSeen YES -onboarding.mountConfirmed YES -firstLaunch.mapsDone YES)
+  # Heading-up is the driver's own saved setting (map.headingUp): it is what shows the arrow.
+  local seen=(-map.headingUp YES -onboarding.cardsSeen YES -onboarding.mountConfirmed YES -firstLaunch.mapsDone YES)
   local wait_demo=""
   case "$scene" in
     1-map)        args+=("${seen[@]}" -uiDemo 1 -storeDemoReadyAt "$T_MAP"); wait_demo=1 ;;
