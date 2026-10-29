@@ -69,6 +69,23 @@ struct NavigationMetricsCodingTests {
         restore.fixesOlderThanSave = 1
         restore.slowPullOutKmh = 8
         metrics.restore = restore
+        // The NAV-NOOBD keys filled too (the run fills all but obdWithheld;
+        // set here so every one is non-nil whatever the scenario gives).
+        metrics.obdWithheld = 1234
+        var accounting = FixAccounting()
+        accounting.delivered = 12
+        accounting.accepted = 9
+        accounting.droppedHeldTimeout = 1
+        accounting.ignoredStale = 2
+        metrics.fixAccounting = accounting
+        metrics.lastFixBaseline = LastFixBaseline(perCheckpoint: [(nil, nil), (120.5, nil), (80, 80)],
+                                                  scored: [true, true, false])
+        metrics.errorMedianM = 40.5
+        metrics.errorP90M = 210
+        metrics.errorMedianPercent = 1.25
+        metrics.errorP90Percent = 3.5
+        metrics.ellipseSemiMajorMedianM = 150
+        metrics.essMin = 812.5
         return metrics
     }
 
@@ -192,7 +209,9 @@ struct NavigationMetricsCodingTests {
             == ["consistency", "consistencyWithTruthSigma", "motionStartT", "pinScoring", "pins",
                 "checkpointsAfterScoreUntil", "roadMetrics", "roadSetHash", "roads", "scoreUntilT",
                 "roadsAttachedAfterInputs", "attachedRoadSetHash", "roadsExtendedAfterInputs", "fixesExcludedByTruth", "fixPinDecisions",
-                "maxErrorByKind", "gpsSwitch", "restore"].sorted())
+                "maxErrorByKind", "gpsSwitch", "restore",
+                "obdWithheld", "fixAccounting", "lastFixBaseline", "errorMedianM", "errorP90M", "errorMedianPercent",
+                "errorP90Percent", "ellipseSemiMajorMedianM", "essMin"].sorted())
         for key in later {
             var old = row
             old.removeValue(forKey: key.stringValue)
@@ -218,6 +237,15 @@ struct NavigationMetricsCodingTests {
             case .maxErrorByKind: #expect(decoded.maxErrorByKind == nil)
             case .gpsSwitch: #expect(decoded.gpsSwitch == nil)
             case .restore: #expect(decoded.restore == nil)
+            case .obdWithheld: #expect(decoded.obdWithheld == nil)
+            case .fixAccounting: #expect(decoded.fixAccounting == nil)
+            case .lastFixBaseline: #expect(decoded.lastFixBaseline == nil)
+            case .errorMedianM: #expect(decoded.errorMedianM == nil)
+            case .errorP90M: #expect(decoded.errorP90M == nil)
+            case .errorMedianPercent: #expect(decoded.errorMedianPercent == nil)
+            case .errorP90Percent: #expect(decoded.errorP90Percent == nil)
+            case .ellipseSemiMajorMedianM: #expect(decoded.ellipseSemiMajorMedianM == nil)
+            case .essMin: #expect(decoded.essMin == nil)
             default: Issue.record("unexpected later key \(key)")
             }
         }

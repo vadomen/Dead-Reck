@@ -77,6 +77,29 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
     /// UX-20 (replay only, `--prior`): the restore's outcome. nil (absent)
     /// without a prior, and in files written before it.
     public var restore: NavigationRestore?
+    /// NAV-NOOBD (`--obd none`): OBD inputs withheld from the engine. nil
+    /// (absent) with `--obd use`, and in files written before it.
+    public var obdWithheld: Int?
+    /// NAV-NOOBD: what happened to the fixes the engine was given
+    /// (`FixAccounting`). nil (absent) in files written before it.
+    public var fixAccounting: FixAccounting?
+    /// NAV-NOOBD: the naive last-fix baselines (`LastFixBaseline`,
+    /// `delivered` and `accepted`). nil (absent) in files written before it.
+    public var lastFixBaseline: LastFixBaseline?
+    /// NAV-NOOBD: nearest-rank median and p90 (`NearestRank`) of the scored
+    /// checkpoints' error, in metres and in % of the distance so far, and
+    /// the median 95 % ellipse semi-major axis (`ReplayErrorAggregates`).
+    /// nil (absent) without a scored checkpoint with an error, and in files
+    /// written before them.
+    public var errorMedianM: Double?
+    public var errorP90M: Double?
+    public var errorMedianPercent: Double?
+    public var errorP90Percent: Double?
+    public var ellipseSemiMajorMedianM: Double?
+    /// NAV-NOOBD: the smallest effective sample size after any ingest while
+    /// initialised (`ReplayResult.essMin`). nil (absent) when the engine
+    /// never initialised, and in files written before it.
+    public var essMin: Double?
 
     public init(_ result: ReplayResult) {
         logName = result.logName
@@ -119,6 +142,15 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
         maxErrorByKind = result.maxErrorByKind.isEmpty ? nil : result.maxErrorByKind
         gpsSwitch = result.gpsSwitch
         restore = result.restore
+        obdWithheld = result.obdWithheld
+        fixAccounting = result.fixAccounting
+        lastFixBaseline = result.lastFixBaseline
+        errorMedianM = result.errorAggregates.errorMedianM
+        errorP90M = result.errorAggregates.errorP90M
+        errorMedianPercent = result.errorAggregates.errorMedianPercent
+        errorP90Percent = result.errorAggregates.errorP90Percent
+        ellipseSemiMajorMedianM = result.errorAggregates.ellipseSemiMajorMedianM
+        essMin = result.essMin
     }
 
     /// `metrics.json` key: one row per log and mode.
@@ -141,6 +173,8 @@ extension ReplayMetrics {
         case maxErrorByKind
         case gpsSwitch
         case restore
+        case obdWithheld, fixAccounting, lastFixBaseline
+        case errorMedianM, errorP90M, errorMedianPercent, errorP90Percent, ellipseSemiMajorMedianM, essMin
     }
 
     /// Keys every `metrics.json` row has had since the first one (N2). A row
@@ -157,7 +191,10 @@ extension ReplayMetrics {
     ///   `motionStartT`, `consistency`, `consistencyWithTruthSigma`, `pins`,
     ///   `pinScoring`, `roads`, `roadSetHash`, `roadMetrics`, `scoreUntilT`,
     ///   `checkpointsAfterScoreUntil`, `roadsAttachedAfterInputs`,
-    ///   `attachedRoadSetHash`, `roadsExtendedAfterInputs`, `fixesExcludedByTruth`, `fixPinDecisions`, `maxErrorByKind`, `gpsSwitch`, `restore` (and any key a
+    ///   `attachedRoadSetHash`, `roadsExtendedAfterInputs`, `fixesExcludedByTruth`, `fixPinDecisions`, `maxErrorByKind`, `gpsSwitch`, `restore`,
+    ///   `obdWithheld`, `fixAccounting`, `lastFixBaseline`, `errorMedianM`,
+    ///   `errorP90M`, `errorMedianPercent`, `errorP90Percent`,
+    ///   `ellipseSemiMajorMedianM`, `essMin` (and any key a
     ///   later build adds, which must be optional or take a default here).
     /// - `config` and `counters` decode tolerantly themselves: a config key
     ///   or counter added later takes its default (0 for a counter).
@@ -204,6 +241,15 @@ extension ReplayMetrics {
         maxErrorByKind = try c.decodeIfPresent([String: KindMaxError].self, forKey: .maxErrorByKind)
         gpsSwitch = try c.decodeIfPresent(ReplayResult.GPSSwitchReport.self, forKey: .gpsSwitch)
         restore = try c.decodeIfPresent(NavigationRestore.self, forKey: .restore)
+        obdWithheld = try c.decodeIfPresent(Int.self, forKey: .obdWithheld)
+        fixAccounting = try c.decodeIfPresent(FixAccounting.self, forKey: .fixAccounting)
+        lastFixBaseline = try c.decodeIfPresent(LastFixBaseline.self, forKey: .lastFixBaseline)
+        errorMedianM = try c.decodeIfPresent(Double.self, forKey: .errorMedianM)
+        errorP90M = try c.decodeIfPresent(Double.self, forKey: .errorP90M)
+        errorMedianPercent = try c.decodeIfPresent(Double.self, forKey: .errorMedianPercent)
+        errorP90Percent = try c.decodeIfPresent(Double.self, forKey: .errorP90Percent)
+        ellipseSemiMajorMedianM = try c.decodeIfPresent(Double.self, forKey: .ellipseSemiMajorMedianM)
+        essMin = try c.decodeIfPresent(Double.self, forKey: .essMin)
     }
 }
 
@@ -319,12 +365,14 @@ public enum ReplayReport {
     public static func summary(_ result: ReplayResult) -> String {
         var lines: [String] = []
         lines.append("Log           \(result.logName)  [\(result.mode)]")
+        if let withheld = result.obdWithheld { lines.append("OBD           " + obdNoneText(withheld)) }
         lines.append(String(format: "Span          %.1f … %.1f s, distance %.0f m, %d steps", result.startT, result.endT, result.distanceM, result.steps)
             + (result.motionStartT.map { String(format: ", motion starts %.1f s", $0) } ?? ", no motion start"))
         lines.append(String(format: "Engine        %.3f ms/step (max ingest %.2f ms), %d particles, seed %llu",
                             result.msPerStep, result.maxIngestMs, result.config.particleCount, result.config.seed))
         let c = result.counters
         lines.append("Fixes         used \(c.fixesUsed) (network \(c.networkFixesUsed)), ignored stale \(c.fixesIgnoredStale), held \(c.fixesHeld) (used \(c.heldFixesUsed), dropped moving \(c.heldFixesDroppedMoving) / timeout \(c.heldFixesDroppedTimeout) / replaced \(c.heldFixesReplaced)), invalid \(c.fixesIgnoredInvalid), withheld \(result.fixes.filter { $0.withheld != nil }.count)")
+        lines.append("Fix account   " + result.fixAccounting.text)
         lines.append("Updates       course \(c.courseUpdates), speed \(c.speedUpdates), reseeds \(c.reseeds), manual \(c.manualFixes) (late \(c.lateManualFixes), resets \(c.manualResets)), resamples \(c.resamples), ZUPT steps \(c.zuptSteps) (vetoed by fixes \(c.zuptVetoedSteps)), stale-speed steps \(c.staleSpeedSteps), parked-stale steps \(c.staleParkedSteps), caught up in bulk \(c.coalescedSteps) (macro steps \(c.macroSteps))")
         let held = result.heldOutFixes
         if !held.isEmpty {
@@ -379,6 +427,8 @@ public enum ReplayReport {
         lines.append("Max error     \(m(result.maxErrorM)) m (\(pct(result.maxErrorPercent)))")
         if let text = maxByKindText(result.maxErrorByKind) { lines.append("Max by kind   " + text) }
         lines.append("End error     \(m(result.endErrorM)) m (\(pct(result.endErrorPercent)))\(result.endIsTruth ? "" : " [\(endNote(result.checkpoints))]")")
+        lines.append("Error dist.   " + aggregatesText(result.errorAggregates, scored: result.consistency.all.scored, essMin: result.essMin))
+        lines.append("Last fix      " + baselineText(result.lastFixBaseline))
         if let last = result.track.last {
             lines.append(String(format: "Final         speed scale %.4f, σhead %.1f°", last.speedScale, last.headingStdDeg))
         }
@@ -388,6 +438,25 @@ public enum ReplayReport {
             lines.append(contentsOf: roadLines(result.roadMetrics, counters: result.counters))
         }
         return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// The `--obd none` header line (NAV-NOOBD).
+    public static func obdNoneText(_ withheld: Int) -> String {
+        "none: \(withheld) OBD repl\(withheld == 1 ? "y" : "ies") withheld from the engine (all ECUs, all PIDs); "
+            + "distance for scoring is still ∫ OBD speed from the log, motion start still from the log's OBD"
+    }
+
+    /// "scored 40: median 120 m (1.20 %), p90 480 m (4.10 %) (nearest
+    /// rank); 95 % ellipse semi-major median 300 m; ESS min 812".
+    public static func aggregatesText(_ a: ReplayErrorAggregates, scored: Int, essMin: Double?) -> String {
+        "scored \(scored): median \(m(a.errorMedianM)) m (\(pct(a.errorMedianPercent))), p90 \(m(a.errorP90M)) m "
+            + "(\(pct(a.errorP90Percent))) (nearest rank); 95 % ellipse semi-major median \(m(a.ellipseSemiMajorMedianM)) m; "
+            + "ESS min \(m(essMin))"
+    }
+
+    /// The two last-fix baselines on one line (NAV-NOOBD).
+    public static func baselineText(_ b: LastFixBaseline) -> String {
+        "(naive, same checkpoints) delivered: " + b.delivered.text + "; accepted: " + b.accepted.text
     }
 
     /// "cleanFix 266: 218 m (t 2144.0 s), 1.10 % (t 2144.0 s); manualFix
@@ -539,6 +608,30 @@ public enum ReplayReport {
         if runs.contains(where: { $0.scoreUntilT != nil }) {
             out += "\nWith a truth `scoreUntilT`, checkpoints after it are listed but not scored (no error, consistency or "
                 + "convergence figure counts them); a truth `end` after it is replaced by the last scored checkpoint (\\*).\n"
+        }
+        let noobdRuns = runs.filter { $0.fixAccounting != nil }
+        if !noobdRuns.isEmpty {
+            out += "\n## Error distribution, last-fix baselines, fix accounting\n\n"
+            out += "Over the scored checkpoints, nearest rank. Last fix (naive): distance from the truth to the newest fix "
+                + "delivered to the engine (passed --gps / --hold-out-acc) or accepted by it, known from its arrival; "
+                + "n = scored checkpoints with a fix, none = without one yet (counted, not scored). Fixes: what the engine "
+                + "did with the delivered fixes (held = held stale fix dropped by timeout / moving OBD / a newer one).\n\n"
+            out += "| log | mode | err median m | err p90 m | err median % | err p90 % | ellipse a median m | ESS min "
+                + "| last fix delivered median / p90 / max m (n, none) | last fix accepted median / p90 / max m (n, none) "
+                + "| fixes delivered | accepted | held dropped timeout / moving / replaced | other outcomes | OBD withheld |\n"
+            out += "|---|---|---:|---:|---:|---:|---:|---:|---|---|---:|---:|---|---|---:|\n"
+            func variant(_ v: LastFixBaseline.Variant?) -> String {
+                guard let v else { return "n/a" }
+                return "\(m(v.medianM)) / \(m(v.p90M)) / \(m(v.maxM)) (\(v.count), \(v.countNone))"
+            }
+            for r in noobdRuns {
+                let a = r.fixAccounting!
+                out += "| \(r.logName) | \(r.mode) | \(m(r.errorMedianM)) | \(m(r.errorP90M)) | \(pct(r.errorMedianPercent)) "
+                    + "| \(pct(r.errorP90Percent)) | \(m(r.ellipseSemiMajorMedianM)) | \(m(r.essMin)) "
+                    + "| \(variant(r.lastFixBaseline?.delivered)) | \(variant(r.lastFixBaseline?.accepted)) "
+                    + "| \(a.delivered) | \(a.accepted) | \(a.droppedHeldTimeout) / \(a.droppedHeldMoving) / \(a.droppedHeldReplaced) "
+                    + "| \(a.otherText) | \(r.obdWithheld.map(String.init) ?? "—") |\n"
+            }
         }
         let roadRuns = runs.filter { $0.roadMetrics != nil }
         if !roadRuns.isEmpty {

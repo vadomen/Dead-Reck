@@ -4,7 +4,7 @@ import Foundation
 // replay_nav — replay recordings through the navigation engine on the Mac.
 //
 //   swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-after <s>|mask-after-motion <s>|none]
-//       [--hold-out-acc <m>] [--truth logs/truth.json] [--seed N|header] [--particles N]
+//       [--obd use|none] [--hold-out-acc <m>] [--truth logs/truth.json] [--seed N|header] [--particles N]
 //       [--set <configKey>=<number>]... [--out logs/out]
 //       [--as-live | --file-order] [--compare <log.nav.jsonl> [--tolerance <m>] [--heading-tolerance <deg>]]
 //       [--write-sidecar <out.nav.jsonl>] [--pin-pair-window <s>] [--strict]
@@ -15,6 +15,19 @@ import Foundation
 //       [--fixpin-inject <out.jsonl> [--fixpin-two-pins] [--fixpin-survey] [--fixpin-pins <n>] [--fixpin-separation <s>] [--fixpin-engine-no-roads]]
 //       [--save-prior <state.json> [--save-prior-at <s>|end] [--save-prior-engine-off]]
 //       [--prior <state.json> [--prior-offset <dE>,<dN>]] [--start-at <s>] [--no-prior]
+//
+// --obd none (NAV-NOOBD, replay only; default use): every OBD reply (all
+// ECUs, all PIDs) is withheld from the engine, causally, like a withheld
+// fix (`OBDMode`); `elm` rows (NO DATA, timeouts) are never engine inputs.
+// Scoring is unchanged: the distance so far is still ∫ OBD speed from the
+// log, motion start still comes from the log. The label gets -obd-none; a
+// recording's navPrior row is ignored, as with --no-prior (its class and
+// speed come from OBD). Refused with it (status 2): --prior, --fix-offset,
+// --compare, --write-sidecar, --fixpin-inject. --as-live --obd none runs,
+// with a note. Every run (either mode) also reports the fix accounting,
+// the naive last-fix baselines (delivered / accepted) and the error
+// median / p90, ellipse median and ESS minimum (summary, metrics.json,
+// metrics.md).
 //
 // Prompt 40, the Navigate → Record hand-over (log v5): a recording that
 // carries a `navPrior` row started its live run from that prior, so every
@@ -171,7 +184,7 @@ func fail(_ message: String, status: Int32) -> Never {
 }
 
 let usage = """
-    usage: replay_nav <log.jsonl.gz>... [--gps use|mask-after <s>|mask-after-motion <s>|none] [--hold-out-acc <m>]
+    usage: replay_nav <log.jsonl.gz>... [--gps use|mask-after <s>|mask-after-motion <s>|none] [--obd use|none] [--hold-out-acc <m>]
            [--truth <truth.json>] [--seed N|header] [--particles N] [--set <configKey>=<number>]... [--out <dir>]
            [--as-live | --file-order] [--compare <sidecar.nav.jsonl> [--tolerance <m>] [--heading-tolerance <deg>]]
            [--write-sidecar <out.nav.jsonl>] [--pin-pair-window <s>] [--strict]
@@ -187,6 +200,7 @@ let usage = """
 var arguments = Array(CommandLine.arguments.dropFirst())
 var paths: [String] = []
 var gps = GPSMode.use
+var obd = OBDMode.use
 var holdOut: Double?
 var truthPath: String?
 var outPath = "logs/out"
@@ -243,6 +257,10 @@ while !arguments.isEmpty {
         let seconds = name.hasPrefix("mask-after") ? number(value(), name) : nil
         guard let mode = GPSMode(name, seconds: seconds) else { fail("unknown --gps \(name)\n\(usage)", status: 2) }
         gps = mode
+    case "--obd":
+        let name = value()
+        guard let mode = OBDMode(name) else { fail("unknown --obd \(name)\n\(usage)", status: 2) }
+        obd = mode
     case "--hold-out-acc":
         holdOut = number(value(), argument)
     case "--truth":
@@ -404,6 +422,16 @@ while !arguments.isEmpty {
     }
 }
 guard !paths.isEmpty else { fail(usage, status: 2) }
+// NAV-NOOBD: what cannot run without OBD, or would reproduce a live run
+// that had it.
+if obd == .none {
+    let refused = OBDMode.refusedFlags(givenFlags)
+    guard refused.isEmpty else {
+        fail("--obd none withholds every OBD reply from the engine: drop \(refused.joined(separator: ", ")) "
+             + "(a saved prior's class and speed come from OBD; --fix-offset runs no engine; --compare, --write-sidecar "
+             + "and --fixpin-inject reproduce or study runs with OBD)\n\(usage)", status: 2)
+    }
+}
 // R35.2-3: --fix-offset runs no engine and writes no metrics, so an engine
 // flag with it would be silently ignored.
 if !fixOffsetWindows.isEmpty {
@@ -639,6 +667,7 @@ if let contents = compareContents {
     roadAttach = .live
 }
 var baseOptions = ReplayOptions(gps: gps, holdOutAccuracyM: holdOut, config: config)
+baseOptions.obd = obd
 baseOptions.roads = roads
 baseOptions.roadAttach = roadAttach
 baseOptions.roadInjections = injections
@@ -648,6 +677,9 @@ baseOptions.fileOrder = asLive || fileOrder
 baseOptions.pinPairWindowS = pinPairWindow
 if asLive && (gps != .use || holdOut != nil) {
     print("note: --as-live with \(baseOptions.label): the live app received every fix; this run withholds some")
+}
+if asLive && obd == .none {
+    print("note: --as-live with --obd none: the live app received every OBD reply; this run withholds them all")
 }
 let outDirectory = URL(fileURLWithPath: outPath)
 do {
@@ -696,7 +728,7 @@ for path in paths {
     // Prompt 40: the recording's navPrior row, the live run's start
     // condition (absent: everything below is exactly as before v5).
     var recordedPrior = ReplayRecordedPrior.choose(row: NavigationReplay.recordedPrior(in: events),
-                                                   explicitPrior: priorPath != nil, noPrior: noPrior)
+                                                   explicitPrior: priorPath != nil, noPrior: noPrior, obd: obd)
     // With --start-at the note describes the cut (below).
     if startAt == nil, let note = recordedPrior.note(firstInput: recordedPrior.startInput(in: inputs)) { print(note) }
     if case .absent = recordedPrior, noPrior { print("note: --no-prior: \(name) has no navPrior row; nothing to ignore") }
