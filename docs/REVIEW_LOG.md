@@ -1154,3 +1154,13 @@ Reviewers: one opus reviewer. Result: 0 BLOCKER, 1 MAJOR (CONFIRMED, fixed), 1 M
 | R81.1-2 | MINOR | `AppTests/MapPermissionNoticeTests.swift`: the `positionFinding` test builds feeds only through `init`; the live path `apply()` → `display` didSet → `writeFinding` is untested. | DEFERRED | BACKLOG. The app cannot build a `NavigationEstimate` (no public init); needs a Core test seam. |
 
 Tests at round 1: Core 1201 tests in 147 suites passed (36 known issues); App 846 tests in 128 suites passed. After the fixes: App 847 tests in 128 suites passed.
+
+### Round 2
+
+Reviewers: one fresh opus reviewer. Result: 0 BLOCKER, 0 MAJOR, 0 MINOR. R81.1-1 fix verified: a recording walks the same sources in the same order (same `baro` rows, same `altimeter unavailable` row when denied); Record's Start while Navigate runs starts the altimeter, and the resumed Navigate skips it; the background-risk refresh reads only location sources; nothing else in App/Sources can prompt for Motion & Fitness; engine inputs unchanged (`baro` maps to no input). No mutations run: Core unchanged; `altimeterOnlyInRecord` and `SensorSourceTests/suites` were checked by reading against the obvious mutants (Navigate flag true, guard inverted, conformance removed).
+
+Tests at round 2: Core 1201 tests in 147 suites passed (36 known issues); App 847 tests in 128 suites passed.
+
+### Run 81 summary
+
+2 rounds; 1 fixed (R81.1-1); 0 rejected; 1 deferred (R81.1-2). Final tests: Core 1201 tests in 147 suites passed (36 known issues); App 847 tests in 128 suites passed.
