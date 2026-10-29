@@ -1141,3 +1141,16 @@ Tests at round 2: Core 1201 tests in 147 suites passed (36 known issues); App 83
 ### Run 80 summary
 
 2 rounds; 1 fixed (R80.1-1); 0 rejected; 4 deferred (R80.1-2, R80.1-3, R80.2-1, R80.2-2). Final tests: Core 1201 tests in 147 suites passed (36 known issues); App 837 tests in 127 suites passed.
+
+## Run 81: Prompt 43 pre-release fixes (GPS-off rail button icon-only while GPS is in use, map line for denied Location, R80 minors, AX3/VoiceOver items, store screenshots) (main..prerelease-fixes: bc59c72..af63317), started 2026-10-29
+
+### Round 1
+
+Reviewers: one opus reviewer. Result: 0 BLOCKER, 1 MAJOR (CONFIRMED, fixed), 1 MINOR (DEFERRED). No mutations: no Core logic changed, and the App logic was checked against the tests.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R81.1-1 | MAJOR | `App/Sources/UI/Map/MapPermissionNotice.swift:7-9`: the Motion-denied map line ("navigation without GPS is not possible") is false on a phone: Motion & Fitness gates only CMAltimeter (`MotionSources.swift` AltimeterSource); device motion needs no permission and the engine never reads the barometer. It also hid "Finding your position…" and, with both denied, the true Location line. | CONFIRMED, fixed | The user decided to drop the motion line (7216365). Also on the user's request (fced9ca), the altimeter starts only in Record, so Navigate never asks for Motion & Fitness, and NSMotionUsageDescription says it is barometric altitude in recordings. Tests: `MapPermissionNoticeTests.choice`, `positionStatusKept`, `RecordingSessionNavigateTests/altimeterOnlyInRecord`, `SensorSourceTests/suites`, `PermissionTextTests`. |
+| R81.1-2 | MINOR | `AppTests/MapPermissionNoticeTests.swift`: the `positionFinding` test builds feeds only through `init`; the live path `apply()` → `display` didSet → `writeFinding` is untested. | DEFERRED | BACKLOG. The app cannot build a `NavigationEstimate` (no public init); needs a Core test seam. |
+
+Tests at round 1: Core 1201 tests in 147 suites passed (36 known issues); App 846 tests in 128 suites passed. After the fixes: App 847 tests in 128 suites passed.
