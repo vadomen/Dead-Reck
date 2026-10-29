@@ -177,7 +177,7 @@ Every check still open from the sections added by prompts 28 and 30-41 below, gr
 - [ ] Before pairing, the HUD reads "No OBD" (muted); Settings → OBD adapter → Scan, pick, Connect works without Console; help shows when no adapter is found (prompts 30, 31)
 - [ ] Disconnect and Forget ask first during a recording (prompt 30)
 - [ ] About: Privacy policy and Support open the site pages; "Data and services" shows OpenStreetMap (ODbL) and Apple Maps (prompt 30)
-- [ ] Settings order: OBD adapter, Maps, Mount and orientation; About; Developer (prompt 31)
+- [ ] Settings order: OBD adapter, Maps, Mount and orientation; Language; About; Developer (prompt 31)
 - [ ] "Use cellular data" is on the first screen of Settings → Maps on the smallest supported iPhone (prompt 28)
 - [ ] First launch with a fix: permission line, then the system prompt, region preselected with neighbours under "Nearby", nothing downloads before the tap (prompt 26)
 - [ ] Location denied, or no fix in 10 s: national only preselected, list editable (prompt 26)
@@ -185,6 +185,8 @@ Every check still open from the sections added by prompts 28 and 30-41 below, gr
 - [ ] Gate also hides the Diagnostics developer rows until 7 taps on Version (prompt 25)
 - [ ] No maps installed: banner/offers behave and the app works; "Never" persists across launches, Reset in Maps brings the offer back (prompt 26)
 - [ ] Each permission denied once (Bluetooth, Motion, Location): the app explains and recovers in the Ukrainian text (prompt 41)
+- [ ] Motion denied: the map shows «Немає доступу до датчиків руху — навігація без GPS неможлива · Параметри» / "No motion access — navigation without GPS is not possible · Settings"; the button opens the app's iOS Settings; "Finding your position…" is not shown; the line goes away after re-grant. It does not cover the OSM credit (prompt 43)
+- [ ] Location denied: the map shows «Немає доступу до геолокації — карта не знає, де ви · Параметри» / "No location access — the map can't show where you are · Settings"; the button opens the app's iOS Settings; the line goes away after re-grant. It does not cover the OSM credit (prompt 43)
 
 **D: demo in airplane mode on the Release build**
 - [ ] Airplane mode, Bluetooth off: Settings → Developer → "Demo drive"; roads overlay visible, calibrating within about 10 s, arrow moves with DEMO badge, location chip grey after 60 s, arrow stays on the roads for 2 laps (about 17 min); Stop demo restores the normal map (REL-DEMO, prompt 36)
