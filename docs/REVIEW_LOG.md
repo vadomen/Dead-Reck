@@ -1177,3 +1177,13 @@ Reviewers: one opus reviewer. Result: 0 BLOCKER, 1 MAJOR (CONFIRMED, fixed), 1 M
 | R82.1-2 | MINOR | `docs/NAVIGATION.md` `essMin` ("resampling resets it to N, so it mainly detects collapse") and the results section's stop-gate sentence: `essMin` is read after the engine's resampling, so it never drops below `resampleESSFraction`·N (1000 by default) and cannot show a weight collapse. | fixed (wording) | Both sentences now say the value sits at the resampling floor and cannot show a collapse; the stop-gate sentence cites the balanced fix accounting instead. No code change. |
 
 Tests at round 1: Core 1212 tests in 148 suites passed (36 known issues). After the fixes: Core 1214 tests in 148 suites passed (36 known issues); perf gate 9 tests in 2 suites passed.
+
+### Round 2
+
+Reviewers: one fresh opus reviewer. Result: 0 BLOCKER, 0 MAJOR, 0 MINOR. R82.1-1 fix verified: the author's `:1430` deletion (survived in round 1) is now killed by `fixAccountingOlderThanSave`; the reviewer's own mutation (moving the `:1451` count into `ignoredStale`, books still balanced) is also killed, so the tests do not rely on `unaccounted == 0` alone; `fixAccountingRejectedTimeJump` pins the field explicitly. R82.1-2 verified against the engine: every weight update that the ESS reading follows ends in `resampleIfNeeded()` (ESS < `resampleESSFraction`·N), so the 1000 floor is right; "unaccounted 0 on all 146 cells" re-checked from the matrix outputs. Scope invariant and privacy re-confirmed.
+
+Tests at round 2: Core 1214 tests in 148 suites passed (36 known issues); perf gate 9 tests in 2 suites passed.
+
+### Run 82 summary
+
+2 rounds; 1 fixed (R82.1-1), 1 wording fix in the round (R82.1-2); 0 rejected; 0 deferred. Final tests: Core 1214 tests in 148 suites passed (36 known issues); perf gate 9 tests in 2 suites passed. App untouched.
