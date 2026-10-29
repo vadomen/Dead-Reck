@@ -29,7 +29,7 @@ Done / in code / open, per item. "In code (prompt N)" = merged work that has not
 | Restore the estimate after a relaunch (D8) | done in code (prompt 39); device checks open (PLAN §6) | UX-20 |
 | Record starts from Navigate's estimate | done in code (prompt 40); device checks open (PLAN §6) | |
 | Release QA: OSM credit layout, Language row, simulator QA, store screenshots | in progress (prompt 42) | |
-| Pre-release fixes: GPS-off rail button icon-only while GPS is in use, permission-denied lines on the map, R80 minors, store screenshots re-shot | in progress (prompt 43, branch `prerelease-fixes`) | R-QA42-*, R80.1-2, R80.1-3, R80.2-2 |
+| Pre-release fixes: GPS-off rail button icon-only while GPS is in use, permission-denied lines on the map, R80 minors, store screenshots re-shot | in progress (prompt 43, branch `prerelease-fixes`) | R-QA42-1, R-QA42-3, R-QA42-4, R-QA42-5 (implemented, checks pending), R80.1-2, R80.1-3, R80.2-1, R80.2-2 (done); R-QA43-1..3 opened; R-QA42-2 stays open |
 | Phases 4-7 (quality, TestFlight, App Store page, submission) | open | |
 
 Starting decisions (from the user, 2026-10-16):

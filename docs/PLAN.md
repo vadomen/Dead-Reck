@@ -186,6 +186,7 @@ Every check still open from the sections added by prompts 28 and 30-41 below, gr
 - [ ] No maps installed: banner/offers behave and the app works; "Never" persists across launches, Reset in Maps brings the offer back (prompt 26)
 - [ ] Each permission denied once (Bluetooth, Motion, Location): the app explains and recovers in the Ukrainian text (prompt 41)
 - [ ] Motion denied: the map shows «Немає доступу до датчиків руху — навігація без GPS неможлива · Параметри» / "No motion access — navigation without GPS is not possible · Settings"; the button opens the app's iOS Settings; "Finding your position…" is not shown; the line goes away after re-grant. It does not cover the OSM credit (prompt 43)
+- [ ] After re-grant in iOS Settings and returning to the app, the permission line disappears without restarting the app (prompt 43, R-QA43-3)
 - [ ] Location denied: the map shows «Немає доступу до геолокації — карта не знає, де ви · Параметри» / "No location access — the map can't show where you are · Settings"; the button opens the app's iOS Settings; the line goes away after re-grant. It does not cover the OSM credit (prompt 43)
 
 **D: demo in airplane mode on the Release build**
