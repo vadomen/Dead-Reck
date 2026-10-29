@@ -162,7 +162,7 @@ struct HUDRailButton: View {
                         .frame(height: MapLayout.railCaptionHeight - 2)
                         .background(HUDColors.card, in: Capsule())
                 } else if reservesCaption {
-                    Color.clear.frame(height: MapLayout.railCaptionHeight - 2)
+                    Color.clear.frame(width: 0, height: MapLayout.railCaptionHeight - 2)
                 }
             }
         }
