@@ -159,14 +159,17 @@ struct MapHUDState: Equatable, Sendable {
 }
 
 /// The rail's GPS switch (UX-9 (a)): what it shows and says for the switch and
-/// the run. Shown always, so the rail does not jump; without a run it is
-/// disabled (nothing to switch: the switch belongs to a run).
+/// the run. Shown always, so the rail does not jump; without a run (and in the
+/// demo) it is disabled (nothing to switch: the switch belongs to a run).
+/// The button reads as an action while GPS is in use (icon only, outlined: a
+/// caption "GPS off" there would sit next to the HUD's "GPS" and read as a
+/// state, prompt 43) and as a state once GPS is off (filled, captioned).
 struct GPSSwitchControl: Equatable, Sendable {
     var symbol: String
-    /// The visible caption under the button.
-    var caption: String
+    /// The visible caption under the button; nil while GPS is in use.
+    var caption: String?
     var accessibilityLabel: String
-    /// Voice Control names: the visible text.
+    /// Voice Control names: the visible text; empty (no caption) keeps the spoken label.
     var inputLabels: [String]
     /// Filled while GPS is off.
     var active: Bool
@@ -174,15 +177,15 @@ struct GPSSwitchControl: Equatable, Sendable {
 
     static func make(switchOn: Bool, runActive: Bool) -> GPSSwitchControl {
         if switchOn {
-            let caption = String(localized: "GPS off (rail caption)", comment: "Under the rail's GPS button. The rail is 80 pt wide, so the Ukrainian caption is the short form; the HUD label and the spoken phrase are the full «GPS вимкнено».")
             return GPSSwitchControl(
-                symbol: "location.circle", caption: caption,
-                accessibilityLabel: String(localized: "Turn GPS off, dead reckoning only"), inputLabels: [caption],
+                symbol: "location.slash", caption: nil,
+                accessibilityLabel: String(localized: "Turn GPS off, dead reckoning only"),
+                inputLabels: [],
                 active: false, enabled: runActive)
         }
-        let caption = String(localized: "Use GPS (rail caption)", comment: "Under the rail's GPS button; short Ukrainian form «Увімк. GPS» (80 pt rail).")
+        let caption = String(localized: "GPS off (rail caption)", comment: "Under the rail's GPS button while GPS is off (a state). The rail is 80 pt wide, so the Ukrainian caption is the short form; the HUD label and the spoken phrase are the full «GPS вимкнено».")
         return GPSSwitchControl(
-            symbol: "location.slash.circle", caption: caption,
+            symbol: "location.slash.fill", caption: caption,
             accessibilityLabel: String(localized: "Turn GPS back on"), inputLabels: [caption],
             active: true, enabled: runActive)
     }
@@ -196,6 +199,9 @@ enum MapBottomItem: Hashable, Sendable, CaseIterable {
     case toast
     /// Calibration and OBD-lost banners (`NavigateStatus`).
     case statusLine
+    /// "No motion / location access · Settings" while a permission is refused (R-QA42-1).
+    /// Priority above the offer card: at accessibility sizes it is kept and the offer yields.
+    case permissionLine
     /// "Finding your position... keep driving" while the estimate is unconverged or km-wide (C6).
     case positionStatus
     /// "Restored · n min ago · not yet confirmed" while a restored estimate is unconfirmed (UX-20).
@@ -214,12 +220,13 @@ enum MapBottomZone {
     /// strip is gated by the setting alone; with it off nothing takes its place.
     static func items(
         offer: Bool, toast: Bool, status: Bool, positionStatus: Bool = false, restoreStatus: Bool = false, roadsWarning: Bool,
-        resumeHint: Bool, debugSetting: Bool
+        resumeHint: Bool, debugSetting: Bool, permission: Bool = false
     ) -> [MapBottomItem] {
         var out: [MapBottomItem] = []
         if offer { out.append(.offerCard) }
         if toast { out.append(.toast) }
         if status { out.append(.statusLine) }
+        if permission { out.append(.permissionLine) }
         if restoreStatus { out.append(.restoreStatus) }
         if positionStatus { out.append(.positionStatus) }
         if roadsWarning { out.append(.roadsWarning) }
@@ -233,10 +240,11 @@ enum MapBottomZone {
     static let accessibilityLimit = 2
 
     /// Least important first. The OBD / calibration banner and the offer card (it also
-    /// hosts the mount card) are never dropped. `.positionStatus` goes first: its slot is
-    /// in `items` whenever there is an estimate but draws nothing once converged, so
-    /// dropping it first never costs a visible line (R80.1-1); when it does draw,
-    /// "Restored ... not yet confirmed" conveys the same uncertainty and stays.
+    /// hosts the mount card) are never dropped. `.positionStatus` goes first: it is in
+    /// `items` only while it draws (R80.2-1: `NavigationFeed.positionFinding`), and
+    /// "Restored ... not yet confirmed" conveys the same uncertainty when a restore
+    /// exists (R80.1-1). A fresh run with no restore loses its "Finding your position"
+    /// only when the stack is over the limit, as any other least-important line.
     private static let dropOrder: [MapBottomItem] = [
         .positionStatus, .debugStrip, .resumeHint, .restoreStatus, .roadsWarning, .toast,
     ]
@@ -249,7 +257,9 @@ enum MapBottomZone {
         guard accessibilitySize else { return items }
         var out = items
         func shown() -> Int { out.filter { $0 != .offerCard || offerVisible }.count }
-        for drop in dropOrder where shown() > accessibilityLimit {
+        // The permission line outranks the offer card (prompt 43): the offer is the last to go.
+        let order = items.contains(.permissionLine) ? dropOrder + [.offerCard] : dropOrder
+        for drop in order where shown() > accessibilityLimit {
             out.removeAll { $0 == drop }
         }
         return out
@@ -422,6 +432,8 @@ struct HUDFakes: Equatable, Sendable {
     var nav: FakeNav?
     /// UX-15 screenshots: the "Restored · n min ago · not yet confirmed" line (12 min), on `navEllipse`.
     var restored = false
+    /// Refused permissions (R-QA42-1 screenshots): `motionDenied`, `locationDenied`.
+    var access = SensorAccess()
 
     /// `navFinding`: not converged, a km-wide ellipse. `navEllipse`: converged,
     /// 90 x 20 m across the track. `navRoad`: converged on a road, with the matched edge.
@@ -444,6 +456,8 @@ struct HUDFakes: Equatable, Sendable {
             case "calibrating": out.isActive = true; out.calibrating = true
             case "stopped": out.isActive = true; out.stopped = true
             case "restored": out.isActive = true; out.restored = true
+            case "motionDenied": out.isActive = true; out.access.motionDenied = true
+            case "locationDenied": out.isActive = true; out.access.locationDenied = true
             case "navFinding", "navEllipse", "navRoad":
                 out.isActive = true
                 out.nav = FakeNav(rawValue: token)

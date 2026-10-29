@@ -399,7 +399,7 @@ struct LocalizationRuntimeTests {
         // A sample across screens: if the catalog did not compile, the key itself would come back.
         let samples: [(LocalizedStringResource, String)] = [
             ("GPS lost", "GPS втрачено"), ("GPS back", "GPS відновлено"), ("GPS off", "GPS вимкнено"),
-            ("Use GPS (rail caption)", "Увімк. GPS"), ("GPS off (rail caption)", "GPS вимк."), ("OBD lost", "OBD втрачено"), ("Not now", "Не зараз"), ("Never", "Ніколи"),
+            ("GPS off (rail caption)", "GPS вимк."), ("OBD lost", "OBD втрачено"), ("Not now", "Не зараз"), ("Never", "Ніколи"),
             ("MARK", "ПОЗНАЧКА"), ("START", "ПОЧАТИ"), ("STOP", "СТОП"), ("km/h", "км/год"),
             ("NOT RECORDING", "ЗАПИС НЕ ТРИВАЄ"), ("Developer", "Розробник"), ("Thermal state", "Температура пристрою"),
         ]
@@ -408,7 +408,6 @@ struct LocalizationRuntimeTests {
         }
         // The rail's captions keep the English text under a context key.
         #expect(resolved("GPS off (rail caption)", "en") == "GPS off")
-        #expect(resolved("Use GPS (rail caption)", "en") == "Use GPS")
     }
 }
 

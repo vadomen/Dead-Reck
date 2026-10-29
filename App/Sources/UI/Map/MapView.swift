@@ -117,6 +117,7 @@ struct MapScreen: View {
             // The switch belongs to a run (Navigate or Record); the demo has none.
             gpsSwitchEnabled: fake.isActive || (session.currentRunGeneration != nil && demo == nil),
             onGPSSwitch: { [session] on in session.setGPSSwitch(on: on) },
+            sensorAccess: fake.isActive ? fake.access : session.sensorAccess,
             onGPSState: { [voice] state, run in
                 voice.note(state, run: run, enabled: speaksGPSChanges)
             },
@@ -381,6 +382,8 @@ struct GPSMapView: View {
     var gpsSwitchOn = true
     var gpsSwitchEnabled = false
     var onGPSSwitch: (Bool) -> Void = { _ in }
+    /// Refused permissions (R-QA42-1): the bottom stack explains them.
+    var sensorAccess = SensorAccess()
     /// The HUD's GPS state changed (UX-22 voice); the map owns the staleness, so it reports it.
     var onGPSState: (HUDGPS, Int?) -> Void = { _, _ in }
     /// A road pack is attached to the run (`MapAttribution.visible`): the
@@ -477,6 +480,7 @@ struct GPSMapView: View {
         gpsSwitchOn: Bool = true,
         gpsSwitchEnabled: Bool = false,
         onGPSSwitch: @escaping (Bool) -> Void = { _ in },
+        sensorAccess: SensorAccess = SensorAccess(),
         onGPSState: @escaping (HUDGPS, Int?) -> Void = { _, _ in },
         roadsAttribution: Bool = false,
         demo: MapDemo? = nil,
@@ -517,6 +521,7 @@ struct GPSMapView: View {
         self.gpsSwitchOn = gpsSwitchOn
         self.gpsSwitchEnabled = gpsSwitchEnabled
         self.onGPSSwitch = onGPSSwitch
+        self.sensorAccess = sensorAccess
         self.onGPSState = onGPSState
         self.roadsAttribution = roadsAttribution
         self.demo = demo
@@ -774,7 +779,7 @@ struct GPSMapView: View {
         return VStack(spacing: MapLayout.railGap) {
             HUDRailButton(
                 symbol: gps.symbol, label: gps.accessibilityLabel, active: gps.active,
-                caption: gps.caption, inputLabels: gps.inputLabels
+                caption: gps.caption, reservesCaption: true, inputLabels: gps.inputLabels
             ) { onGPSSwitch(!gpsSwitchOn) }
             .disabled(!gps.enabled)
             .opacity(gps.enabled ? 1 : 0.45)
@@ -803,9 +808,14 @@ struct GPSMapView: View {
     private var bottomItemsUnlimited: [MapBottomItem] {
         MapBottomZone.items(
             offer: offerCard != nil, toast: toast != nil, status: statusLine != nil,
-            positionStatus: estimate != nil, restoreStatus: estimate.map { RestoreStatus.line($0.restore) != nil } ?? false,
+            positionStatus: MapPermissionNotice.showsPositionStatus(hasEstimate: estimate?.positionFinding ?? false, notice: permissionNotice),
+            restoreStatus: estimate.map { RestoreStatus.line($0.restore) != nil } ?? false,
             roadsWarning: roadsWarning != nil, resumeHint: follow.resumeDeadline != nil,
-            debugSetting: showNavStats)
+            debugSetting: showNavStats, permission: permissionNotice != nil)
+    }
+
+    private var permissionNotice: MapPermissionNotice? {
+        MapPermissionNotice.make(sensorAccess, demo: demo != nil)
     }
 
     private var bottomZone: some View {
@@ -829,6 +839,8 @@ struct GPSMapView: View {
             offerCard.onGeometryChange(for: Double.self, of: { Double($0.size.height) }) { offerCardHeight = $0 }
         case .toast: if let toast { toastView(toast) }
         case .statusLine: statusLine
+        case .permissionLine:
+            if let permissionNotice { MapPermissionLine(notice: permissionNotice, showsNote: !typeSize.isAccessibilitySize) }
         case .positionStatus: if let estimate { PositionStatusLine(feed: estimate) }
         case .restoreStatus: if let estimate { RestoreStatusLine(feed: estimate) }
         case .roadsWarning: if let roadsWarning { roadsWarningView(roadsWarning) }
@@ -1035,6 +1047,7 @@ struct GPSMapView: View {
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityLabel(text)
+        .accessibilityHint(RoadsWarning.opensMapsHint)
     }
 
     @ViewBuilder

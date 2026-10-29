@@ -2008,6 +2008,40 @@
         }
       }
     },
+    "No location access — the map can't show where you are" : {
+      "comment" : "Map bottom line when Location is refused (followed by the Settings button).",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No location access — the map can't show where you are"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Немає доступу до геолокації — карта не знає, де ви"
+          }
+        }
+      }
+    },
+    "No motion access — navigation without GPS is not possible" : {
+      "comment" : "Map bottom line when Motion & Fitness is refused (followed by the Settings button).",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No motion access — navigation without GPS is not possible"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Немає доступу до датчиків руху — навігація без GPS неможлива"
+          }
+        }
+      }
+    },
     "NOT RECORDING" : {
       "localizations" : {
         "uk" : {
@@ -2329,6 +2363,23 @@
         }
       }
     },
+    "OBD navigation needs a starting point — place a pin on the map" : {
+      "comment" : "Second line under the Location-refused map line (normal text sizes only). Map pin = «мітка».",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OBD navigation needs a starting point — place a pin on the map"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Навігації за OBD потрібна початкова точка — поставте мітку на карті"
+          }
+        }
+      }
+    },
     "OBD SPEED" : {
       "localizations" : {
         "uk" : {
@@ -2385,6 +2436,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "OK"
+          }
+        }
+      }
+    },
+    "Open iOS Settings (map line)" : {
+      "comment" : "Short button at the end of the map's permission line; opens the app's page in iOS Settings. uk «Параметри» (Apple's name for the iOS Settings app).",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Settings"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Параметри"
+          }
+        }
+      }
+    },
+    "Opens Settings → Maps" : {
+      "comment" : "VoiceOver hint of the map's road-pack warning button.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Opens Settings → Maps"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Відкриває Налаштування → Карти"
           }
         }
       }
@@ -3762,23 +3847,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Оновлено · діятиме з наступного запуску"
-          }
-        }
-      }
-    },
-    "Use GPS (rail caption)" : {
-      "comment" : "Under the rail GPS button; short uk form because of the 80 pt rail.",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Use GPS"
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Увімк. GPS"
           }
         }
       }

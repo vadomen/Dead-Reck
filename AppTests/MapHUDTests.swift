@@ -167,8 +167,8 @@ struct MapHUDTests {
     func stackOrder() {
         let all = MapBottomZone.items(
             offer: true, toast: true, status: true, positionStatus: true, restoreStatus: true, roadsWarning: true,
-            resumeHint: true, debugSetting: true)
-        #expect(all == [.offerCard, .toast, .statusLine, .restoreStatus, .positionStatus, .roadsWarning, .resumeHint, .debugStrip])
+            resumeHint: true, debugSetting: true, permission: true)
+        #expect(all == [.offerCard, .toast, .statusLine, .permissionLine, .restoreStatus, .positionStatus, .roadsWarning, .resumeHint, .debugStrip])
         #expect(Set(all).count == all.count)
         #expect(Set(all) == Set(MapBottomItem.allCases))
     }

@@ -22,7 +22,13 @@ final class NavigationFeed {
     /// Statistics are re-published at most this often.
     static let statsInterval: Duration = .seconds(1)
 
-    private(set) var display: NavDisplay?
+    private(set) var display: NavDisplay? {
+        didSet { writeFinding() }
+    }
+    /// `PositionStatus.isFinding(display)`, published only when it flips (R80.2-1): the
+    /// map's bottom stack counts "Finding your position…" as an item only while it
+    /// draws, without observing the 4 Hz `display`.
+    private(set) var positionFinding = false
     private(set) var stats: NavStatsDisplay?
     /// The matched OSM edge's shape for the roads debug drawing; empty
     /// without roads. Rewritten only when the matched edge changes (the
@@ -68,6 +74,7 @@ final class NavigationFeed {
         self.restore = restore
         self.matchedEdge = matchedEdge
         self.display = display
+        self.positionFinding = PositionStatus.isFinding(display)
         self.latest = display
         self.stats = stats
     }
@@ -118,6 +125,11 @@ final class NavigationFeed {
         guard gate.admit(next, at: now) else { return false }
         display = next
         return true
+    }
+
+    private func writeFinding() {
+        let next = PositionStatus.isFinding(display)
+        if next != positionFinding { positionFinding = next }
     }
 
     private struct EdgeKey: Equatable {

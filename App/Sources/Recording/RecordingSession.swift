@@ -510,6 +510,11 @@ final class RecordingSession {
     /// still reads available), on `handleScenePhase(.active)`
     /// (back from Settings), and when a recording starts and ends.
     private(set) var backgroundRiskWarning: String?
+    /// Refused Motion & Fitness / Location permissions, for the map's explanation
+    /// (R-QA42-1). Re-read wherever `backgroundRiskWarning` is (init, an
+    /// availability change, back from Settings, run start and end); it never
+    /// touches what is recorded.
+    private(set) var sensorAccess = SensorAccess()
     /// Called once per recording with its navigation feed (see the type's
     /// doc, "Navigation feed"), and once per Navigate session with its
     /// `.navigateOnly` feed (UX-1). Runs synchronously on the main actor
@@ -1173,6 +1178,8 @@ final class RecordingSession {
     func refreshBackgroundRisk() {
         let warning = currentBackgroundRisk()
         if warning != backgroundRiskWarning { backgroundRiskWarning = warning }
+        let access = SensorAccess.from(sources.map(\.availability))
+        if access != sensorAccess { sensorAccess = access }
     }
 
     /// Reads free space off the main actor and stores it in
