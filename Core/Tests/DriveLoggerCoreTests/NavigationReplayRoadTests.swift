@@ -905,6 +905,10 @@ struct NavigationReplayRoadTests {
         let geo = Self.text(try ReplayReport.geoJSON(result))
         #expect(geo.components(separatedBy: "\"fixRejectedOffRoad\"").count == 2)
         #expect(ReplayReport.summary(result).contains("Rejected      off-road fixes (t s, acc m): 40.0/5"))
+        // NAV-NOOBD fix accounting: the rejected fix is its own outcome, and
+        // the books balance.
+        #expect(result.fixAccounting.rejectedOffRoad == 1 && result.fixAccounting.unaccounted == 0)
+        #expect(result.fixAccounting.delivered == result.fixes.filter { $0.withheld == nil }.count)
     }
 
     @Test("Without roads no road key reaches metrics.json, the summary or the GeoJSON")

@@ -50,8 +50,48 @@ public enum GPSMode: Hashable, Sendable {
     }
 }
 
+/// Whether the engine receives the recording's OBD replies (`replay_nav
+/// --obd`, NAV-NOOBD, replay only).
+public enum OBDMode: String, Hashable, Sendable, CaseIterable {
+    /// Every OBD reply, as before the flag existed.
+    case use
+    /// None: every `obd` input (all ECUs, all PIDs) is withheld from the
+    /// engine, causally, like a withheld fix. `elm` rows (`NO DATA`,
+    /// timeouts) are never engine inputs in any mode
+    /// (`NavigationInput.init?(_:)`). Scoring is unchanged: the distance
+    /// so far is still ∫ OBD speed from the log and motion start still
+    /// comes from the log's OBD replies (truth side, never the engine's).
+    case none
+
+    /// `use` or `none`; nil for anything else.
+    public init?(_ name: String) {
+        self.init(rawValue: name)
+    }
+
+    /// The flags `replay_nav` refuses with `--obd none` (status 2), each
+    /// once, in the order given: `--prior` (a saved restore state carries
+    /// an OBD-derived class and speed), `--fix-offset` (no engine runs),
+    /// `--compare` and `--write-sidecar` (they reproduce the live run,
+    /// which had OBD), `--fixpin-inject` (its study runs the engine with
+    /// `--gps use` and every OBD reply).
+    public static let refusedWithNone: [String] = [
+        "--prior", "--fix-offset", "--compare", "--write-sidecar", "--fixpin-inject",
+    ]
+
+    /// The members of `refusedWithNone` among `given` (the command line's
+    /// flags), each once, in the order given; empty when the run may go on.
+    public static func refusedFlags(_ given: [String]) -> [String] {
+        var seen = Set<String>()
+        return given.filter { refusedWithNone.contains($0) && seen.insert($0).inserted }
+    }
+}
+
 public struct ReplayOptions: Hashable, Sendable {
     public var gps: GPSMode
+    /// NAV-NOOBD (`replay_nav --obd`): `.none` withholds every OBD reply
+    /// from the engine (`OBDMode`); the label gets `-obd-none`. `.use`:
+    /// as before the flag existed, label unchanged.
+    public var obd = OBDMode.use
     /// Fixes with horizontal accuracy under this many metres are withheld,
     /// initialisation included.
     public var holdOutAccuracyM: Double?
@@ -131,6 +171,7 @@ public struct ReplayOptions: Hashable, Sendable {
     ///   neither overwrites the from-start or `--as-live` row (R32.1-5).
     ///   `--as-live` already names the live rule.
     /// - `-inject-<hash>-<when>` per `roadInjections` entry (prompt 38).
+    /// - `-obd-none`: `obd` `.none` (NAV-NOOBD), last.
     public var label: String {
         var label = gps.label
         if let holdOutAccuracyM { label += "-holdout-\(GPSMode.format(holdOutAccuracyM))" }
@@ -151,6 +192,7 @@ public struct ReplayOptions: Hashable, Sendable {
         }
         if let startAtS { label += "-from-\(GPSMode.format(startAtS))" }
         if prior != nil { label += priorSource == .recording ? "-prior" : "-restored" }
+        if obd == .none { label += "-obd-none" }
         return label
     }
 }
@@ -177,6 +219,9 @@ public enum ReplayRecordedPrior: Hashable, Sendable {
     case overridden
     /// `--no-prior`: the row is ignored, the run starts fresh.
     case ignored
+    /// NAV-NOOBD, `--obd none`: the row is ignored as with `--no-prior`;
+    /// its restore class and speed come from OBD, which this run withholds.
+    case ignoredWithoutOBD
     /// The row starts nothing (`NavPriorSample.invalidField`), live and in
     /// the replay alike.
     case invalid(field: String)
@@ -192,11 +237,14 @@ public enum ReplayRecordedPrior: Hashable, Sendable {
     case noEstimateAtCut(atS: Double)
 
     /// The choice for `row` (`NavigationReplay.recordedPrior(in:)`).
-    /// `explicitPrior`: `--prior` was given; `noPrior`: `--no-prior`.
-    /// `--prior` wins over `--no-prior` (which only drops the row).
-    public static func choose(row: NavPriorSample?, explicitPrior: Bool, noPrior: Bool) -> Self {
+    /// `explicitPrior`: `--prior` was given; `noPrior`: `--no-prior`;
+    /// `obd`: `--obd`. `--prior` wins over `--no-prior` (which only drops
+    /// the row); `--obd none` drops the row as `--no-prior` does, with its
+    /// own note (`replay_nav` refuses `--prior` with it).
+    public static func choose(row: NavPriorSample?, explicitPrior: Bool, noPrior: Bool, obd: OBDMode = .use) -> Self {
         guard let row else { return .absent }
         if explicitPrior { return .overridden }
+        if obd == .none { return .ignoredWithoutOBD }
         if noPrior { return .ignored }
         guard let prior = row.navigationPrior else { return .invalid(field: row.invalidField ?? "restoreClass") }
         return .used(prior)
@@ -271,6 +319,8 @@ public enum ReplayRecordedPrior: Hashable, Sendable {
             return "note: --prior replaces the recording's navPrior row (the live run started from the row)"
         case .ignored:
             return "note: --no-prior: the recording's navPrior row is ignored; the run starts fresh (not as live)"
+        case .ignoredWithoutOBD:
+            return "note: navPrior row ignored with --obd none: its class and speed come from OBD; the run starts fresh (not as live)"
         case .invalid(let field):
             return "note: the recording's navPrior row is invalid (\(field)): no prior, as the live run"
         case .cut(let prior, let atS):
@@ -1077,6 +1127,24 @@ public struct ReplayResult: Hashable, Sendable, Codable {
     /// it, and when the engine had no estimate then.
     public var savedRestoreState: NavigationRestoreState? = nil
 
+    /// NAV-NOOBD, `--obd none`: OBD inputs withheld from the engine (all
+    /// of them); nil with `--obd use`.
+    public var obdWithheld: Int? = nil
+    /// NAV-NOOBD: what happened to the fixes the engine was given
+    /// (`FixAccounting`).
+    public var fixAccounting = FixAccounting()
+    /// NAV-NOOBD: the naive last-fix baselines on the run's checkpoints
+    /// (`LastFixBaseline`).
+    public var lastFixBaseline = LastFixBaseline(perCheckpoint: [], scored: [])
+    /// NAV-NOOBD: error median / p90 and ellipse median over the scored
+    /// checkpoints (`ReplayErrorAggregates`).
+    public var errorAggregates = ReplayErrorAggregates([])
+    /// NAV-NOOBD: the smallest effective sample size the engine had after
+    /// any ingest while initialised (as the live sidecar reads it: after
+    /// the update's resampling, which resets it to the particle count); nil
+    /// when the engine never initialised.
+    public var essMin: Double? = nil
+
     public var heldOutFixes: [Fix] { fixes.filter { $0.withheld == .heldOut } }
 }
 
@@ -1163,6 +1231,19 @@ private struct ReplayRun {
     /// UX-20: the state captured at `options.savePrior`.
     var savedRestoreState: NavigationRestoreState?
     var restoreStateCaptured = false
+    /// NAV-NOOBD: OBD inputs withheld from the engine (`--obd none`).
+    var obdWithheld = 0
+    /// NAV-NOOBD: the last-fix baselines' state, one measurement per
+    /// checkpoint (`checkpoints` order), and the fix the engine holds (the
+    /// one an OBD 0 may apply later).
+    var baseline = LastFixBaseline.Tracker()
+    var baselinePerCheckpoint: [(delivered: Double?, accepted: Double?)] = []
+    var heldFix: LastFixBaseline.Fix?
+    /// NAV-NOOBD: the fix accounting's per-input parts (delivered, time
+    /// jumps, location inputs older than a pending prior); the rest is
+    /// read from the engine's counters at the end (`fixAccounting()`).
+    var accounting = FixAccounting()
+    var essMin: Double?
 
     init(logName: String, inputs: [NavigationInput], options: ReplayOptions, truth: TruthFile.Entry?) {
         self.logName = logName
@@ -1231,12 +1312,23 @@ private struct ReplayRun {
             // pin are as corrupt as its time. The engine still counts it
             // (`inputsRejectedTimeJump`) unless it is a withheld fix, which the
             // engine never receives. Its pending checkpoints are dropped.
+            // NAV-NOOBD, `--obd none`: an OBD reply is never given to the
+            // engine; it still counts for the distance (below) and motion
+            // start (`init`), which are scoring, not engine input.
+            let obdWithheldHere = options.obd == .none && input.isOBD
             guard engine.accepts(input) else {
                 skippedInputs.insert(index)
-                if reason == nil {
+                if obdWithheldHere {
+                    obdWithheld += 1
+                } else if reason == nil {
                     attachIfDue()
+                    let jumpsBefore = engine.counters.inputsRejectedTimeJump
                     engine.ingest(input)
                     givenInputs += 1
+                    if case .location = input {
+                        accounting.delivered += 1
+                        accounting.rejectedTimeJump += engine.counters.inputsRejectedTimeJump - jumpsBefore
+                    }
                 }
                 continue
             }
@@ -1264,6 +1356,8 @@ private struct ReplayRun {
                     accuracyM: sample.horizontalAccuracy, withheld: reason
                 ))
                 if reason != nil { continue }
+                accounting.delivered += 1
+                if let fix = LastFixBaseline.Fix(sample, at: t) { baseline.deliver(fix) }
             }
             let pinIndex: Int?
             if case .manualFix(let sample, let t) = input {
@@ -1276,7 +1370,14 @@ private struct ReplayRun {
                 distance.observe(sample, at: t.nanoseconds, maxAgeS: options.config.obdMaxAgeS,
                                  offsetKmh: options.config.obdSpeedOffsetKmh)
             }
+            if obdWithheldHere {
+                obdWithheld += 1
+                continue
+            }
             let rejectedBefore = engine.counters.fixesRejectedOffRoad
+            let usedBefore = engine.counters.fixesUsed
+            let heldBefore = engine.counters.fixesHeld
+            let olderBefore = engine.restore.inputsOlderThanSave ?? 0
             let switchWithheldBefore = engine.fixesWithheldByGPSSwitch
             attachIfDue()
             injectIfDue(arrival: input.arrival)
@@ -1296,6 +1397,7 @@ private struct ReplayRun {
             let ns = elapsed.components.seconds * 1_000_000_000 + elapsed.components.attoseconds / 1_000_000_000
             engineNs += ns
             maxIngestNs = max(maxIngestNs, ns)
+            observeFixes(input, usedBefore: usedBefore, heldBefore: heldBefore, olderBefore: olderBefore)
         }
         attachIfDue()
         // The end is the last input on the timeline: the last one, unless
@@ -1313,6 +1415,44 @@ private struct ReplayRun {
         }
 
         return finish(firstNs: firstNs, lastNs: endNs)
+    }
+
+    /// NAV-NOOBD, after `input` was ingested (read-only use of the
+    /// engine): which fix the engine used (this one, or at an OBD reply the
+    /// fix it held), which one it now holds, location inputs ignored as
+    /// older than a pending prior, and the effective sample size.
+    mutating func observeFixes(_ input: NavigationInput, usedBefore: Int, heldBefore: Int, olderBefore: Int) {
+        let used = engine.counters.fixesUsed > usedBefore
+        if case .location(let sample, let t) = input {
+            let fix = LastFixBaseline.Fix(sample, at: t)
+            if used, let fix { baseline.accept(fix) }
+            if engine.counters.fixesHeld > heldBefore { heldFix = fix }
+            accounting.olderThanSave += (engine.restore.inputsOlderThanSave ?? 0) - olderBefore
+        } else if used, let held = heldFix {
+            // Only a held fix becomes used at another input (an OBD 0).
+            baseline.accept(held)
+        }
+        if !engine.hasHeldFix { heldFix = nil }
+        if engine.isInitialized {
+            essMin = min(essMin ?? .infinity, engine.effectiveSampleSize)
+        }
+    }
+
+    /// The fix accounting at the end of the run (`FixAccounting`).
+    func fixAccounting() -> FixAccounting {
+        var a = accounting
+        let c = engine.counters
+        a.accepted = c.fixesUsed
+        a.droppedHeldTimeout = c.heldFixesDroppedTimeout
+        a.droppedHeldMoving = c.heldFixesDroppedMoving
+        a.droppedHeldReplaced = c.heldFixesReplaced
+        a.ignoredStale = c.fixesIgnoredStale - c.heldFixesDroppedTimeout - c.heldFixesDroppedMoving - c.heldFixesReplaced
+        a.ignoredInvalid = c.fixesIgnoredInvalid
+        a.olderThanSave += engine.restore.fixesOlderThanSave
+        if options.roads != nil { a.rejectedOffRoad = c.fixesRejectedOffRoad }
+        if gpsSwitch != nil { a.withheldByGPSSwitch = engine.fixesWithheldByGPSSwitch }
+        a.stillHeld = engine.hasHeldFix ? 1 : 0
+        return a
     }
 
     /// The restore state at `t`, from the state before the first input
@@ -1520,6 +1660,10 @@ private struct ReplayRun {
             scoreRoad(sample, checkpoint: checkpoint, estimate: estimate.map(inTruthFrame))
         }
         checkpoints.append(checkpoint)
+        // NAV-NOOBD: the last-fix baselines from the same information state
+        // and on the same plane (before initialisation: one at the truth).
+        let plane = engine.tangentPlane ?? LocalTangentPlane(latitude: item.latitude, longitude: item.longitude)
+        baselinePerCheckpoint.append(baseline.measure(latitude: item.latitude, longitude: item.longitude, plane: plane))
     }
 
     /// What the truth file's `excludeFixes` took out of truth; nil without
@@ -1783,6 +1927,11 @@ private struct ReplayRun {
         }
         if options.prior != nil { result.restore = engine.restore }
         result.savedRestoreState = savedRestoreState
+        if options.obd == .none { result.obdWithheld = obdWithheld }
+        result.fixAccounting = fixAccounting()
+        result.lastFixBaseline = LastFixBaseline(perCheckpoint: baselinePerCheckpoint, scored: checkpoints.map(\.isScored))
+        result.errorAggregates = ReplayErrorAggregates(checkpoints)
+        result.essMin = essMin
         result.maxErrorByKind = KindMaxError.byKind(checkpoints)
         if let scoreUntilT = truth?.scoreUntilT {
             result.scoreUntilT = scoreUntilT
@@ -2020,5 +2169,12 @@ extension ErrorEllipse {
         return ErrorEllipse(semiMajorM: (semiMajorM * semiMajorM + extra).squareRoot(),
                             semiMinorM: (semiMinorM * semiMinorM + extra).squareRoot(),
                             orientationDeg: orientationDeg)
+    }
+}
+
+extension NavigationInput {
+    /// An OBD reply (any ECU, any PID): what `--obd none` withholds.
+    var isOBD: Bool {
+        if case .obd = self { true } else { false }
     }
 }

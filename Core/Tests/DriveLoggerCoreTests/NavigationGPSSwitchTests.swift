@@ -389,6 +389,11 @@ struct NavigationGPSSwitchTests {
                                          options: options)
         #expect(result.track == plain.track && result.checkpoints == plain.checkpoints && result.counters == plain.counters)
         #expect(plain.gpsSwitch == nil)
+        // NAV-NOOBD fix accounting: the switch's fixes are delivered (the
+        // replay gave them) and withheld by the engine; the books balance.
+        #expect(result.fixAccounting.withheldByGPSSwitch == 24 && result.fixAccounting.unaccounted == 0)
+        #expect(result.fixAccounting.delivered == plain.fixAccounting.delivered + 24)
+        #expect(plain.fixAccounting.withheldByGPSSwitch == nil && plain.fixAccounting.unaccounted == 0)
 
         let text = "GPS off 2 intervals: t 20.5 … 50.5 s, t 70.5 s … end; 24 fixes withheld by the switch (not checkpoints); 4 switch inputs"
         #expect(report.text == text)

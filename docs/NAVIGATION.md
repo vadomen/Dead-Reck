@@ -796,7 +796,7 @@ default 100 (was 30 until 2026-10-14; N3.2 decision, below).
 
 ```bash
 cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-after <s>|mask-after-motion <s>|none] \
-  [--hold-out-acc <m>] [--truth ../logs/truth.json] [--seed N|header] [--particles N] \
+  [--obd use|none] [--hold-out-acc <m>] [--truth ../logs/truth.json] [--seed N|header] [--particles N] \
   [--set <configKey>=<number>] [--out ../logs/out] \
   [--as-live | --file-order] [--compare <log.nav.jsonl> [--tolerance <m>] [--heading-tolerance <deg>]] \
   [--write-sidecar <out.nav.jsonl>] [--pin-pair-window <s>] [--strict] \
@@ -1039,6 +1039,26 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   ahead to decide the mask, and the engine never sees it. The summary prints it.
 - `--hold-out-acc m`: every fix with accuracy < m is withheld, including for
   initialisation. Each one is printed as (t, acc).
+- **`--obd use|none`** (NAV-NOOBD, replay only; default `use`):
+  - `use` is bit-identical to before the flag existed (clean, seed 1, roads
+    off and on: GeoJSON byte-identical; metrics differ only in `msPerStep`,
+    `maxIngestMs` and the new keys below).
+  - `none` withholds every OBD reply (all ECUs, all PIDs) from the engine,
+    causally, as `--gps` withholds fixes. The input is still read: it feeds
+    the replay's distance integrator (∫ OBD speed from the log: "% of
+    distance", "distance so far") and motion start, but the engine never
+    ingests it. `elm` rows (`NO DATA`, timeouts) are never an engine input in
+    any mode, live or replay, so nothing is withheld there. The summary prints
+    an `OBD` line (replies withheld; scoring distance is still ∫ OBD speed).
+    The label gets `-obd-none`, so `use` and `none` rows coexist in one
+    `--out`.
+  - With `none` a recording's `navPrior` row is ignored, as with `--no-prior`,
+    with a printed note (its class and speed come from OBD); the label stays
+    `-obd-none`. `--start-at` carries the OBD mode into the pre-cut run.
+  - Refused with `none` (status 2): `--prior`, `--fix-offset`, `--compare`,
+    `--write-sidecar`, `--fixpin-inject` (they reproduce the live run, run no
+    engine or hard-code `--gps use`). `--as-live --obd none` runs and prints a
+    note (as `--as-live` with a GPS mask does).
 - Scored only against information the engine did not receive: withheld clean
   fixes (≤ 15 m), each manual fix (on the prior, just before it is ingested),
   and truth-file points and `end` (the last input). Errors are in metres and as
@@ -1047,6 +1067,34 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   the run's `cleanFixAccM`: the engine still uses its own `cleanFixAccM` to
   decide which fixes it treats as clean, but a `--set cleanFixAccM=…`, a sweep
   or a new default does not change which withheld fixes are scored.
+- **Fix account and last-fix baseline** (optional `metrics.json` keys, present
+  in every mode; summary lines "Fix account", "Error dist.", "Last fix"; a
+  section in `metrics.md`):
+  - `fixAccounting`: the location inputs that passed `--gps`/`--hold-out-acc`
+    (`delivered`) and their outcome in the engine: `accepted` (= the engine's
+    `fixesUsed`: the initialising fix, position updates incl. network fixes,
+    held fixes applied at an OBD 0), `droppedHeldTimeout`, `droppedHeldMoving`,
+    `droppedHeldReplaced` (the three held-fix drops), `ignoredStale` (the rest
+    of `fixesIgnoredStale`), `ignoredInvalid`, `olderThanSave`,
+    `rejectedTimeJump`, `stillHeld`, and with roads `rejectedOffRoad`, with a
+    GPS switch `withheldByGPSSwitch`. The outcomes sum to `delivered`.
+  - `lastFixBaseline`: the naive "stay at the last fix" baseline on the same
+    scored checkpoints, in two variants: `delivered` (newest fix that passed
+    the mask, whatever the engine's gates: what UX-1 (d)'s plain-GPS map
+    shows) and `accepted` (newest fix the engine ingested). A fix counts from
+    its arrival, never from its `t`; "newest" is by fix `t`; a checkpoint with
+    no fix yet is counted (`countNone`), not scored. Each has `perCheckpointM`
+    (indexed like `checkpoints`), `medianM`, `p90M`, `maxM`, `count`,
+    `countNone`.
+  - `errorMedianM`, `errorP90M`, `errorMedianPercent`, `errorP90Percent` over
+    the scored checkpoints; `ellipseSemiMajorMedianM`; `essMin` (minimum
+    effective sample size read after each ingest while initialised; it is
+    read after the engine's resampling, so it never drops below
+    `resampleESSFraction`·N (1000 with the defaults) and cannot show a weight
+    collapse, only how close the cloud sat to the resampling floor;
+    R82.1-2). Percentiles are
+    nearest-rank (rank ⌈p·n/100⌉; the median of an even count is the lower
+    middle value; the summary's older clean-fix median line is unchanged).
 - **Refinement pairs** (`--pin-pair-window s`, default 3, 0 disables; N3.0):
   a manual fix whose `t` is at most s seconds after the previous manual fix's
   `t` is a refinement and is not scored, because the previous pin has just
@@ -2485,6 +2533,220 @@ is the parked prior's known risk extended to slow pull-outs: a car moved
 while parked (synthetic 300 m) stays wrong until a fix that can reject it;
 with only coarse fixes that took 219 s on two seeds and never came on
 three. 110-cell no-prior matrix byte-identical to main after the change.
+
+### NAV-NOOBD results (2026-10-29)
+
+Question (BACKLOG_UX NAV-NOOBD, deciding UX-1 (d) and UX-7): how good is the
+plain engine when it never receives an OBD reply? Method: `replay_nav --obd
+none` against `--obd use`, no engine or config change, the acceptance `--gps`
+flags per drive, roads off and on (N3.2 default packs), seeds 1–5; drive-8 and
+drive-9 report-only; clean, clean-long and manual-3 one sanity run each (seed
+1, roads off). Release build on the Mac; full matrix 146 cells in 9 min 0 s
+(core 80 cells 239 s with the 6 sanity cells in parallel; drive-8/9 60 cells
+299 s). Outputs are git-ignored (`logs/noobd/m1/`, table script
+`logs/noobd/table.py`).
+
+**What the engine does without OBD** (confirmed in code,
+`NavigationEngine.step(at:)`):
+- No OBD reply ever: `obdSpeedKmh` is nil and every initialised step is a
+  stale-speed step: speed = 0 + the particle's OU offset (2.5 m/s/√s, τ 20 s,
+  zero mean, ±, stationary sd ≈ 7.9 m/s), heading noise ×
+  `staleHeadingNoiseFactor`, the scale state idle. `parkedSinceZero` is armed
+  only by an OBD 0, so there is no ZUPT and no parked freeze; the N4B1-1 zero
+  gate never applies (it guards on an OBD reply).
+- Initialisation is from the first accepted fix (σ growth from the fix's
+  Doppler speed, else 0); pins use `manualFixUnknownSpeedMps`. Offsets learned
+  through resampling at fixes decay within ~τ.
+- Found while measuring: (a) a fix older than `maxFixAgeS` (10 s) at ingest is
+  held for an OBD reply and dropped after `heldFixTimeoutS` (5 s) with none
+  (N4B-1 `holdStaleFix`), so a cached pre-session fix never reaches the engine
+  without OBD; (b) the roads off-road fix gate needs fresh OBD ≥
+  `roadFixGateMinKmh`, so without OBD it never rejects a fix. `elm` rows
+  (`NO DATA`) are not an engine input in any mode.
+- The stop gate did not fire: no crash, no non-finite value, every cell's
+  fix accounting balanced (`unaccounted` 0 on all 146 cells), and the ESS
+  minimum sat at the resampling floor (1000–1238), which by construction
+  cannot show a collapse (R82.1-2).
+
+Table: each cell is mean (min–max over seeds); p90 is nearest-rank; "max %" is
+the maximum over the scored points; "naive" is the stay-at-the-last-fix
+baseline, median, `delivered` / `accepted` variant; "stale" is the stale-speed
+share of steps; fixes are delivered / accepted / held-timeout drops / other.
+Gated metric: cf = clean-fix max %, end = end %, TP1 = truth point 1 (m),
+TP % = truth-point %, max m = sanity runs.
+
+| drive | roads | OBD | gated metric | median m | p90 m | max m | max % | naive del. / acc. m | ellipse semi-major m | inside 95 % | stale | resamples | ESS min | fixes |
+|---|---|---|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---|
+| drive-7 | off | use | cf 1.13 (1.07–1.23) | 177 (166–194) | 206 (195–226) | 224 (213–245) | 10.99 (10.95–11.09) | 3770 / 3770 | 432 (420–443) | 99.6 | 0.0 % | 9 | 1124 (1001–1238) | 131 / 131 / 0 / 0 |
+| drive-7 | off | none | cf 20.78 (20.71–20.86) | 3710 (3694–3730) | 4099 (4087–4115) | 4109 (4097–4124) | 59.03 (57.93–59.82) | 3770 / 3770 | 1594 (1575–1630) | 2.2 | 100.0 % | 19 | 1016 (1001–1028) | 131 / 131 / 0 / 0 |
+| drive-7 | on | use | cf 0.13 (0.12–0.15) | 12 (8–18) | 24 (24–26) | 250 (249–250) | 4.74 (4.52–5.05) | 3770 / 3770 | 34 (33–34) | 95.2 (91.6–96.7) | 0.0 % | 24 (23–25) | 1001 (1000–1001) | 131 / 131 / 0 / 0 |
+| drive-7 | on | none | cf 20.65 (20.51–20.89) | 3681 (3653–3732) | 4074 (4046–4122) | 4084 (4057–4131) | 59.45 (57.97–61.69) | 3770 / 3770 | 1547 (1520–1595) | 2.1 (1.8–2.2) | 100.0 % | 26 (26–27) | 1005 (1001–1014) | 131 / 131 / 0 / 0 |
+| jammed-A | off | use | end 1.14 (1.01–1.26) | 128 (114–141) | 128 | 128 | 1.14 (1.01–1.26) | 83 / 83 | 1094 (1068–1111) | 100.0 | 0.0 % | 3 | 1006 (1000–1019) | 72 / 72 / 0 / 0 |
+| jammed-A | off | none | end 12.91 (11.31–14.32) | 1449 (1270–1607) | 1449 | 1449 | 12.91 (11.31–14.32) | 83 / 83 | 1356 (1262–1463) | 40.0 (0.0–100.0) | 100.0 % | 6 | 1036 (1015–1080) | 72 / 71 / 1 / 0 |
+| jammed-A | on | use | end 0.18 (0.17–0.18) | 20 (19–20) | 20 | 20 | 0.18 (0.17–0.18) | 83 / 83 | 26 | 100.0 | 0.0 % | 11 (11–12) | 1001 (1000–1002) | 72 / 72 / 0 / 0 |
+| jammed-A | on | none | end 13.16 (11.51–15.87) | 1477 (1292–1782) | 1477 | 1477 | 13.16 (11.51–15.87) | 83 / 83 | 1367 (1299–1542) | 0.0 | 100.0 % | 7 | 1015 (1005–1023) | 72 / 71 / 1 / 0 |
+| jammed-B | off | use | end 1.07 (0.94–1.37) | 63 (55–81) | 63 | 63 | 1.07 (0.94–1.37) | 170 / 170 | 1319 (1308–1334) | 100.0 | 0.0 % | 2 | 1026 (1020–1038) | 58 / 58 / 0 / 0 |
+| jammed-B | off | none | end 24.95 (23.18–28.05) | 1470 (1366–1652) | 1470 | 1470 | 24.95 (23.18–28.05) | 170 / 170 | 1384 (1241–1507) | 0.0 | 100.0 % | 4 | 1046 (1009–1149) | 58 / 57 / 1 / 0 |
+| jammed-B | on | use | end 0.20 (0.17–0.24) | 12 (10–14) | 12 | 12 | 0.20 (0.17–0.24) | 170 / 170 | 44 (43–45) | 100.0 | 0.0 % | 8 | 1002 (1000–1003) | 58 / 58 / 0 / 0 |
+| jammed-B | on | none | end 23.04 (20.13–25.63) | 1358 (1186–1510) | 1358 | 1358 | 23.04 (20.13–25.63) | 170 / 170 | 1324 (1226–1448) | 20.0 (0.0–100.0) | 100.0 % | 4 | 1011 (1002–1033) | 58 / 57 / 1 / 0 |
+| manual | off | use | TP1 50.50 (47.39–57.51) | 67 (64–76) | 260 | 260 | 17.12 (17.10–17.12) | 149 / 149 | 462 (447–492) | 100.0 | 0.0 % | 3 | 1015 (1012–1018) | 59 / 59 / 0 / 0 |
+| manual | off | none | TP1 1019.85 (809.26–1193.06) | 829 (749–993) | 1020 (809–1193) | 1020 (809–1193) | 27.60 (27.43–27.80) | 149 / 149 | 565 (510–688) | 33.3 | 100.0 % | 6 | 1020 (1004–1035) | 59 / 59 / 0 / 0 |
+| manual | on | use | TP1 7.23 (5.81–10.02) | 12 (8–18) | 286 (235–331) | 286 (235–331) | 18.86 (15.50–21.79) | 149 / 149 | 38 (37–39) | 100.0 | 0.0 % | 11 (7–17) | 1001 (1000–1003) | 59 / 59 / 0 / 0 |
+| manual | on | none | TP1 988.75 (333.66–1427.03) | 925 (420–1293) | 1008 (431–1427) | 1008 (431–1427) | 27.58 (26.64–28.39) | 149 / 149 | 616 (534–687) | 33.3 | 100.0 % | 8 (7–8) | 1043 (1007–1144) | 59 / 59 / 0 / 0 |
+| drive-8 | off | use | cf 1.48 (1.37–1.60) | 56 (54–58) | 229 (216–243) | 280 (259–302) | 1.48 (1.37–1.60) | 1793 / 1793 | 202 (201–202) | 100.0 | 4.2 % | 8 | 1011 (1002–1018) | 163 / 163 / 0 / 0 |
+| drive-8 | off | none | cf 22.24 (22.04–22.45) | 1735 (1713–1754) | 2381 (2362–2400) | 3916 (3879–3942) | 22.24 (22.04–22.45) | 1793 / 1793 | 2379 (2347–2429) | 46.4 (30.9–58.3) | 100.0 % | 37 (36–38) | 1005 (1001–1013) | 163 / 162 / 1 / 0 |
+| drive-8 | on | use | cf 0.19 (0.18–0.19) | 4 (4–5) | 10 (10–11) | 17 (16–17) | 0.20 (0.20–0.21) | 1793 / 1793 | 32 | 100.0 | 4.2 % | 19 | 1001 (1000–1001) | 163 / 163 / 0 / 0 |
+| drive-8 | on | none | cf 21.75 (21.31–22.44) | 1674 (1640–1695) | 2566 (2483–2690) | 4111 (4029–4242) | 21.75 (21.31–22.44) | 1793 / 1793 | 2260 (2208–2367) | 53.3 (51.6–56.0) | 100.0 % | 38 (35–40) | 1004 (1000–1009) | 163 / 162 / 1 / 0 |
+| drive-9 (1) | off | use | TP % 10.21 (10.02–10.37) | 242 (240–243) | 1400 (1374–1422) | 1400 (1374–1422) | 18.40 (18.37–18.43) | 376 / 376 | 821 (819–822) | 75.0 | 0.0 % | 3 | 1218 (1217–1219) | 110 / 109 / 0 / 1 |
+| drive-9 (1) | off | none | TP % 41.39 (41.36–41.41) | 870 (862–885) | 5676 (5672–5678) | 5676 (5672–5678) | 41.39 (41.36–41.41) | 376 / 376 | 1218 (1185–1244) | 40.0 (25.0–50.0) | 100.0 % | 19 | 1019 (1002–1036) | 110 / 109 / 1 / 0 |
+| drive-9 (1) | on | use | TP % 0.04 (0.03–0.05) | 15 | 447 (446–448) | 447 (446–448) | 18.40 (18.37–18.43) | 376 / 376 | 31 (31–32) | 75.0 | 0.0 % | 17 (16–17) | 1001 (1000–1002) | 110 / 109 / 0 / 1 |
+| drive-9 (1) | on | none | TP % 41.50 (41.48–41.53) | 885 (869–899) | 5691 (5689–5695) | 5691 (5689–5695) | 41.50 (41.48–41.53) | 376 / 376 | 1192 (1164–1208) | 30.0 (25.0–50.0) | 100.0 % | 21 (20–22) | 1010 (1002–1015) | 110 / 109 / 1 / 0 |
+| drive-9 (2) | off | use | TP % 8.38 (8.28–8.51) | 242 (240–243) | 1149 (1135–1167) | 1149 (1135–1167) | 18.40 (18.37–18.43) | 376 / 376 | 821 (819–822) | 75.0 | 0.0 % | 4 | 1218 (1217–1219) | 114 / 114 / 0 / 0 |
+| drive-9 (2) | off | none | TP % 23.29 (22.75–24.00) | 870 (862–885) | 3194 (3119–3291) | 3194 (3119–3291) | 35.65 (35.49–35.79) | 376 / 376 | 1218 (1185–1244) | 40.0 (25.0–50.0) | 100.0 % | 16 | 1013 (1001–1031) | 114 / 114 / 0 / 0 |
+| drive-9 (2) | on | use | TP % 0.04 (0.03–0.05) | 15 | 447 (446–448) | 447 (446–448) | 18.40 (18.37–18.43) | 376 / 376 | 31 (31–32) | 75.0 | 0.0 % | 17 (16–17) | 1001 (1000–1004) | 114 / 114 / 0 / 0 |
+| drive-9 (2) | on | none | TP % 22.27 (21.35–22.81) | 885 (869–899) | 3054 (2928–3128) | 3054 (2928–3128) | 35.65 (35.49–35.79) | 376 / 376 | 1192 (1164–1208) | 30.0 (25.0–50.0) | 100.0 % | 19 (17–21) | 1012 (1000–1025) | 114 / 114 / 0 / 0 |
+| clean | off | use | max m 12.24 | 7 | 10 | 12 | 0.56 | 786 / 786 | 81 | 100.0 | 0.0 % | 18 | 1001 | 155 / 155 / 0 / 0 |
+| clean | off | none | max m 1190.72 | 894 | 1179 | 1191 | 34.58 | 786 / 786 | 790 | 9.3 | 100.0 % | 70 | 1019 | 155 / 155 / 0 / 0 |
+| clean-long | off | use | max m 20.29 | 10 | 20 | 20 | 0.26 | 916 / 916 | 66 | 100.0 | 0.0 % | 11 | 1007 | 383 / 383 / 0 / 0 |
+| clean-long | off | none | max m 1312.34 | 835 | 1301 | 1312 | 17.04 | 916 / 916 | 909 | 45.8 | 100.0 % | 120 | 1002 | 383 / 383 / 0 / 0 |
+| manual-3 | off | use | max m 459.59 | 131 | 460 | 460 | 7.23 | 252 / 252 | 715 | 66.7 | 0.0 % | 6 | 1007 | 106 / 106 / 0 / 0 |
+| manual-3 | off | none | max m 1318.97 | 539 | 1319 | 1319 | 31.42 | 252 / 253 | 1036 | 66.7 | 100.0 % | 11 | 1010 | 106 / 105 / 1 / 0 |
+
+Notes on the table: drive-7 and drive-8 "gated" errors are over withheld
+clean fixes after the mask (drive-8 to the truth `scoreUntilT`); jammed-A/B
+score one point (the end), so their "inside 95 %" is 0/20/40/100 % by seed
+count, not a rate. The manual naive columns cover all three scored points; at
+truth point 1 the naive fix is 6 m off. The sanity rows' naive column shows
+the medians (the `accepted` median differs from `delivered` only on manual-3
+none, 252 vs 253).
+
+drive-7 jammed stretch, scored pin prior error (m, seed mean) and the clean
+fixes after the mask (the engine's pin prior is its estimate just before the
+pin):
+
+| pin t (s) | 87 | 359 | 706 | 878 | 1272 | 1427 | 1765 | clean fixes after 1800 s: median / max |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| distance driven (km) | 0.6 | 2.7 | 6.0 | 8.2 | 11.1 | 12.0 | 14.9 | 16.8–19.9 km |
+| naive newest fix (delivered = accepted) | 354 | 321 | 140 | 176 | 6 | 264 | 27 | 3770 / 4177 |
+| OBD, roads off | 63 | 93 | 210 | 90 | 27 | 88 | 27 | 177 / 224 |
+| none, roads off | 338 | 647 | 258 | 1212 | 5 | 356 | 62 | 3710 / 4109 |
+| OBD, roads on | 27 | 46 | 250 | 55 | 14 | 6 | 48 | 12 / 25 |
+| none, roads on | 340 | 647 | 247 | 1202 | 6 | 377 | 47 | 3681 / 4084 |
+
+Pins mean / median / max: naive 184 / 176 / 354; none off 411 / 338 / 1212;
+none on 409 / 340 / 1202; OBD off 85 / 88 / 210; OBD on 64 / 46 / 250. Seven
+pins, one drive: indicative only. Clean fixes after the mask (266), `none`:
+first 1669 m (roads off) / 1641 m (on), inside 95 % 0.0 % in both (OBD:
+first 99 / 11 m, inside 95 % 100.0 / 96.3 %). Without OBD the ellipse at the
+pins is 559 / 1395 / 619 / 958 / 207 / 559 / 366 m (roads off), inside 95 % at
+6 of 7 pins.
+
+Why `none` is worse than the last fix (seed 1, roads off, plus the seed means
+below): the estimate is the fix track, delayed.
+
+| | jammed-A | jammed-B | manual |
+|---|---:|---:|---:|
+| best lag of the estimate behind the fix track, `none` (`use`: 0–10 s) | 240 s | 140 s | 160 s |
+| estimate's net displacement vs the fixes' (`use`: 98–102 %) | 73 % (4.2 of 5.8 km) | 61 % (2.3 of 3.8 km) | 85 % (3.7 of 4.3 km) |
+| heading σ at the end (`use`: 6–8°) | 84° | 107° | 2° (converged) |
+| end / truth point 1 error, roads off / on, m | 1449 / 1477 | 1470 / 1358 | 1020 / 989 |
+| naive newest fix, m | 83 | 170 | 6 |
+
+Median jump of the estimate at a fix: 1 m (`use`: 11–20 m); mean pull toward
+the fix 12–23 m against a 1.0–1.5 km gap. Cosine of the estimate's and the fix
+track's displacement over 100 s windows: median 0.83–0.89 (`use` 0.98–0.99).
+
+Findings:
+- (i) The `use` rows reproduce the documented adoption numbers per drive
+  (per-seed min–max equal in every cell), roads off / on: drive-7 clean-fix
+  max % 1.128 (1.073–1.231) / 0.130 (0.123–0.148); jammed-A end % 1.137
+  (1.012–1.259) / 0.177 (0.170–0.182); jammed-B 1.068 (0.940–1.374) / 0.201
+  (0.171–0.245); manual truth point 1 50.5 (47.4–57.5) m / 7.2 (5.8–10.0) m;
+  drive-8 clean-fix max % to 1988 s 1.482 (1.371–1.596) / 0.186
+  (0.184–0.188); drive-9 (1) mask 1229 truth-point % 10.212 (10.022–10.373) /
+  0.042 (0.033–0.051); drive-9 (2) hold-out 100 8.380 (8.278–8.513) / 0.043
+  (0.033–0.054).
+- (ii) Without OBD the engine is in the ~1 km class on every jammed drive.
+  With roads: jammed-A end 1477 m (1292–1782), jammed-B 1358 m (1186–1510),
+  manual truth point 1 989 m (334–1427), drive-7 pins median 340 m / max
+  1202 m, drive-9 median 885 m (p90 3054–5691 m).
+- (iii) It is worse than UX-1 (d)'s plain last-fix display (the naive
+  `delivered` baseline) on every jammed drive: jammed-A 17.8× (1477 vs 83 m),
+  jammed-B 8.0× (1358 vs 170 m), manual truth point 1 989 vs 6 m (3-point
+  median 925 vs 149 m), drive-7 pins 1.9× (median 340 vs 176 m), drive-9 2.4×
+  (median 885 vs 376 m). drive-7 and drive-8 after the mask equal the naive
+  (3681 vs 3770 m, 1674 vs 1793 m) by construction: no fixes, speed 0, the
+  engine froze (23 m / 179 m moved between the mask and the end); two frozen
+  points, not a comparison of estimators.
+- (iv) Mechanism: lag, not jumps or heading. Network fixes claiming ~1.4 km
+  accuracy move the estimate 12–23 m each (the engine weights each as σ ≈
+  0.94 km) while the real error of the newest fix at the pins is 0.10–0.38 of
+  the claim; the estimate follows the fix track 140–240 s late. Why (a
+  zero-mean OU offset decaying in ~20 s plus weak fixes) is a hypothesis,
+  consistent with the code, not tested (no engine change allowed).
+- (v) The ellipse is not honest without OBD. Inside 95 %: drive-7 2.2 %,
+  jammed-A 40 %, jammed-B 20 %, manual 33 %, drive-8 46–53 %, drive-9
+  25–50 %; with OBD 99.6–100 % (drive-9 75 %). drive-7 median error 3710 m is
+  2.3× the median semi-major (1594 m); after the drive-7 mask the ellipse
+  rises 407 → 1741 m within 300 s and sits at ~1.77 km while the error grows
+  to 4.1 km.
+- (vi) Fix accounting: the held-timeout drop is 1 fix on jammed-A/B, drive-8
+  and drive-9 (1) (0.6–1.7 % of delivered; the pre-session fix) and 0 on
+  drive-7, manual and drive-9 (2) (hold-out removes it / the first fix is 9 s
+  old). It does not dominate: drives that lose no fix are as bad (20.7 %,
+  1020 m, 23 %). Side effect: without it the engine starts 73 / 28 / 10 s
+  later on jammed-A / jammed-B / drive-8 and from a ~600 m fix instead of a
+  50 m one; the effect on the end error is unproven. drive-9 (1) `other` = 1
+  with `use` is `droppedHeldMoving` of the same fix (accepted 109 in both).
+  Nothing else is dropped in any cell.
+- (vii) Roads change nothing without OBD (drive-7 20.78 → 20.65 %, jammed-A
+  12.9 → 13.2 %, jammed-B 24.9 → 23.0 %, manual 1020 → 989 m, drive-8 22.2 →
+  21.7 %, drive-9 41.4 → 41.5 % / 23.3 → 22.3 %), all inside the seed spread
+  (jammed-A 11.3–14.3 off vs 11.5–15.9 on); with OBD roads cut the same errors
+  5–9× (drive-9 about 240×). Road updates did run (drive-7 1452 vs 2008 with
+  OBD; jammed-A 181 vs 912). Supported by code and data but not isolated by
+  an experiment: `roadUpdate` is a no-op above a 1000 m ellipse
+  (`roadEngageMaxEllipseM`) and the no-OBD ellipse is above that most of the
+  time; the evidence weight scales with the distance driven since the last
+  update, which is ≈ 0 without a speed. That a city road likelihood is flat at
+  ±1 km is a hypothesis.
+
+Recommendation for UX-1 (d) / UX-7: the UX-7 row builds it at ≤ 100–200 m in
+the city with roads and does not at ~1 km. The plain engine without OBD is
+~1 km with roads (jammed-A 1477 m, jammed-B 1358 m, manual 989 m, drive-7 pins
+median 340 m / max 1202 m, drive-9 median 885 m) and 1.9–17.8× worse than the
+plain last-fix display. UX-7 is not built on the plain engine; UX-1 (d) stays.
+Decision: user.
+
+Hypotheses (not implemented; each goes through the adoption rule, the
+`nav-adoption` skill, later), ranked. Bounds from the recordings (span =
+motion start to last input; "log" = every fix, age ≤ 10 s at arrival;
+"flags" = what the engine sees under the acceptance flags):
+
+| drive | span s | Doppler ≤ 5 s, log / flags | any fix ≤ 30 s, log / flags | Δposition speed (fixes ≥ 45 s apart) / OBD path speed, median; median abs diff | stopped share of span; stops ≥ 5 s (n, total s, longest) |
+|---|---:|---|---|---|---|
+| drive-7 | 2149 | 13 % / 0 % | 88 % / 72 % | 0.93; 4.4 km/h | 7.0 %; 5, 133 s, 87 s |
+| jammed-A | 995 | 0 % / 0 % | 77 % / 77 % | 0.76; 10.7 km/h | 6.5 %; 3, 54 s, 23 s |
+| jammed-B | 708 | 0 % / 0 % | 80 % / 80 % | 0.81; 7.4 km/h | 7.7 %; 4, 47 s, 26 s |
+| manual | 778 | 0 % / 0 % | 82 % / 82 % | 0.97; 13.1 km/h | 11.4 %; 5, 87 s, 34 s |
+| drive-8 | 2080 | 67 % / 6 % | 92 % / 30 % | 0.98; 1.4 km/h | 12.0 %; 10, 234 s, 81 s |
+| drive-9 (1) mask / (2) hold-out | 2024 | 0 % / 0 % (1 fix with speed) | 86 % / 54 %; 86 % / 70 % | 0.93; 9.7 km/h | 9.6 % (OBD covers 75 % of the span, lower bound); 9, 173 s, 69 s |
+
+1. (a) Speed from fixes as the OU mean instead of 0. Doppler is valid only
+   where GNSS is clean (0 % on the jammed drives, 13 % drive-7, 67 % drive-8 in
+   the log; 0–6 % after the acceptance flags), so it means the Δposition speed
+   of network/Wi-Fi fixes: available 77–92 % of the time, median error 7–13
+   km/h against OBD on the jammed drives, reads low (median ratio 0.76–0.97).
+   It attacks the 140–240 s lag directly: highest potential.
+2. (c) Typical speed per road class from the pack: a non-zero speed prior
+   whenever the cloud is on a road (the share of time attached was not
+   measured: it is not in `metrics.json`). Needs the road matching to work at
+   ±1 km, which it does not today, so it pairs with (a).
+3. (b) IMU stop/move detector: bounds the walk only during stops (5.4–11.3 %
+   of the span, 3–10 stops ≥ 5 s per drive); cheap, complementary, cannot fix
+   the lag.
+4. (d) UX-27 learned per-edge speeds: the same mechanism as (c) with better
+   numbers; needs data collection first.
 
 ## Known limitations and options
 
