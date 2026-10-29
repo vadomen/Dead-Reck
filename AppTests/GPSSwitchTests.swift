@@ -71,16 +71,27 @@ struct GPSSwitchHUDTests {
         #expect(off.accessibilitySummary.contains("GPS off"))
     }
 
-    @Test("Rail control: texts, state, enablement")
-    func control() {
+    @Test("Rail control, GPS in use: icon only (outlined, no caption), spoken action unchanged")
+    func controlInUse() {
         let on = GPSSwitchControl.make(switchOn: true, runActive: true)
-        #expect(on.caption == "GPS off" && on.inputLabels == ["GPS off"] && !on.active && on.enabled)
+        #expect(on.symbol == "location.slash" && on.caption == nil && !on.active && on.enabled)
         #expect(on.accessibilityLabel == "Turn GPS off, dead reckoning only")
+        #expect(on.inputLabels.isEmpty, "no caption: Voice Control uses the spoken label")
+    }
+
+    @Test("Rail control, GPS off: filled, captioned state «GPS off», spoken Turn GPS back on")
+    func controlOff() {
         let off = GPSSwitchControl.make(switchOn: false, runActive: true)
-        #expect(off.caption == "Use GPS" && off.inputLabels == ["Use GPS"] && off.active)
+        #expect(off.symbol == "location.slash.fill" && off.caption == "GPS off" && off.active && off.enabled)
+        #expect(off.inputLabels == ["GPS off"])
         #expect(off.accessibilityLabel == "Turn GPS back on")
-        #expect(off.symbol != on.symbol)
-        #expect(!GPSSwitchControl.make(switchOn: true, runActive: false).enabled)
+        #expect(off.symbol != GPSSwitchControl.make(switchOn: true, runActive: true).symbol)
+    }
+
+    @Test("Rail control, demo / no run: visible but disabled, icon only")
+    func controlDemo() {
+        let demo = GPSSwitchControl.make(switchOn: true, runActive: false)
+        #expect(!demo.enabled && demo.caption == nil && demo.symbol == "location.slash")
         #expect(!GPSSwitchControl.make(switchOn: false, runActive: false).enabled)
     }
 

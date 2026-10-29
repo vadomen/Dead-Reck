@@ -248,7 +248,7 @@ struct PermissionTextTests {
     /// logs/UK_GLOSSARY.md §5.2, verbatim.
     static let glossary: [String: String] = [
         "NSBluetoothAlwaysUsageDescription": "FuGPS підключається до Bluetooth-адаптера OBD-II у вашому авто, щоб зчитувати швидкість і дані двигуна й продовжувати визначати позицію, коли GPS глушать. Якщо ви записуєте поїздку, ці дані зберігаються в записі на вашому телефоні.",
-        "NSMotionUsageDescription": "FuGPS використовує датчики руху телефона, щоб відстежувати повороти, гальмування й прискорення авто та продовжувати визначати позицію, коли GPS глушать. Якщо ви записуєте поїздку, ці дані зберігаються в записі на вашому телефоні.",
+        "NSMotionUsageDescription": "FuGPS записує зміни висоти за барометром, коли ви записуєте тестову поїздку; дані лишаються в записі на вашому телефоні.",
         "NSLocationWhenInUseUsageDescription": "FuGPS використовує вашу геолокацію, щоб показувати, де ви перебуваєте, продовжувати визначати позицію, коли GPS глушать (також із заблокованим екраном під час руху), і вибирати карту доріг для вашого району. Якщо ви записуєте поїздку, ваш маршрут зберігається в записі на вашому телефоні.",
     ]
 
@@ -399,7 +399,7 @@ struct LocalizationRuntimeTests {
         // A sample across screens: if the catalog did not compile, the key itself would come back.
         let samples: [(LocalizedStringResource, String)] = [
             ("GPS lost", "GPS втрачено"), ("GPS back", "GPS відновлено"), ("GPS off", "GPS вимкнено"),
-            ("Use GPS (rail caption)", "Увімк. GPS"), ("GPS off (rail caption)", "GPS вимк."), ("OBD lost", "OBD втрачено"), ("Not now", "Не зараз"), ("Never", "Ніколи"),
+            ("GPS off (rail caption)", "GPS вимк."), ("OBD lost", "OBD втрачено"), ("Not now", "Не зараз"), ("Never", "Ніколи"),
             ("MARK", "ПОЗНАЧКА"), ("START", "ПОЧАТИ"), ("STOP", "СТОП"), ("km/h", "км/год"),
             ("NOT RECORDING", "ЗАПИС НЕ ТРИВАЄ"), ("Developer", "Розробник"), ("Thermal state", "Температура пристрою"),
         ]
@@ -408,7 +408,6 @@ struct LocalizationRuntimeTests {
         }
         // The rail's captions keep the English text under a context key.
         #expect(resolved("GPS off (rail caption)", "en") == "GPS off")
-        #expect(resolved("Use GPS (rail caption)", "en") == "Use GPS")
     }
 }
 

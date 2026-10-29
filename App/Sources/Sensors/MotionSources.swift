@@ -195,9 +195,11 @@ final class RawIMUSource: SensorSource {
 }
 
 /// `CMAltimeter` relative altitude and pressure → `baro`, at the rate the
-/// device chooses (about 1 Hz). Needs Motion & Fitness permission.
+/// device chooses (about 1 Hz). Needs Motion & Fitness permission: the
+/// first `start` is what shows the prompt. Recording-only (R81.1-1): no
+/// navigation input reads `baro`, so Navigate never starts it.
 @MainActor
-final class AltimeterSource: SensorSource {
+final class AltimeterSource: SensorSource, RecordingOnlySource {
     let name = "altimeter"
 
     private let altimeter = CMAltimeter()

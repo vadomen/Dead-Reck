@@ -363,16 +363,24 @@ struct MarkSheet: View {
     var onMark: (String) -> Void
     @State private var custom = ""
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 12) {
-                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                    // One column at accessibility sizes (R-QA42-3): a tile's label wraps instead of clipping mid-word.
+                    LazyVGrid(
+                        columns: typeSize.isAccessibilitySize ? [GridItem(.flexible())] : [GridItem(.flexible()), GridItem(.flexible())],
+                        spacing: 12
+                    ) {
                         ForEach(MarkPreset.all, id: \.self) { preset in
                             Button { onMark(preset) } label: {
                                 Text(MarkPreset.label(for: preset))
                                     .font(.title3.weight(.bold))
+                                    .multilineTextAlignment(.center)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .padding(.vertical, 8)
                                     .frame(maxWidth: .infinity, minHeight: 64)
                                     .foregroundStyle(.white)
                                     .background(RoundedRectangle(cornerRadius: 14).fill(Color.blue))
@@ -380,7 +388,8 @@ struct MarkSheet: View {
                             .buttonStyle(.plain)
                         }
                     }
-                    HStack {
+                    let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 12)) : AnyLayout(HStackLayout())
+                    layout {
                         TextField("Custom marker", text: $custom)
                             .textFieldStyle(.roundedBorder)
                             .submitLabel(.send)

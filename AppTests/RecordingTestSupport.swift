@@ -88,13 +88,16 @@ final class FakeLink: OBDLinkServicing {
     }
 }
 
-/// A source that records `accel` rows at 100 Hz on the session clock
-/// (through the app's `SimulatedSampleTicker`), or fails as told.
+/// A source that records `accel` rows (or `payload`) at 100 Hz on the
+/// session clock (through the app's `SimulatedSampleTicker`), or fails as
+/// told.
 @MainActor
 class FakeSource: SensorSource {
     let name: String
     var availability: SensorAvailability = .available
     var startError: (any Error)?
+    /// What each row holds, as of `start`.
+    var payload: LogEvent.Payload = .accelerometer(Vector3(x: 0, y: -1, z: 0))
     private(set) var starts = 0
     private(set) var stops = 0
     /// Called by `stop()` before the source stops.
@@ -110,8 +113,9 @@ class FakeSource: SensorSource {
     func start(clock: SessionClock, sink: LogSink) throws {
         if let startError { throw startError }
         starts += 1
+        let payload = payload
         let ticker = SimulatedSampleTicker(label: name, clock: clock, sink: sink, period: .milliseconds(10)) { _, t in
-            [LogEvent(timestamp: t, payload: .accelerometer(Vector3(x: 0, y: -1, z: 0)))]
+            [LogEvent(timestamp: t, payload: payload)]
         }
         self.ticker = ticker
         ticker.begin()
@@ -124,6 +128,11 @@ class FakeSource: SensorSource {
         ticker = nil
     }
 }
+
+/// A `FakeSource` standing in for `AltimeterSource`: only a recording
+/// starts it, never Navigate (R81.1-1).
+@MainActor
+final class FakeRecordingOnlySource: FakeSource, RecordingOnlySource {}
 
 /// A `FakeSource` standing in for `ReferenceLocationSource` as the one that
 /// keeps the app running while locked (R4.1-5). Setting `availability`

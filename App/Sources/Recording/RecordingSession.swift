@@ -387,7 +387,9 @@ final class NavigationRunEnd: Sendable {
 /// `SessionClock` on the same `uptime`, a `LogHeader` built by the same
 /// `makeHeader` as a recording's (never written; its `sessionID` seeds the
 /// engine), a `NavigationTap` behind a `LogSink.tapOnly` sink, every source
-/// started by the same `startSources` and link events forwarded and
+/// but the `RecordingOnlySource`s (the altimeter, R81.1-1: its `baro` rows
+/// are no navigation input) started by the same `startSources` and link
+/// events forwarded and
 /// replayed by the same `handleLinkEvent` / `replayStartupInit` as in a
 /// recording — so the engine's inputs are those of a recording of the same
 /// sensors — and the feed (`output: .navigateOnly`) handed to
@@ -510,6 +512,11 @@ final class RecordingSession {
     /// still reads available), on `handleScenePhase(.active)`
     /// (back from Settings), and when a recording starts and ends.
     private(set) var backgroundRiskWarning: String?
+    /// A refused Location permission, for the map's explanation (R-QA42-1;
+    /// Motion & Fitness is not one, R81.1-1). Re-read wherever
+    /// `backgroundRiskWarning` is (init, an availability change, back from
+    /// Settings, run start and end); it never touches what is recorded.
+    private(set) var sensorAccess = SensorAccess()
     /// Called once per recording with its navigation feed (see the type's
     /// doc, "Navigation feed"), and once per Navigate session with its
     /// `.navigateOnly` feed (UX-1). Runs synchronously on the main actor
@@ -1173,6 +1180,8 @@ final class RecordingSession {
     func refreshBackgroundRisk() {
         let warning = currentBackgroundRisk()
         if warning != backgroundRiskWarning { backgroundRiskWarning = warning }
+        let access = SensorAccess.from(sources.map(\.availability))
+        if access != sensorAccess { sensorAccess = access }
     }
 
     /// Reads free space off the main actor and stores it in
@@ -1360,9 +1369,12 @@ final class RecordingSession {
     /// Starts every source on the session's clock and sink, a recording's
     /// or (UX-1) a Navigate session's: one function, so the two start the
     /// same sources in the same order, both with background location (D7
-    /// revised).
+    /// revised). Except `RecordingOnlySource`s (the altimeter), which only a
+    /// recording starts: Navigate skips them first, so it never starts one
+    /// (no Motion & Fitness prompt) and has no row for one (R81.1-1).
     private func startSources(_ rec: some SessionRun) {
         for source in sources {
+            if !rec.startsRecordingOnlySources, source is any RecordingOnlySource { continue }
             if case .unavailable(let reason) = source.availability {
                 rec.record(LifecycleSample(.error, detail: "\(source.name) unavailable: \(reason)"))
                 continue
@@ -2081,6 +2093,8 @@ private final class ActiveRecording: SessionRun {
     let navigationTap: NavigationTap
     /// A recording holds background location (unchanged by UX-1, D7a).
     let holdsBackgroundLocation = true
+    /// A recording starts every source, the altimeter included.
+    let startsRecordingOnlySources = true
     var startedSources: [any SensorSource] = []
     /// Link events are written while true.
     var acceptsLinkEvents = true

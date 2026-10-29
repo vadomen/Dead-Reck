@@ -40,7 +40,7 @@ struct AdapterScreenStatus: Equatable, Sendable {
     var showsHelp: Bool
 
     /// Bluetooth is denied for the app: only iOS Settings can change it, so the screen
-    /// offers a button to the app's page there (R-QA42-3). Not for "Bluetooth is off"
+    /// offers a button to the app's page there (prompt 42 QA). Not for "Bluetooth is off"
     /// (Control Centre) or an unsupported device.
     var offersAppSettings: Bool { phase == .bluetoothNotAllowed }
 }

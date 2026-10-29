@@ -104,16 +104,21 @@ else
   OLD_LOCALE="$(sim_defaults read -g AppleLocale 2>/dev/null || true)"
   while IFS= read -r l; do OLD_LANGS+=("$l"); done < <(sim_defaults read -g AppleLanguages 2>/dev/null \
     | sed -nE 's/^ *"?([^",()]+)"?,? *$/\1/p')
+  # The trap is armed before the first write, so an interrupt (Ctrl-C, kill) or a failure from here on
+  # still puts the saved values back. Every restore step is `|| true`: one failing must not skip the rest.
+  restore_locale() {
+    trap - EXIT INT TERM
+    xcrun simctl status_bar "$SIM" clear >/dev/null 2>&1 || true
+    if [[ -n "$OLD_LOCALE" ]]; then sim_defaults write -g AppleLocale "$OLD_LOCALE" || true; else sim_defaults delete -g AppleLocale 2>/dev/null || true; fi
+    if [[ ${#OLD_LANGS[@]} -gt 0 ]]; then sim_defaults write -g AppleLanguages -array "${OLD_LANGS[@]}" || true; else sim_defaults delete -g AppleLanguages 2>/dev/null || true; fi
+    reboot_sim || true
+  }
+  trap restore_locale EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   sim_defaults write -g AppleLocale en_US
   sim_defaults write -g AppleLanguages -array en
   reboot_sim
-  restore_locale() {
-    xcrun simctl status_bar "$SIM" clear >/dev/null 2>&1 || true
-    if [[ -n "$OLD_LOCALE" ]]; then sim_defaults write -g AppleLocale "$OLD_LOCALE"; else sim_defaults delete -g AppleLocale 2>/dev/null || true; fi
-    if [[ ${#OLD_LANGS[@]} -gt 0 ]]; then sim_defaults write -g AppleLanguages -array "${OLD_LANGS[@]}"; else sim_defaults delete -g AppleLanguages 2>/dev/null || true; fi
-    reboot_sim
-  }
-  trap restore_locale EXIT
 fi
 
 # --- clean look

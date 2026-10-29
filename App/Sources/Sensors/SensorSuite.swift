@@ -79,6 +79,15 @@ struct SensorSuite {
     }
 }
 
+/// A source only a recording starts; Navigate skips it
+/// (`SessionRun.startsRecordingOnlySources`). For a source whose rows are no
+/// navigation input and whose start asks for a permission navigation does
+/// not need: `AltimeterSource` (Motion & Fitness gates only `CMAltimeter`,
+/// R81.1-1). Device motion (a navigation input) and the raw IMU need no
+/// authorisation and run in Navigate as in Record: never mark them.
+@MainActor
+protocol RecordingOnlySource: SensorSource {}
+
 /// The `SensorAvailability.unavailable(reason:)` strings of the real sources
 /// (UX-15). The raw value is what the recording holds: `RecordingSession`
 /// writes "<source> unavailable: <raw value>" as a `lifecycle` `error` row,

@@ -286,6 +286,10 @@ struct SensorSourceTests {
         #expect(simulated.note == SensorSuite.simulatedNote)
         let device = SensorSuite.device()
         #expect(device.sources.map(\.name) == ["deviceMotion", "rawIMU", "altimeter", "referenceLocation"])
+        // Only the altimeter is Record-only (R81.1-1): Navigate starts every
+        // other source, the navigation inputs among them.
+        #expect(device.sources.filter { $0 is any RecordingOnlySource }.map(\.name) == ["altimeter"])
+        #expect(!simulated.sources.contains { $0 is any RecordingOnlySource }, "no permission on the simulator")
         #expect(device.note == nil)
         #expect(simulated.configuration == device.configuration)
         // Live GPS speed on both (M2-S2); background execution only on the

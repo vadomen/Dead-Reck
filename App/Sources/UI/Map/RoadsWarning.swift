@@ -8,6 +8,8 @@ enum RoadsWarning {
     static let noPacks = String(localized: "No road packs — roads off")
     static let noneCovering = String(localized: "No road pack covers this area — roads off")
     static let refused = String(localized: "Road packs refused — see Maps")
+    /// VoiceOver hint of the warning button (R-QA42-4): it opens Settings → Maps.
+    static let opensMapsHint = String(localized: "Opens Settings → Maps")
 
     /// The line to show, or nil.
     ///

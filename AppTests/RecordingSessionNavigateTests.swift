@@ -879,6 +879,50 @@ struct RecordingSessionNavigateTests {
         rig.session.disableNavigate()
     }
 
+    // MARK: Altimeter only in Record (R81.1-1)
+
+    @Test("Navigate never starts the altimeter (no Motion & Fitness prompt); Record starts it, writes its baro rows and, denied, its error row")
+    func altimeterOnlyInRecord() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let altimeter = FakeRecordingOnlySource(name: "altimeter")
+        altimeter.payload = .barometer(BarometerSample(pressureKPa: 100.5, relativeAltitude: 0))
+        let motion = FakeSource(name: "deviceMotion")
+        let rig = NavigateRig(store: scratch.store, extraSources: [motion, altimeter])
+        await rig.connect(speed: 0)
+
+        rig.session.enableNavigate(Self.quick)
+        let first = try #require(rig.session.navigateGeneration)
+        #expect(rig.source.isRunning && motion.isRunning, "Navigate starts every other source")
+        #expect(altimeter.starts == 0 && !altimeter.isRunning)
+
+        try await rig.session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
+        let url = try #require(rig.session.currentFile)
+        #expect(await eventually(10) { rig.tee.ended.contains(first) })
+        #expect(altimeter.starts == 1 && altimeter.isRunning)
+        try await Task.sleep(for: .milliseconds(200))
+        await rig.session.stop()
+        #expect(altimeter.stops == 1 && !altimeter.isRunning)
+        let second = try #require(rig.session.navigateGeneration, "back to Navigate: the link still polls")
+        #expect(second != first)
+        #expect(altimeter.starts == 1, "the next Navigate session does not start it either")
+        let (_, events, _) = try RecordingFixtures.read(url)
+        #expect(!RecordingFixtures.kinds(events, .barometer).isEmpty)
+        #expect(!RecordingFixtures.kinds(events, .accelerometer).isEmpty, "the other fake's rows")
+
+        // Denied: Record's row is as before; Navigate has nothing to say.
+        altimeter.availability = SensorUnavailableReason.motionDenied.availability
+        try await rig.session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
+        let denied = try #require(rig.session.currentFile)
+        await rig.session.stop()
+        #expect(altimeter.starts == 1)
+        let (_, deniedEvents, _) = try RecordingFixtures.read(denied)
+        let errors = RecordingFixtures.lifecycle(deniedEvents).filter { $0.sample.event == "error" }.map(\.sample.detail)
+        #expect(errors == ["altimeter unavailable: \(SensorUnavailableReason.motionDenied.rawValue)"])
+        #expect(RecordingFixtures.kinds(deniedEvents, .barometer).isEmpty)
+        rig.session.disableNavigate()
+    }
+
     /// A rig whose location source is a real `ReferenceLocationSource`
     /// (When In Use, so no CoreLocation prompt) holding fake background
     /// activity sessions, so the test sees each one made and released.

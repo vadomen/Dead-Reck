@@ -99,6 +99,8 @@ struct ConsoleContent: View {
             ViewThatFits(in: .horizontal) {
                 HStack { linkButtons; Spacer(minLength: 0); reinitialiseButton }
                 VStack(alignment: .leading, spacing: 8) { HStack { linkButtons }; reinitialiseButton }
+                // Accessibility sizes (R-QA42-3): one button per row, nothing cut.
+                VStack(alignment: .leading, spacing: 8) { linkButtons; reinitialiseButton }
             }
             .buttonStyle(.bordered)
             .controlSize(.regular)

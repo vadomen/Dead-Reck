@@ -29,6 +29,7 @@ Done / in code / open, per item. "In code (prompt N)" = merged work that has not
 | Restore the estimate after a relaunch (D8) | done in code (prompt 39); device checks open (PLAN §6) | UX-20 |
 | Record starts from Navigate's estimate | done in code (prompt 40); device checks open (PLAN §6) | |
 | Release QA: OSM credit layout, Language row, simulator QA, store screenshots | in progress (prompt 42) | |
+| Pre-release fixes: GPS-off rail button icon-only while GPS is in use, map line for denied Location, altimeter only in Record, R80 minors, store screenshots re-shot | done in code (prompt 43, branch `prerelease-fixes`, review run 81 closed); device checks open (PLAN §6) | R-QA42-1 (Location line only), R-QA42-3, R-QA42-4, R-QA42-5 (implemented, checks pending), R80.1-2, R80.1-3, R80.2-1, R80.2-2, R81.1-1 (done); R-QA43-3 opened; R81.1-2 deferred; R-QA42-2 stays open |
 | Phases 4-7 (quality, TestFlight, App Store page, submission) | open | |
 
 Starting decisions (from the user, 2026-10-16):
@@ -105,6 +106,7 @@ Also: `NSPrivacyTracking = false`, no tracking domains, `NSPrivacyCollectedDataT
 
 ### 2.3 Info.plist: permission texts and background modes
 - [ ] Rewrite the purpose strings for an ordinary user instead of "for dead-reckoning research", for example: "…to estimate your position when GPS is unavailable or jammed". Translate the texts (InfoPlist.xcstrings).
+  - Motion & Fitness covers only the barometer (altitude changes in recordings) and is asked only at the first recording, never in Navigate (prompt 43, R81.1-1). `NSMotionUsageDescription` en: "FuGPS records barometric altitude changes when you record a test drive; it stays in the recording on your phone."; uk: «FuGPS записує зміни висоти за барометром, коли ви записуєте тестову поїздку; дані лишаються в записі на вашому телефоні.»
 - [ ] `UIBackgroundModes` (D7 revised, 2026-10-20): keeps `location` and `bluetooth-central`. Navigate and Record both keep running with the screen locked. Authorisation stays **When In Use**; a `CLBackgroundActivitySession` (with `allowsBackgroundLocationUpdates`) makes it work in the background, so there is no Always prompt. `NSLocationAlwaysAndWhenInUseUsageDescription` is removed, because nothing requests Always. The session is held while Navigate or Record runs and released when it stops (Navigate also auto-stops after 5 min without OBD). The display-only location feed (map without OBD) stays foreground-only. Review Notes justify the modes as live position on the map while driving (2.5.4). Device check in PLAN §6 (lock during Navigate; battery over 1 h, locked vs on). The `lifecycle` event for entering the background is already written.
 - [ ] `UIFileSharingEnabled`: keep (this is how Record logs reach Files), but make sure Documents holds nothing technical: packs move to Application Support.
 

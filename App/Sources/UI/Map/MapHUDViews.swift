@@ -122,14 +122,17 @@ struct HUDRailButton: View {
     var active: Bool
     /// Visible text under the button (the GPS switch); nil for the others.
     var caption: String?
+    /// Keep the caption's height when `caption` is nil (the GPS switch, so the rail does not jump).
+    var reservesCaption: Bool
     /// Voice Control names; empty keeps the system default (the label).
     var inputLabels: [String]
     var action: () -> Void
 
     init(
-        symbol: String, label: String, active: Bool, caption: String? = nil, inputLabels: [String] = [],
-        action: @escaping () -> Void
+        symbol: String, label: String, active: Bool, caption: String? = nil, reservesCaption: Bool = false,
+        inputLabels: [String] = [], action: @escaping () -> Void
     ) {
+        self.reservesCaption = reservesCaption
         self.symbol = symbol
         self.label = label
         self.active = active
@@ -158,6 +161,8 @@ struct HUDRailButton: View {
                         .padding(.horizontal, 6)
                         .frame(height: MapLayout.railCaptionHeight - 2)
                         .background(HUDColors.card, in: Capsule())
+                } else if reservesCaption {
+                    Color.clear.frame(width: 0, height: MapLayout.railCaptionHeight - 2)
                 }
             }
         }

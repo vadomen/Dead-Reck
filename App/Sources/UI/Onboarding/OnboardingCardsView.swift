@@ -103,6 +103,11 @@ struct OnboardingCardsContent: View {
     var primaryTitle: String
     var onPrimary: () -> Void = {}
     var onSkip: () -> Void = {}
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    /// At accessibility sizes the pinned block is the smaller one (R-QA42-5): the text
+    /// above it is what the driver's passenger reads, the buttons only need to be reachable.
+    private var compactBlock: Bool { typeSize.isAccessibilitySize }
 
     private var current: OnboardingCard {
         OnboardingCard.allCases[min(max(page, 0), OnboardingCard.allCases.count - 1)]
@@ -122,13 +127,14 @@ struct OnboardingCardsContent: View {
                 .accessibilitySortPriority(2)
             VStack(spacing: 8) {
                 Button(action: onPrimary) {
-                    Text(primaryTitle).font(.title2.bold()).frame(maxWidth: .infinity, minHeight: 56)
+                    Text(primaryTitle).font(compactBlock ? .title3.bold() : .title2.bold())
+                        .frame(maxWidth: .infinity, minHeight: compactBlock ? 48 : 56)
                 }
                 .prominentButton()
                 if showsSkip {
                     Button(action: onSkip) {
-                        Text(OnboardingText.skip).font(.title3.weight(.semibold))
-                            .frame(maxWidth: .infinity, minHeight: 48)
+                        Text(OnboardingText.skip).font(compactBlock ? .body.weight(.semibold) : .title3.weight(.semibold))
+                            .frame(maxWidth: .infinity, minHeight: compactBlock ? 44 : 48)
                     }
                     .buttonStyle(.bordered)
                 }
@@ -136,8 +142,9 @@ struct OnboardingCardsContent: View {
             .padding(.horizontal, 24)
             .padding(.bottom, 8)
             // The buttons are pinned: at the accessibility sizes they filled almost half of a small
-            // phone and left the text a window of three lines. They stay big (xxxLarge, 56 pt tall).
-            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+            // phone and left the text a window of three lines. Up to xxxLarge they stay big (56 pt
+            // tall); at accessibility sizes they stop at xLarge and 48 / 44 pt (R-QA42-5).
+            .dynamicTypeSize(...(compactBlock ? DynamicTypeSize.xLarge : DynamicTypeSize.xxxLarge))
             .accessibilitySortPriority(1)
         }
         .accessibilityElement(children: .contain)

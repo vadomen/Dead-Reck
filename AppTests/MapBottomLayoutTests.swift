@@ -11,7 +11,7 @@ struct MapBottomLayoutTests {
     private static let heightScales: [Double] = [1, 2.2]
     private static let baseHeight: [MapBottomItem: Double] = [
         .offerCard: 130, .toast: 56, .statusLine: 56, .positionStatus: 44, .restoreStatus: 44,
-        .roadsWarning: 48, .resumeHint: 40, .debugStrip: 50,
+        .roadsWarning: 48, .resumeHint: 40, .debugStrip: 50, .permissionLine: 80,
     ]
     private static let rail = CGSize(width: MapLayout.controlSize, height: MapLayout.railHeight)
 
@@ -27,7 +27,7 @@ struct MapBottomLayoutTests {
             offer: subset.contains(.offerCard), toast: subset.contains(.toast), status: subset.contains(.statusLine),
             positionStatus: subset.contains(.positionStatus), restoreStatus: subset.contains(.restoreStatus),
             roadsWarning: subset.contains(.roadsWarning), resumeHint: subset.contains(.resumeHint),
-            debugSetting: subset.contains(.debugStrip))
+            debugSetting: subset.contains(.debugStrip), permission: subset.contains(.permissionLine))
     }
 
     @Test("the credit frame meets no bottom element and stays inside the container, for every combination")
@@ -53,7 +53,7 @@ struct MapBottomLayoutTests {
                 }
             }
         }
-        #expect(checked == 2 * 2 * 256)
+        #expect(checked == 2 * 2 * 512)
     }
 
     @Test("the stack ends above the credit band; the rail too; the stack stays left of the rail")
@@ -92,7 +92,7 @@ struct MapBottomLayoutTests {
     }
 }
 
-/// R-QA42-1: at accessibility Dynamic Type sizes the bottom stack is cut so it cannot grow over the speed card.
+/// Prompt 42 QA: at accessibility Dynamic Type sizes the bottom stack is cut so it cannot grow over the speed card.
 @Suite("Map bottom stack at accessibility sizes")
 struct MapBottomLimitTests {
     private let all = MapBottomZone.items(
@@ -133,16 +133,18 @@ struct MapBottomLimitTests {
         #expect(MapBottomZone.limited(items, accessibilitySize: true, offerVisible: true) == [.offerCard, .statusLine])
     }
 
-    @Test("accessibility sizes: two or fewer pass through; the status banner and offer card survive any combination")
+    @Test("accessibility sizes: two or fewer pass through; the status banner and permission line survive any combination, the offer card too unless a permission line needs the room")
     func neverDropsCritical() {
         #expect(MapBottomZone.limited([.positionStatus, .debugStrip], accessibilitySize: true) == [.positionStatus, .debugStrip])
         for mask in 0..<(1 << MapBottomItem.allCases.count) {
             let subset = MapBottomItem.allCases.enumerated().filter { mask & (1 << $0.offset) != 0 }.map(\.element)
             let out = MapBottomZone.limited(subset, accessibilitySize: true)
-            for critical in [MapBottomItem.statusLine, .offerCard] where subset.contains(critical) {
+            let never: [MapBottomItem] = subset.contains(.permissionLine)
+                ? [.statusLine, .permissionLine] : [.statusLine, .offerCard]
+            for critical in never where subset.contains(critical) {
                 #expect(out.contains(critical))
             }
-            #expect(out.count <= max(MapBottomZone.accessibilityLimit, subset.filter { [.statusLine, .offerCard].contains($0) }.count))
+            #expect(out.count <= max(MapBottomZone.accessibilityLimit, subset.filter { never.contains($0) }.count))
         }
     }
 }

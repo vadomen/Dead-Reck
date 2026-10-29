@@ -177,7 +177,7 @@ Every check still open from the sections added by prompts 28 and 30-41 below, gr
 - [ ] Before pairing, the HUD reads "No OBD" (muted); Settings → OBD adapter → Scan, pick, Connect works without Console; help shows when no adapter is found (prompts 30, 31)
 - [ ] Disconnect and Forget ask first during a recording (prompt 30)
 - [ ] About: Privacy policy and Support open the site pages; "Data and services" shows OpenStreetMap (ODbL) and Apple Maps (prompt 30)
-- [ ] Settings order: OBD adapter, Maps, Mount and orientation; About; Developer (prompt 31)
+- [ ] Settings order: OBD adapter, Maps, Mount and orientation; Language; About; Developer (prompt 31)
 - [ ] "Use cellular data" is on the first screen of Settings → Maps on the smallest supported iPhone (prompt 28)
 - [ ] First launch with a fix: permission line, then the system prompt, region preselected with neighbours under "Nearby", nothing downloads before the tap (prompt 26)
 - [ ] Location denied, or no fix in 10 s: national only preselected, list editable (prompt 26)
@@ -185,6 +185,10 @@ Every check still open from the sections added by prompts 28 and 30-41 below, gr
 - [ ] Gate also hides the Diagnostics developer rows until 7 taps on Version (prompt 25)
 - [ ] No maps installed: banner/offers behave and the app works; "Never" persists across launches, Reset in Maps brings the offer back (prompt 26)
 - [ ] Each permission denied once (Bluetooth, Motion, Location): the app explains and recovers in the Ukrainian text (prompt 41)
+- [ ] Motion & Fitness denied: Navigate is unaffected (no map line, turns still followed, "Finding your position…" as usual); a recording gets the `altimeter unavailable` error row and no `baro` rows (prompt 43, R81.1-1)
+- [ ] Fresh install: onboarding and Navigate with OBD never show the Motion & Fitness prompt; the first Record Start shows it with the new text (prompt 43, R81.1-1)
+- [ ] After re-grant of Location in iOS Settings and returning to the app, the Location line disappears without restarting the app (prompt 43, R-QA43-3)
+- [ ] Location denied: the map shows «Немає доступу до геолокації — карта не знає, де ви · Параметри» / "No location access — the map can't show where you are · Settings"; the button opens the app's iOS Settings; the line goes away after re-grant. It does not cover the OSM credit (prompt 43)
 
 **D: demo in airplane mode on the Release build**
 - [ ] Airplane mode, Bluetooth off: Settings → Developer → "Demo drive"; roads overlay visible, calibrating within about 10 s, arrow moves with DEMO badge, location chip grey after 60 s, arrow stays on the roads for 2 laps (about 17 min); Stop demo restores the normal map (REL-DEMO, prompt 36)
@@ -259,7 +263,7 @@ Every check still open from the sections added by prompts 28 and 30-41 below, gr
 - **One CMMotionManager:** device motion and raw IMU share one manager (`SharedMotionManager`). Confirm neither stream's rate drops when both run, compared with either alone.
 - **Device-motion magnetic field:** with `xArbitraryZVertical` CoreMotion is expected to report `magneticAccuracy` −1 and no `magneticField` in `motion` rows (the raw field is in `mag`). Record what the phone actually reports.
 - **CoreMotion timestamps:** `motion`/`accel`/`gyro` `t` must track `clock.now()` (no offset of seconds). Check the first samples after start: a small negative `t` from a buffered batch is legal; a large offset would mean CoreMotion's timebase is not `ProcessInfo.systemUptime` on this iOS version.
-- **Permissions:** first start prompts for Motion & Fitness (altimeter) and Location When In Use. Denying either must give a `lifecycle` `error` row (`altimeter unavailable: …`, `referenceLocation unavailable: …`) and the recording must still run. Revoking location mid-drive must give `referenceLocation: authorization denied while recording …`.
+- **Permissions:** the first Record start prompts for Motion & Fitness (altimeter; Navigate never asks, prompt 43), and Location When In Use is asked at the first-launch maps step. Denying either must give a `lifecycle` `error` row (`altimeter unavailable: …`, `referenceLocation unavailable: …`) and the recording must still run. Revoking location mid-drive must give `referenceLocation: authorization denied while recording …`.
 - **Background survival (`CLBackgroundActivitySession`):** with When-In-Use authorisation only, lock the screen for 5+ minutes (M4) and ≥ 1 h on a drive (M5): rows continue, `stats` rows every 10 s without holes, `background`/`foreground` rows bracket the lock, the blue location indicator shows. If the app is suspended, `stats` `t` values jump — that is the signature to look for.
 - **Reference fix quality:** `location` `ageS` (expect 0–1 s), `horizontalAccuracy`, and whether `activityType = .otherNavigation` with `kCLLocationAccuracyBest` avoids road snapping (compare a drive's track with the road geometry at a junction). Also whether fixes keep arriving at 1 Hz while stationary (no auto-pause).
 - **Fix time:** `t = receivedT − ageS`; on the phone `receivedT − t` should be a fraction of a second. Large or negative ages on most fixes would mean the wall clock and CoreLocation disagree.
