@@ -1088,8 +1088,11 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
     `countNone`.
   - `errorMedianM`, `errorP90M`, `errorMedianPercent`, `errorP90Percent` over
     the scored checkpoints; `ellipseSemiMajorMedianM`; `essMin` (minimum
-    effective sample size read after each ingest while initialised;
-    resampling resets it to N, so it mainly detects collapse). Percentiles are
+    effective sample size read after each ingest while initialised; it is
+    read after the engine's resampling, so it never drops below
+    `resampleESSFraction`·N (1000 with the defaults) and cannot show a weight
+    collapse, only how close the cloud sat to the resampling floor;
+    R82.1-2). Percentiles are
     nearest-rank (rank ⌈p·n/100⌉; the median of an even count is the lower
     middle value; the summary's older clean-fix median line is unchanged).
 - **Refinement pairs** (`--pin-pair-window s`, default 3, 0 disables; N3.0):
@@ -2560,8 +2563,10 @@ drive-9 report-only; clean, clean-long and manual-3 one sanity run each (seed
   without OBD; (b) the roads off-road fix gate needs fresh OBD ≥
   `roadFixGateMinKmh`, so without OBD it never rejects a fix. `elm` rows
   (`NO DATA`) are not an engine input in any mode.
-- The stop gate did not fire: no crash, no non-finite value, ESS min
-  1000–1238 on every cell.
+- The stop gate did not fire: no crash, no non-finite value, every cell's
+  fix accounting balanced (`unaccounted` 0 on all 146 cells), and the ESS
+  minimum sat at the resampling floor (1000–1238), which by construction
+  cannot show a collapse (R82.1-2).
 
 Table: each cell is mean (min–max over seeds); p90 is nearest-rank; "max %" is
 the maximum over the scored points; "naive" is the stay-at-the-last-fix

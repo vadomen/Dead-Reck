@@ -1164,3 +1164,16 @@ Tests at round 2: Core 1201 tests in 147 suites passed (36 known issues); App 84
 ### Run 81 summary
 
 2 rounds; 1 fixed (R81.1-1); 0 rejected; 1 deferred (R81.1-2). Final tests: Core 1201 tests in 147 suites passed (36 known issues); App 847 tests in 128 suites passed.
+
+## Run 82: Prompt 44 NAV-NOOBD, replay only (`replay_nav --obd use|none`, fix accounting, last-fix baselines delivered/accepted, per-run aggregates; NAVIGATION.md results section; BACKLOG_UX NAV-NOOBD done, UX-7 decision pending) (main..nav-noobd: e900c39..4ab0642), started 2026-10-29
+
+### Round 1
+
+Reviewers: one opus reviewer. Result: 0 BLOCKER, 1 MAJOR (CONFIRMED, fixed), 1 MINOR (wording, fixed in the round). Scope invariant confirmed (no engine, config, log-format, sidecar or App change). Bit-identical check 12 passed (clean, seed 1, roads on: GeoJSON identical, metrics differ only in `msPerStep`/`maxIngestMs` plus the 8 new optional keys). Docs numbers recomputed for six table cells: match; all 146 `fixAccounting` rows balance. Mutations: author's `--obd none` `continue` removal re-run (killed, 4 tests); reviewer's two (below) survived.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R82.1-1 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/Replay/NavigationReplay.swift:1330` (`rejectedTimeJump`) and `:1430` (`olderThanSave`, with the `restore.fixesOlderThanSave` term at ~1451): two fix-accounting outcomes with no test; deleting either line survives every suite, and a regression would show `UNACCOUNTED n` with no test failing. | CONFIRMED, fixed | `NavigationNoOBDTests/fixAccountingOlderThanSave` (hand-over prior, one fix before `savedT`, one cached fix after the prior; `olderThanSave == 2`) and `fixAccountingRejectedTimeJump` (one fix 7200 s ahead; `rejectedTimeJump == 1`), both with `expectBalanced` (field-by-field sum == `delivered`, `unaccounted == 0`). Mutations: `:1330` deleted → `fixAccountingRejectedTimeJump` fails; `:1430` deleted → `fixAccountingOlderThanSave` fails; `:1451` deleted → `fixAccountingOlderThanSave` fails. |
+| R82.1-2 | MINOR | `docs/NAVIGATION.md` `essMin` ("resampling resets it to N, so it mainly detects collapse") and the results section's stop-gate sentence: `essMin` is read after the engine's resampling, so it never drops below `resampleESSFraction`·N (1000 by default) and cannot show a weight collapse. | fixed (wording) | Both sentences now say the value sits at the resampling floor and cannot show a collapse; the stop-gate sentence cites the balanced fix accounting instead. No code change. |
+
+Tests at round 1: Core 1212 tests in 148 suites passed (36 known issues). After the fixes: Core 1214 tests in 148 suites passed (36 known issues); perf gate 9 tests in 2 suites passed.

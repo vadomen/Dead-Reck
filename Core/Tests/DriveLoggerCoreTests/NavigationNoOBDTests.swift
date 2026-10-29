@@ -239,6 +239,80 @@ struct NavigationNoOBDTests {
         #expect(ReplayReport.summary(none).contains("Fix account   delivered 3: accepted 2, held dropped timeout 1"))
     }
 
+    /// Every outcome, summed field by field (not through `notAccepted`),
+    /// equals `delivered`, and `unaccounted` is 0.
+    static func expectBalanced(_ a: FixAccounting, sourceLocation: SourceLocation = #_sourceLocation) {
+        let outcomes = a.accepted + a.droppedHeldTimeout + a.droppedHeldMoving + a.droppedHeldReplaced
+            + a.ignoredStale + a.ignoredInvalid + a.olderThanSave + (a.rejectedOffRoad ?? 0)
+            + (a.withheldByGPSSwitch ?? 0) + a.rejectedTimeJump + a.stillHeld
+        #expect(outcomes == a.delivered, "\(a.text)", sourceLocation: sourceLocation)
+        #expect(a.unaccounted == 0, "\(a.text)", sourceLocation: sourceLocation)
+    }
+
+    /// A clean 5 m fix at (east, north) of the synthetic plane, its own
+    /// time `t`, received at `receivedT` (session seconds).
+    static func fix(east: Double, north: Double, t: Double, receivedT: Double) -> LogEvent {
+        let p = S.plane.geodetic(east: east, north: north)
+        return .location(LocationSample(latitude: p.latitude, longitude: p.longitude, altitude: 0,
+                                        horizontalAccuracy: 5, verticalAccuracy: -1, speed: 10, speedAccuracy: 0.3,
+                                        course: 0, courseAccuracy: 2, receivedT: S.ms(receivedT),
+                                        ageS: receivedT - t),
+                         at: S.ms(t))
+    }
+
+    @Test("Fix accounting with a hand-over prior: a fix arriving before the prior's save (inputsOlderThanSave) and a cached fix older than the save after the prior is applied (fixesOlderThanSave) are both 'older than save'; a fresh fix is accepted; the books balance")
+    func fixAccountingOlderThanSave() throws {
+        typealias H = NavigationHandOverTests
+        let prior = try #require(try H.handOverRow(ageS: 1).navigationPrior)
+        // On Record's clock the prior was saved about 1 s before the Start.
+        #expect(prior.savedT.seconds > -2 && prior.savedT.seconds < 0, "savedT \(prior.savedT.seconds)")
+        let north = { (t: Double) in H.drive.truth(at: H.switchT + t).north }
+        let events = H.recordEvents(initReplay: true) + [
+            // Arrives before the save, prior still pending: ignored by
+            // `ingest` (restore.inputsOlderThanSave).
+            Self.fix(east: 0, north: north(-8), t: -8, receivedT: -7.95),
+            // Arrives after the prior is applied, its own t before the save:
+            // a cached fix (restore.fixesOlderThanSave).
+            Self.fix(east: 0, north: north(-5), t: -5, receivedT: 2.005),
+            // A fresh fix on the truth: accepted.
+            Self.fix(east: 0, north: north(10), t: 10, receivedT: 10.055),
+        ]
+        var options = ReplayOptions(gps: .use, config: H.recordConfig)
+        options.prior = prior
+        options.priorSource = .recording
+        let run = Self.run(events, options)
+        let restore = try #require(run.restore)
+        #expect(restore.status == .confirmed)
+        #expect(restore.inputsOlderThanSave == 2, "the init replay's OBD reading and the early fix")
+        #expect(restore.fixesOlderThanSave == 1)
+        let a = run.fixAccounting
+        #expect(a.delivered == 3 && a.delivered == run.fixes.count)
+        #expect(a.olderThanSave == 2, "1 location input older than the save + 1 cached fix older than the save")
+        #expect(a.accepted == 1 && a.accepted == run.counters.fixesUsed)
+        #expect(a.rejectedTimeJump == 0 && a.stillHeld == 0)
+        Self.expectBalanced(a)
+        #expect(ReplayMetrics(run).fixAccounting == a)
+    }
+
+    @Test("Fix accounting: a fix arriving more than maxForwardJumpS after the drive is delivered and rejected as a time jump (not in fixes, not scored); the books balance")
+    func fixAccountingRejectedTimeJump() throws {
+        typealias K = NavigationReplaySkipTests
+        let events = K.drive.events(fix: S.cleanFix())
+        let late = K.drive.duration + 7_200
+        let plain = K.replay(events)
+        let jumped = K.replay(events + [Self.fix(east: 0, north: 0, t: late, receivedT: late + 0.05)])
+        #expect(jumped.counters.inputsRejectedTimeJump == 1)
+        #expect(jumped.fixes == plain.fixes, "the rejected fix is not on the replay's timeline")
+        let a = jumped.fixAccounting
+        #expect(a.delivered == plain.fixAccounting.delivered + 1 && a.delivered == jumped.fixes.count + 1)
+        #expect(a.rejectedTimeJump == 1)
+        #expect(a.accepted == plain.fixAccounting.accepted)
+        Self.expectBalanced(a)
+        Self.expectBalanced(plain.fixAccounting)
+        #expect(plain.fixAccounting.rejectedTimeJump == 0)
+        #expect(ReplayMetrics(jumped).fixAccounting == a)
+    }
+
     @Test("Last-fix baselines in a run: the held stale fix is delivered but never accepted; known from its arrival, not its t; none yet is counted, not scored")
     func baselinesInARun() throws {
         let run = Self.staleRun(.none)
