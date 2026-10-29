@@ -199,7 +199,7 @@ enum MapBottomItem: Hashable, Sendable, CaseIterable {
     case toast
     /// Calibration and OBD-lost banners (`NavigateStatus`).
     case statusLine
-    /// "No motion / location access · Settings" while a permission is refused (R-QA42-1).
+    /// "No location access · Settings" while a permission is refused (R-QA42-1).
     /// Priority above the offer card: at accessibility sizes it is kept and the offer yields.
     case permissionLine
     /// "Finding your position... keep driving" while the estimate is unconverged or km-wide (C6).
@@ -432,7 +432,7 @@ struct HUDFakes: Equatable, Sendable {
     var nav: FakeNav?
     /// UX-15 screenshots: the "Restored · n min ago · not yet confirmed" line (12 min), on `navEllipse`.
     var restored = false
-    /// Refused permissions (R-QA42-1 screenshots): `motionDenied`, `locationDenied`.
+    /// Refused permissions (R-QA42-1 screenshots): `locationDenied`.
     var access = SensorAccess()
 
     /// `navFinding`: not converged, a km-wide ellipse. `navEllipse`: converged,
@@ -456,7 +456,6 @@ struct HUDFakes: Equatable, Sendable {
             case "calibrating": out.isActive = true; out.calibrating = true
             case "stopped": out.isActive = true; out.stopped = true
             case "restored": out.isActive = true; out.restored = true
-            case "motionDenied": out.isActive = true; out.access.motionDenied = true
             case "locationDenied": out.isActive = true; out.access.locationDenied = true
             case "navFinding", "navEllipse", "navRoad":
                 out.isActive = true

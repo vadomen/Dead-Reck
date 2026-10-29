@@ -2025,23 +2025,6 @@
         }
       }
     },
-    "No motion access — navigation without GPS is not possible" : {
-      "comment" : "Map bottom line when Motion & Fitness is refused (followed by the Settings button).",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "No motion access — navigation without GPS is not possible"
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Немає доступу до датчиків руху — навігація без GPS неможлива"
-          }
-        }
-      }
-    },
     "NOT RECORDING" : {
       "localizations" : {
         "uk" : {

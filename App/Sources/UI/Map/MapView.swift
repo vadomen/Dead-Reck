@@ -808,7 +808,7 @@ struct GPSMapView: View {
     private var bottomItemsUnlimited: [MapBottomItem] {
         MapBottomZone.items(
             offer: offerCard != nil, toast: toast != nil, status: statusLine != nil,
-            positionStatus: MapPermissionNotice.showsPositionStatus(hasEstimate: estimate?.positionFinding ?? false, notice: permissionNotice),
+            positionStatus: estimate?.positionFinding ?? false,
             restoreStatus: estimate.map { RestoreStatus.line($0.restore) != nil } ?? false,
             roadsWarning: roadsWarning != nil, resumeHint: follow.resumeDeadline != nil,
             debugSetting: showNavStats, permission: permissionNotice != nil)

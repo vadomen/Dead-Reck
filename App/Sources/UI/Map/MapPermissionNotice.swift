@@ -1,35 +1,26 @@
 import SwiftUI
 
-/// The map's explanation of a refused permission (R-QA42-1, prompt 43): one line
-/// in the bottom stack with a button that opens the app's page in iOS Settings.
-/// Pure, so a test checks the choice and the texts without a view.
+/// The map's explanation of a refused Location permission (R-QA42-1, prompt 43):
+/// one line in the bottom stack with a button that opens the app's page in iOS
+/// Settings. Pure, so a test checks the choice and the texts without a view.
 ///
-/// - Motion & Fitness refused: navigation without GPS cannot run at all (the
-///   dead-reckoning engine has no motion), so this wins over Location.
 /// - Location refused: the map cannot show the phone's position; navigation by
 ///   OBD still works but needs a starting point from the driver (`note`).
-/// - Neither: nil, so the line is gone after the permission is granted again.
+/// - Motion & Fitness refused: no line (R81.1-1). That permission gates only
+///   the altimeter; the dead-reckoning engine reads no barometer, so navigation
+///   works and "Finding your position…" stays truthful.
+/// - Nothing refused: nil, so the line is gone after the permission is granted again.
 enum MapPermissionNotice: Equatable, Sendable {
-    case motionDenied
     case locationDenied
 
     /// nil while nothing is refused or during the demo (its sensors are not the phone's).
     static func make(_ access: SensorAccess, demo: Bool) -> MapPermissionNotice? {
         guard !demo else { return nil }
-        if access.motionDenied { return .motionDenied }
-        if access.locationDenied { return .locationDenied }
-        return nil
-    }
-
-    /// "Finding your position…" never shows while Motion is refused: without motion
-    /// the estimate cannot converge, so the line would stay forever.
-    static func showsPositionStatus(hasEstimate: Bool, notice: MapPermissionNotice?) -> Bool {
-        hasEstimate && notice != .motionDenied
+        return access.locationDenied ? .locationDenied : nil
     }
 
     var message: String {
         switch self {
-        case .motionDenied: String(localized: "No motion access — navigation without GPS is not possible")
         case .locationDenied: String(localized: "No location access — the map can't show where you are")
         }
     }
@@ -42,7 +33,6 @@ enum MapPermissionNotice: Equatable, Sendable {
     /// One short extra line (normal text sizes only): what still works without Location.
     var note: String? {
         switch self {
-        case .motionDenied: nil
         case .locationDenied: String(localized: "OBD navigation needs a starting point — place a pin on the map")
         }
     }
@@ -80,10 +70,6 @@ struct MapPermissionLine: View {
         .accessibilityLabel(notice.accessibilityLabel)
         .accessibilityAddTraits(.isButton)
     }
-}
-
-#Preview("Motion denied") {
-    MapPermissionLine(notice: .motionDenied).padding()
 }
 
 #Preview("Location denied") {

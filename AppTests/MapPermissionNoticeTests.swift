@@ -20,45 +20,42 @@ struct MapPermissionNoticeTests {
     func accessFromAvailability() {
         #expect(SensorAccess.from([]).isGranted)
         #expect(SensorAccess.from([.available, .available]).isGranted)
-        #expect(SensorAccess.from([.available, motion]) == SensorAccess(motionDenied: true, locationDenied: false))
-        #expect(SensorAccess.from([location, .available]) == SensorAccess(motionDenied: false, locationDenied: true))
-        #expect(SensorAccess.from([motion, location]) == SensorAccess(motionDenied: true, locationDenied: true))
-        #expect(SensorAccess.from([SensorUnavailableReason.motionRestricted.availability]).motionDenied)
+        #expect(SensorAccess.from([location, .available]) == SensorAccess(locationDenied: true))
+        #expect(SensorAccess.from([motion, location]) == SensorAccess(locationDenied: true))
         #expect(SensorAccess.from([SensorUnavailableReason.locationRestricted.availability]).locationDenied)
+        // Motion & Fitness gates only the altimeter (R81.1-1): not a map permission.
+        #expect(SensorAccess.from([motion]).isGranted)
+        #expect(SensorAccess.from([SensorUnavailableReason.motionRestricted.availability]).isGranted)
         // Unrelated reasons (no barometer) are not a permission.
         #expect(SensorAccess.from([SensorUnavailableReason.barometerUnsupported.availability]).isGranted)
     }
 
-    @Test("Motion wins over Location; nothing refused or the demo: no line; re-grant removes it")
+    @Test("Only Location produces a line (also with Motion refused); the demo or nothing refused: no line")
     func choice() {
-        #expect(MapPermissionNotice.make(SensorAccess(motionDenied: true, locationDenied: true), demo: false) == .motionDenied)
-        #expect(MapPermissionNotice.make(SensorAccess(motionDenied: true), demo: false) == .motionDenied)
         #expect(MapPermissionNotice.make(SensorAccess(locationDenied: true), demo: false) == .locationDenied)
+        #expect(MapPermissionNotice.make(SensorAccess.from([motion, location]), demo: false) == .locationDenied, "both refused")
+        #expect(MapPermissionNotice.make(SensorAccess.from([motion]), demo: false) == nil, "R81.1-1: Motion refused, no line")
         #expect(MapPermissionNotice.make(SensorAccess(locationDenied: true), demo: true) == nil)
         #expect(MapPermissionNotice.make(SensorAccess(), demo: false) == nil, "after re-grant")
     }
 
-    @Test("Finding your position is suppressed only while Motion is refused")
-    func positionStatusSuppressed() {
-        #expect(!MapPermissionNotice.showsPositionStatus(hasEstimate: true, notice: .motionDenied))
-        #expect(MapPermissionNotice.showsPositionStatus(hasEstimate: true, notice: .locationDenied))
-        #expect(MapPermissionNotice.showsPositionStatus(hasEstimate: true, notice: nil))
-        #expect(!MapPermissionNotice.showsPositionStatus(hasEstimate: false, notice: nil))
+    @Test("Motion refused keeps Finding your position (the stack counts it)")
+    func positionStatusKept() {
+        let notice = MapPermissionNotice.make(SensorAccess.from([motion]), demo: false)
+        let items = MapBottomZone.items(
+            offer: false, toast: false, status: false, positionStatus: true, restoreStatus: false,
+            roadsWarning: false, resumeHint: false, debugSetting: false, permission: notice != nil)
+        #expect(items.contains(.positionStatus) && !items.contains(.permissionLine))
     }
 
     @Test("Texts in en and uk; the OBD starting-point note belongs to Location only")
     func texts() {
-        #expect(resolved("No motion access — navigation without GPS is not possible", "en")
-            == "No motion access — navigation without GPS is not possible")
-        #expect(resolved("No motion access — navigation without GPS is not possible", "uk")
-            == "Немає доступу до датчиків руху — навігація без GPS неможлива")
         #expect(resolved("No location access — the map can't show where you are", "uk")
             == "Немає доступу до геолокації — карта не знає, де ви")
         #expect(resolved("Open iOS Settings (map line)", "en") == "Settings")
         #expect(resolved("Open iOS Settings (map line)", "uk") == "Параметри")
         #expect(resolved("OBD navigation needs a starting point — place a pin on the map", "uk")
             == "Навігації за OBD потрібна початкова точка — поставте мітку на карті")
-        #expect(MapPermissionNotice.motionDenied.note == nil)
         #expect(MapPermissionNotice.locationDenied.note != nil)
         #expect(MapPermissionNotice.locationDenied.accessibilityLabel.hasSuffix(MapPermissionNotice.buttonTitle))
     }
@@ -79,9 +76,9 @@ struct MapPermissionNoticeTests {
         #expect(MapBottomZone.limited([.offerCard, .toast, .statusLine], accessibilitySize: true) == [.offerCard, .statusLine])
     }
 
-    @Test("DEBUG fakes: motionDenied / locationDenied")
+    @Test("DEBUG fakes: locationDenied (motionDenied is gone)")
     func fakes() {
-        #expect(HUDFakes.parse("ok,motionDenied").access == SensorAccess(motionDenied: true))
+        #expect(HUDFakes.parse("ok,motionDenied").access.isGranted)
         #expect(HUDFakes.parse("locationDenied").access == SensorAccess(locationDenied: true))
         #expect(HUDFakes.parse("ok").access.isGranted)
     }
