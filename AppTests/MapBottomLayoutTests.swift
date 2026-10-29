@@ -92,7 +92,7 @@ struct MapBottomLayoutTests {
     }
 }
 
-/// R-QA42-1: at accessibility Dynamic Type sizes the bottom stack is cut so it cannot grow over the speed card.
+/// Prompt 42 QA: at accessibility Dynamic Type sizes the bottom stack is cut so it cannot grow over the speed card.
 @Suite("Map bottom stack at accessibility sizes")
 struct MapBottomLimitTests {
     private let all = MapBottomZone.items(
