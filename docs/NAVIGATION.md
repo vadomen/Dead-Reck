@@ -796,7 +796,7 @@ default 100 (was 30 until 2026-10-14; N3.2 decision, below).
 
 ```bash
 cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-after <s>|mask-after-motion <s>|none] \
-  [--hold-out-acc <m>] [--truth ../logs/truth.json] [--seed N|header] [--particles N] \
+  [--obd use|none] [--hold-out-acc <m>] [--truth ../logs/truth.json] [--seed N|header] [--particles N] \
   [--set <configKey>=<number>] [--out ../logs/out] \
   [--as-live | --file-order] [--compare <log.nav.jsonl> [--tolerance <m>] [--heading-tolerance <deg>]] \
   [--write-sidecar <out.nav.jsonl>] [--pin-pair-window <s>] [--strict] \
@@ -1039,6 +1039,26 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   ahead to decide the mask, and the engine never sees it. The summary prints it.
 - `--hold-out-acc m`: every fix with accuracy < m is withheld, including for
   initialisation. Each one is printed as (t, acc).
+- **`--obd use|none`** (NAV-NOOBD, replay only; default `use`):
+  - `use` is bit-identical to before the flag existed (clean, seed 1, roads
+    off and on: GeoJSON byte-identical; metrics differ only in `msPerStep`,
+    `maxIngestMs` and the new keys below).
+  - `none` withholds every OBD reply (all ECUs, all PIDs) from the engine,
+    causally, as `--gps` withholds fixes. The input is still read: it feeds
+    the replay's distance integrator (∫ OBD speed from the log: "% of
+    distance", "distance so far") and motion start, but the engine never
+    ingests it. `elm` rows (`NO DATA`, timeouts) are never an engine input in
+    any mode, live or replay, so nothing is withheld there. The summary prints
+    an `OBD` line (replies withheld; scoring distance is still ∫ OBD speed).
+    The label gets `-obd-none`, so `use` and `none` rows coexist in one
+    `--out`.
+  - With `none` a recording's `navPrior` row is ignored, as with `--no-prior`,
+    with a printed note (its class and speed come from OBD); the label stays
+    `-obd-none`. `--start-at` carries the OBD mode into the pre-cut run.
+  - Refused with `none` (status 2): `--prior`, `--fix-offset`, `--compare`,
+    `--write-sidecar`, `--fixpin-inject` (they reproduce the live run, run no
+    engine or hard-code `--gps use`). `--as-live --obd none` runs and prints a
+    note (as `--as-live` with a GPS mask does).
 - Scored only against information the engine did not receive: withheld clean
   fixes (≤ 15 m), each manual fix (on the prior, just before it is ingested),
   and truth-file points and `end` (the last input). Errors are in metres and as
@@ -1047,6 +1067,31 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   the run's `cleanFixAccM`: the engine still uses its own `cleanFixAccM` to
   decide which fixes it treats as clean, but a `--set cleanFixAccM=…`, a sweep
   or a new default does not change which withheld fixes are scored.
+- **Fix account and last-fix baseline** (optional `metrics.json` keys, present
+  in every mode; summary lines "Fix account", "Error dist.", "Last fix"; a
+  section in `metrics.md`):
+  - `fixAccounting`: the location inputs that passed `--gps`/`--hold-out-acc`
+    (`delivered`) and their outcome in the engine: `accepted` (= the engine's
+    `fixesUsed`: the initialising fix, position updates incl. network fixes,
+    held fixes applied at an OBD 0), `droppedHeldTimeout`, `droppedHeldMoving`,
+    `droppedHeldReplaced` (the three held-fix drops), `ignoredStale` (the rest
+    of `fixesIgnoredStale`), `ignoredInvalid`, `olderThanSave`,
+    `rejectedTimeJump`, `stillHeld`, and with roads `rejectedOffRoad`, with a
+    GPS switch `withheldByGPSSwitch`. The outcomes sum to `delivered`.
+  - `lastFixBaseline`: the naive "stay at the last fix" baseline on the same
+    scored checkpoints, in two variants: `delivered` (newest fix that passed
+    the mask, whatever the engine's gates: what UX-1 (d)'s plain-GPS map
+    shows) and `accepted` (newest fix the engine ingested). A fix counts from
+    its arrival, never from its `t`; "newest" is by fix `t`; a checkpoint with
+    no fix yet is counted (`countNone`), not scored. Each has `perCheckpointM`
+    (indexed like `checkpoints`), `medianM`, `p90M`, `maxM`, `count`,
+    `countNone`.
+  - `errorMedianM`, `errorP90M`, `errorMedianPercent`, `errorP90Percent` over
+    the scored checkpoints; `ellipseSemiMajorMedianM`; `essMin` (minimum
+    effective sample size read after each ingest while initialised;
+    resampling resets it to N, so it mainly detects collapse). Percentiles are
+    nearest-rank (rank ⌈p·n/100⌉; the median of an even count is the lower
+    middle value; the summary's older clean-fix median line is unchanged).
 - **Refinement pairs** (`--pin-pair-window s`, default 3, 0 disables; N3.0):
   a manual fix whose `t` is at most s seconds after the previous manual fix's
   `t` is a refinement and is not scored, because the previous pin has just
