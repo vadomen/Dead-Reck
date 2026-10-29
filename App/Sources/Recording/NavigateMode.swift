@@ -68,6 +68,10 @@ protocol SessionRun: AnyObject {
     /// starts. True for a recording and for Navigate (D7 revised
     /// 2026-10-20: Navigate keeps running with the screen locked).
     var holdsBackgroundLocation: Bool { get }
+    /// Whether `RecordingOnlySource`s start with this run: true for a
+    /// recording, false for Navigate (R81.1-1: the altimeter, the only
+    /// source behind Motion & Fitness, feeds no navigation input).
+    var startsRecordingOnlySources: Bool { get }
     var startedSources: [any SensorSource] { get set }
     /// Link events are forwarded while true.
     var acceptsLinkEvents: Bool { get set }
@@ -101,6 +105,9 @@ final class NavigateRun: SessionRun {
     /// with the screen locked; released when the session ends (its sources
     /// stop: `disableNavigate`, auto-stop, Record's Start, `willTerminate`).
     let holdsBackgroundLocation = true
+    /// No altimeter in Navigate (R81.1-1): its `baro` rows reach no
+    /// navigation input, and starting it is what asks for Motion & Fitness.
+    let startsRecordingOnlySources = false
     var startedSources: [any SensorSource] = []
     var acceptsLinkEvents = true
     var replayedStartupInit = false

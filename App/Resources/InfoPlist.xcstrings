@@ -54,13 +54,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "FuGPS uses your phone's motion sensors to follow the car's turns, braking and acceleration, so it can keep estimating your position when GPS is jammed. If you record a drive, this data is saved in the recording on your phone."
+            "value" : "FuGPS records barometric altitude changes when you record a test drive; it stays in the recording on your phone."
           }
         },
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "FuGPS використовує датчики руху телефона, щоб відстежувати повороти, гальмування й прискорення авто та продовжувати визначати позицію, коли GPS глушать. Якщо ви записуєте поїздку, ці дані зберігаються в записі на вашому телефоні."
+            "value" : "FuGPS записує зміни висоти за барометром, коли ви записуєте тестову поїздку; дані лишаються в записі на вашому телефоні."
           }
         }
       }

@@ -46,7 +46,7 @@
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>FuGPS connects to your car's OBD-II Bluetooth adapter to read its speed and engine data, so it can keep estimating your position when GPS is jammed. If you record a drive, this data is saved in the recording on your phone.</string>
 	<key>NSMotionUsageDescription</key>
-	<string>FuGPS uses your phone's motion sensors to follow the car's turns, braking and acceleration, so it can keep estimating your position when GPS is jammed. If you record a drive, this data is saved in the recording on your phone.</string>
+	<string>FuGPS records barometric altitude changes when you record a test drive; it stays in the recording on your phone.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>FuGPS uses your location to show where you are and to keep estimating your position when GPS is jammed, also with the screen locked while you drive, and to pick the road map for your area. If you record a drive, your route is saved in the recording on your phone.</string>
 
