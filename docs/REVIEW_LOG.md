@@ -1197,7 +1197,7 @@ Reviewers: one opus reviewer. Bit-identity re-run by the reviewer: clean seed 1,
 | ID | Tag | Finding | Status | Note |
 |---|---|---|---|---|
 | R83.1-1 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/NavigationEngine.swift:984-1001`: `macroStep`'s fix-speed distance (`fixSpeedMeanIntegral`) is untested; removing it leaves the suite green. | CONFIRMED | Fixed: regression test `fixSpeedMeanThroughMacroSteps` (M2 now killed), review round 1 commit. |
-| R83.1-2 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/NavigationEngine.swift:1565-1568`: the robust branch's own tempering constant `noOBDNetworkFixCorrelationS` is untested (the test fixes are 60 s apart, weight 1 either way). | CONFIRMED | Fix: regression test (in progress). |
+| R83.1-2 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/NavigationEngine.swift:1565-1568`: the robust branch's own tempering constant `noOBDNetworkFixCorrelationS` is untested (the test fixes are 60 s apart, weight 1 either way). | CONFIRMED | Fixed: regression test `robustTemperingUsesItsOwnTimeConstant` (M3 now killed), review round 1 commit. |
 | R83.1-3 | MINOR | `docs/NAVIGATION.md` "Configuration (defaults)" table claims every non-road key but lacks the 14 noOBD* keys. | DEFERRED | See BACKLOG R83.1-3. |
 | R83.1-4 | MINOR | `docs/NAVIGATION.md`: "(123.2 m)" is given as the 0.7 × display line; it is the engine median 123.21 m, the line is 0.7 × 176.3 = 123.38 m. | FIXED in round 1 | One-line factual fix in a decision table. |
 
