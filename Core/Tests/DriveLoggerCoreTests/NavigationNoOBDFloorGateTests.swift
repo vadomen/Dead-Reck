@@ -234,6 +234,10 @@ struct NavigationNoOBDFloorGateTests {
         #expect(abs(parked.gatedMps - parked.mps * (300 / d0) * (300 / d0)) < 1e-6)
         #expect(engine.fixSpeedMean(at: S.ms(90).nanoseconds) == parked.mps)
         #expect(abs(engine.fixSpeedMean(at: S.ms(90.001).nanoseconds) - parked.gatedMps) < 1e-5)
+        // ∫μ dt across the hold's end: 30 s of μ̂, then the gated decay.
+        let closed = 30 * parked.mps + parked.gatedMps * 500 * -expm1(-110.0 / 500)
+        let parkedIntegral = engine.fixSpeedMeanIntegral(from: S.ms(60).nanoseconds, to: S.ms(200).nanoseconds)
+        #expect(abs(parkedIntegral - closed) < 1e-9 * closed, "\(parkedIntegral) vs \(closed)")
         var hard = M.config(fixSpeed: 1)
         hard.noOBDFixSpeedGate = 1
         var e1 = NavigationEngine(config: hard)
