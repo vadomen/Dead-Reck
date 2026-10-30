@@ -166,6 +166,46 @@ struct ReplayPinSnapTests {
             Self.run([Self.pin(at: 40, logged: (0, 20), tap: nil, span: 2000)], roads: try Self.road(), snap: false)))
     }
 
+    @Test("R84.3-2 (a): a v6 row at a span the app would refuse (800 m, no roads): zoomIn, and the engine gets the raw tap, not the logged point")
+    func zoomInGivesTheTap() throws {
+        let v6 = [Self.pin(at: 40, logged: (300, -300), tap: (0, 20), span: 800)]
+        let on = Self.run(v6, roads: nil, snap: true)
+        #expect(on.pinSnaps?.map(\.placement) == ["zoomIn"])
+        #expect(on.pinSnaps?.map(\.result) == ["noNetwork"])
+        // The engine input is the tap: as a row whose point is the tap.
+        let tapRow = Self.run([Self.pin(at: 40, logged: (0, 20), tap: nil, span: 800)], roads: nil, snap: false)
+        #expect(Self.engineOutput(on) == Self.engineOutput(tapRow))
+        // Not the logged point (what the row gives the engine without the flag).
+        let off = Self.run(v6, roads: nil, snap: false)
+        #expect(Self.engineOutput(on) != Self.engineOutput(off))
+    }
+
+    /// The road the drive follows (way 1, north = 0) and a westbound one-way
+    /// (way 2) 20 m south of it.
+    static func roadAndOneWay() throws -> ReplayRoadSet {
+        ReplayRoadSet(try RoadNetwork(packs: [RoadFixture.build([
+            RoadFixture.way(1, ["highway": "primary"], [
+                RoadFixture.Node(id: 1, east: -200, north: 0), RoadFixture.Node(id: 2, east: 1200, north: 0),
+            ]),
+            RoadFixture.way(2, ["highway": "primary", "oneway": "yes"], [
+                RoadFixture.Node(id: 3, east: 1200, north: -20), RoadFixture.Node(id: 4, east: -200, north: -20),
+            ]),
+        ])]))
+    }
+
+    @Test("R84.3-2 (b): the engine's cloud snaps the pin to the farther road: differsFromNearest is true and the summary counts it")
+    func cloudPicksTheFartherRoad() throws {
+        // Tap 12 m south of the car (eastbound on way 1): the westbound
+        // one-way is nearer (8 m); 300 m span, σ/2 15 m < 20 m apart.
+        let r = Self.run([Self.pin(at: 40, logged: (0, -12), tap: nil, span: 300)], roads: try Self.roadAndOneWay(), snap: true)
+        let s = try #require(r.pinSnaps?.first)
+        #expect(s.result == "edge" && s.decision == "cloud" && s.placement == "snapped")
+        #expect(s.differsFromNearest == true)
+        #expect(abs((s.snapDistanceM ?? 0) - 12) < 0.2)
+        #expect(s.contested == 2)
+        #expect(ReplayReport.summary(r).contains("not the nearest edge 1"))
+    }
+
     @Test("Label: -snap-pins before -obd-none; a non-default viewport is named")
     func label() {
         var o = ReplayOptions(gps: .use)

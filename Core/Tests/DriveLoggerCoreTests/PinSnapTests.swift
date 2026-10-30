@@ -298,6 +298,51 @@ struct PinSnapTests {
         #expect(o.support.count == 2 && o.support[0] > 0.9 && o.support[1] < 0.05, "\(o.support)")
     }
 
+    @Test("R84.3-1: a side road whose nearest point is a junction on another edge of N's way is no rival")
+    func sideRoadAtJunctionOnAnotherEdgeOfN() throws {
+        // Way 1 split at J1 (10, 0) and J2 (63, 0); side roads north from both.
+        let net = try Self.network([
+            RoadFixture.way(1, Self.road, [Node(id: 1, east: -300, north: 0), Node(id: 10, east: 10, north: 0),
+                                           Node(id: 11, east: 63, north: 0), Node(id: 2, east: 300, north: 0)]),
+            RoadFixture.way(2, Self.road, [Node(id: 10, east: 10, north: 0), Node(id: 3, east: 10, north: 300)]),
+            RoadFixture.way(3, Self.road, [Node(id: 11, east: 63, north: 0), Node(id: 4, east: 63, north: 300)]),
+        ])
+        // 1500 m span. N = way 1's west edge at 40 m (foot (0, 0)); way 3's
+        // nearest point is J2 at 74.6 m (< 2 × 40 m, 63 m from N's point:
+        // more than σ/2 = 62.5 m), a node of way 1's other edge.
+        let o = Self.snap(0, -40, span: 1500, network: net)
+        guard case .edge(let s) = o.result else { Issue.record("\(o.result) \(o.contested.map(\.osmWayID))"); return }
+        #expect(s.candidate.osmWayID == 1 && s.decision == .onlyRoad)
+        #expect(o.contested.isEmpty)
+        Self.expectAt(s, 0, 0)
+    }
+
+    @Test("A junction snap reports the nearest edge that ends at the node")
+    func junctionReportsNearestEdge() throws {
+        let net = try Self.crossing()
+        // Tap (5, 2) at 1500 m: the node (0, 0) is 5.4 m away; of the four
+        // edges ending there, way 1's east edge is nearest (2 m).
+        let o = Self.snap(5, 2, span: 1500, network: net)
+        guard case .node(let n) = o.result else { Issue.record("\(o.result)"); return }
+        #expect(n.candidate.osmWayID == 1)
+        #expect(abs(n.candidate.distanceM - 2) < 0.05)
+        #expect(n.candidate.edge == o.nearest?.edge)
+    }
+
+    @Test("A tap exactly on an overpass crossing (0 m from both roads): contested, then close roads, not 'clearly nearer'")
+    func tapOnCrossingIsContested() throws {
+        let net = try Self.network([
+            RoadFixture.way(1, Self.road, [Node(id: 1, east: -300, north: 0), Node(id: 2, east: 300, north: 0)]),
+            RoadFixture.way(2, ["highway": "primary", "bridge": "yes", "layer": "1"],
+                            [Node(id: 3, east: 0, north: -300), Node(id: 4, east: 0, north: 300)]),
+        ])
+        let a = RoadFixture.point(0, 0)
+        let o = PinSnap.snap(latitude: a.latitude, longitude: a.longitude, mapSpanM: 300, viewportHeightPt: Self.viewport,
+                             network: net, cloud: nil)
+        #expect(o.contested.count == 2, "\(o.contested.map(\.distanceM))")
+        #expect(o.result.snap?.decision == .closeRoads)
+    }
+
     // MARK: Ambiguity
 
     /// Two parallel east-west roads, 20 m apart (north = 0 and north = 20).
