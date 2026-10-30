@@ -211,7 +211,7 @@ struct NavigationMetricsCodingTests {
                 "roadsAttachedAfterInputs", "attachedRoadSetHash", "roadsExtendedAfterInputs", "fixesExcludedByTruth", "fixPinDecisions",
                 "maxErrorByKind", "gpsSwitch", "restore",
                 "obdWithheld", "fixAccounting", "lastFixBaseline", "errorMedianM", "errorP90M", "errorMedianPercent",
-                "errorP90Percent", "ellipseSemiMajorMedianM", "essMin"].sorted())
+                "errorP90Percent", "ellipseSemiMajorMedianM", "essMin", "pinSnaps"].sorted())
         for key in later {
             var old = row
             old.removeValue(forKey: key.stringValue)
@@ -246,6 +246,7 @@ struct NavigationMetricsCodingTests {
             case .errorP90Percent: #expect(decoded.errorP90Percent == nil)
             case .ellipseSemiMajorMedianM: #expect(decoded.ellipseSemiMajorMedianM == nil)
             case .essMin: #expect(decoded.essMin == nil)
+            case .pinSnaps: #expect(decoded.pinSnaps == nil)
             default: Issue.record("unexpected later key \(key)")
             }
         }
