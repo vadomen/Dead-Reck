@@ -1187,3 +1187,46 @@ Tests at round 2: Core 1214 tests in 148 suites passed (36 known issues); perf g
 ### Run 82 summary
 
 2 rounds; 1 fixed (R82.1-1), 1 wording fix in the round (R82.1-2); 0 rejected; 0 deferred. Final tests: Core 1214 tests in 148 suites passed (36 known issues); perf gate 9 tests in 2 suites passed. App untouched.
+
+## Run 83: Prompt 45 NAV-NOOBD-B, replay only (no-OBD-mode keys `noOBDRobustNetworkFix` and `noOBDFixSpeedMean`, default off; NAVIGATION.md "NAV-NOOBD-B" section; BACKLOG_UX NAV-NOOBD/UX-7 status) (nav-noobd..nav-noobd-b: ac1de70..12242a6), started 2026-10-29
+
+### Round 1
+
+Reviewers: one opus reviewer. Bit-identity re-run by the reviewer: clean seed 1, roads and `--obd none` no roads, GeoJSON byte-identical, PASS. Mutations: M1 killed, M2 and M3 survived.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R83.1-1 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/NavigationEngine.swift:984-1001`: `macroStep`'s fix-speed distance (`fixSpeedMeanIntegral`) is untested; removing it leaves the suite green. | CONFIRMED | Fixed: regression test `fixSpeedMeanThroughMacroSteps` (M2 now killed), review round 1 commit. |
+| R83.1-2 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/NavigationEngine.swift:1565-1568`: the robust branch's own tempering constant `noOBDNetworkFixCorrelationS` is untested (the test fixes are 60 s apart, weight 1 either way). | CONFIRMED | Fixed: regression test `robustTemperingUsesItsOwnTimeConstant` (M3 now killed), review round 1 commit. |
+| R83.1-3 | MINOR | `docs/NAVIGATION.md` "Configuration (defaults)" table claims every non-road key but lacks the 14 noOBD* keys. | DEFERRED | See BACKLOG R83.1-3. |
+| R83.1-4 | MINOR | `docs/NAVIGATION.md`: "(123.2 m)" is given as the 0.7 × display line; it is the engine median 123.21 m, the line is 0.7 × 176.3 = 123.38 m. | FIXED in round 1 | One-line factual fix in a decision table. |
+
+Round 1 outcome: R83.1-1, R83.1-2 fixed with regression tests (mutations M2, M3 now killed), R83.1-4 fixed, R83.1-3 deferred; `swift test` 1226 tests in 149 suites passed (36 known issues); release perf gate 9 passed.
+
+### Round 2
+
+Reviewers: one opus reviewer (fresh). Engine unchanged since round 1 (tests and docs only), so the round-1 bit-identity holds. Mutations: A (author's, macroStep fix-speed distance) killed; B (robust branch staleGrowth → 0) survived; C (noteFixSpeed on the initialisation path) killed.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R83.2-1 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/NavigationEngine.swift:1570-1571`: the robust branch's stale-age σ growth (`staleGrowth`) is untested; removing it leaves the suite green, so a late Wi-Fi fix could be weighted ~1.5× too tight unnoticed. | CONFIRMED | Fixed: regression test `robustScaleGrowsWithFixAge` (mutation B now killed), review round 2 commit. |
+
+Round 2 outcome: R83.2-1 fixed; `swift test` 1227 tests in 149 suites passed (36 known issues).
+
+### Round 3
+
+Reviewers: one opus reviewer (fresh). Engine unchanged since 8105503. Mutations: author's staleGrowth killed; step μ average → end value survived (near-equivalent at 0.1 s steps, not reported); Student-t weight (ν+2) → ν survived.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R83.3-1 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/NavigationEngine.swift:1754`: the robust Student-t particle log-weight (−(ν+2)/2·log1p(m²/ν) − ½·log\|S\|) is unpinned; (ν+2) → ν and a dropped log-det term leave the suite green. | CONFIRMED | Fixed: regression test `robustWeightIsTheStudentT` (closed-form weight ratio to 1e-9, ν 2 and 5, equal and unequal correlated covariances; both mutants killed), review round 3 commit. |
+
+Author mutation sweep after three rounds of test gaps in the same code: 77 mutations over every new or changed line of the no-OBD code in NavigationEngine.swift and NavigationConfig.swift, 68 killed, 9 survivors all equivalent (window reset after the mode ends; `stale`/`!vetoed` guards implied by the mode; defensive finiteness/sign guards; τ = 0 and zero-length boundaries). New or strengthened tests: `fixSpeedMeanExactWithoutNoise`, `noFixSpeedAfterTheFirstReply`, `fixSpeedEstimateRules` (window drop, same-time tie), `robustTemperingUsesItsOwnTimeConstant` (zero-weight re-ingest), `fixSpeedIntegral`, `configKeys`.
+
+Round 3 outcome: R83.3-1 fixed; `swift test` 1230 tests in 149 suites passed (36 known issues); release perf gate 9 passed.
+
+### Round 4
+
+Reviewers: one opus reviewer (fresh). No findings. Engine unchanged since 8105503 (round 1 bit-identity stands). Round-3 closed forms and tolerances checked (none vacuous); equivalence claims E04–E06, E42, E44, E49, E51, E53, E55 checked by reading; E08 and E02 re-run and killed. NAVIGATION.md defaults match the code; privacy grep clean.
+
+Run 83 closed: 4 rounds; 4 MAJOR fixed with regression tests (R83.1-1, R83.1-2, R83.2-1, R83.3-1), 1 MINOR fixed (R83.1-4), 1 MINOR deferred (R83.1-3); `swift test` 1230 tests in 149 suites passed (36 known issues); release perf gate 9 passed.

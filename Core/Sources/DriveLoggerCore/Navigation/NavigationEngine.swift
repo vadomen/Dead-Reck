@@ -92,6 +92,15 @@ import Foundation
 /// stale fix that has a valid speed (counted as withheld), so a fix from
 /// before the tap is never applied after it. Without a switch input
 /// nothing changes.
+///
+/// **No-OBD mode** (NAV-NOOBD-B, both switches off by default): until the
+/// first OBD vehicle-speed reply of the run (`obdEverIngested`), with
+/// `noOBDRobustNetworkFix` a network fix's position likelihood is a
+/// Student-t of a calibrated scale (`robustPositionUpdate`), and with
+/// `noOBDFixSpeedMean` each particle's unknown speed is the network
+/// fixes' speed μ plus its OU offset (`fixSpeedMean(at:)`). The first
+/// reply ends the mode for good: from then on the engine runs as with
+/// both switches off.
 public struct NavigationEngine: Sendable {
     public let config: NavigationConfig
 
@@ -175,6 +184,33 @@ public struct NavigationEngine: Sendable {
     private var preInitSteps: PreInitSteps
 
     private var lastNetworkFixNs: Int64?
+
+    // No-OBD mode (NAV-NOOBD-B, `NavigationConfig.noOBDRobustNetworkFix`,
+    // `noOBDFixSpeedMean`). Outside `counters`, so a run with both
+    // switches off codes exactly as before; with them off none of it is
+    // read.
+    /// Set by the first vehicle-speed reply `ingestOBD` takes (primary
+    /// ECU, finite, ≥ 0) and never cleared in the run: not by a manual
+    /// reset, a reseed, a restored prior or its rejection. No-OBD mode is
+    /// a no-OBD switch on and this false.
+    private(set) var obdEverIngested = false
+    /// A network fix in the fix-speed window: its `t` and position.
+    struct FixSpeedPoint: Sendable, Equatable {
+        var ns: Int64
+        var latitude: Double
+        var longitude: Double
+    }
+    /// The network fixes used within `noOBDFixSpeedWindowS` of the newest
+    /// one, by fix time (no-OBD mode with `noOBDFixSpeedMean` only).
+    private var fixSpeedWindow: [FixSpeedPoint] = []
+    /// The latest fix-speed estimate: m/s, and the fix time of the newest
+    /// fix it used; nil before the first.
+    private(set) var fixSpeedEstimate: (mps: Double, newestNs: Int64)?
+
+    /// The robust network-fix likelihood acts (no-OBD mode).
+    var noOBDRobustNetworkFixActive: Bool { config.noOBDRobustNetworkFix == 1 && !obdEverIngested }
+    /// The fix-speed mean acts (no-OBD mode).
+    var noOBDFixSpeedMeanActive: Bool { config.noOBDFixSpeedMean == 1 && !obdEverIngested }
 
     /// The driver's GPS switch (UX-9 a): false from an off `gpsSwitch`
     /// input until an on one. Starts on.
@@ -668,6 +704,11 @@ public struct NavigationEngine: Sendable {
         // A fresh 0 says the car is stopped now: braking deceleration still
         // in the EMA is not evidence of motion since (R13.2-2).
         if sample.value == 0 { motionEMA = .zero }
+        // No-OBD mode ends here for the rest of the run (NAV-NOOBD-B).
+        if !obdEverIngested {
+            obdEverIngested = true
+            fixSpeedWindow = []
+        }
         return true
     }
 
@@ -744,7 +785,8 @@ public struct NavigationEngine: Sendable {
     // MARK: Predict
 
     private mutating func step(at ns: Int64) {
-        let dt = Double(ns - (lastStepNs ?? ns)) / 1e9
+        let fromNs = lastStepNs ?? ns
+        let dt = Double(ns - fromNs) / 1e9
         lastStepNs = ns
         let yaw = pendingYaw
         pendingYaw = 0
@@ -816,6 +858,11 @@ public struct NavigationEngine: Sendable {
             : config.staleSpeedNoiseMpsPerSqrtS * sqrtDt
         let alongPerM = config.alongTrackNoisePerSqrtM * config.alongTrackNoisePerSqrtM
         let crossPerM = config.crossTrackNoisePerSqrtM * config.crossTrackNoisePerSqrtM
+        // No-OBD mode (NAV-NOOBD-B): the OU offsets move about the fix
+        // speed μ (its mean over this step) instead of 0. A vetoed step
+        // needs an OBD 0, so it never runs in no-OBD mode.
+        let addFixSpeed = stale && !vetoed && noOBDFixSpeedMeanActive
+        let fixSpeed = addFixSpeed ? fixSpeedMeanAverage(from: fromNs, to: ns) : 0
 
         var meanDEast = 0.0, meanDNorth = 0.0, meanSpeed = 0.0
         var pairNoise = 0.0
@@ -837,6 +884,7 @@ public struct NavigationEngine: Sendable {
                 }
                 speedOffset[i] = decay * speedOffset[i] + sigmaOffset * noise
                 speed += speedOffset[i]
+                if addFixSpeed { speed += fixSpeed }
             }
             let (dEast, dNorth) = move(i, dHeading: dHeading, distance: speed * dt, scaleStep: sigmaScale * n2,
                                        alongPerM: alongPerM, crossPerM: crossPerM)
@@ -911,7 +959,8 @@ public struct NavigationEngine: Sendable {
     /// spread by ≈ √(dt/τ) for dt ≫ τ). Heading and scale random walks are
     /// exact for any dt.
     private mutating func macroStep(at ns: Int64, gridSteps: Int) {
-        let dt = Double(ns - (lastStepNs ?? ns)) / 1e9
+        let fromNs = lastStepNs ?? ns
+        let dt = Double(ns - fromNs) / 1e9
         lastStepNs = ns
         let yaw = pendingYaw
         pendingYaw = 0
@@ -932,6 +981,10 @@ public struct NavigationEngine: Sendable {
         let ou = Self.ouTransition(dt: dt, sigma: config.staleSpeedNoiseMpsPerSqrtS, tau: config.staleSpeedDecayS)
         let alongPerM = config.alongTrackNoisePerSqrtM * config.alongTrackNoisePerSqrtM
         let crossPerM = config.crossTrackNoisePerSqrtM * config.crossTrackNoisePerSqrtM
+        // No-OBD mode (NAV-NOOBD-B): the fix speed μ integrated exactly
+        // over the macro step (held, then relaxing), as `step` adds it.
+        let addFixSpeed = noOBDFixSpeedMeanActive
+        let fixSpeedDistance = addFixSpeed ? fixSpeedMeanIntegral(from: fromNs, to: ns) : 0
 
         var meanDEast = 0.0, meanDNorth = 0.0, meanSpeed = 0.0
         var pairNoise = (0.0, 0.0)
@@ -944,7 +997,8 @@ public struct NavigationEngine: Sendable {
             let x0 = speedOffset[i]
             speedOffset[i] = ou.decay * x0 + ou.sigmaEnd * n3
             let integral = ou.integralGain * x0 + ou.integralOnEnd * n3 + ou.integralOwn * n4
-            let distance = vObd * scale[i] * dt + integral
+            var distance = vObd * scale[i] * dt + integral
+            if addFixSpeed { distance += fixSpeedDistance }
             let (dEast, dNorth) = move(i, dHeading: yaw + sigmaHeading * n1, distance: distance,
                                        scaleStep: sigmaScale * n2, alongPerM: alongPerM, crossPerM: crossPerM)
             let w = weight[i]
@@ -1449,6 +1503,7 @@ public struct NavigationEngine: Sendable {
             if network {
                 counters.networkFixesUsed += 1
                 lastNetworkFixNs = fixNs
+                if noOBDFixSpeedMeanActive { noteFixSpeed(sample, fixNs: fixNs) }
             } else if !fixPin.isEmpty, let plane = tangentPlane {
                 let kind = FixPinSource.Kind(accessory: sample.accessory)
                 let p = plane.enu(latitude: sample.latitude, longitude: sample.longitude)
@@ -1502,12 +1557,22 @@ public struct NavigationEngine: Sendable {
 
         var temper = 1.0
         var positionSigma = sigma
+        // No-OBD mode (NAV-NOOBD-B): a network fix's likelihood is a
+        // Student-t of the calibrated scale, tempered over its own time
+        // constant; its σ above (claimed / 1.51) is not used.
+        let robust = network && noOBDRobustNetworkFixActive
         if network {
             temper = Self.networkTemper(
-                sinceLastS: lastNetworkFixNs.map { Double(fixNs - $0) / 1e9 }, correlationS: config.networkFixCorrelationS
+                sinceLastS: lastNetworkFixNs.map { Double(fixNs - $0) / 1e9 },
+                correlationS: robust ? config.noOBDNetworkFixCorrelationS : config.networkFixCorrelationS
             )
+            if robust {
+                positionSigma = Self.noOBDNetworkFixScale(accuracy: accuracy, config: config)
+                    + Self.staleGrowth(fixNs: fixNs, age: age, config: config, sample: sample)
+            }
             lastNetworkFixNs = max(lastNetworkFixNs ?? fixNs, fixNs)
             counters.networkFixesUsed += 1
+            if noOBDFixSpeedMeanActive { noteFixSpeed(sample, fixNs: fixNs) }
         } else if let source {
             let k = source.rawValue
             if let offset = fixPin[k].offset {
@@ -1525,7 +1590,8 @@ public struct NavigationEngine: Sendable {
         if !network { lastGNSSFixUsedNs = max(lastGNSSFixUsedNs ?? arrivalNs, arrivalNs) }
 
         // Tempering a Gaussian likelihood by w is the same as dividing its
-        // precision by w: R = σ² / w.
+        // precision by w: R = σ² / w. A robust fix is tempered the same
+        // way: its squared scale is divided by w.
         let positionVariance = temper > 0 ? positionSigma * positionSigma / temper : .infinity
         let useSpeed = sample.hasValidSpeed && (since.obdSpeed ?? 0) * 3.6 > config.speedUpdateMinKmh && dopplerConsistent
         let obdSpeed = since.obdSpeed ?? 0
@@ -1541,9 +1607,13 @@ public struct NavigationEngine: Sendable {
             }
         }
         for i in 0..<east.count {
-            var l = positionVariance.isFinite
-                ? positionUpdate(i, east: targetEast, north: targetNorth, variance: positionVariance).logLikelihood
-                : 0
+            var l = 0.0
+            if positionVariance.isFinite {
+                l = robust
+                    ? robustPositionUpdate(i, east: targetEast, north: targetNorth, scale2: positionVariance,
+                                           nu: config.noOBDNetworkFixNu)
+                    : positionUpdate(i, east: targetEast, north: targetNorth, variance: positionVariance).logLikelihood
+            }
             if courseValid {
                 let r = Self.wrapPi(heading[i] - targetCourse) / courseSigma
                 l -= 0.5 * r * r
@@ -1643,6 +1713,122 @@ public struct NavigationEngine: Sendable {
     static func networkTemper(sinceLastS: Double?, correlationS: Double) -> Double {
         guard let dt = sinceLastS else { return 1 }
         return min(1, max(0, dt / correlationS))
+    }
+
+    // MARK: No-OBD mode (NAV-NOOBD-B)
+
+    /// Per-axis Student-t scale of a network fix claiming `accuracy` m, in
+    /// no-OBD mode (`noOBDRobustNetworkFix`): `noOBDNetworkFixTowerScaleM`
+    /// at or above `noOBDNetworkFixTowerAccuracyM`, else
+    /// max(`noOBDNetworkFixScalePerAccuracy` × accuracy,
+    /// `noOBDNetworkFixScaleFloorM`).
+    static func noOBDNetworkFixScale(accuracy: Double, config: NavigationConfig) -> Double {
+        accuracy >= config.noOBDNetworkFixTowerAccuracyM
+            ? config.noOBDNetworkFixTowerScaleM
+            : max(accuracy * config.noOBDNetworkFixScalePerAccuracy, config.noOBDNetworkFixScaleFloorM)
+    }
+
+    /// Robust update of particle `i`'s position with a network fix
+    /// (`noOBDRobustNetworkFix`). Returns the log of a bivariate Student-t
+    /// with `nu` degrees of freedom and scale matrix S = P + `scale2`·I
+    /// (P the particle's covariance, `scale2` the tempered squared scale)
+    /// at the fix, without the constants common to every particle:
+    /// −(ν + 2)/2 · log(1 + m²/ν) − ½ log |S|, m² the residual's squared
+    /// Mahalanobis distance under S. A fix km off (m² in the thousands)
+    /// costs only ~log m², so it hardly reweights the cloud.
+    ///
+    /// The particle's Gaussian then takes a Kalman update with the scale
+    /// inflated by the Student-t's expected precision given the residual,
+    /// (ν + m²)/(ν + 2) (the Gaussian scale-mixture view of the t), floored
+    /// at 1: an outlier barely moves the particle or shrinks its
+    /// covariance; an inlier is a Gaussian of the calibrated scale, never
+    /// tighter.
+    private mutating func robustPositionUpdate(
+        _ i: Int, east z0: Double, north z1: Double, scale2 r: Double, nu: Double
+    ) -> Double {
+        let pee = covEE[i], pen = covEN[i], pnn = covNN[i]
+        let see = pee + r, snn = pnn + r
+        let det = see * snn - pen * pen
+        let de = z0 - east[i], dn = z1 - north[i]
+        let m2 = (snn * de * de - 2 * pen * de * dn + see * dn * dn) / det
+        let logLikelihood = -0.5 * (nu + 2) * log1p(m2 / nu) - 0.5 * log(det)
+        let inflation = max(1, (nu + m2) / (nu + 2))
+        _ = positionUpdate(i, east: z0, north: z1, variance: r * inflation)
+        return logLikelihood
+    }
+
+    /// Takes a used network fix into the fix-speed window and re-estimates
+    /// μ (`noOBDFixSpeedMean`): the window keeps the fixes at most
+    /// `noOBDFixSpeedWindowS` older than the newest; once its oldest and
+    /// newest are at least `noOBDFixSpeedMinSpanS` apart, μ is their
+    /// straight-line distance over that time, clamped to
+    /// 0…`noOBDFixSpeedMaxKmh`. A window that cannot estimate leaves the
+    /// previous estimate (and its age) as it was.
+    private mutating func noteFixSpeed(_ sample: LocationSample, fixNs: Int64) {
+        let point = FixSpeedPoint(ns: fixNs, latitude: sample.latitude, longitude: sample.longitude)
+        // By fix time; a fix arriving late slots in behind newer ones.
+        let index = (fixSpeedWindow.lastIndex { $0.ns <= fixNs } ?? -1) + 1
+        fixSpeedWindow.insert(point, at: index)
+        guard let newest = fixSpeedWindow.last else { return }
+        let windowNs = config.noOBDFixSpeedWindowS * 1e9
+        // In Double: no overflow for any `t`.
+        if let keep = fixSpeedWindow.firstIndex(where: { Double(newest.ns) - Double($0.ns) <= windowNs }), keep > 0 {
+            fixSpeedWindow.removeFirst(keep)
+        }
+        guard let oldest = fixSpeedWindow.first else { return }
+        let spanS = (Double(newest.ns) - Double(oldest.ns)) / 1e9
+        guard spanS >= config.noOBDFixSpeedMinSpanS else { return }
+        let d = LocalTangentPlane(latitude: oldest.latitude, longitude: oldest.longitude)
+            .enu(latitude: newest.latitude, longitude: newest.longitude)
+        let mps = (d.east * d.east + d.north * d.north).squareRoot() / spanS
+        guard mps.isFinite else { return }
+        fixSpeedEstimate = (min(max(mps, 0), config.noOBDFixSpeedMaxKmh / 3.6), newest.ns)
+    }
+
+    /// The fix-speed mean μ at `ns`, m/s (`noOBDFixSpeedMean`): 0 before
+    /// the first estimate; the estimate μ̂ while `ns` is at most
+    /// `noOBDFixSpeedHoldS` after its newest fix; then
+    /// floor + (μ̂ − floor)·exp(−(age − hold)/τ), floor
+    /// `noOBDFixSpeedFloorKmh`, τ `noOBDFixSpeedDecayS` (0: the floor at
+    /// once). Read only in no-OBD mode.
+    func fixSpeedMean(at ns: Int64) -> Double {
+        guard let estimate = fixSpeedEstimate else { return 0 }
+        let after = (Double(ns) - Double(estimate.newestNs)) / 1e9 - config.noOBDFixSpeedHoldS
+        guard after > 0 else { return estimate.mps }
+        let floor = config.noOBDFixSpeedFloorKmh / 3.6
+        let tau = config.noOBDFixSpeedDecayS
+        guard tau > 0 else { return floor }
+        return floor + (estimate.mps - floor) * exp(-after / tau)
+    }
+
+    /// ∫ μ dt from `from` to `to`, metres (0 when `to` ≤ `from`): exact for
+    /// the held-then-relaxing μ of `fixSpeedMean(at:)`.
+    func fixSpeedMeanIntegral(from: Int64, to: Int64) -> Double {
+        guard let estimate = fixSpeedEstimate, to > from else { return 0 }
+        let hold = config.noOBDFixSpeedHoldS
+        // Seconds after the hold ends; negative while held.
+        let a = (Double(from) - Double(estimate.newestNs)) / 1e9 - hold
+        let b = (Double(to) - Double(estimate.newestNs)) / 1e9 - hold
+        var total = 0.0
+        if a < 0 { total += estimate.mps * (min(b, 0) - a) }
+        if b > 0 {
+            let u = max(a, 0)
+            let floor = config.noOBDFixSpeedFloorKmh / 3.6
+            let tau = config.noOBDFixSpeedDecayS
+            total += floor * (b - u)
+            if tau > 0 {
+                // (μ̂ − floor)·τ·(e^(−u/τ) − e^(−b/τ)), cancellation-free.
+                total += (estimate.mps - floor) * tau * exp(-u / tau) * -expm1(-(b - u) / tau)
+            }
+        }
+        return total
+    }
+
+    /// μ averaged over the step from `from` to `to`, m/s; μ at `to` for an
+    /// empty step.
+    func fixSpeedMeanAverage(from: Int64, to: Int64) -> Double {
+        guard to > from else { return fixSpeedMean(at: to) }
+        return fixSpeedMeanIntegral(from: from, to: to) / (Double(to - from) / 1e9)
     }
 
     /// Whether any particle's heading is within `reseedNoSupportSigma`

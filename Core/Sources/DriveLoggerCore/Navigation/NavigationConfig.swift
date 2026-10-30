@@ -210,6 +210,76 @@ public struct NavigationConfig: Hashable, Sendable, Codable {
     /// Fraction of particles a clean fix reseeds.
     public var reseedFraction = 0.5
 
+    // MARK: No-OBD mode (NAV-NOOBD-B, prompt 45)
+
+    // Both mechanisms act only in no-OBD mode: their switch is 1 and the
+    // engine has not yet taken a single OBD vehicle-speed reply from the
+    // primary ECU in this run (`NavigationEngine.obdEverIngested`). The
+    // first such reply ends the mode for the rest of the run; from then on
+    // the engine runs exactly as with the switch 0. Both are off by
+    // default, and with a switch 0 its parameters change nothing. The
+    // parameters come from calibration drives outside the evaluation set
+    // (network-fix residuals against the OBD + roads track, prompt 45).
+
+    /// Robust network-fix likelihood in no-OBD mode: 1 replaces a network
+    /// fix's Gaussian position likelihood (σ = claimed accuracy / 1.51,
+    /// tempered over `networkFixCorrelationS`) with a bivariate Student-t
+    /// (`noOBDNetworkFixNu` degrees of freedom) of per-axis scale
+    /// `noOBDNetworkFixScale…` from the claimed accuracy band, tempered
+    /// over `noOBDNetworkFixCorrelationS`; 0: off. The heavy tail leaves a
+    /// fix kilometres off nearly uninformative (calibration: tower-band p99
+    /// 1258 m, 1.1 % over 1 km). "Network fix" is the engine's own rule
+    /// (no valid speed); initialisation and every other fix are unchanged.
+    /// Valid: 0 or 1.
+    public var noOBDRobustNetworkFix = 0
+    /// Student-t degrees of freedom ν. Valid: finite, > 0.
+    public var noOBDNetworkFixNu = 2.0
+    /// Per-axis scale per metre of claimed accuracy below
+    /// `noOBDNetworkFixTowerAccuracyM` (Wi-Fi-like and mid bands). Valid:
+    /// finite, > 0.
+    public var noOBDNetworkFixScalePerAccuracy = 0.21
+    /// Lower bound on that scale, m. Valid: finite, > 0.
+    public var noOBDNetworkFixScaleFloorM = 5.0
+    /// Claimed accuracy at or above which a network fix is a tower fix, m.
+    /// Valid: finite, > 0.
+    public var noOBDNetworkFixTowerAccuracyM = 1_000.0
+    /// Per-axis scale of a tower fix, m, whatever accuracy it claims
+    /// (calibration: RMS ~240 m per axis, claimed / 1.51 ≈ 936 m). Valid:
+    /// finite, > 0.
+    public var noOBDNetworkFixTowerScaleM = 120.0
+    /// Tempering time constant of a robust network fix, s, in place of
+    /// `networkFixCorrelationS` (same rule: exponent min(1, Δt / this),
+    /// applied as the Gaussian's is, by dividing the squared scale by it).
+    /// Calibration: residual autocorrelation 1/e at 7–36 s, same-sign runs
+    /// median 33 s. Valid: finite, > 0.
+    public var noOBDNetworkFixCorrelationS = 30.0
+    /// Fix-speed mean in no-OBD mode: 1 makes each particle's speed
+    /// μ + its Ornstein–Uhlenbeck offset (`staleSpeed…`, unchanged), where
+    /// μ is the speed of the network fixes: endpoint displacement / Δt of
+    /// those within `noOBDFixSpeedWindowS` of the newest, clamped to
+    /// 0…`noOBDFixSpeedMaxKmh`, held `noOBDFixSpeedHoldS` after the newest
+    /// fix of the estimate, then relaxing towards `noOBDFixSpeedFloorKmh`
+    /// with time constant `noOBDFixSpeedDecayS`. μ = 0 (the behaviour with
+    /// 0) until the first estimate. Causal: fixes already ingested only.
+    /// 0: off. Valid: 0 or 1.
+    public var noOBDFixSpeedMean = 0
+    /// Window of network fixes behind the newest one, s. Valid: finite,
+    /// in (0, `maxNoOBDFixSpeedWindowS`].
+    public var noOBDFixSpeedWindowS = 120.0
+    /// The window's oldest and newest fixes must be at least this far
+    /// apart for an estimate, s. Valid: finite, > 0.
+    public var noOBDFixSpeedMinSpanS = 10.0
+    /// Upper clamp on μ, km/h. Valid: finite, ≥ 0.
+    public var noOBDFixSpeedMaxKmh = 110.0
+    /// μ is held this long after the newest fix of its estimate, s. Valid:
+    /// finite, ≥ 0.
+    public var noOBDFixSpeedHoldS = 30.0
+    /// Then it relaxes exponentially with this time constant, s (0: at
+    /// once). Valid: finite, ≥ 0.
+    public var noOBDFixSpeedDecayS = 30.0
+    /// …towards this speed, km/h. Valid: finite, ≥ 0.
+    public var noOBDFixSpeedFloorKmh = 30.0
+
     // MARK: Manual fixes
 
     /// Smallest σ of a manual "I'm here" pin, metres; also the σ when the
@@ -391,6 +461,10 @@ extension NavigationConfig {
         case maxFixAgeS, heldFixTimeoutS, courseMinSpeedMps, courseSigmaFloorDeg
         case speedUpdateMinKmh, gnssSpeedGateMps, gnssSpeedGateFraction, speedSigmaFloorMps
         case cleanFixAccM, reseedHeadingStdDeg, reseedNoSupportSigma, reseedFraction
+        case noOBDRobustNetworkFix, noOBDNetworkFixNu, noOBDNetworkFixScalePerAccuracy, noOBDNetworkFixScaleFloorM
+        case noOBDNetworkFixTowerAccuracyM, noOBDNetworkFixTowerScaleM, noOBDNetworkFixCorrelationS
+        case noOBDFixSpeedMean, noOBDFixSpeedWindowS, noOBDFixSpeedMinSpanS, noOBDFixSpeedMaxKmh
+        case noOBDFixSpeedHoldS, noOBDFixSpeedDecayS, noOBDFixSpeedFloorKmh
         case manualFixSigmaMinM, manualFixSpanDivisor, manualFixReactionS, manualFixUnknownSpeedMps
         case manualFixResetChi2, lateManualFixWindowS
         case fixPinWindowS, fixPinTwoPinCheck, fixPinTwoPinMinPathM, fixPinTwoPinMinTurnDeg, fixPinInflation, fixPinRestoreS
@@ -460,6 +534,20 @@ extension NavigationConfig {
         reseedHeadingStdDeg = try c.decodeIfPresent(type(of: reseedHeadingStdDeg), forKey: .reseedHeadingStdDeg) ?? reseedHeadingStdDeg
         reseedNoSupportSigma = try c.decodeIfPresent(type(of: reseedNoSupportSigma), forKey: .reseedNoSupportSigma) ?? reseedNoSupportSigma
         reseedFraction = try c.decodeIfPresent(type(of: reseedFraction), forKey: .reseedFraction) ?? reseedFraction
+        noOBDRobustNetworkFix = try c.decodeIfPresent(type(of: noOBDRobustNetworkFix), forKey: .noOBDRobustNetworkFix) ?? noOBDRobustNetworkFix
+        noOBDNetworkFixNu = try c.decodeIfPresent(type(of: noOBDNetworkFixNu), forKey: .noOBDNetworkFixNu) ?? noOBDNetworkFixNu
+        noOBDNetworkFixScalePerAccuracy = try c.decodeIfPresent(type(of: noOBDNetworkFixScalePerAccuracy), forKey: .noOBDNetworkFixScalePerAccuracy) ?? noOBDNetworkFixScalePerAccuracy
+        noOBDNetworkFixScaleFloorM = try c.decodeIfPresent(type(of: noOBDNetworkFixScaleFloorM), forKey: .noOBDNetworkFixScaleFloorM) ?? noOBDNetworkFixScaleFloorM
+        noOBDNetworkFixTowerAccuracyM = try c.decodeIfPresent(type(of: noOBDNetworkFixTowerAccuracyM), forKey: .noOBDNetworkFixTowerAccuracyM) ?? noOBDNetworkFixTowerAccuracyM
+        noOBDNetworkFixTowerScaleM = try c.decodeIfPresent(type(of: noOBDNetworkFixTowerScaleM), forKey: .noOBDNetworkFixTowerScaleM) ?? noOBDNetworkFixTowerScaleM
+        noOBDNetworkFixCorrelationS = try c.decodeIfPresent(type(of: noOBDNetworkFixCorrelationS), forKey: .noOBDNetworkFixCorrelationS) ?? noOBDNetworkFixCorrelationS
+        noOBDFixSpeedMean = try c.decodeIfPresent(type(of: noOBDFixSpeedMean), forKey: .noOBDFixSpeedMean) ?? noOBDFixSpeedMean
+        noOBDFixSpeedWindowS = try c.decodeIfPresent(type(of: noOBDFixSpeedWindowS), forKey: .noOBDFixSpeedWindowS) ?? noOBDFixSpeedWindowS
+        noOBDFixSpeedMinSpanS = try c.decodeIfPresent(type(of: noOBDFixSpeedMinSpanS), forKey: .noOBDFixSpeedMinSpanS) ?? noOBDFixSpeedMinSpanS
+        noOBDFixSpeedMaxKmh = try c.decodeIfPresent(type(of: noOBDFixSpeedMaxKmh), forKey: .noOBDFixSpeedMaxKmh) ?? noOBDFixSpeedMaxKmh
+        noOBDFixSpeedHoldS = try c.decodeIfPresent(type(of: noOBDFixSpeedHoldS), forKey: .noOBDFixSpeedHoldS) ?? noOBDFixSpeedHoldS
+        noOBDFixSpeedDecayS = try c.decodeIfPresent(type(of: noOBDFixSpeedDecayS), forKey: .noOBDFixSpeedDecayS) ?? noOBDFixSpeedDecayS
+        noOBDFixSpeedFloorKmh = try c.decodeIfPresent(type(of: noOBDFixSpeedFloorKmh), forKey: .noOBDFixSpeedFloorKmh) ?? noOBDFixSpeedFloorKmh
         manualFixSigmaMinM = try c.decodeIfPresent(type(of: manualFixSigmaMinM), forKey: .manualFixSigmaMinM) ?? manualFixSigmaMinM
         manualFixSpanDivisor = try c.decodeIfPresent(type(of: manualFixSpanDivisor), forKey: .manualFixSpanDivisor) ?? manualFixSpanDivisor
         manualFixReactionS = try c.decodeIfPresent(type(of: manualFixReactionS), forKey: .manualFixReactionS) ?? manualFixReactionS
@@ -515,6 +603,9 @@ extension NavigationConfig {
     /// Largest `fixPinWindowS`, s: the per-source fix rings hold this much
     /// of each GNSS stream (about 1 fix/s).
     public static let maxFixPinWindowS = 3_600.0
+    /// Largest `noOBDFixSpeedWindowS`, s: the engine keeps the network
+    /// fixes of this window (at most about one per second).
+    public static let maxNoOBDFixSpeedWindowS = 3_600.0
 
     /// This configuration with values the engine cannot use safely clamped
     /// (B0-1). `NavigationEngine.init` applies it, so `engine.config` is the
@@ -593,11 +684,46 @@ extension NavigationConfig {
     ///   not > 0; `fixPinTwoPinMinTurnDeg` outside 0…360; the other
     ///   distances and times negative; any of them not finite. Refused,
     ///   not clamped: a mistyped `--set` must not run as something else.
+    /// - The no-OBD keys (NAV-NOOBD-B): the two switches other than 0 or
+    ///   1; ν, the scales, the tower threshold, the correlation time and
+    ///   the minimum span not > 0; the window outside (0,
+    ///   `maxNoOBDFixSpeedWindowS`]; the speed clamp, hold, decay and
+    ///   floor negative; any of them not finite.
     public var invalidReason: String? {
         if !(roadAlongTrackCoupling >= 0 && roadAlongTrackCoupling <= 1) {
             return "roadAlongTrackCoupling must be in 0…1, got \(roadAlongTrackCoupling)"
         }
-        return fixPinInvalidReason ?? zuptFixGateInvalidReason
+        return fixPinInvalidReason ?? zuptFixGateInvalidReason ?? noOBDInvalidReason
+    }
+
+    /// The no-OBD keys (NAV-NOOBD-B): refused, not clamped, like the
+    /// pin-vs-source keys. Checked whatever the switches say, so a
+    /// mistyped parameter is caught before it is switched on.
+    private var noOBDInvalidReason: String? {
+        for (name, value) in [("noOBDRobustNetworkFix", noOBDRobustNetworkFix),
+                              ("noOBDFixSpeedMean", noOBDFixSpeedMean)] where value != 0 && value != 1 {
+            return "\(name) must be 0 or 1, got \(value)"
+        }
+        for (name, value) in [("noOBDNetworkFixNu", noOBDNetworkFixNu),
+                              ("noOBDNetworkFixScalePerAccuracy", noOBDNetworkFixScalePerAccuracy),
+                              ("noOBDNetworkFixScaleFloorM", noOBDNetworkFixScaleFloorM),
+                              ("noOBDNetworkFixTowerAccuracyM", noOBDNetworkFixTowerAccuracyM),
+                              ("noOBDNetworkFixTowerScaleM", noOBDNetworkFixTowerScaleM),
+                              ("noOBDNetworkFixCorrelationS", noOBDNetworkFixCorrelationS),
+                              ("noOBDFixSpeedMinSpanS", noOBDFixSpeedMinSpanS)]
+            where !(value > 0 && value.isFinite) {
+            return "\(name) must be finite and > 0, got \(value)"
+        }
+        if !(noOBDFixSpeedWindowS > 0 && noOBDFixSpeedWindowS <= Self.maxNoOBDFixSpeedWindowS) {
+            return "noOBDFixSpeedWindowS must be in (0, \(Self.maxNoOBDFixSpeedWindowS)], got \(noOBDFixSpeedWindowS)"
+        }
+        for (name, value) in [("noOBDFixSpeedMaxKmh", noOBDFixSpeedMaxKmh), ("noOBDFixSpeedHoldS", noOBDFixSpeedHoldS),
+                              ("noOBDFixSpeedDecayS", noOBDFixSpeedDecayS),
+                              ("noOBDFixSpeedFloorKmh", noOBDFixSpeedFloorKmh)]
+            where !(value >= 0 && value.isFinite) {
+            return "\(name) must be finite and ≥ 0, got \(value)"
+        }
+        return nil
     }
 
     /// The OBD-zero fix gate's keys (N4B1-1): refused, not clamped, like the

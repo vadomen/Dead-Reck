@@ -2748,6 +2748,236 @@ motion start to last input; "log" = every fix, age ≤ 10 s at arrival;
 4. (d) UX-27 learned per-edge speeds: the same mechanism as (c) with better
    numbers; needs data collection first.
 
+### NAV-NOOBD-B (2026-10-29)
+
+Question (BACKLOG_UX NAV-NOOBD, deciding UX-7): can the engine, without OBD,
+get clearly ahead of the plain last-fix display if the two causes found in
+NAV-NOOBD are fixed, in no-OBD mode only? Replay only (`replay_nav --obd
+none`), Core and `replay_nav`, no `App/`, log format or sidecar change; all new
+keys are off by default and no default changes. Parameters were calibrated on
+drives outside the evaluation set and frozen before any evaluation run. Outputs
+are git-ignored (`logs/noobd-b/`).
+
+**No-OBD mode.** `NavigationEngine.obdEverIngested` is set at the first
+accepted primary-ECU vehicle-speed reply and never reset (it also clears the
+fix-speed window). The 14 keys (`NavigationConfig`, "No-OBD mode") act only
+while a switch is 1 and `obdEverIngested` is false; with a switch 0 its
+parameters change nothing. A run with OBD leaves the mode at its first reply
+and continues exactly as before.
+
+**Calibration.** Set cal-1..cal-5 (not in the evaluation set); reference =
+`--obd use --roads` seed 1, a proxy truth: its own 95 % semi-major at the fix
+times is a median 26–42 m (cal-5 14 m), 13 of 271 fixes have one > 100 m, and
+against manual pins the reference is 5–564 m off, so a residual RMS below
+~100 m is proxy-limited. Network fix = not accessory and claimed accuracy >
+15 m. 271 network fixes in the residual windows (cal-1 46, cal-2 56, cal-3 3,
+cal-4 129, cal-5 37), below the 300-fix line the brief set: reported before
+choosing, and the user accepted the set. Residuals, pooled (m; n per band
+beside each number):
+
+| claimed band | n | RMS E / N | median 2-D | p90 | p99 | share > 1 km | err / claimed, median | claimed, median |
+|---|---:|---|---:|---:|---:|---|---:|---:|
+| < 100 m | 48 | 9 / 7 | 4 | 13 | 40 | 0 % | 0.19 | 19 |
+| 100–1000 m | 37 | 161 / 175 | 149 | 420 | 516 | 0 % | 0.36 | 319 |
+| ≥ 1000 m (tower) | 186 | 203 / 271 | 174 | 548 | 1258 | 1.1 % (2) | 0.12 | 1414 |
+| all | 271 | 179 / 234 | 126 | 498 | 967 | 0.7 % | 0.15 | 1414 |
+
+Only cal-5 (37) and cal-4 (11) carry the < 100 m band and 100–1000 m is
+heterogeneous (cal-2 11 fixes at median 358 m, about the claim; cal-4 24 at
+47 m), so both are thin; the tower band (3 drives) supports a value. The
+tower claim is almost a constant (91 of 186 claim exactly 1414 m): it carries
+no information inside the band. The engine's σ there is claimed / 1.51 =
+936 m per axis against a measured ~240 m, about 4× too wide. The error is not
+zero-mean along the track: median along-track −106 m (≥ 1000), network fixes
+lag the car by a median 9.3 s (mean 15.5 s; per drive 6–13 s), cross-track
+unbiased (−4 m). The lag is a position-age effect, not addressed here.
+
+Residual correlation (≥ 1000 band, n = 186): the ACF at one fix spacing (median
+7–8 s) is 0.3–0.77, the 1/e crossing 7 s east, 36 s north, 7 s along, 10 s
+cross; same-sign runs of the along-track error median 3 fixes / 33 s (p90
+183 s, n = 57 runs). With information per fix ~ Δt / (2 τc) this gives a
+tempering constant of 15–40 s; 60 s is at the slow end. 30 s cannot be told
+from 60 s with 3 drives.
+
+Speed from fixes (target situation: no Doppler, 0 of 378 tower/Wi-Fi fixes
+carry a speed). Gaps between network fixes (cal-5 excluded, n = 273): median
+8.3 s, p90 36 s, p99 106 s. Causal estimators against the mean OBD speed over
+the same interval, moving only:
+
+| estimator | n | bias km/h | est / OBD, median | median abs err | p90 abs err | available, moving time (hold 120 s) |
+|---|---:|---:|---:|---:|---:|---:|
+| 2 fixes | 162 | +6.9 | 0.91 | 27.0 | 72.9 | 50 % |
+| 5 fixes | 246 | −0.7 | 0.88 | 14.8 | 43.4 | 71 % |
+| window 60 s, ends | 253 | +1.5 | 0.97 | 13.5 | 49.1 | 71 % |
+| window 120 s, ends | 279 | −4.7 | 0.84 | 8.9 | 25.3 | 77 % |
+| constant 36 km/h (same events as the 120 s window) | 279 | — | — | 11.3 | 29.4 | — |
+
+The fix speed barely beats a constant: median error 8.9 vs 11.3 km/h, p90
+25.3 vs 29.4 (60 s window 13.5 / 49.1 vs constant 14.0 / 29.9); correlation
+with OBD over the interval 0.50 (120 s window). Gating on the claimed accuracy
+(dropping ≥ 1000 m) leaves 27 % of the fixes and 8–21 % availability, bias
+−13 to −20 km/h: not used. When fixes stop, the moving OBD speed has median 33
+km/h; the all-time mean OBD speed (stops included) is 30.8 km/h pooled.
+
+Held-out manual-3 (from 348 s; set no parameter): agrees on the tower band
+(n = 68: RMS 159 / 289 m, median 171 m, p99 1215 m, 2.9 % over 1 km, lag 5.7
+s; ACF decorrelation 5–25 s per axis) and disagrees on the 100–1000 m band
+(n = 8: err / claimed 0.12 vs 0.36) and on the fix speed (120 s window: bias
++10.7 km/h, p90 55.4 km/h, correlation 0.02, a two-fix jump gave 1619 km/h
+with 5 fixes): the speed estimate is the weakest part and needs the clamp.
+
+Parameters (fixed before any evaluation run; keys in `NavigationConfig`, all
+off: switches 0; default value in brackets):
+
+| mechanism | key (default) | meaning |
+|---|---|---|
+| (e) robust network fix | `noOBDRobustNetworkFix` (0) | 1: a network fix (`!hasValidSpeed`, the engine's own rule) is a bivariate Student-t, not a Gaussian at claimed / 1.51; initialisation and every other fix unchanged |
+| | `noOBDNetworkFixNu` (2.0) | degrees of freedom ν; tower band log-likelihood −2505 vs Gaussian −2566, ν 2–4 poorly determined, 2 chosen for the unobserved 5 km tail (calibration ceiling 1.6 km) |
+| | `noOBDNetworkFixScalePerAccuracy` (0.21), `noOBDNetworkFixScaleFloorM` (5.0) | per-axis scale 0.21 × claimed, floor 5 m, below the tower accuracy |
+| | `noOBDNetworkFixTowerAccuracyM` (1000), `noOBDNetworkFixTowerScaleM` (120) | at or above 1000 m claimed: scale 120 m whatever it claims |
+| | `noOBDNetworkFixCorrelationS` (30) | tempering Δt / 30 s in place of `networkFixCorrelationS` (60 s) |
+| (a) fix-speed OU mean | `noOBDFixSpeedMean` (0) | 1: each particle's speed is μ + its OU offset (unchanged, 2.5 m/s/√s, τ 20 s); antithetic increments kept |
+| | `noOBDFixSpeedWindowS` (120), `noOBDFixSpeedMinSpanS` (10) | μ = endpoint displacement / Δt of the network fixes within 120 s of the newest, at least 10 s apart |
+| | `noOBDFixSpeedMaxKmh` (110) | clamp 0…110 km/h (OBD p99 101, max 107) |
+| | `noOBDFixSpeedHoldS` (30), `noOBDFixSpeedDecayS` (30), `noOBDFixSpeedFloorKmh` (30) | μ held until the estimate's newest fix is 30 s old, then exponential to 30 km/h with τ 30 s; 0 is not used (the NAV-NOOBD lag) |
+
+The t-likelihood leaves a fix kilometres off nearly uninformative (cost ~ log
+m²). The particle's Gaussian then takes a Kalman update with the scale
+inflated by the Student-t's expected precision given the residual, (ν + m²) /
+(ν + 2), floored at 1, so an outlier barely moves it and an inlier is never
+tighter than the calibrated scale; a fix older than ingest adds the usual
+stale growth to the scale. Before the first fix-speed estimate μ = 0, the
+NAV-NOOBD behaviour. Unit tests (synthetic): default-off bit-identity; the
+mode ends at the first OBD reply; a 5 km outlier is ignored; μ follows a
+synthetic fix track; nothing non-finite when fixes stop for 10 min.
+
+Report-only extras (cal-1..cal-5; not in the engine; speed against OBD, moving
+= OBD > 3 km/h, 1 s windows):
+- Speed from turns: v = |mean lateral acceleration| / |mean yaw rate|, per
+  second, lateral axis fitted on the whole drive (a mounting fit: not causal,
+  assumes a fixed phone). By the yaw threshold:
+
+  | \|yaw\| > | estimates (of 4642 moving s) | share of moving time | bias km/h | median abs err | p90 |
+  |---|---:|---:|---:|---:|---:|
+  | 3 deg/s | 1001 | 21.6 % | −0.0 | 5.6 | 19.4 |
+  | 5 | 726 | 15.6 % | +0.4 | 4.6 | 15.7 |
+  | 10 | 379 | 8.2 % | 0.0 | 3.5 | 8.4 |
+  | 20 | 54 | 1.2 % | −0.4 | 2.7 | 5.2 |
+
+  Near-unbiased, OBD-grade, but available 8–22 % of moving time; without the
+  axis it reads high (+2.4 to +9.4 km/h).
+- IMU stop detector (trailing window, variance of the acceleration; stopped =
+  OBD 0): stopped and moving variance overlap. 2 s window, threshold 5e-4:
+  precision 0.92, recall 0.31; 2 s, 1e-3: 0.64 / 0.43; 4 s, 7e-4: 0.90 / 0.34.
+  Best F1 ~0.5; held-out manual-3 precision 0.91 recall 0.25 (2 s, 5e-4); per
+  drive F1 0.28–0.75 (a vibrating phone at a stop is the worst).
+
+**Bit-identity.** A (keys off against `nav-noobd`): every NAV-NOOBD cell
+(7 drives incl. drive-9-1/-2 × roads off/on × `--obd use`/`none` × seeds 1–5 =
+140, plus the 6 sanity cells) GeoJSON `cmp` equal and `metrics.json` equal
+except the 14 new config keys and `msPerStep` / `maxIngestMs`: 146 / 146. B
+(keys on, variant `ea`, against keys off, every `--obd use` cell: 7 drives ×
+roads off/on × seeds 1–5 = 70): 70 / 70 GeoJSON byte-identical. Caveat on B:
+in every replay the first OBD reply arrives 18–31 ms before the first network
+fix (0.012–0.053 s from the start; drive-9-1 delivers one GNSS fix before its
+first reply, which the switches do not act on), so B shows that the mode ends
+with the OBD reply but does not exercise a live late-OBD link (OBD joining
+after network fixes were already used).
+
+**Evaluation.** Evaluation set drive-7, jammed-A, jammed-B, drive-9-1/-2,
+manual, drive-8 × roads off/on × seeds 1–5 × `--obd none` × variants off (= the
+NAV-NOOBD cells, reproduced to the metre), e, a, ea = 210 new cells; the
+acceptance `--gps` flags as in NAV-NOOBD. Report-only on top: the error against
+the reference track (`--obd use`, roads on, same seed) every 10 s over the
+whole drive (series), engine and the delivered last-fix display on the same
+times, and the display on the scored points. drive-7 under `mask-after 1800`:
+the post-mask stretch has no inputs and is left out of the criterion (pins and
+series before 1800 s). Criterion (proposed by the assistant, the user decides),
+roads on, jammed-A, jammed-B, drive-7, drive-9: median ≤ 200 m **and** at
+least 30 % below the display (≤ 0.7 ×) on the same points / series, p90 not
+worse than the display, consistency (inside 95 %) ≥ 80 %; a drive passes when
+both its points and its series pass. Roads on, seed means (points: jammed-A/B
+and drive-9 one scored truth point each, drive-7 the 7 pins; series: n = 94 /
+70 / 180 / 204 / 204; m; "inside" = inside 95 %; ellipse = median semi-major at
+the scored points):
+
+| drive | variant | points: engine med / display med / engine p90 / display p90 / inside % | series: engine med / display med / engine p90 / display p90 / inside % | ellipse med m | failed parts (points; series) | drive |
+|---|---|---|---|---:|---|---|
+| jammed-A | off | 1477 / 83 / 1477 / 83 / 0.0 | 1653 / 275 / 1990 / 722 / 20.2 | 1367 | med, below, p90, cons; same | FAIL |
+| jammed-A | e | 160 / 83 / 160 / 83 / 100 | 478 / 275 / 1291 / 722 / 28.1 | 687 | below, p90; med, below, p90, cons | FAIL |
+| jammed-A | a | 410 / 83 / 410 / 83 / 100 | 717 / 275 / 1890 / 722 / 77.0 | 1336 | med, below, p90; med, below, p90, cons | FAIL |
+| jammed-A | ea | 119 / 83 / 119 / 83 / 100 | 428 / 275 / 1731 / 722 / 45.5 | 416 | below, p90; med, below, p90, cons | FAIL |
+| jammed-B | off | 1358 / 170 / 1358 / 170 / 20.0 | 1359 / 183 / 2107 / 452 / 39.1 | 1324 | med, below, p90, cons; same | FAIL |
+| jammed-B | e | 327 / 170 / 327 / 170 / 100 | 347 / 183 / 673 / 452 / 50.3 | 567 | med, below, p90; med, below, p90, cons | FAIL |
+| jammed-B | a | 287 / 170 / 287 / 170 / 100 | 251 / 183 / 755 / 452 / 99.7 | 1229 | med, below, p90; med, below, p90 | FAIL |
+| jammed-B | ea | 275 / 170 / 275 / 170 / 100 | 196 / 183 / 552 / 452 / 69.7 | 509 | med, below, p90; below, p90, cons | FAIL |
+| drive-7 | off | 340 / 176 / 1202 / 354 / 82.9 | 364 / 231 / 1065 / 517 / 66.1 | 1547 | med, below, p90; med, below, p90, cons | FAIL |
+| drive-7 | e | 226 / 176 / 345 / 354 / 85.7 | 245 / 231 / 509 / 517 / 66.4 | 1528 | med, below; med, below, cons | FAIL |
+| drive-7 | a | 123 / 176 / 336 / 354 / 100 | 124 / 231 / 367 / 517 / 92.7 | 1468 | none; none | PASS |
+| drive-7 | ea | 101 / 176 / 358 / 354 / 85.7 | 103 / 231 / 408 / 517 / 75.9 | 1438 | p90; cons | FAIL |
+| drive-9-1 | off | 5691 / 5700 / 5691 / 5700 / 0.0 | 254 / 279 / 4200 / 4207 / 61.3 | 1192 | med, below, cons; same | FAIL |
+| drive-9-1 | e | 5670 / 5700 / 5670 / 5700 / 0.0 | 207 / 279 / 4180 / 4207 / 54.0 | 537 | med, below, cons; same | FAIL |
+| drive-9-1 | a | 2280 / 5700 / 2280 / 5700 / 0.0 | 57 / 279 / 1103 / 4207 / 87.7 | 522 | med, cons; none | FAIL |
+| drive-9-1 | ea | 2288 / 5700 / 2288 / 5700 / 0.0 | 75 / 279 / 1111 / 4207 / 70.8 | 430 | med, cons; cons | FAIL |
+| drive-9-2 | off | 3054 / 921 / 3054 / 921 / 0.0 | 249 / 196 / 2236 / 669 / 62.3 | 1192 | med, below, p90, cons; same | FAIL |
+| drive-9-2 | e | 1065 / 921 / 1065 / 921 / 0.0 | 206 / 196 / 844 / 669 / 63.1 | 513 | med, below, p90, cons; same | FAIL |
+| drive-9-2 | a | 829 / 921 / 829 / 921 / 100 | 72 / 196 / 519 / 669 / 100 | 522 | med, below; none | FAIL |
+| drive-9-2 | ea | 979 / 921 / 979 / 921 / 0.0 | 110 / 196 / 753 / 669 / 68.4 | 362 | med, below, p90, cons; p90, cons | FAIL |
+
+Overall: FAIL for every variant (drives passed: off 0/5, e 0/5, a 1/5, ea
+0/5; "5" counts drive-9-1 and -2 as two). Notes:
+- drive-7 `a` PASS is a near-pass: the points median 123 m is 0.17 m inside the
+  line (median 123.21 m, line 0.7 × 176.3 = 123.38 m); by seed it passes the points in 1 of 5 seeds
+  (the series in 5 of 5).
+- Single-point "inside 95 %" (jammed-A/B, drive-9) is one hit or miss per
+  seed, not a rate.
+- drive-9-1's scored truth point lies ~700 s after its `--gps mask-after 1229`
+  and cannot be reached with no input; it stays in the criterion because the
+  brief lists it, and the display there is the last pre-mask fix (5700 m off).
+  Its post-mask series (the same stretch, report-only) is the better
+  comparison: `a` 187 m against display 1907 m, `ea` 184 m against 1907 m.
+- `ea` has the lowest medians but its ellipse is too tight: series inside
+  95 % 68–76 % on four drives (jammed-A 45.5 %), the semi-major median
+  362–509 m on jammed-B / drive-9 (416 m on jammed-A). `a` alone is honest
+  (series inside 77–100 %) with a large ellipse (1229–1336 m on jammed-A / B).
+- (e) alone: points move to the 160–330 m class on jammed-A/B (1358–1477 m
+  before) and the pins median to 226 m, but the series medians stay above the
+  display except drive-9-1 (207 vs 279 m).
+- Report-only, roads on, series whole drive, engine median against display:
+  drive-8 off 1345 / 1272 m, `a` 382 m, `ea` 310 m; manual off 1016 / 229 m,
+  `e` 481 m, `a` 406 m (seeds 77–1597 m), `ea` 765 m. drive-8 and manual are
+  outside the criterion.
+
+Roads off (not part of the criterion): scored points, engine median, off / e /
+a / ea: jammed-A 1449 / 194 / 354 / 146 m, jammed-B 1470 / 332 / 342 / 377 m,
+drive-7 pins 338 / 225 / 247 / 149 m (display 176 m), drive-9-1 5676 / 5676 /
+2604 / 2658 m, drive-9-2 3194 / 1064 / 864 / 588 m; series medians for `a`:
+jammed-A 529, jammed-B 300, drive-7 (before 1800 s) 201, drive-9-1 99,
+drive-9-2 178 m. Roads change little, as in NAV-NOOBD.
+
+Cost: 572 replays (210 new cells, 2 × 146 for gate A, 70 for gate B), at most 2 in parallel, 37 min 50 s from the first replay to the last,
+gate checks included. ms/step, `--obd none`, mean over drives and seeds: roads
+on off 0.138, e 0.162, a 0.146, ea 0.160; roads off 0.094 for every variant.
+ESS minimum 1000 or more in every cell, no non-finite value; the independent
+recompute of the table (roads on) reproduced every verdict row.
+
+Recommendation for UX-7: do not build it on (e)+(a) as measured. No variant
+meets the proposed criterion (overall FAIL, `a` 1 of 5 drives). (a) is the
+useful piece: on the series it is 2–4× below the display on drive-7 (124 vs
+231 m), drive-9 (57–72 vs 196–279 m) and drive-8 (382 vs 1272 m), with an
+honest ellipse, but it fails jammed-A and jammed-B (410 / 287 m on the points
+against 83 / 170 m for the display) and the drive-9 points. (e) removes most
+of the 1 km lag of NAV-NOOBD (jammed-A/B points 160 / 327 m) but alone leaves
+the series above the display on four of five drives. What the remaining hypotheses might add: (b) an IMU stop/move
+detector is weak (precision 0.9 at recall ~0.3, thresholds depend on the drive
+and the mount), so a small help during stops only; speed from turns is
+OBD-grade but intermittent (8–22 % of moving time), a better μ source than
+Δposition when it is available (median error 3.5–5.6 km/h against 9–15 for the
+fix speed), at the price of a mounting calibration; (c) a road-class speed
+would replace the 30 km/h floor and the held μ with a road-dependent speed,
+and needs the road matching that does not work at ±1 km. The decision is the
+user's; UX-1 (d) stays until then and no default changes.
+
 ## Known limitations and options
 
 - **Heading convergence with tower fixes only** (manual: 6.8 km against a
