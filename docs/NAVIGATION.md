@@ -260,6 +260,43 @@ updates reweight only by what heading and scale actually predict.
   reset (R13.1-1): that is the pin carrying the most information. For example,
   a ring-shaped cloud after km of unknown heading is cut down to the headings
   that lead to the pin, and resampling keeps that posterior.
+  - **Pin snapping** (prompt 46, log v6; Core `PinSnap`, the app calls it once
+    per double tap). The tap is snapped to the road before it becomes the
+    pin; the engine ingests the snapped point, the log keeps the raw tap
+    (`tapLatitude`/`tapLongitude`, only on snapped rows; LOG_FORMAT "Pin
+    truth"), and scoring uses the raw tap. Rule: the search radius is 44 pt
+    (metres per point = visible span / map height in points); no road edge
+    within it: no snap. A junction node (ends at least two candidate edges)
+    within 8 pt of the tap: the node. Otherwise the nearest edge N against the
+    nearest edge of every other OSM way (packs carry no names, so "another
+    road" is another way; a way whose nearest point is a node of N's way is
+    the same road): no rival, or the nearest at least 2× nearer: N. Rivals
+    whose snapped point is at most σ_pin/2 from N's count as N's road (the
+    nearer wins). Otherwise the engine's particle cloud decides: support =
+    weight within 2 σ_pin of the candidate's snapped point with heading within
+    45° of the edge (either direction on a two-way edge, only the driving
+    direction on a one-way edge); at least 2× the support of every other
+    contested candidate wins, even if it is not the nearest; otherwise
+    ambiguous. σ_pin stays isotropic, max(30, span/12) (+ the speed term
+    above). The snapped point is the position the engine gets.
+
+    | result of the snap | span ≤ 1500 m | span > 1500 m |
+    |---|---|---|
+    | edge or node | pin placed on the road (log: snapped point + raw tap) | zoom in |
+    | ambiguous, no edge in the radius, no packs / no run | span ≤ 300 m: raw tap placed (today's rule, no tap fields); else zoom in | same: ≤ 300 m raw, else zoom in |
+    | span unknown, non-finite or negative | zoom in | zoom in |
+
+    (A snapped result is accepted up to 1500 m; everything else falls back to
+    today's 300 m rule, so with no packs or no run nothing changes.) An
+    along-road / across-road σ would be tighter than the isotropic one: a
+    follow-up, see [BACKLOG_UX UX-24](BACKLOG_UX.md) (quick along-road
+    correction) and the pin-snapping row UX-43. Replay check (26 pins, logged
+    spans median 150–370 m): snapping moves a pin a median of about 2–3 m to
+    the centreline (largest 20 m, an old 1248 m heading-up row), with no
+    measurable effect on the estimate (differences within the seed-to-seed
+    spread). With the same taps re-snapped as if made at 1000 / 1500 m, all
+    26 would be accepted snapped (5 / 8 of them to a junction node). Not
+    measured: finger precision at 1–1.5 km, and the phone's timing.
   - **Late manual fix** (R14.3-1). The double-tap flow writes the row when its
     3 s undo window closes, with `t` = the tap, so the live engine (and
     `--as-live`) ingests it about 3 s late. A pin is *late* when grid steps have
@@ -805,8 +842,32 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   [--fix-offset-max <m>] [--fix-offset-step <m>] [--fix-offset-stat mean|median] \
   [--fix-offset-course <deg>|off] [--fix-offset-test <m>@<deg>]... [--fix-offset-trace] \
   [--save-prior <state.json> [--save-prior-at <s>|end] [--save-prior-engine-off]] \
-  [--prior <state.json> [--prior-offset <dE>,<dN>]] [--start-at <s>] [--no-prior]
+  [--prior <state.json> [--prior-offset <dE>,<dN>]] [--start-at <s>] [--no-prior] \
+  [--snap-pins [--snap-viewport <pt>] [--snap-span <m>]]
 ```
+
+- **Pin snapping (prompt 46, replay only, off by default)**: `--snap-pins`
+  re-snaps each manual fix from its raw tap and its logged `mapSpanM` with the
+  same Core code as the app (`PinSnap`, rule under "Manual fix"), using the
+  engine's road network and particle cloud just before the pin. The engine
+  gets the placed point; **scoring keeps the raw tap** in every run
+  (`truthLatitude`/`truthLongitude`: the tap when the row has one, else the
+  logged point, so pre-v6 rows score exactly as before). `--snap-viewport
+  <pt>`: the map height in points, default 852 (the reference portrait iPhone;
+  no log records it; it only scales the radius). `--snap-span <m>` (stress
+  test): snap and place every pin as if tapped on a map that many metres
+  tall; the engine's pin σ keeps the row's span. Label part `-snap-pins`
+  (`-vp-<pt>` for a non-default viewport, `-span-<m>`); the summary has a
+  "Pin snap" line and `metrics.json` a `pinSnaps` array (one record per
+  manual fix: result, decision, placement `snapped` / `raw` / `zoomIn`, raw to
+  snapped distance in relative metres, radius; a `zoomIn` pin, which the app
+  would have refused, still gives the engine the raw tap as the recording
+  has it). Without
+  `--roads` every pin is "no network" and the raw tap is placed. Refused
+  (status 2) with `--compare`, `--write-sidecar`, `--fixpin-inject` and
+  `--fix-offset`, because it changes the pins the engine gets;
+  `--snap-viewport` and `--snap-span` need `--snap-pins`. Without the flag
+  the GeoJSON is byte-identical to the build before it.
 
 - **Navigate → Record hand-over (prompt 40, log v5)**: a recording with a
   `navPrior` row started its live run from that row's prior, so every
@@ -2839,7 +2900,7 @@ off: switches 0; default value in brackets):
 | (a) fix-speed OU mean | `noOBDFixSpeedMean` (0) | 1: each particle's speed is μ + its OU offset (unchanged, 2.5 m/s/√s, τ 20 s); antithetic increments kept |
 | | `noOBDFixSpeedWindowS` (120), `noOBDFixSpeedMinSpanS` (10) | μ = endpoint displacement / Δt of the network fixes within 120 s of the newest, at least 10 s apart |
 | | `noOBDFixSpeedMaxKmh` (110) | clamp 0…110 km/h (OBD p99 101, max 107) |
-| | `noOBDFixSpeedHoldS` (30), `noOBDFixSpeedDecayS` (30), `noOBDFixSpeedFloorKmh` (30) | μ held until the estimate's newest fix is 30 s old, then exponential to 30 km/h with τ 30 s; 0 is not used (the NAV-NOOBD lag) |
+| | `noOBDFixSpeedHoldS` (30), `noOBDFixSpeedDecayS` (30), `noOBDFixSpeedFloorKmh` (30) | as measured here: μ held until the estimate's newest fix is 30 s old, then exponential to 30 km/h with τ 30 s; 0 is not used (the NAV-NOOBD lag). **Since prompt 46 (2026-10-30) the defaults are floor 0, decay 500 s and a soft gate** ("NAV-NOOBD-46" below); this row's values are reproduced with `noOBDFixSpeedFloorKmh=30`, `noOBDFixSpeedGate=0`, `noOBDFixSpeedDecayS=30` |
 
 The t-likelihood leaves a fix kilometres off nearly uninformative (cost ~ log
 m²). The particle's Gaussian then takes a Kalman update with the scale
@@ -2977,6 +3038,66 @@ fix speed), at the price of a mounting calibration; (c) a road-class speed
 would replace the 30 km/h floor and the held μ with a road-dependent speed,
 and needs the road matching that does not work at ±1 km. The decision is the
 user's; UX-1 (d) stays until then and no default changes.
+
+### NAV-NOOBD-46 (2026-10-30): no-OBD speed after fixes stop
+
+Decisions (user, 2026-10-30): UX-7 builds on (a); the default of the speed
+after the fixes stop is rule (iv), "hold the state before the gap", with
+τ 500 s. Part A of prompt 46; replay only, `--obd none`. The switch
+`noOBDFixSpeedMean` itself still defaults to 0 (the mode needs it on); the new
+defaults act while it is 1.
+
+Without OBD, the fix-speed mean μ follows a "hold the state before the gap"
+rule (default since 2026-10-30). While network fixes keep arriving, μ is
+prompt 45's (a): the endpoint speed of the fixes in the last 120 s, held 30 s
+after the newest fix. When fixes stop, μ starts from the gated speed of that
+last window, then decays toward 0: μ = μ̂_gated · exp(−(age − 30 s)/τ), with
+τ = 500 s. μ̂_gated is μ̂ · min(1, (d/D0)²), where d is the endpoint
+displacement and D0 = 2.15·√2·σ, σ the calibrated per-axis noise of the fix
+band, which gives D0 of 24 m for Wi-Fi-class fixes, 517 m for 100–1000 m
+fixes and 730 m for tower fixes. So a parked car's jitter gives μ ≈ 0, and a clearly moving track keeps
+its full speed. τ is long because a moving car usually keeps moving: on the
+calibration drives, the mean speed s seconds after a moving instant,
+E[v(t+s)]/E[v(t)], stays around 0.8 from 120 s out to 480 s. The median time
+from a moving instant to the next stop of 30 s or more (or the end of the
+drive) is 404 s; to a stop of 60 s or more, the mean is 508 s.
+
+Keys (`NavigationConfig`, "No-OBD mode"):
+
+| key | default | meaning |
+|---|---|---|
+| `noOBDFixSpeedFloorKmh` | 0 | the floor μ decays to (was 30) |
+| `noOBDFixSpeedDecayS` | 500 | τ of the decay after the hold (was 30) |
+| `noOBDFixSpeedGate` | 2 | 0 off, 1 hard, 2 soft (the `min(1, (d/D0)²)` factor) |
+| `noOBDFixSpeedGateK` | 2.15 | k in D0 = k·√2·σ |
+| `noOBDFixSpeedGateSigmaLowM` / `MidM` / `TowerM` | 8 / 170 / 240 | the calibrated per-axis σ of the three bands (Wi-Fi-class, 100–1000 m, tower); D0 = 2.15·√2·σ = 24 / 517 / 730 m |
+
+Prompt 45's (a) is reproducible with floor 30, gate 0, decay 30
+(`--set noOBDFixSpeedFloorKmh=30 --set noOBDFixSpeedGate=0 --set
+noOBDFixSpeedDecayS=30`, with `noOBDFixSpeedMean=1`).
+
+Gate table, round 2 (median error ratio of the engine to the last-fix
+display; `logs/noobd-46/TABLE2.md`, git-ignored): jammed-A 0.89 PASS,
+jammed-B 1.04, drive-7 0.98, drive-9-1 1.65 FAIL, drive-9-2 0.89. The
+jammed-A median ratio alone (0.89) is marked PASS in that table.
+
+**drive-9-1 fails, stated plainly.** The replay's GPS mask withholds every
+fix, network ones included, for about 12 minutes while the car is moving. The
+fixes in the window before the mask also barely moved: endpoints 11 m apart
+over 101 s, so the gated speed was 0. The estimate therefore stays near where
+the fixes stopped (truth-point error 5692 m, against 2280 m for prompt 45's
+constant 30 km/h floor).
+
+**Known cost.** A car that drives into an underground garage and loses every
+fix keeps moving at its held speed for the 30 s hold and then decaying. That
+is at most about v·(30 s + τ) ≈ v·530 s, for example about 2.9 km from
+20 km/h, or about 2.1 km within the first 10 minutes.
+
+Parked tests: no fixes 41.3 m worst; ±200 m tower jitter 135.4 m mean (= prompt
+45, live μ untouched while fixes arrive).
+
+UX-7 note (user, 2026-10-30): show "position uncertain" when no fix has arrived
+for N minutes in no-OBD mode (BACKLOG_UX UX-7).
 
 ## Known limitations and options
 
