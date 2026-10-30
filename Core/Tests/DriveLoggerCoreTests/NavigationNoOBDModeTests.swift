@@ -46,11 +46,12 @@ struct NavigationNoOBDModeTests {
         return config
     }
 
-    /// Prompt 45's (a): the floor 30 km/h and no displacement gate.
+    /// Prompt 45's (a): the floor 30 km/h, decay 30 s and no displacement gate.
     static func config45(robust: Int = 0, fixSpeed: Int = 1, particles: Int = 300, seed: UInt64 = 5) -> NavigationConfig {
         var config = Self.config(robust: robust, fixSpeed: fixSpeed, particles: particles, seed: seed)
         config.noOBDFixSpeedFloorKmh = 30
         config.noOBDFixSpeedGate = 0
+        config.noOBDFixSpeedDecayS = 30
         return config
     }
 
@@ -89,7 +90,7 @@ struct NavigationNoOBDModeTests {
         #expect(d.noOBDNetworkFixScaleFloorM == 5 && d.noOBDNetworkFixTowerAccuracyM == 1_000)
         #expect(d.noOBDNetworkFixTowerScaleM == 120 && d.noOBDNetworkFixCorrelationS == 30)
         #expect(d.noOBDFixSpeedWindowS == 120 && d.noOBDFixSpeedMinSpanS == 10 && d.noOBDFixSpeedMaxKmh == 110)
-        #expect(d.noOBDFixSpeedHoldS == 30 && d.noOBDFixSpeedDecayS == 30 && d.noOBDFixSpeedFloorKmh == 0)
+        #expect(d.noOBDFixSpeedHoldS == 30 && d.noOBDFixSpeedDecayS == 500 && d.noOBDFixSpeedFloorKmh == 0)
         #expect(d.noOBDFixSpeedGate == 2 && d.noOBDFixSpeedGateK == 2.15 && d.noOBDFixSpeedGateSigmaLowM == 8)
         #expect(d.noOBDFixSpeedGateSigmaMidM == 170 && d.noOBDFixSpeedGateSigmaTowerM == 240)
         #expect(NavigationConfig.noOBDFixSpeedGateMidAccuracyM == 100 && NavigationConfig.noOBDFixSpeedGateTowerAccuracyM == 1_000)
@@ -344,21 +345,21 @@ struct NavigationNoOBDModeTests {
 
     // MARK: 5. Fixes stop for 10 min
 
-    @Test("Fixes stop for 10 min in no-OBD mode: estimate, ellipse, μ and weights stay finite; μ holds 30 s then relaxes to the floor (0 by default, 30 km/h in prompt 45's config); the same with no motion samples (catch-up macro steps)")
+    @Test("Fixes stop for 10 min in no-OBD mode: estimate, ellipse, μ and weights stay finite; μ holds 30 s then relaxes from the gated estimate to the floor (default: 0, τ 500 s; prompt 45's config: 30 km/h, τ 30 s); the same with no motion samples (catch-up macro steps)")
     func fixesStopForTenMinutes() throws {
         let long = S(initialHeadingDeg: 0, initialSpeed: Self.kmh50, [.straight(seconds: 760, speed: Self.kmh50)])
         let lastFix = 152.0
         let fix = Self.networkFix(accuracy: 1_414, noise: 200)
         let events = long.events(gyroNoise: 0.002, obdSpeed: Self.noOBD, fixEvery: 8,
                                  fix: { t, s, rng in t <= lastFix ? fix(t, s, &rng) : nil })
-        let runs = Self.switches.map { (robust: $0.robust, fixSpeed: $0.fixSpeed, floorKmh: 0.0) }
-            + [(robust: 0, fixSpeed: 1, floorKmh: 30.0)]
-        for (robust, fixSpeed, floorKmh) in runs {
+        let runs = Self.switches.map { (robust: $0.robust, fixSpeed: $0.fixSpeed, is45: false) }
+            + [(robust: 0, fixSpeed: 1, is45: true)]
+        for (robust, fixSpeed, is45) in runs {
             let times = Array(stride(from: 10.0, through: 760, by: 10))
-            var config = Self.config(robust: robust, fixSpeed: fixSpeed)
-            config.noOBDFixSpeedFloorKmh = floorKmh
+            let config = is45 ? Self.config45() : Self.config(robust: robust, fixSpeed: fixSpeed)
+            let floorKmh = config.noOBDFixSpeedFloorKmh, tau = config.noOBDFixSpeedDecayS
             let run = S.run(events, config: config, sampleTimes: times)
-            let tag = "\(robust) \(fixSpeed) floor \(floorKmh)"
+            let tag = "\(robust) \(fixSpeed) 45 \(is45)"
             for estimate in run.samples {
                 let e = try #require(estimate, "\(tag)")
                 #expect([e.latitude, e.longitude, e.headingDeg, e.speedMps, e.ellipse.semiMajorM, e.ellipse.semiMinorM,
@@ -372,6 +373,7 @@ struct NavigationNoOBDModeTests {
             // The 50 km/h track moves far beyond the gate's D0: μ̂ is the
             // track speed whatever the floor.
             #expect(abs(estimate.mps - Self.kmh50) * 3.6 < 15, "\(tag): μ̂ \(estimate.mps * 3.6) km/h")
+            #expect(estimate.gatedMps == estimate.mps)
             var previous = estimate.mps
             for t in stride(from: lastFix, through: 760, by: 5) {
                 let mu = run.engine.fixSpeedMean(at: S.ms(t).nanoseconds)
@@ -384,9 +386,11 @@ struct NavigationNoOBDModeTests {
                 }
                 previous = mu
             }
-            #expect(abs(run.engine.fixSpeedMean(at: S.ms(760).nanoseconds) - floor) * 3.6 < 0.01)
-            let mid = lastFix + 30 + 30
-            let expected = floor + (estimate.mps - floor) * exp(-1)
+            let end = floor + (estimate.gatedMps - floor) * exp(-(760 - lastFix - 30) / tau)
+            #expect(abs(run.engine.fixSpeedMean(at: S.ms(760).nanoseconds) - end) < 1e-9)
+            if is45 { #expect(abs(end - floor) * 3.6 < 0.01) }
+            let mid = lastFix + 30 + tau
+            let expected = floor + (estimate.gatedMps - floor) * exp(-1)
             #expect(abs(run.engine.fixSpeedMean(at: S.ms(mid).nanoseconds) - expected) < 1e-9)
         }
 

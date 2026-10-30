@@ -258,10 +258,11 @@ public struct NavigationConfig: Hashable, Sendable, Codable {
     /// μ is the speed of the network fixes: endpoint displacement / Δt of
     /// those within `noOBDFixSpeedWindowS` of the newest, clamped to
     /// 0…`noOBDFixSpeedMaxKmh`, held `noOBDFixSpeedHoldS` after the newest
-    /// fix of the estimate, then relaxing towards `noOBDFixSpeedFloorKmh`
-    /// with time constant `noOBDFixSpeedDecayS`. μ = 0 (the behaviour with
-    /// 0) until the first estimate. Causal: fixes already ingested only.
-    /// 0: off. Valid: 0 or 1.
+    /// fix of the estimate, then relaxing from the gated estimate
+    /// (`noOBDFixSpeedGate`) towards `noOBDFixSpeedFloorKmh` with time
+    /// constant `noOBDFixSpeedDecayS`. μ = 0 (the behaviour with 0) until
+    /// the first estimate. Causal: fixes already ingested only. Prompt 45's
+    /// (a) is floor 30, gate 0, decay 30 s. 0: off. Valid: 0 or 1.
     public var noOBDFixSpeedMean = 0
     /// Window of network fixes behind the newest one, s. Valid: finite,
     /// in (0, `maxNoOBDFixSpeedWindowS`].
@@ -275,22 +276,29 @@ public struct NavigationConfig: Hashable, Sendable, Codable {
     /// finite, ≥ 0.
     public var noOBDFixSpeedHoldS = 30.0
     /// Then it relaxes exponentially with this time constant, s (0: at
-    /// once). Valid: finite, ≥ 0.
-    public var noOBDFixSpeedDecayS = 30.0
-    /// …towards this speed, km/h (prompt 46: 0, so with no fix a parked
-    /// car's μ goes to 0 and the OU spread alone keeps the ellipse honest;
-    /// 30 is prompt 45's (a)). Valid: finite, ≥ 0.
+    /// once): μ = floor + (μ_gated − floor) · exp(−(age − hold)/τ), age the
+    /// time since the estimate's newest fix. Prompt 46: 500 s, the mean
+    /// time from a moving instant to the next stop of 60 s or more (or the
+    /// drive's end) on cal-1..cal-5 (508 s; median 453 s): the car is
+    /// expected to keep going about that long. Prompt 45's (a): 30 s.
+    /// Valid: finite, ≥ 0.
+    public var noOBDFixSpeedDecayS = 500.0
+    /// …towards this speed, km/h (prompt 46: 0, so with no fix μ ends at 0
+    /// and the OU spread alone keeps the ellipse honest; 30 is prompt 45's
+    /// (a)). Valid: finite, ≥ 0.
     public var noOBDFixSpeedFloorKmh = 0.0
-    /// Displacement significance gate on μ (prompt 46), read only with
-    /// `noOBDFixSpeedMean` on in no-OBD mode: a window whose endpoint
-    /// displacement d is within the noise of two network fixes is not
-    /// speed. D0 = `noOBDFixSpeedGateK` · √2 · σ, σ the per-axis noise of
-    /// the worse endpoint's band (`noOBDFixSpeedGateSigma…M`). 0: off
-    /// (prompt 45); 1: hard, μ = 0 below D0; 2: soft, μ scaled by
-    /// min(1, (d/D0)²) (calibration, cal-1..cal-5: the hard gate zeroed
-    /// 61 % of the fresh-estimate time at 5–20 km/h; the soft one halves a
-    /// parked car's noise speed and leaves μ unchanged at d ≥ D0).
-    /// Valid: 0, 1 or 2.
+    /// Displacement significance gate on the μ a fix gap starts from
+    /// (prompt 46, user rule "hold the state before the gap"), read only
+    /// with `noOBDFixSpeedMean` on in no-OBD mode. While fixes arrive (μ
+    /// held, `noOBDFixSpeedHoldS`) μ is the ungated estimate, as in prompt
+    /// 45; once the hold ends, μ relaxes from the gated one: a window whose
+    /// endpoint displacement d is within the noise of two network fixes is
+    /// not speed. D0 = `noOBDFixSpeedGateK` · √2 · σ, σ the per-axis noise
+    /// of the worse endpoint's band (`noOBDFixSpeedGateSigma…M`). 0: off
+    /// (prompt 45); 1: hard, 0 below D0; 2: soft, scaled by min(1, (d/D0)²)
+    /// (calibration, cal-1..cal-5: the hard gate zeroed 61 % of the
+    /// fresh-estimate time at 5–20 km/h; the soft one halves a parked car's
+    /// noise speed and leaves μ unchanged at d ≥ D0). Valid: 0, 1 or 2.
     public var noOBDFixSpeedGate = 2
     /// D0 in units of √2 · σ: 2.15 is the 90 % point of the Rayleigh
     /// distance between two fixes of a parked car (√(2 ln 10)); 1.67 its

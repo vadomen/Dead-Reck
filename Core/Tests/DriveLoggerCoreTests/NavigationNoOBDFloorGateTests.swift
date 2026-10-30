@@ -3,11 +3,13 @@ import Testing
 
 @testable import DriveLoggerCore
 
-/// Prompt 46 Part A: the no-OBD fix-speed mean μ (`noOBDFixSpeedMean`)
-/// relaxes towards `noOBDFixSpeedFloorKmh` = 0 when fixes stop, and a
-/// window of network fixes that moves less than the noise of two fixes is
-/// damped by the displacement gate (`noOBDFixSpeedGate`). Synthetic drives
-/// from (0, 0) only; no real place, date or recording.
+/// Prompt 46 Part A, "hold the state before the gap": while network fixes
+/// arrive the no-OBD fix-speed mean μ (`noOBDFixSpeedMean`) is prompt 45's;
+/// when they stop it relaxes, after the hold, from the gated estimate
+/// (`noOBDFixSpeedGate`: a window that moves less than the noise of two
+/// fixes is damped) towards `noOBDFixSpeedFloorKmh` = 0 with τ
+/// `noOBDFixSpeedDecayS` = 500 s. Synthetic drives from (0, 0) only; no
+/// real place, date or recording.
 @Suite("Navigation prompt 46: no-OBD fix-speed floor and displacement gate")
 struct NavigationNoOBDFloorGateTests {
     typealias S = SyntheticDrive
@@ -95,7 +97,7 @@ struct NavigationNoOBDFloorGateTests {
 
     // MARK: Parked, no fixes
 
-    @Test("Parked 10 min with no fixes (μ̂ ≈ 0 from 2 min of parked Wi-Fi fixes): the estimate (2000 particles) drifts < 50 m at floor 0 (measured: worst 10.2 m, 5.7 m at the end; μ̂ 0.84 km/h); prompt 45's floor 30 km/h drives it over 1 km (1722 m)")
+    @Test("Parked 10 min with no fixes (μ̂ ≈ 0 from 2 min of parked Wi-Fi fixes): the estimate (2000 particles) drifts < 50 m (measured: worst 41.3 m, at the end; μ̂ 0.84 km/h held 30 s, then its gated value decaying with τ 500 s); prompt 45's floor 30 km/h drives it over 1 km (1722 m)")
     func parkedWithoutFixesStays() throws {
         let fixesStop = 250.0, end = 850.0
         let wifi = M.networkFix(accuracy: 50, noise: 8)
@@ -120,7 +122,7 @@ struct NavigationNoOBDFloorGateTests {
 
     // MARK: Parked, tower fixes
 
-    @Test("Parked 10 min with tower fixes (1414 m claimed) jittering uniformly ±200 m per axis every 8 s: the estimate (2000 particles) stays within 150 m of the car on average (measured: mean 21.9 m, worst 63.9 m); prompt 45's (a) is farther off (mean 135.4 m, worst 180.6 m)")
+    @Test("Parked 10 min with tower fixes (1414 m claimed) jittering uniformly ±200 m per axis every 8 s: while they arrive μ is prompt 45's, so the run equals prompt 45's (a) sample for sample, and the estimate (2000 particles) stays within 150 m of the car on average (measured: mean 135.4 m, worst 180.6 m)")
     func parkedWithTowerFixesStays() throws {
         let end = Self.parkAt + 600
         let tower: (Double, S.State, inout NavigationRandom) -> S.Fix? = { _, state, rng in
@@ -131,21 +133,21 @@ struct NavigationNoOBDFloorGateTests {
                                              fix: Self.parkedFixes { t, state, rng in t <= end ? tower(t, state, &rng) : nil })
         let times = Array(stride(from: Self.parkAt + 10, through: end, by: 10))
         let car = Self.parkedDrive.truth(at: Self.parkAt)
-        func drift(_ config: NavigationConfig) throws -> (mean: Double, max: Double) {
+        func drift(_ config: NavigationConfig) throws -> (mean: Double, max: Double, samples: [NavigationEstimate?]) {
             let run = S.run(events, config: config, sampleTimes: times)
             #expect(!run.engine.obdEverIngested && run.engine.counters.networkFixesUsed >= 70)
             let d = try run.samples.map { Self.distance(try #require($0), (car.east, car.north)) }
-            return (d.reduce(0, +) / Double(d.count), d.max()!)
+            return (d.reduce(0, +) / Double(d.count), d.max()!, run.samples)
         }
         let now = try drift(M.config(fixSpeed: 1, particles: 2_000))
         #expect(now.mean < 150, "mean drift \(now.mean) m, worst \(now.max) m")
         let old = try drift(M.config45(particles: 2_000))
-        #expect(now.mean < old.mean, "now \(now.mean) m, prompt 45 \(old.mean) m")
+        #expect(now.samples == old.samples, "now \(now.mean) m, prompt 45 \(old.mean) m")
     }
 
     // MARK: Moving: μ as in prompt 45
 
-    @Test("Moving at 50 km/h with tower fixes (200 m noise) every 8 s: μ̂ is endpoint distance / span × min(1, (d/730 m)²), the same as prompt 45's (a) times the gate; once the window spans more than D0 (here from 130 s on) it equals prompt 45's bit for bit")
+    @Test("Moving at 50 km/h with tower fixes (200 m noise) every 8 s: while fixes arrive μ̂ and μ are prompt 45's bit for bit (endpoint distance / span); the gated value a gap would start from is μ̂ × min(1, (d/730 m)²), equal to μ̂ once the window spans more than D0 (here from 130 s on)")
     func movingTrackKeepsTheFixSpeed() throws {
         let straight = S(initialHeadingDeg: 30, initialSpeed: Self.kmh50, [.straight(seconds: 300, speed: Self.kmh50)])
         let events = straight.events(gyroNoise: 0.002, obdSpeed: M.noOBD, fixEvery: 8,
@@ -170,7 +172,10 @@ struct NavigationNoOBDFloorGateTests {
             let d = ((p.east - window[0].east) * (p.east - window[0].east)
                 + (p.north - window[0].north) * (p.north - window[0].north)).squareRoot()
             let oldMps = try #require(old.fixSpeedEstimate?.mps)
-            let gatedMps = try #require(gated.fixSpeedEstimate?.mps)
+            #expect(gated.fixSpeedEstimate?.mps == oldMps, "\(t.seconds)")
+            #expect(gated.fixSpeedMean(at: t.nanoseconds) == old.fixSpeedMean(at: t.nanoseconds), "\(t.seconds)")
+            #expect(old.fixSpeedEstimate?.gatedMps == oldMps)
+            let gatedMps = try #require(gated.fixSpeedEstimate?.gatedMps)
             #expect(abs(oldMps - min(d / span, 110 / 3.6)) < 1e-6, "\(t.seconds)")
             let factor = min(1, (d / d0) * (d / d0))
             #expect(abs(gatedMps - min(d / span * factor, 110 / 3.6)) < 1e-6, "\(t.seconds): \(gatedMps) vs \(d / span * factor)")
@@ -187,9 +192,60 @@ struct NavigationNoOBDFloorGateTests {
         #expect(damped >= 3 && equal >= 20, "damped \(damped), equal \(equal)")
     }
 
+    // MARK: Fix gap: the state before it, decaying
+
+    @Test("Fix gap after a moving track (50 km/h, tower fixes to 152 s): μ is μ̂ for the 30 s hold, then μ̂_gated (= μ̂, the window moved far beyond D0) · exp(−(age − 30)/500 s), still 32 km/h 4 min into the decay; the cloud's speed is μ (within 15 %) and its mean goes on north (measured 2960 m of ∫μ dt 5289 m: the headings spread); after a parked window the gap starts from μ̂ × (d/D0)² instead")
+    func fixGapKeepsTheStateBeforeIt() throws {
+        let lastFix = 152.0, end = 760.0, tau = 500.0
+        let long = S(initialHeadingDeg: 0, initialSpeed: Self.kmh50, [.straight(seconds: end, speed: Self.kmh50)])
+        let fix = M.networkFix(accuracy: 1_414, noise: 200)
+        let events = long.events(gyroNoise: 0.002, obdSpeed: M.noOBD, fixEvery: 8,
+                                 fix: { t, s, rng in t <= lastFix ? fix(t, s, &rng) : nil })
+        let config = M.config(fixSpeed: 1, particles: 2_000)
+        #expect(config.noOBDFixSpeedDecayS == tau && config.noOBDFixSpeedFloorKmh == 0)
+        let run = S.run(events, config: config, sampleTimes: [lastFix + 30, end])
+        let estimate = try #require(run.engine.fixSpeedEstimate)
+        #expect(estimate.newestNs == S.ms(lastFix).nanoseconds)
+        #expect(estimate.gatedMps == estimate.mps && abs(estimate.mps - Self.kmh50) * 3.6 < 15)
+        for t in stride(from: lastFix, through: end, by: 10) {
+            let mu = run.engine.fixSpeedMean(at: S.ms(t).nanoseconds)
+            let expected = t - lastFix <= 30 ? estimate.mps : estimate.gatedMps * exp(-(t - lastFix - 30) / tau)
+            #expect(abs(mu - expected) < 1e-9, "\(t): \(mu) vs \(expected)")
+        }
+        #expect(run.engine.fixSpeedMean(at: S.ms(lastFix + 30 + 240).nanoseconds) * 3.6 > 30)
+        // The cloud keeps moving: its speed is μ, and its mean goes on north
+        // (less than ∫μ dt: 10 min without fixes spread the headings).
+        let first = try #require(run.samples[0]), last = try #require(run.samples[1])
+        let muEnd = run.engine.fixSpeedMean(at: S.ms(end).nanoseconds)
+        #expect(abs(last.speedMps - muEnd) < 0.15 * muEnd, "speed \(last.speedMps) m/s, μ \(muEnd) m/s")
+        let a = Self.enu(first), b = Self.enu(last)
+        let integral = run.engine.fixSpeedMeanIntegral(from: S.ms(lastFix + 30).nanoseconds, to: S.ms(end).nanoseconds)
+        #expect(abs(integral - estimate.mps * tau * -expm1(-(end - lastFix - 30) / tau)) < 1e-6 * integral)
+        #expect(b.north - a.north > 0.4 * integral, "moved \(b.north - a.north) m, ∫μ \(integral) m")
+
+        // A parked window (tower jitter, d below D0) then a gap: the gap
+        // starts from the gated value, not from the noise speed.
+        var engine = NavigationEngine(config: M.config(fixSpeed: 1))
+        engine.ingest(M.networkInput(east: 0, north: 0, accuracy: 1_414, at: 0))
+        engine.ingest(M.networkInput(east: 180, north: 240, accuracy: 1_414, at: 60))
+        let parked = try #require(engine.fixSpeedEstimate)
+        let d0 = 2.15 * 2.0.squareRoot() * 240
+        #expect(abs(parked.mps - 300.0 / 60) < 1e-3)
+        #expect(abs(parked.gatedMps - parked.mps * (300 / d0) * (300 / d0)) < 1e-6)
+        #expect(engine.fixSpeedMean(at: S.ms(90).nanoseconds) == parked.mps)
+        #expect(abs(engine.fixSpeedMean(at: S.ms(90.001).nanoseconds) - parked.gatedMps) < 1e-5)
+        var hard = M.config(fixSpeed: 1)
+        hard.noOBDFixSpeedGate = 1
+        var e1 = NavigationEngine(config: hard)
+        e1.ingest(M.networkInput(east: 0, north: 0, accuracy: 1_414, at: 0))
+        e1.ingest(M.networkInput(east: 180, north: 240, accuracy: 1_414, at: 60))
+        #expect(e1.fixSpeedEstimate?.mps == parked.mps && e1.fixSpeedEstimate?.gatedMps == 0)
+        #expect(e1.fixSpeedMean(at: S.ms(90.001).nanoseconds) == 0)
+    }
+
     // MARK: Prompt 45 reproduced
 
-    @Test("Floor 30 and gate 0 reproduce prompt 45's (a) bit for bit: a 10 min no-fix gap after a 50 km/h tower-fix drive ends at the estimate prompt 45 produced (values recorded on its code)")
+    @Test("Floor 30, gate 0 and decay 30 s reproduce prompt 45's (a) bit for bit: a 10 min no-fix gap after a 50 km/h tower-fix drive ends at the estimate prompt 45 produced (values recorded on its code)")
     func floor30ReproducesPrompt45() throws {
         let long = S(initialHeadingDeg: 0, initialSpeed: Self.kmh50, [.straight(seconds: 760, speed: Self.kmh50)])
         let fix = M.networkFix(accuracy: 1_414, noise: 200)
