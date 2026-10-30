@@ -459,7 +459,7 @@ enum ManualFixTap {
 
     @MainActor
     static func perform(
-        latitude: Double, longitude: Double, visibleSpanM: Double?, viewportHeightPt: Double = 0,
+        latitude: Double, longitude: Double, visibleSpanM: Double?, viewportHeightPt: Double,
         marking: ManualFixMarking
     ) async -> Outcome {
         guard let tapT = marking.tapTime() else { return .ignored }

@@ -280,10 +280,10 @@ struct MapNavigationTests {
     @MainActor
     func doubleTapTooFarOut() async {
         let fake = FakeMarking()
-        #expect(await ManualFixTap.perform(latitude: 0, longitude: 0, visibleSpanM: 300.1, marking: fake.marking) == .tooFarOut)
-        #expect(await ManualFixTap.perform(latitude: 0, longitude: 0, visibleSpanM: nil, marking: fake.marking) == .tooFarOut)
+        #expect(await ManualFixTap.perform(latitude: 0, longitude: 0, visibleSpanM: 300.1, viewportHeightPt: 800, marking: fake.marking) == .tooFarOut)
+        #expect(await ManualFixTap.perform(latitude: 0, longitude: 0, visibleSpanM: nil, viewportHeightPt: 800, marking: fake.marking) == .tooFarOut)
         #expect(fake.staged.isEmpty)
-        #expect(await ManualFixTap.perform(latitude: 0, longitude: 0, visibleSpanM: 300, marking: fake.marking) != .tooFarOut)
+        #expect(await ManualFixTap.perform(latitude: 0, longitude: 0, visibleSpanM: 300, viewportHeightPt: 800, marking: fake.marking) != .tooFarOut)
     }
 
     @Test("Not recording, or a refused position: ignored, no toast")
@@ -291,13 +291,13 @@ struct MapNavigationTests {
     func doubleTapIgnored() async {
         let fake = FakeMarking()
         fake.now = nil
-        #expect(await ManualFixTap.perform(latitude: 0, longitude: 0, visibleSpanM: 100, marking: fake.marking) == .ignored)
-        #expect(await ManualFixTap.perform(latitude: 0, longitude: 0, visibleSpanM: 1000, marking: fake.marking) == .ignored,
+        #expect(await ManualFixTap.perform(latitude: 0, longitude: 0, visibleSpanM: 100, viewportHeightPt: 800, marking: fake.marking) == .ignored)
+        #expect(await ManualFixTap.perform(latitude: 0, longitude: 0, visibleSpanM: 1000, viewportHeightPt: 800, marking: fake.marking) == .ignored,
                 "not recording: no zoom hint either")
         #expect(fake.snapCalls == 0, "not recording: no snap")
         fake.now = MonotonicTimestamp(seconds: 1)
         fake.accept = false
-        #expect(await ManualFixTap.perform(latitude: 0, longitude: 0, visibleSpanM: 100, marking: fake.marking) == .ignored)
+        #expect(await ManualFixTap.perform(latitude: 0, longitude: 0, visibleSpanM: 100, viewportHeightPt: 800, marking: fake.marking) == .ignored)
         #expect(ManualFixMarking.unavailable.undoWindow == .seconds(3))
     }
 
