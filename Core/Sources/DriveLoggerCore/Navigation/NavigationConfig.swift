@@ -277,8 +277,35 @@ public struct NavigationConfig: Hashable, Sendable, Codable {
     /// Then it relaxes exponentially with this time constant, s (0: at
     /// once). Valid: finite, ≥ 0.
     public var noOBDFixSpeedDecayS = 30.0
-    /// …towards this speed, km/h. Valid: finite, ≥ 0.
-    public var noOBDFixSpeedFloorKmh = 30.0
+    /// …towards this speed, km/h (prompt 46: 0, so with no fix a parked
+    /// car's μ goes to 0 and the OU spread alone keeps the ellipse honest;
+    /// 30 is prompt 45's (a)). Valid: finite, ≥ 0.
+    public var noOBDFixSpeedFloorKmh = 0.0
+    /// Displacement significance gate on μ (prompt 46), read only with
+    /// `noOBDFixSpeedMean` on in no-OBD mode: a window whose endpoint
+    /// displacement d is within the noise of two network fixes is not
+    /// speed. D0 = `noOBDFixSpeedGateK` · √2 · σ, σ the per-axis noise of
+    /// the worse endpoint's band (`noOBDFixSpeedGateSigma…M`). 0: off
+    /// (prompt 45); 1: hard, μ = 0 below D0; 2: soft, μ scaled by
+    /// min(1, (d/D0)²) (calibration, cal-1..cal-5: the hard gate zeroed
+    /// 61 % of the fresh-estimate time at 5–20 km/h; the soft one halves a
+    /// parked car's noise speed and leaves μ unchanged at d ≥ D0).
+    /// Valid: 0, 1 or 2.
+    public var noOBDFixSpeedGate = 2
+    /// D0 in units of √2 · σ: 2.15 is the 90 % point of the Rayleigh
+    /// distance between two fixes of a parked car (√(2 ln 10)); 1.67 its
+    /// 75 % point. Valid: finite, > 0.
+    public var noOBDFixSpeedGateK = 2.15
+    /// Per-axis noise σ of a network fix claiming under
+    /// `noOBDFixSpeedGateMidAccuracyM`, m (calibration RMS E/N 9/7). Valid:
+    /// finite, > 0.
+    public var noOBDFixSpeedGateSigmaLowM = 8.0
+    /// …claiming `noOBDFixSpeedGateMidAccuracyM` up to
+    /// `noOBDFixSpeedGateTowerAccuracyM`, m (RMS 161/175). Valid: finite, > 0.
+    public var noOBDFixSpeedGateSigmaMidM = 170.0
+    /// …claiming `noOBDFixSpeedGateTowerAccuracyM` or more, m (RMS
+    /// 203/271). Valid: finite, > 0.
+    public var noOBDFixSpeedGateSigmaTowerM = 240.0
 
     // MARK: Manual fixes
 
@@ -465,6 +492,8 @@ extension NavigationConfig {
         case noOBDNetworkFixTowerAccuracyM, noOBDNetworkFixTowerScaleM, noOBDNetworkFixCorrelationS
         case noOBDFixSpeedMean, noOBDFixSpeedWindowS, noOBDFixSpeedMinSpanS, noOBDFixSpeedMaxKmh
         case noOBDFixSpeedHoldS, noOBDFixSpeedDecayS, noOBDFixSpeedFloorKmh
+        case noOBDFixSpeedGate, noOBDFixSpeedGateK, noOBDFixSpeedGateSigmaLowM, noOBDFixSpeedGateSigmaMidM
+        case noOBDFixSpeedGateSigmaTowerM
         case manualFixSigmaMinM, manualFixSpanDivisor, manualFixReactionS, manualFixUnknownSpeedMps
         case manualFixResetChi2, lateManualFixWindowS
         case fixPinWindowS, fixPinTwoPinCheck, fixPinTwoPinMinPathM, fixPinTwoPinMinTurnDeg, fixPinInflation, fixPinRestoreS
@@ -548,6 +577,11 @@ extension NavigationConfig {
         noOBDFixSpeedHoldS = try c.decodeIfPresent(type(of: noOBDFixSpeedHoldS), forKey: .noOBDFixSpeedHoldS) ?? noOBDFixSpeedHoldS
         noOBDFixSpeedDecayS = try c.decodeIfPresent(type(of: noOBDFixSpeedDecayS), forKey: .noOBDFixSpeedDecayS) ?? noOBDFixSpeedDecayS
         noOBDFixSpeedFloorKmh = try c.decodeIfPresent(type(of: noOBDFixSpeedFloorKmh), forKey: .noOBDFixSpeedFloorKmh) ?? noOBDFixSpeedFloorKmh
+        noOBDFixSpeedGate = try c.decodeIfPresent(type(of: noOBDFixSpeedGate), forKey: .noOBDFixSpeedGate) ?? noOBDFixSpeedGate
+        noOBDFixSpeedGateK = try c.decodeIfPresent(type(of: noOBDFixSpeedGateK), forKey: .noOBDFixSpeedGateK) ?? noOBDFixSpeedGateK
+        noOBDFixSpeedGateSigmaLowM = try c.decodeIfPresent(type(of: noOBDFixSpeedGateSigmaLowM), forKey: .noOBDFixSpeedGateSigmaLowM) ?? noOBDFixSpeedGateSigmaLowM
+        noOBDFixSpeedGateSigmaMidM = try c.decodeIfPresent(type(of: noOBDFixSpeedGateSigmaMidM), forKey: .noOBDFixSpeedGateSigmaMidM) ?? noOBDFixSpeedGateSigmaMidM
+        noOBDFixSpeedGateSigmaTowerM = try c.decodeIfPresent(type(of: noOBDFixSpeedGateSigmaTowerM), forKey: .noOBDFixSpeedGateSigmaTowerM) ?? noOBDFixSpeedGateSigmaTowerM
         manualFixSigmaMinM = try c.decodeIfPresent(type(of: manualFixSigmaMinM), forKey: .manualFixSigmaMinM) ?? manualFixSigmaMinM
         manualFixSpanDivisor = try c.decodeIfPresent(type(of: manualFixSpanDivisor), forKey: .manualFixSpanDivisor) ?? manualFixSpanDivisor
         manualFixReactionS = try c.decodeIfPresent(type(of: manualFixReactionS), forKey: .manualFixReactionS) ?? manualFixReactionS
@@ -606,6 +640,11 @@ extension NavigationConfig {
     /// Largest `noOBDFixSpeedWindowS`, s: the engine keeps the network
     /// fixes of this window (at most about one per second).
     public static let maxNoOBDFixSpeedWindowS = 3_600.0
+    /// Claimed accuracy from which a network fix is in the gate's middle
+    /// band, m (`noOBDFixSpeedGateSigmaMidM`); the calibration's band edge.
+    public static let noOBDFixSpeedGateMidAccuracyM = 100.0
+    /// …and in its tower band, m (`noOBDFixSpeedGateSigmaTowerM`).
+    public static let noOBDFixSpeedGateTowerAccuracyM = 1_000.0
 
     /// This configuration with values the engine cannot use safely clamped
     /// (B0-1). `NavigationEngine.init` applies it, so `engine.config` is the
@@ -704,13 +743,20 @@ extension NavigationConfig {
                               ("noOBDFixSpeedMean", noOBDFixSpeedMean)] where value != 0 && value != 1 {
             return "\(name) must be 0 or 1, got \(value)"
         }
+        if ![0, 1, 2].contains(noOBDFixSpeedGate) {
+            return "noOBDFixSpeedGate must be 0, 1 or 2, got \(noOBDFixSpeedGate)"
+        }
         for (name, value) in [("noOBDNetworkFixNu", noOBDNetworkFixNu),
                               ("noOBDNetworkFixScalePerAccuracy", noOBDNetworkFixScalePerAccuracy),
                               ("noOBDNetworkFixScaleFloorM", noOBDNetworkFixScaleFloorM),
                               ("noOBDNetworkFixTowerAccuracyM", noOBDNetworkFixTowerAccuracyM),
                               ("noOBDNetworkFixTowerScaleM", noOBDNetworkFixTowerScaleM),
                               ("noOBDNetworkFixCorrelationS", noOBDNetworkFixCorrelationS),
-                              ("noOBDFixSpeedMinSpanS", noOBDFixSpeedMinSpanS)]
+                              ("noOBDFixSpeedMinSpanS", noOBDFixSpeedMinSpanS),
+                              ("noOBDFixSpeedGateK", noOBDFixSpeedGateK),
+                              ("noOBDFixSpeedGateSigmaLowM", noOBDFixSpeedGateSigmaLowM),
+                              ("noOBDFixSpeedGateSigmaMidM", noOBDFixSpeedGateSigmaMidM),
+                              ("noOBDFixSpeedGateSigmaTowerM", noOBDFixSpeedGateSigmaTowerM)]
             where !(value > 0 && value.isFinite) {
             return "\(name) must be finite and > 0, got \(value)"
         }
