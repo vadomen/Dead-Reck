@@ -432,6 +432,111 @@ struct NavigationNoOBDModeTests {
                     - (30 * (e0.fixSpeedEstimate?.mps ?? .nan) + 10 * 30 / 3.6)) < 1e-6)
     }
 
+    // MARK: Review run 83
+
+    /// Every particle at the origin heading east, no speed offset, the
+    /// given per-axis variance, equal weights: identical particles, so an
+    /// update moves each the same way and leaves the weights uniform.
+    static func setIdenticalCloud(_ engine: inout NavigationEngine, variance: Double) {
+        let n = engine.east.count
+        for i in 0..<n {
+            engine.east[i] = 0
+            engine.north[i] = 0
+            engine.heading[i] = .pi / 2
+            engine.speedOffset[i] = 0
+            engine.covEE[i] = variance
+            engine.covEN[i] = 0
+            engine.covNN[i] = variance
+            engine.logWeight[i] = -log(Double(n))
+        }
+        engine.normalizeWeights()
+    }
+
+    static func weightedMean(_ engine: NavigationEngine) -> (east: Double, north: Double) {
+        var e = 0.0, n = 0.0
+        for i in engine.east.indices {
+            e += engine.weight[i] * engine.east[i]
+            n += engine.weight[i] * engine.north[i]
+        }
+        return (e, n)
+    }
+
+    @Test("R83.1-1: fix-speed μ moves the cloud through catch-up macro steps: an 80 s input gap (μ = 20 m/s held to 40 s, then relaxing to 30 km/h) moves the mean east by ∫μ dt within 0.5 %, as stepping one by one does; with μ off it stays within 5 m")
+    func fixSpeedMeanThroughMacroSteps() throws {
+        func run(fixSpeed: Int, maxCatchUpSteps: Int = 100) throws -> (displacement: (east: Double, north: Double),
+                                                                         expected: Double, macroSteps: Int) {
+            var config = Self.config(fixSpeed: fixSpeed)
+            config.maxCatchUpSteps = maxCatchUpSteps
+            var engine = NavigationEngine(config: config)
+            // μ̂ = 200 m / 10 s from the fixes at 0 and 10 s (newest at 10 s).
+            engine.ingest(Self.networkInput(east: 0, north: 0, accuracy: 30, at: 0))
+            engine.ingest(Self.networkInput(east: 200, north: 0, accuracy: 30, at: 10))
+            engine.ingest(Self.still(at: 20.05))
+            let from = try #require(engine.lastStepTime)
+            #expect(from == S.ms(20))
+            Self.setIdenticalCloud(&engine, variance: 400)
+            let macroBefore = engine.counters.macroSteps
+            // No input for 80 s: 800 grid steps, caught up in macro steps.
+            engine.ingest(Self.still(at: 100.05))
+            let to = try #require(engine.lastStepTime)
+            #expect(to == S.ms(100))
+            let expected = engine.fixSpeedMeanIntegral(from: from.nanoseconds, to: to.nanoseconds)
+            Self.expectFinite(engine, "macro \(fixSpeed) \(maxCatchUpSteps)")
+            return (Self.weightedMean(engine), expected, engine.counters.macroSteps - macroBefore)
+        }
+        // 20 s held at 20 m/s, then 60 s relaxing from 20 m/s to 30 km/h.
+        let floor = 30 / 3.6
+        let closedForm = 20 * 20 + floor * 60 + (20 - floor) * 30 * -expm1(-2)
+        let macro = try run(fixSpeed: 1)
+        #expect(macro.macroSteps > 0)
+        #expect(abs(macro.expected - closedForm) < 1e-6 * closedForm, "\(macro.expected) vs \(closedForm)")
+        #expect(abs(macro.displacement.east - closedForm) < 0.005 * closedForm,
+                "macro steps moved \(macro.displacement.east) m east, ∫μ = \(closedForm) m")
+        #expect(abs(macro.displacement.north) < 0.01 * closedForm)
+        let stepped = try run(fixSpeed: 1, maxCatchUpSteps: 1_000_000)
+        #expect(stepped.macroSteps == 0)
+        #expect(abs(stepped.displacement.east - closedForm) < 0.005 * closedForm,
+                "stepping moved \(stepped.displacement.east) m east, ∫μ = \(closedForm) m")
+        let off = try run(fixSpeed: 0)
+        #expect(off.macroSteps > 0)
+        #expect(abs(off.displacement.east) < 5, "μ off moved \(off.displacement.east) m east")
+    }
+
+    @Test("R83.1-2: a robust network fix 15 s after the previous one is tempered by 15 s / noOBDNetworkFixCorrelationS (scale² divided by it), not by networkFixCorrelationS: the identical-particle Kalman shift matches the closed form for 30 s and for 60 s to 1e-9 m, and changing networkFixCorrelationS leaves it unchanged")
+    func robustTemperingUsesItsOwnTimeConstant() {
+        let p = 400.0, offset = 300.0, scale = 120.0, nu = 2.0, dt = 15.0
+        /// The shift every particle (so the mean) takes: Kalman gain of the
+        /// scale² / w inflated by max(1, (ν + m²)/(ν + 2)).
+        func predicted(correlationS: Double) -> Double {
+            let r = scale * scale / min(1, dt / correlationS)
+            let m2 = offset * offset / (p + r)
+            let inflation = max(1, (nu + m2) / (nu + 2))
+            return p / (p + r * inflation) * offset
+        }
+        func shift(_ edit: (inout NavigationConfig) -> Void) -> (east: Double, north: Double) {
+            var config = Self.config(robust: 1)
+            edit(&config)
+            var engine = NavigationEngine(config: config)
+            engine.ingest(Self.networkInput(east: 0, north: 0, accuracy: 30, at: 0))
+            engine.ingest(Self.still(at: dt + 0.05))
+            Self.setIdenticalCloud(&engine, variance: p)
+            // A tower fix (scale 120 m) 300 m east, 15 s after the first; no step between.
+            engine.ingest(Self.networkInput(east: offset, north: 0, accuracy: 1414, at: dt))
+            #expect(engine.lastStepTime == S.ms(dt))
+            return Self.weightedMean(engine)
+        }
+        let at30 = shift { _ in }
+        let at60 = shift { $0.noOBDNetworkFixCorrelationS = 60 }
+        let otherKey = shift { $0.networkFixCorrelationS = 5 }
+        #expect(abs(at30.east - predicted(correlationS: 30)) < 1e-9, "\(at30.east) vs \(predicted(correlationS: 30))")
+        #expect(abs(at60.east - predicted(correlationS: 60)) < 1e-9, "\(at60.east) vs \(predicted(correlationS: 60))")
+        #expect(abs(at30.north) < 1e-9 && abs(at60.north) < 1e-9)
+        // The two weights give clearly different shifts (≈ 3.25 and 2.07 m).
+        #expect(at30.east > 1.3 * at60.east && at60.east > 1)
+        // networkFixCorrelationS is the Gaussian path's key only.
+        #expect(otherKey.east == at30.east && otherKey.north == at30.north)
+    }
+
     // MARK: Keys
 
     @Test("No-OBD keys: decoding without them gives the defaults (off); refused values")

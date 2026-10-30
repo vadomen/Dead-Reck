@@ -2927,7 +2927,7 @@ the scored points):
 Overall: FAIL for every variant (drives passed: off 0/5, e 0/5, a 1/5, ea
 0/5; "5" counts drive-9-1 and -2 as two). Notes:
 - drive-7 `a` PASS is a near-pass: the points median 123 m is 0.17 m inside the
-  0.7 × 176 m line (123.2 m); by seed it passes the points in 1 of 5 seeds
+  line (median 123.21 m, line 0.7 × 176.3 = 123.38 m); by seed it passes the points in 1 of 5 seeds
   (the series in 5 of 5).
 - Single-point "inside 95 %" (jammed-A/B, drive-9) is one hit or miss per
   seed, not a rate.
