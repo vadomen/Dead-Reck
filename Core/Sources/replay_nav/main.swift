@@ -433,10 +433,10 @@ while !arguments.isEmpty {
         snapPins = true
     case "--snap-viewport":
         snapViewport = number(value(), argument)
-        guard snapViewport > 0 else { fail("--snap-viewport needs a positive height in points\n\(usage)", status: 2) }
+        guard ReplayPinSnap.isValidViewportHeightPt(snapViewport) else { fail("--snap-viewport needs a positive height in points\n\(usage)", status: 2) }
     case "--snap-span":
         let span = number(value(), argument)
-        guard span > 0 else { fail("--snap-span needs a positive span in metres\n\(usage)", status: 2) }
+        guard ReplayPinSnap.isValidSpanOverrideM(span) else { fail("--snap-span needs a positive span in metres\n\(usage)", status: 2) }
         snapSpan = span
     case "-h", "--help":
         print(usage)
@@ -450,11 +450,11 @@ guard !paths.isEmpty else { fail(usage, status: 2) }
 // Prompt 46: --snap-pins changes the engine's pin input, so it cannot
 // reproduce a live run or feed a study that builds its own inputs.
 if snapPins {
-    let refused = givenFlags.filter { ["--compare", "--write-sidecar", "--fixpin-inject", "--fix-offset"].contains($0) }
+    let refused = ReplayPinSnap.refusedFlags(givenFlags)
     guard refused.isEmpty else {
         fail("--snap-pins changes the pins the engine gets: drop \(refused.joined(separator: ", "))\n\(usage)", status: 2)
     }
-} else if givenFlags.contains("--snap-viewport") || givenFlags.contains("--snap-span") {
+} else if ReplayPinSnap.needsSnapPins(givenFlags) {
     fail("--snap-viewport and --snap-span need --snap-pins\n\(usage)", status: 2)
 }
 // NAV-NOOBD: what cannot run without OBD, or would reproduce a live run

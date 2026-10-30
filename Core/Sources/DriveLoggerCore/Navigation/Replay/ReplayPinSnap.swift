@@ -26,6 +26,40 @@ public struct ReplayPinSnap: Hashable, Sendable {
     public var parameters = PinSnap.Parameters()
     public var spanOverrideM: Double?
 
+    // MARK: replay_nav flags
+
+    /// Flags refused with `--snap-pins` (status 2): it changes the pins the
+    /// engine gets, so it cannot reproduce a live run (`--compare`,
+    /// `--write-sidecar`) or feed a study that builds its own inputs
+    /// (`--fixpin-inject`, `--fix-offset`).
+    public static let refusedWithSnapPins: [String] = ["--compare", "--write-sidecar", "--fixpin-inject", "--fix-offset"]
+
+    /// Flags that need `--snap-pins`.
+    public static let needSnapPins: [String] = ["--snap-viewport", "--snap-span"]
+
+    /// The members of `refusedWithSnapPins` among `given` (the command
+    /// line's flags), in the order given, repeats kept (as `replay_nav`
+    /// printed them before this helper); empty when the run may go on.
+    public static func refusedFlags(_ given: [String]) -> [String] {
+        given.filter { refusedWithSnapPins.contains($0) }
+    }
+
+    /// Whether `given` has a flag of `needSnapPins` (refused without
+    /// `--snap-pins`).
+    public static func needsSnapPins(_ given: [String]) -> Bool {
+        given.contains { needSnapPins.contains($0) }
+    }
+
+    /// `--snap-viewport <pt>`: a finite, positive height in points.
+    public static func isValidViewportHeightPt(_ value: Double) -> Bool {
+        value.isFinite && value > 0
+    }
+
+    /// `--snap-span <m>`: a finite, positive span in metres.
+    public static func isValidSpanOverrideM(_ value: Double) -> Bool {
+        value.isFinite && value > 0
+    }
+
     public init(viewportHeightPt: Double = Self.defaultViewportHeightPt, spanOverrideM: Double? = nil) {
         self.viewportHeightPt = viewportHeightPt
         self.spanOverrideM = spanOverrideM

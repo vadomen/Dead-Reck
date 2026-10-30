@@ -207,6 +207,34 @@ struct ReplayPinSnapTests {
         #expect(ReplayReport.summary(r).contains("not the nearest edge 1"))
     }
 
+    @Test("replay_nav flags: --snap-pins refuses --compare, --write-sidecar, --fixpin-inject, --fix-offset (in the order given, repeats kept); --snap-viewport / --snap-span need --snap-pins")
+    func flagRefusals() {
+        #expect(ReplayPinSnap.refusedWithSnapPins == ["--compare", "--write-sidecar", "--fixpin-inject", "--fix-offset"])
+        for flag in ReplayPinSnap.refusedWithSnapPins {
+            #expect(ReplayPinSnap.refusedFlags(["--snap-pins", flag, "--roads"]) == [flag])
+        }
+        #expect(ReplayPinSnap.refusedFlags(["--fix-offset", "--snap-pins", "--compare", "--seed", "--compare"])
+                == ["--fix-offset", "--compare", "--compare"])
+        let allowed = ["--snap-pins", "--snap-viewport", "--snap-span", "--roads", "--obd", "--gps", "--truth", "--out",
+                       "--seed", "--set", "--as-live", "--start-at", "--prior"]
+        #expect(ReplayPinSnap.refusedFlags(allowed).isEmpty)
+        #expect(ReplayPinSnap.needsSnapPins(["--roads", "--snap-viewport"]))
+        #expect(ReplayPinSnap.needsSnapPins(["--snap-span", "--out"]))
+        #expect(!ReplayPinSnap.needsSnapPins(["--snap-pins", "--roads", "--compare"]))
+    }
+
+    @Test("replay_nav values: --snap-viewport and --snap-span must be finite and positive (0 is refused)")
+    func flagValues() {
+        for valid in [852.0, 1, 0.5, 1e6] {
+            #expect(ReplayPinSnap.isValidViewportHeightPt(valid))
+            #expect(ReplayPinSnap.isValidSpanOverrideM(valid))
+        }
+        for invalid in [0.0, -0.0, -1, -852, .nan, .infinity, -.infinity] {
+            #expect(!ReplayPinSnap.isValidViewportHeightPt(invalid), "\(invalid)")
+            #expect(!ReplayPinSnap.isValidSpanOverrideM(invalid), "\(invalid)")
+        }
+    }
+
     @Test("Label: -snap-pins before -obd-none; a non-default viewport is named")
     func label() {
         var o = ReplayOptions(gps: .use)
