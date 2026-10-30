@@ -399,14 +399,21 @@ struct ManualFixMarking {
     /// The recording's clock now; nil when not recording (the tap is ignored).
     var tapTime: @MainActor () -> MonotonicTimestamp?
     /// Stages the fix (`RecordingSession.stageManualFix`); nil when refused.
-    var stage: @MainActor (_ latitude: Double, _ longitude: Double, _ tapT: MonotonicTimestamp, _ spanM: Double?) -> Int?
+    /// `tapLatitude`/`tapLongitude` are the raw tap, set only when the pin snapped.
+    var stage: @MainActor (
+        _ latitude: Double, _ longitude: Double, _ tapT: MonotonicTimestamp, _ spanM: Double?,
+        _ tapLatitude: Double?, _ tapLongitude: Double?
+    ) -> Int?
+    /// Where the tap snaps (`NavigationFeed.snapPin`): latitude, longitude, visible
+    /// span m, viewport height pt. `.noNetwork` when no engine runs.
+    var snap: @MainActor (_ latitude: Double, _ longitude: Double, _ spanM: Double?, _ viewportHeightPt: Double) async -> PinSnap.Result = { _, _, _, _ in .noNetwork }
     /// Cancels a staged fix (Undo). False when it is already written or
     /// dropped: nothing was undone.
     var undo: @MainActor (_ id: Int) -> Bool
     /// How long Undo is offered; the recorder writes the row after this.
     var undoWindow: Duration = .seconds(3)
 
-    static let unavailable = ManualFixMarking(tapTime: { nil }, stage: { _, _, _, _ in nil }, undo: { _ in false })
+    static let unavailable = ManualFixMarking(tapTime: { nil }, stage: { _, _, _, _, _, _ in nil }, undo: { _ in false })
 }
 
 /// Undo and its toast, decided on the recorder's pending list only (R14.3-2).
@@ -435,23 +442,48 @@ enum ManualFixUndo {
 /// A double tap on the map: the decision, taken on what was true at the tap.
 /// The map zooms in on a double tap, so the coordinate, the span and the time
 /// are captured before the zoom starts and handed in here.
+///
+/// The pin snaps to the nearest drivable road when road data is loaded
+/// (`PinSnap`, prompt 46): a snapped pin is accepted up to 1500 m of visible
+/// span, anything else keeps the 300 m rule.
 enum ManualFixTap {
     enum Outcome: Equatable {
         /// Not recording, or the recorder refused the position: nothing happens.
         case ignored
-        /// The span was over 300 m or unknown: nothing recorded, say why.
+        /// The span was over the limit or unknown: nothing recorded, say why.
         case tooFarOut
-        /// Staged with this id at `latitude`/`longitude`.
-        case staged(id: Int, latitude: Double, longitude: Double)
+        /// Staged with this id at `latitude`/`longitude`. `snapped` is true when
+        /// that is the road point and not the finger.
+        case staged(id: Int, latitude: Double, longitude: Double, snapped: Bool)
     }
 
     @MainActor
     static func perform(
-        latitude: Double, longitude: Double, visibleSpanM: Double?, marking: ManualFixMarking
-    ) -> Outcome {
+        latitude: Double, longitude: Double, visibleSpanM: Double?, viewportHeightPt: Double,
+        marking: ManualFixMarking
+    ) async -> Outcome {
         guard let tapT = marking.tapTime() else { return .ignored }
-        guard PinPrecision.isPreciseEnough(visibleSpanM: visibleSpanM) else { return .tooFarOut }
-        guard let id = marking.stage(latitude, longitude, tapT, visibleSpanM) else { return .ignored }
-        return .staged(id: id, latitude: latitude, longitude: longitude)
+        let result = await marking.snap(latitude, longitude, visibleSpanM, viewportHeightPt)
+        return stage(
+            latitude: latitude, longitude: longitude, tapT: tapT, visibleSpanM: visibleSpanM,
+            result: result, marking: marking)
+    }
+
+    /// The accept/refuse rule and the staging, on a snap result. Synchronous so
+    /// the whole decision is testable without an engine.
+    @MainActor
+    static func stage(
+        latitude: Double, longitude: Double, tapT: MonotonicTimestamp, visibleSpanM: Double?,
+        result: PinSnap.Result, marking: ManualFixMarking
+    ) -> Outcome {
+        switch PinSnap.placement(
+            tapLatitude: latitude, tapLongitude: longitude, mapSpanM: visibleSpanM, result: result
+        ) {
+        case .zoomIn:
+            return .tooFarOut
+        case .place(let pinLat, let pinLon, let tapLat, let tapLon):
+            guard let id = marking.stage(pinLat, pinLon, tapT, visibleSpanM, tapLat, tapLon) else { return .ignored }
+            return .staged(id: id, latitude: pinLat, longitude: pinLon, snapped: tapLat != nil)
+        }
     }
 }

@@ -944,8 +944,9 @@ final class RecordingSession {
     /// There is no speed limit. Returns nil, and stages nothing, when no
     /// recording is calibrating or recording (and no Navigate session runs),
     /// or the coordinate is not a finite WGS 84 position. A non-finite or
-    /// negative `mapSpanM` is dropped from the row. The 300 m span rule is
-    /// the map's.
+    /// negative `mapSpanM` is dropped from the row. The span rule is the map's
+    /// (`PinSnap.placement`). `latitude`/`longitude` are the pin; pass the raw
+    /// tap as `tapLatitude`/`tapLongitude` only when the pin snapped to a road.
     ///
     /// In Navigate (UX-1 (e)) the same: staged, undoable for the same
     /// window, then recorded into the session's tap-only sink — the engine
@@ -955,7 +956,9 @@ final class RecordingSession {
         latitude: Double,
         longitude: Double,
         tapT: MonotonicTimestamp,
-        mapSpanM: Double?
+        mapSpanM: Double?,
+        tapLatitude: Double? = nil,
+        tapLongitude: Double? = nil
     ) -> PendingManualFix.ID? {
         guard let rec = manualFixRun else { return nil }
         let obdSpeedKmh = live.obdSpeedKmh
@@ -968,7 +971,9 @@ final class RecordingSession {
             mapSpanM: mapSpanM,
             obdSpeedKmh: obdSpeedKmh,
             obdSpeedT: obdSpeedT,
-            referenceFix: live.referenceFix
+            referenceFix: live.referenceFix,
+            tapLatitude: tapLatitude,
+            tapLongitude: tapLongitude
         ) else { return nil }
         let pending = PendingManualFix(id: nextPendingFixID, generation: rec.generation, sample: sample)
         nextPendingFixID += 1

@@ -136,6 +136,29 @@ struct RecordingSessionFixSpeedAtStartTests {
         Self.expectSpeedTimesHaveRows(events)
     }
 
+    @Test("The written manualFix carries the raw tap only when the pin snapped")
+    func tapFieldsOnlyWhenSnapped() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let session = RecordingFixtures.session(link: FakeLink(), store: scratch.store, manualFixUndoWindow: .milliseconds(100))
+        try await session.start(mount: "", vehicle: "", allowWithoutOBD: true, calibration: .zero)
+        let url = try #require(session.currentFile)
+        let tapT = try #require(session.manualFixTapTime())
+        // Snapped: the pin is the road point, the tap is kept beside it.
+        session.stageManualFix(latitude: 0.5, longitude: 0.25, tapT: tapT, mapSpanM: 1000, tapLatitude: 0.5004, tapLongitude: 0.25)
+        // Not snapped: no tap fields.
+        session.stageManualFix(latitude: 0.6, longitude: 0.3, tapT: tapT, mapSpanM: 200)
+        #expect(await eventually(3) { session.pendingManualFixes.isEmpty })
+        await session.stop()
+
+        let (_, events, _) = try RecordingFixtures.read(url)
+        let fixes = M.manualFixes(events).map(\.sample)
+        #expect(fixes.count == 2)
+        #expect(fixes[0].latitude == 0.5 && fixes[0].tapLatitude == 0.5004 && fixes[0].tapLongitude == 0.25)
+        #expect(fixes[0].mapSpanM == 1000)
+        #expect(fixes[1].tapLatitude == nil && fixes[1].tapLongitude == nil)
+    }
+
     @Test("A reading delivered before Start but handled after it (skipped, not written) does not become the fix's speed")
     func skippedReadingNotUsed() async throws {
         let scratch = try ScratchStore()

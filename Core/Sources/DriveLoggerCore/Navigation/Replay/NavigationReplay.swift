@@ -151,6 +151,11 @@ public struct ReplayOptions: Hashable, Sendable {
     /// restore state (`NavigationRestoreState.capture`) at this time;
     /// `ReplayResult.savedRestoreState`. Changes no number.
     public var savePrior: ReplaySavePrior?
+    /// Prompt 46, replay only (`replay_nav --snap-pins`): each manual fix
+    /// is snapped to the road before the engine gets it (`ReplayPinSnap`);
+    /// scoring keeps the raw tap. nil: the engine gets the logged pin, as
+    /// before the flag existed.
+    public var snapPins: ReplayPinSnap?
 
     public init(gps: GPSMode, holdOutAccuracyM: Double? = nil, config: NavigationConfig = NavigationConfig()) {
         self.gps = gps
@@ -171,6 +176,7 @@ public struct ReplayOptions: Hashable, Sendable {
     ///   neither overwrites the from-start or `--as-live` row (R32.1-5).
     ///   `--as-live` already names the live rule.
     /// - `-inject-<hash>-<when>` per `roadInjections` entry (prompt 38).
+    /// - `-snap-pins` (`snapPins`, prompt 46), before `-obd-none`.
     /// - `-obd-none`: `obd` `.none` (NAV-NOOBD), last.
     public var label: String {
         var label = gps.label
@@ -192,6 +198,7 @@ public struct ReplayOptions: Hashable, Sendable {
         }
         if let startAtS { label += "-from-\(GPSMode.format(startAtS))" }
         if prior != nil { label += priorSource == .recording ? "-prior" : "-restored" }
+        if let snapPins { label += "-" + snapPins.labelSuffix }
         if obd == .none { label += "-obd-none" }
         return label
     }
@@ -1144,6 +1151,9 @@ public struct ReplayResult: Hashable, Sendable, Codable {
     /// the update's resampling, which resets it to the particle count); nil
     /// when the engine never initialised.
     public var essMin: Double? = nil
+    /// Prompt 46, `--snap-pins`: what the snap did at each manual fix the
+    /// engine was given, in input order; nil without the flag.
+    public var pinSnaps: [ReplayPinSnap.Record]? = nil
 
     public var heldOutFixes: [Fix] { fixes.filter { $0.withheld == .heldOut } }
 }
@@ -1244,6 +1254,8 @@ private struct ReplayRun {
     /// read from the engine's counters at the end (`fixAccounting()`).
     var accounting = FixAccounting()
     var essMin: Double?
+    /// Prompt 46, `--snap-pins`: one record per manual fix given.
+    var pinSnaps: [ReplayPinSnap.Record] = []
 
     init(logName: String, inputs: [NavigationInput], options: ReplayOptions, truth: TruthFile.Entry?) {
         self.logName = logName
@@ -1382,8 +1394,16 @@ private struct ReplayRun {
             attachIfDue()
             injectIfDue(arrival: input.arrival)
             let before = RoadSelectionRule.Before(engine)
+            var given = input
+            if let snap = options.snapPins, case .manualFix(let sample, let t) = input {
+                // Snapped from the engine's state before the pin, as the app
+                // snaps at the tap; not timed (the app snaps on the map side).
+                let applied = snap.apply(sample, at: t, engine: engine)
+                given = .manualFix(applied.sample, at: t)
+                pinSnaps.append(applied.record)
+            }
             let start = clock.now
-            engine.ingest(input)
+            engine.ingest(given)
             let elapsed = clock.now - start
             givenInputs += 1
             selectLive(before: before)
@@ -1585,8 +1605,10 @@ private struct ReplayRun {
                                           inputIndex: index))
             case .manualFix(let sample, let t):
                 manualIndices.append(schedule.count)
-                schedule.append(Scheduled(t: t.nanoseconds, kind: .manualFix, latitude: sample.latitude,
-                                          longitude: sample.longitude,
+                // Pin truth is the raw tap (v6: `tapLatitude`/`tapLongitude`
+                // of a snapped pin), never the snapped point.
+                schedule.append(Scheduled(t: t.nanoseconds, kind: .manualFix, latitude: sample.truthLatitude,
+                                          longitude: sample.truthLongitude,
                                           sigma: NavigationReplay.manualFixTruthSigmaM(mapSpanM: sample.mapSpanM),
                                           inputIndex: index))
             default:
@@ -1932,6 +1954,7 @@ private struct ReplayRun {
         result.lastFixBaseline = LastFixBaseline(perCheckpoint: baselinePerCheckpoint, scored: checkpoints.map(\.isScored))
         result.errorAggregates = ReplayErrorAggregates(checkpoints)
         result.essMin = essMin
+        if options.snapPins != nil { result.pinSnaps = pinSnaps }
         result.maxErrorByKind = KindMaxError.byKind(checkpoints)
         if let scoreUntilT = truth?.scoreUntilT {
             result.scoreUntilT = scoreUntilT
