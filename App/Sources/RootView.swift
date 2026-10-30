@@ -35,7 +35,8 @@ struct RootView: View {
         _map = State(initialValue: MapViewModel())
         let service = services.navigation
         _navigation = State(initialValue: NavigationFeed(
-            source: { await service.snapshot() }, generation: { await service.currentGeneration }))
+            source: { await service.snapshot() }, generation: { await service.currentGeneration },
+            pinSnap: { await service.snapPin(latitude: $0, longitude: $1, mapSpanM: $2, viewportHeightPt: $3) }))
         _demoFeed = State(initialValue: Self.makeDemoFeed(services))
         _demoWarning = State(initialValue: Self.makeDemoWarning(services))
         _sessions = State(initialValue: SessionsViewModel(services: services))
@@ -138,7 +139,9 @@ struct RootView: View {
     /// The demo's feed: its own navigation service, no shared state with the app's.
     private static func makeDemoFeed(_ services: AppServices) -> NavigationFeed {
         let service = services.demo.navigation
-        return NavigationFeed(source: { await service.snapshot() })
+        return NavigationFeed(
+            source: { await service.snapshot() },
+            pinSnap: { await service.snapPin(latitude: $0, longitude: $1, mapSpanM: $2, viewportHeightPt: $3) })
     }
 
     private static func makeDemoWarning(_ services: AppServices) -> RoadsWarningModel {

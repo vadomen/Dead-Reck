@@ -211,12 +211,17 @@ extension MapScreen {
     fileprivate var marking: ManualFixMarking {
         ManualFixMarking(
             tapTime: { [session] in session.manualFixTapTime() },
-            stage: { [session, model] latitude, longitude, tapT, spanM in
+            stage: { [session, model] latitude, longitude, tapT, spanM, tapLatitude, tapLongitude in
                 guard let id = session.stageManualFix(
-                    latitude: latitude, longitude: longitude, tapT: tapT, mapSpanM: spanM
+                    latitude: latitude, longitude: longitude, tapT: tapT, mapSpanM: spanM,
+                    tapLatitude: tapLatitude, tapLongitude: tapLongitude
                 ) else { return nil }
                 model.addManualFix(id: id, latitude: latitude, longitude: longitude)
                 return id
+            },
+            snap: { [navigation] latitude, longitude, spanM, viewportHeightPt in
+                await navigation.snapPin(
+                    latitude: latitude, longitude: longitude, mapSpanM: spanM, viewportHeightPt: viewportHeightPt)
             },
             undo: { [session, model] id in
                 ManualFixUndo.perform(
@@ -414,6 +419,10 @@ struct GPSMapView: View {
     @State private var position: MapCameraPosition = .automatic
     /// Visible north-south extent, metres, from the camera.
     @State private var visibleSpanM: Double?
+    /// Snap animation: a flag's offset from its road point back to the finger
+    /// (screen points), by fix id; cleared with animation.
+    @State private var flagOffsets: [Int: CGSize] = [:]
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isStale = false
     @State private var toast: MapToast?
     @State private var toastSerial = 0
@@ -906,6 +915,7 @@ struct GPSMapView: View {
                 ForEach(manualFixes) { fix in
                     Annotation("", coordinate: .init(latitude: fix.latitude, longitude: fix.longitude), anchor: .bottom) {
                         fixMarker(pending: pendingFixIDs.contains(fix.id))
+                            .offset(flagOffsets[fix.id] ?? .zero)
                     }
                 }
             }
@@ -950,22 +960,47 @@ struct GPSMapView: View {
             .opacity(pending ? 0.55 : 1)
     }
 
-    /// A double tap records the point under the finger. The map zooms in on
-    /// a double tap, so the coordinate (`MapProxy`), the span and the session
-    /// time are all read here, before that zoom starts.
+    /// A double tap records the point under the finger, or the road point
+    /// nearest to it when road data is loaded (`PinSnap`). The map zooms in on
+    /// a double tap, so the coordinate (`MapProxy`), the span, the viewport
+    /// height and the session time are all read here, before that zoom starts.
+    /// The snap answers a moment later (an actor call); the flag then flies
+    /// from the finger to the road point.
     private func handleDoubleTap(at point: CGPoint, proxy: MapProxy) {
         guard let coordinate = proxy.convert(point, from: .named(Self.space)) else { return }
-        switch ManualFixTap.perform(
-            latitude: coordinate.latitude, longitude: coordinate.longitude,
-            visibleSpanM: visibleSpanM, marking: manual
-        ) {
-        case .ignored:
-            break
-        case .tooFarOut:
-            show(.zoomIn)
-        case .staged(let id, _, _):
-            recordedCount += 1
-            show(.recorded(id: id))
+        let span = visibleSpanM, height = Double(mapGeometry.size.height)
+        let marking = manual
+        // The tap's time is taken now, not after the snap answers.
+        let tapT = marking.tapTime()
+        Task { @MainActor in
+            guard let tapT else { return }
+            let result = await marking.snap(coordinate.latitude, coordinate.longitude, span, height)
+            let outcome = ManualFixTap.stage(
+                latitude: coordinate.latitude, longitude: coordinate.longitude, tapT: tapT,
+                visibleSpanM: span, result: result, marking: marking)
+            switch outcome {
+            case .ignored:
+                break
+            case .tooFarOut:
+                show(.zoomIn)
+            case .staged(let id, let latitude, let longitude, let snapped):
+                recordedCount += 1
+                if snapped, !reduceMotion,
+                   let landed = proxy.convert(CLLocationCoordinate2D(latitude: latitude, longitude: longitude), to: .named(Self.space)) {
+                    flyFromFinger(id: id, offset: CGSize(width: point.x - landed.x, height: point.y - landed.y))
+                }
+                show(.recorded(id: id))
+            }
+        }
+    }
+
+    /// The flag starts at the finger and settles on the road point (0.3 s).
+    /// Not called with Reduce Motion on: the flag is just there.
+    private func flyFromFinger(id: Int, offset: CGSize) {
+        flagOffsets[id] = offset
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(60))
+            withAnimation(.easeOut(duration: 0.3)) { flagOffsets[id] = nil }
         }
     }
 

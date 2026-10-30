@@ -182,55 +182,122 @@ struct MapNavigationTests {
     /// Records what the tap asked the recorder for.
     @MainActor
     private final class FakeMarking {
+        struct Staged { var lat: Double; var lon: Double; var tapT: MonotonicTimestamp; var span: Double?; var tapLat: Double?; var tapLon: Double? }
         var now: MonotonicTimestamp? = MonotonicTimestamp(seconds: 42)
-        var staged: [(Double, Double, MonotonicTimestamp, Double?)] = []
+        var staged: [Staged] = []
         var accept = true
+        var snapResult: PinSnap.Result = .noNetwork
+        var snapCalls = 0
 
         var marking: ManualFixMarking {
             ManualFixMarking(
                 tapTime: { self.now },
-                stage: { lat, lon, tapT, span in
-                    self.staged.append((lat, lon, tapT, span))
+                stage: { lat, lon, tapT, span, tapLat, tapLon in
+                    self.staged.append(Staged(lat: lat, lon: lon, tapT: tapT, span: span, tapLat: tapLat, tapLon: tapLon))
                     return self.accept ? 7 : nil
+                },
+                snap: { _, _, _, _ in
+                    self.snapCalls += 1
+                    return self.snapResult
                 },
                 undo: { _ in true }
             )
         }
+
+        /// The tap used with `snapped()`: 40 m north of a point on the fixture road.
+        static let tap = (latitude: 0.001 + 0.00036, longitude: 0.002)
+
+        /// A snap result as Core builds it, on the one-road fixture pack (a real
+        /// `.edge`; Core's snap types have no public initialisers).
+        static func snapped(span: Double = 1000) throws -> PinSnap.Result {
+            let dir = try RoadPackFixture.directory()
+            defer { try? FileManager.default.removeItem(at: dir) }
+            let url = try RoadPackFixture.write(try RoadPackFixture.data(), named: "fixture.roadpack", in: dir)
+            let network = try RoadNetwork(packs: [try RoadPack(contentsOf: url)])
+            return PinSnap.snap(
+                latitude: tap.latitude, longitude: tap.longitude, mapSpanM: span, viewportHeightPt: 800,
+                network: network, cloud: nil).result
+        }
     }
 
-    @Test("A tap on a zoomed-in map stages the coordinate, span and time it was given")
+    @Test("A tap on a zoomed-in map stages the coordinate, span and time it was given, without tap fields")
     @MainActor
-    func doubleTapStages() {
+    func doubleTapStages() async {
         let fake = FakeMarking()
-        let outcome = ManualFixTap.perform(latitude: 0.0012, longitude: -0.0034, visibleSpanM: 250, marking: fake.marking)
-        #expect(outcome == .staged(id: 7, latitude: 0.0012, longitude: -0.0034))
+        let outcome = await ManualFixTap.perform(latitude: 0.0012, longitude: -0.0034, visibleSpanM: 250, viewportHeightPt: 800, marking: fake.marking)
+        #expect(outcome == .staged(id: 7, latitude: 0.0012, longitude: -0.0034, snapped: false))
         #expect(fake.staged.count == 1)
-        #expect(fake.staged[0].0 == 0.0012 && fake.staged[0].1 == -0.0034)
-        #expect(fake.staged[0].2 == MonotonicTimestamp(seconds: 42))
-        #expect(fake.staged[0].3 == 250)
+        #expect(fake.staged[0].lat == 0.0012 && fake.staged[0].lon == -0.0034)
+        #expect(fake.staged[0].tapT == MonotonicTimestamp(seconds: 42))
+        #expect(fake.staged[0].span == 250)
+        #expect(fake.staged[0].tapLat == nil && fake.staged[0].tapLon == nil)
     }
 
-    @Test("A tap over 300 m, or with an unknown span, records nothing")
+    @Test("Accept or refuse by span and snap result")
     @MainActor
-    func doubleTapTooFarOut() {
+    func acceptRefuseMatrix() throws {
+        let (lat, lon) = FakeMarking.tap
+        let snapped = try FakeMarking.snapped()
+        #expect(snapped.snap != nil, "the fixture tap snaps")
+        func outcome(span: Double?, _ result: PinSnap.Result) -> ManualFixTap.Outcome {
+            let fake = FakeMarking()
+            return ManualFixTap.stage(
+                latitude: lat, longitude: lon, tapT: MonotonicTimestamp(seconds: 1), visibleSpanM: span,
+                result: result, marking: fake.marking)
+        }
+        func isStaged(_ o: ManualFixTap.Outcome) -> Bool { if case .staged = o { true } else { false } }
+        func isSnapped(_ o: ManualFixTap.Outcome) -> Bool { if case .staged(_, _, _, true) = o { true } else { false } }
+        #expect(isSnapped(outcome(span: 1000, snapped)), "snapped at 1000 m: accepted")
+        #expect(isSnapped(outcome(span: 1500, snapped)), "snapped at 1500 m: accepted")
+        #expect(outcome(span: 1000, .noEdgeInRadius) == .tooFarOut, "unsnapped at 1000 m: refused")
+        #expect(outcome(span: 1600, snapped) == .tooFarOut, "snapped at 1600 m: refused")
+        #expect(isStaged(outcome(span: 250, .noNetwork)) && !isSnapped(outcome(span: 250, .noNetwork)), "no network at 250 m: accepted unsnapped")
+        #expect(outcome(span: 800, .ambiguous) == .tooFarOut, "ambiguous at 800 m: refused")
+        #expect(isStaged(outcome(span: 250, .ambiguous)) && !isSnapped(outcome(span: 250, .ambiguous)))
+        #expect(outcome(span: 301, .noNetwork) == .tooFarOut)
+        #expect(outcome(span: nil, snapped) == .tooFarOut, "unknown span: refused")
+        #expect(outcome(span: .nan, .noNetwork) == .tooFarOut)
+    }
+
+    @Test("A snapped tap stages the road point and carries the raw tap; an unsnapped one carries none")
+    @MainActor
+    func snappedStagesTapFields() async throws {
         let fake = FakeMarking()
-        #expect(ManualFixTap.perform(latitude: 0, longitude: 0, visibleSpanM: 300.1, marking: fake.marking) == .tooFarOut)
-        #expect(ManualFixTap.perform(latitude: 0, longitude: 0, visibleSpanM: nil, marking: fake.marking) == .tooFarOut)
+        let result = try FakeMarking.snapped()
+        let pin = try #require(result.snap)
+        fake.snapResult = result
+        let (lat, lon) = FakeMarking.tap
+        let outcome = await ManualFixTap.perform(latitude: lat, longitude: lon, visibleSpanM: 1000, viewportHeightPt: 800, marking: fake.marking)
+        #expect(outcome == .staged(id: 7, latitude: pin.latitude, longitude: pin.longitude, snapped: true))
+        #expect(pin.latitude != lat || pin.longitude != lon)
+        #expect(fake.staged[0].lat == pin.latitude && fake.staged[0].lon == pin.longitude)
+        #expect(fake.staged[0].tapLat == lat && fake.staged[0].tapLon == lon)
+        #expect(fake.staged[0].span == 1000, "the row keeps the visible span")
+        #expect(fake.snapCalls == 1)
+    }
+
+    @Test("A tap over the limit, or with an unknown span, records nothing")
+    @MainActor
+    func doubleTapTooFarOut() async {
+        let fake = FakeMarking()
+        #expect(await ManualFixTap.perform(latitude: 0, longitude: 0, visibleSpanM: 300.1, marking: fake.marking) == .tooFarOut)
+        #expect(await ManualFixTap.perform(latitude: 0, longitude: 0, visibleSpanM: nil, marking: fake.marking) == .tooFarOut)
         #expect(fake.staged.isEmpty)
-        #expect(ManualFixTap.perform(latitude: 0, longitude: 0, visibleSpanM: 300, marking: fake.marking) != .tooFarOut)
+        #expect(await ManualFixTap.perform(latitude: 0, longitude: 0, visibleSpanM: 300, marking: fake.marking) != .tooFarOut)
     }
 
     @Test("Not recording, or a refused position: ignored, no toast")
     @MainActor
-    func doubleTapIgnored() {
+    func doubleTapIgnored() async {
         let fake = FakeMarking()
         fake.now = nil
-        #expect(ManualFixTap.perform(latitude: 0, longitude: 0, visibleSpanM: 100, marking: fake.marking) == .ignored)
-        #expect(ManualFixTap.perform(latitude: 0, longitude: 0, visibleSpanM: 1000, marking: fake.marking) == .ignored,
+        #expect(await ManualFixTap.perform(latitude: 0, longitude: 0, visibleSpanM: 100, marking: fake.marking) == .ignored)
+        #expect(await ManualFixTap.perform(latitude: 0, longitude: 0, visibleSpanM: 1000, marking: fake.marking) == .ignored,
                 "not recording: no zoom hint either")
+        #expect(fake.snapCalls == 0, "not recording: no snap")
         fake.now = MonotonicTimestamp(seconds: 1)
         fake.accept = false
-        #expect(ManualFixTap.perform(latitude: 0, longitude: 0, visibleSpanM: 100, marking: fake.marking) == .ignored)
+        #expect(await ManualFixTap.perform(latitude: 0, longitude: 0, visibleSpanM: 100, marking: fake.marking) == .ignored)
         #expect(ManualFixMarking.unavailable.undoWindow == .seconds(3))
     }
 

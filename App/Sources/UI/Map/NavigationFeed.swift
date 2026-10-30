@@ -18,6 +18,8 @@ import Observation
 @Observable
 final class NavigationFeed {
     typealias Source = @Sendable () async -> NavigationSnapshot
+    /// Where a tapped pin snaps: (latitude, longitude, visible span m, viewport height pt).
+    typealias PinSnapSource = @Sendable (Double, Double, Double?, Double) async -> PinSnap.Result
 
     /// Statistics are re-published at most this often.
     static let statsInterval: Duration = .seconds(1)
@@ -49,6 +51,7 @@ final class NavigationFeed {
 
     @ObservationIgnored private(set) var latest: NavDisplay?
     @ObservationIgnored private let source: Source?
+    @ObservationIgnored private let pinSnapSource: PinSnapSource?
     /// The generation the source's snapshots follow (the service's current
     /// run). Read before and after each snapshot: a poll across a run change
     /// is dropped, so `gps` is never tagged with the wrong run (R76.2-1).
@@ -57,8 +60,12 @@ final class NavigationFeed {
     @ObservationIgnored private var edgeKey: EdgeKey?
     @ObservationIgnored private var lastStatsWrite: ContinuousClock.Instant?
 
-    init(source: @escaping Source, generation: (@Sendable () async -> Int?)? = nil) {
+    init(
+        source: @escaping Source, generation: (@Sendable () async -> Int?)? = nil,
+        pinSnap: PinSnapSource? = nil
+    ) {
         self.source = source
+        self.pinSnapSource = pinSnap
         self.generation = generation
     }
 
@@ -66,9 +73,10 @@ final class NavigationFeed {
     /// `source` is given (a test of the first poll after seeded values).
     init(
         display: NavDisplay?, stats: NavStatsDisplay? = nil, matchedEdge: [GeoPoint] = [], gps: EngineGPS? = nil,
-        restore: RestoreDisplay? = nil, source: Source? = nil
+        restore: RestoreDisplay? = nil, source: Source? = nil, pinSnap: PinSnapSource? = nil
     ) {
         self.source = source
+        self.pinSnapSource = pinSnap
         self.generation = nil
         self.gps = gps
         self.restore = restore
@@ -77,6 +85,13 @@ final class NavigationFeed {
         self.positionFinding = PositionStatus.isFinding(display)
         self.latest = display
         self.stats = stats
+    }
+
+    /// Where a double-tapped pin snaps. `.noNetwork` (today's 300 m rule) when
+    /// there is no service behind the feed (previews).
+    func snapPin(latitude: Double, longitude: Double, mapSpanM: Double?, viewportHeightPt: Double) async -> PinSnap.Result {
+        guard let pinSnapSource else { return .noNetwork }
+        return await pinSnapSource(latitude, longitude, mapSpanM, viewportHeightPt)
     }
 
     /// Reads the newest snapshot. True when `display` was written (the
