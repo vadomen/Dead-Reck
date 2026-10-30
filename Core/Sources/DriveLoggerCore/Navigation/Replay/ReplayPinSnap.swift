@@ -14,14 +14,21 @@ import Foundation
 /// screen in portrait (`--snap-viewport <pt>` overrides it). It only scales
 /// the touch and junction radii (44 pt and 8 pt in metres are
 /// span × points / height).
+///
+/// `spanOverrideM` (`--snap-span <m>`, a stress test): snap and place as if
+/// every tap had been made on a map that many metres tall (radius, σ_pin for
+/// the cloud, the span rule), with the logged tap position. The engine's
+/// pin σ still comes from the row's own `mapSpanM`.
 public struct ReplayPinSnap: Hashable, Sendable {
     public static let defaultViewportHeightPt = 852.0
 
     public var viewportHeightPt = Self.defaultViewportHeightPt
     public var parameters = PinSnap.Parameters()
+    public var spanOverrideM: Double?
 
-    public init(viewportHeightPt: Double = Self.defaultViewportHeightPt) {
+    public init(viewportHeightPt: Double = Self.defaultViewportHeightPt, spanOverrideM: Double? = nil) {
         self.viewportHeightPt = viewportHeightPt
+        self.spanOverrideM = spanOverrideM
     }
 
     /// The mode label part: `-snap-pins`, plus `-vp-<pt>` for a viewport
@@ -29,6 +36,7 @@ public struct ReplayPinSnap: Hashable, Sendable {
     public var labelSuffix: String {
         var s = "snap-pins"
         if viewportHeightPt != Self.defaultViewportHeightPt { s += "-vp-\(GPSMode.format(viewportHeightPt))" }
+        if let spanOverrideM { s += "-span-\(GPSMode.format(spanOverrideM))" }
         return s
     }
 
@@ -48,6 +56,10 @@ public struct ReplayPinSnap: Hashable, Sendable {
         public var placement: String
         /// Raw tap → snapped point, metres (`edge` / `node`).
         public var snapDistanceM: Double?
+        /// Raw tap → snapped point, metres east and north (`edge` / `node`):
+        /// relative, so the pin's place is not in the record.
+        public var snapEastM: Double?
+        public var snapNorthM: Double?
         public var radiusM: Double
         /// An `edge` snap on another edge than the one nearest the tap (the
         /// cloud chose it).
@@ -64,11 +76,12 @@ public struct ReplayPinSnap: Hashable, Sendable {
     public func apply(_ sample: ManualFixSample, at t: MonotonicTimestamp, engine: NavigationEngine) -> (sample: ManualFixSample, record: Record) {
         let tap = (latitude: sample.truthLatitude, longitude: sample.truthLongitude)
         let network = engine.roadNetwork
-        let outcome = PinSnap.snap(latitude: tap.latitude, longitude: tap.longitude, mapSpanM: sample.mapSpanM,
+        let span = spanOverrideM ?? sample.mapSpanM
+        let outcome = PinSnap.snap(latitude: tap.latitude, longitude: tap.longitude, mapSpanM: span,
                                    viewportHeightPt: viewportHeightPt, network: network,
                                    cloud: network == nil ? nil : engine.pinSnapCloud(), parameters: parameters)
         let placement = PinSnap.placement(tapLatitude: tap.latitude, tapLongitude: tap.longitude,
-                                          mapSpanM: sample.mapSpanM, result: outcome.result, parameters: parameters)
+                                          mapSpanM: span, result: outcome.result, parameters: parameters)
         var given = sample
         let placementName: String
         switch placement {
@@ -108,10 +121,15 @@ public struct ReplayPinSnap: Hashable, Sendable {
             }
             spread = worst
         }
+        let offset = outcome.result.snap.map { snap in
+            LocalTangentPlane(latitude: tap.latitude, longitude: tap.longitude)
+                .enu(latitude: snap.latitude, longitude: snap.longitude)
+        }
         let record = Record(
-            t: t.seconds, mapSpanM: sample.mapSpanM, result: resultName,
+            t: t.seconds, mapSpanM: span, result: resultName,
             decision: outcome.result.snap?.decision.rawValue, placement: placementName,
-            snapDistanceM: outcome.result.snap?.distanceM, radiusM: outcome.radiusM,
+            snapDistanceM: outcome.result.snap?.distanceM, snapEastM: offset?.east, snapNorthM: offset?.north,
+            radiusM: outcome.radiusM,
             differsFromNearest: differs, contested: outcome.contested.count, contestedSpreadM: spread
         )
         return (given, record)

@@ -105,6 +105,7 @@ struct ReplayPinSnapTests {
         let s = snaps[0]
         #expect(s.result == "edge" && s.placement == "snapped" && s.decision == "onlyRoad")
         #expect(abs((s.snapDistanceM ?? 0) - 20) < 0.1)
+        #expect(abs((s.snapNorthM ?? 0) + 20) < 0.1 && abs(s.snapEastM ?? 1) < 0.1, "the road is 20 m south of the tap")
         #expect(abs(s.radiusM - 44) < 1e-9, "852 m span in 852 pt: 1 m per point")
         #expect(s.differsFromNearest == false && s.contested == 0 && s.contestedSpreadM == nil)
         #expect(abs(s.t - 40) < 1e-9 && s.mapSpanM == 852)
@@ -145,6 +146,19 @@ struct ReplayPinSnapTests {
         #expect(on.checkpoints.map(\.errorM) == off.checkpoints.map(\.errorM))
         #expect(on.pinSnaps?.map(\.result) == ["noNetwork", "noNetwork"])
         #expect(on.pinSnaps?.map(\.placement) == ["raw", "raw"])
+        // --snap-span: as if tapped at 1000 m (radius 51.6 m): a tap 40 m
+        // off the road snaps, the record carries the override span.
+        var options = ReplayOptions(gps: .use, config: S.config(particles: 200))
+        options.roads = try Self.road()
+        options.snapPins = ReplayPinSnap(spanOverrideM: 1000)
+        let events = Self.drive.events(fix: { t, state, rng in t <= 15 ? S.cleanFix()(t, state, &rng) : nil },
+                                       extra: [Self.pin(at: 40, logged: (0, 40), tap: nil, span: 200)])
+        let stressed = NavigationReplay.run(logName: "synthetic.jsonl.gz", inputs: NavigationReplay.inputs(from: events),
+                                            options: options)
+        #expect(stressed.pinSnaps?.map(\.result) == ["edge"])
+        #expect(stressed.pinSnaps?.first?.mapSpanM == 1000)
+        #expect(Self.run([Self.pin(at: 40, logged: (0, 40), tap: nil, span: 200)], roads: try Self.road(), snap: true)
+            .pinSnaps?.map(\.result) == ["noEdgeInRadius"])
         // A span the app would refuse: the engine still gets the raw tap.
         let wide = Self.run([Self.pin(at: 40, logged: (0, 20), tap: nil, span: 2000)], roads: try Self.road(), snap: true)
         #expect(wide.pinSnaps?.map(\.placement) == ["zoomIn"])
@@ -160,5 +174,7 @@ struct ReplayPinSnapTests {
         #expect(o.label == "use-snap-pins-obd-none")
         o.snapPins = ReplayPinSnap(viewportHeightPt: 700)
         #expect(o.label == "use-snap-pins-vp-700-obd-none")
+        o.snapPins = ReplayPinSnap(spanOverrideM: 1000)
+        #expect(o.label == "use-snap-pins-span-1000-obd-none")
     }
 }
