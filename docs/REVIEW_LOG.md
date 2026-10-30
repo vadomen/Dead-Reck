@@ -1250,3 +1250,13 @@ Reviewers: three parallel opus reviewers on disjoint sets: A engine, B log/snap/
 | R84.1-9 | MINOR | `App/Sources/UI/Map/MapView.swift:969-997`: `handleDoubleTap` duplicates `ManualFixTap.perform` (`MapNavigation.swift:461`), which no app code calls, so the "no snap when not recording / tap time before await / viewport height" tests exercise `perform`, not the shipped path. | DEFERRED | See BACKLOG R84.1-9. |
 
 Round 1 outcome: R84.1-1..4 fixed (R84.1-2 docs, R84.1-1/3/4 regression tests), R84.1-5..9 deferred; `swift test` in Core 1277 tests in 153 suites passed (36 known issues); App full suite 850 passed at 5ed8883 (no App change since).
+
+### Round 2
+One fresh opus reviewer, whole range f063768..f6c62dc. Round-1 fixes verified (R84.1-2 paragraph matches TABLE2 exactly). Mutations: author's `fixSpeedMeanIntegral` `gatedMps` → `mps` killed; two new survivors below.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R84.2-1 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/Roads/PinSnap.swift:266`: "the nearest junction node within 8 pt wins" untested (mutation `<=` → `>=` survived). | CONFIRMED | Fixed a4c2223: `PinSnapTests/nearestJunctionWins`, `equidistantJunctionsTieBreak` (also kills a reversed key tie-break). |
+| R84.2-2 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/NavigationEngine+PinSnap.swift:18`: nothing tests that `pinSnapCloud` passes the engine heading (mutation `heading[i] + .pi` survived); a regression would snap a dual-carriageway tap to the opposite carriageway. | CONFIRMED | Fixed a4c2223: `PinSnapTests/engineCloudHeadingPicksCarriageway` (real engine eastbound, cloud mean heading = estimate, `snapPin` picks the eastbound way by cloud). |
+
+Round 2 outcome: R84.2-1..2 fixed (regression tests only, no code change); `swift test` in Core 1280 tests in 153 suites passed (36 known issues); no App change.
