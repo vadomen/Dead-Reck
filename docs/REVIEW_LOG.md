@@ -1224,3 +1224,9 @@ Reviewers: one opus reviewer (fresh). Engine unchanged since 8105503. Mutations:
 Author mutation sweep after three rounds of test gaps in the same code: 77 mutations over every new or changed line of the no-OBD code in NavigationEngine.swift and NavigationConfig.swift, 68 killed, 9 survivors all equivalent (window reset after the mode ends; `stale`/`!vetoed` guards implied by the mode; defensive finiteness/sign guards; τ = 0 and zero-length boundaries). New or strengthened tests: `fixSpeedMeanExactWithoutNoise`, `noFixSpeedAfterTheFirstReply`, `fixSpeedEstimateRules` (window drop, same-time tie), `robustTemperingUsesItsOwnTimeConstant` (zero-weight re-ingest), `fixSpeedIntegral`, `configKeys`.
 
 Round 3 outcome: R83.3-1 fixed; `swift test` 1230 tests in 149 suites passed (36 known issues); release perf gate 9 passed.
+
+### Round 4
+
+Reviewers: one opus reviewer (fresh). No findings. Engine unchanged since 8105503 (round 1 bit-identity stands). Round-3 closed forms and tolerances checked (none vacuous); equivalence claims E04–E06, E42, E44, E49, E51, E53, E55 checked by reading; E08 and E02 re-run and killed. NAVIGATION.md defaults match the code; privacy grep clean.
+
+Run 83 closed: 4 rounds; 4 MAJOR fixed with regression tests (R83.1-1, R83.1-2, R83.2-1, R83.3-1), 1 MINOR fixed (R83.1-4), 1 MINOR deferred (R83.1-3); `swift test` 1230 tests in 149 suites passed (36 known issues); release perf gate 9 passed.
