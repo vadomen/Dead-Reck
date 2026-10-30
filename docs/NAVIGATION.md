@@ -3076,10 +3076,25 @@ Prompt 45's (a) is reproducible with floor 30, gate 0, decay 30
 (`--set noOBDFixSpeedFloorKmh=30 --set noOBDFixSpeedGate=0 --set
 noOBDFixSpeedDecayS=30`, with `noOBDFixSpeedMean=1`).
 
-Gate table, round 2 (median error ratio of the engine to the last-fix
-display; `logs/noobd-46/TABLE2.md`, git-ignored): jammed-A 0.89 PASS,
-jammed-B 1.04, drive-7 0.98, drive-9-1 1.65 FAIL, drive-9-2 0.89. The
-jammed-A median ratio alone (0.89) is marked PASS in that table.
+Gate table, round 2 (`logs/noobd-46/TABLE2.md`, git-ignored). The ratio is
+rule (iv)'s series median divided by prompt 45's (a) series median (roads
+on, `--obd none`, seed means; series = error against the `--obd use
+--roads` reference every 10 s). It is not a ratio to the last-fix display.
+The gate had two parts: ratio <= 1.15 and series inside-95 % >= 80 %.
+jammed-A is judged on the median ratio only, because 45's (a) is already
+at 77 % there.
+
+| drive | median, 45 (a) -> rule | ratio | inside-95 %, 45 (a) -> rule | verdict |
+|---|---|---|---|---|
+| jammed-A | 717 -> 639 m | 0.89 | 77.0 -> 80.6 % | PASS (ratio only) |
+| jammed-B | 251 -> 260 m | 1.04 | 99.7 -> 98.9 % | pass |
+| drive-7 before 1800 s | 124 -> 121 m | 0.98 | 92.7 -> 92.8 % | pass |
+| drive-9-1 | 57 -> 94 m | 1.65 | 87.7 -> 72.6 % | FAIL on both parts |
+| drive-9-2 | 72 -> 64 m | 0.89 | 100 -> 100 % | pass |
+
+Against the last-fix display the engine still loses (jammed-A: 639 m
+against the display's 275 m), so the UX-7 engine-vs-display criterion still
+FAILS for (a), as in NAV-NOOBD-B.
 
 **drive-9-1 fails, stated plainly.** The replay's GPS mask withholds every
 fix, network ones included, for about 12 minutes while the car is moving. The

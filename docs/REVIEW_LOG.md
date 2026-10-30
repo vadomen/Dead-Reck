@@ -1230,3 +1230,23 @@ Round 3 outcome: R83.3-1 fixed; `swift test` 1230 tests in 149 suites passed (36
 Reviewers: one opus reviewer (fresh). No findings. Engine unchanged since 8105503 (round 1 bit-identity stands). Round-3 closed forms and tolerances checked (none vacuous); equivalence claims E04–E06, E42, E44, E49, E51, E53, E55 checked by reading; E08 and E02 re-run and killed. NAVIGATION.md defaults match the code; privacy grep clean.
 
 Run 83 closed: 4 rounds; 4 MAJOR fixed with regression tests (R83.1-1, R83.1-2, R83.2-1, R83.3-1), 1 MINOR fixed (R83.1-4), 1 MINOR deferred (R83.1-3); `swift test` 1230 tests in 149 suites passed (36 known issues); release perf gate 9 passed.
+
+## Run 84: Prompt 46 no-OBD floor/gate rule (iv), log format v6 (tapLatitude/tapLongitude), pin snapping (Core PinSnap, app snap flow, replay --snap-pins), docs (nav-noobd..nav-noobd-46: f063768..ace9030), started 2026-10-30
+
+### Round 1
+
+Reviewers: three parallel opus reviewers on disjoint sets: A engine, B log/snap/replay, C app. Bit-identity re-run by reviewer A (jammed-A seed 1, keys off with `--obd use`; (a) floor 30 / gate 0 / decay 30 vs base): identical.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R84.1-1 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/NavigationEngine.swift:1797`: no engine test covers which fix accuracies feed the gate (worse endpoint). The mutation passing newest.accuracy as oldestAccuracy survived. | CONFIRMED | Fixed bcf08cf: `NavigationNoOBDFloorGateTests/gateUsesTheWorseEndpointInTheEngine` (both orders, soft and hard gate); kills that mutation and the symmetric one. |
+| R84.1-2 | MAJOR | `docs/NAVIGATION.md:3079`: gate ratios labelled "engine to last-fix display"; they are rule (iv) vs prompt 45's (a). | CONFIRMED | Fixed in this round's commit: paragraph rewritten with both gate parts and a table, plus a statement that the engine still loses to the display (UX-7 criterion still fails). |
+| R84.1-3 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/Roads/PinSnap.swift:262`: junction node "≥ 2 candidate edges" untested (mutation `>= 1` survived). | CONFIRMED | Fixed bcf08cf: `PinSnapTests/deadEndIsNotAJunction`. |
+| R84.1-4 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/Roads/PinSnap.swift:415`: `to`-end node detection untested (mutation `last + 1` survived). | CONFIRMED | Fixed bcf08cf: `PinSnapTests/sameRoadAtJunctionToEnd`, `sideRoadToEndAtJunction` (expected decision `.onlyRoad`, since S is not a rival). |
+| R84.1-5 | MINOR | `docs/NAVIGATION.md` NAV-NOOBD-46 section omits report-only drive-8 (series median 382 → 695 m, inside 93 → 87 %) and manual (406 → 430 m). | DEFERRED | See BACKLOG R84.1-5. |
+| R84.1-6 | MINOR | `docs/LOG_FORMAT.md:577`: "rows written before v6 have at most 300 m" is wrong; older recordings (e.g. a pre-v6 1248 m heading-up row) exceed it. Should say: new rows by builds before v6. | DEFERRED | See BACKLOG R84.1-6. |
+| R84.1-7 | MINOR | `docs/PLAN.md:555-556`: §6 overpass/dual-carriageway checks say the cloud picks the road; since 290fc98, roads ≤ σ_pin/2 apart go to the nearer one first. | DEFERRED | See BACKLOG R84.1-7. |
+| R84.1-8 | MINOR | `docs/PLAN.md:554,560,561`: Reduce Motion check says "camera" (it is the flag); snap time "from the sidecar" (nothing is written); the parked-phone rule (iv) check can't run on device (app engine has `noOBDFixSpeedMean` = 0, Navigate runs no engine without OBD). | DEFERRED | See BACKLOG R84.1-8. |
+| R84.1-9 | MINOR | `App/Sources/UI/Map/MapView.swift:969-997`: `handleDoubleTap` duplicates `ManualFixTap.perform` (`MapNavigation.swift:461`), which no app code calls, so the "no snap when not recording / tap time before await / viewport height" tests exercise `perform`, not the shipped path. | DEFERRED | See BACKLOG R84.1-9. |
+
+Round 1 outcome: R84.1-1..4 fixed (R84.1-2 docs, R84.1-1/3/4 regression tests), R84.1-5..9 deferred; `swift test` in Core 1277 tests in 153 suites passed (36 known issues); App full suite 850 passed at 5ed8883 (no App change since).
