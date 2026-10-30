@@ -247,6 +247,29 @@ struct NavigationNoOBDFloorGateTests {
         #expect(e1.fixSpeedMean(at: S.ms(90.001).nanoseconds) == 0)
     }
 
+    @Test("R84.1-1: mixed-band endpoints (tower ≥ 1000 m, Wi-Fi < 100 m) gate with the tower band's D0 ≈ 730 m, whichever is the oldest and the newest fix")
+    func gateUsesTheWorseEndpointInTheEngine() throws {
+        let d0Tower = 2.15 * 2.0.squareRoot() * 240
+        let d0WiFi = 2.15 * 2.0.squareRoot() * 8
+        // 300 m in 60 s: below the tower D0, far above the Wi-Fi one.
+        for (first, last) in [(1_414.0, 65.0), (65.0, 1_414.0)] {
+            for gate in [2, 1] {
+                var config = M.config(fixSpeed: 1)
+                config.noOBDFixSpeedGate = gate
+                var engine = NavigationEngine(config: config)
+                engine.ingest(M.networkInput(east: 0, north: 0, accuracy: first, at: 0))
+                engine.ingest(M.networkInput(east: 180, north: 240, accuracy: last, at: 60))
+                #expect(engine.counters.networkFixesUsed == 2, "both fixes used (\(first) → \(last))")
+                let estimate = try #require(engine.fixSpeedEstimate)
+                #expect(abs(estimate.mps - 5) < 1e-3)
+                let expected = gate == 2 ? estimate.mps * (300 / d0Tower) * (300 / d0Tower) : 0
+                #expect(abs(estimate.gatedMps - expected) < 1e-6,
+                        "gate \(gate), \(first) → \(last): gated \(estimate.gatedMps), tower-band \(expected)")
+                #expect(300 > d0WiFi, "with the Wi-Fi band for both ends the gate would pass μ̂ unchanged")
+            }
+        }
+    }
+
     // MARK: Prompt 45 reproduced
 
     @Test("Floor 30, gate 0 and decay 30 s reproduce prompt 45's (a) bit for bit: a 10 min no-fix gap after a 50 km/h tower-fix drive ends at the estimate prompt 45 produced (values recorded on its code)")

@@ -182,6 +182,60 @@ struct PinSnapTests {
         Self.expectAt(s, -12, 0)
     }
 
+    @Test("R84.1-4: a continuation way drawn toward the shared node (its `to` end) is not a rival either")
+    func sameRoadAtJunctionToEnd() throws {
+        // Way 3 drawn from (300, 0) to the shared node: its nearest point to
+        // the tap is its last point, the `to` end node.
+        let net = try Self.network([
+            RoadFixture.way(1, Self.road, [Node(id: 1, east: -300, north: 0), Node(id: 10, east: 0, north: 0)]),
+            RoadFixture.way(3, Self.road, [Node(id: 2, east: 300, north: 0), Node(id: 10, east: 0, north: 0)]),
+        ])
+        let o = Self.snap(-12, 10, span: 1500, network: net)
+        guard case .edge(let s) = o.result else { Issue.record("\(o.result)"); return }
+        #expect(s.candidate.osmWayID == 1)
+        #expect(s.decision == .onlyRoad, "way 3 ends at a node of way 1: no rival, no close-roads contest")
+        #expect(o.contested.isEmpty)
+        Self.expectAt(s, -12, 0)
+    }
+
+    @Test("R84.1-4: a side road drawn toward the junction on the through road is not a rival when its nearest point is that junction")
+    func sideRoadToEndAtJunction() throws {
+        // Through road N (way 1) east-west through J = (0, 0); side road S
+        // (way 2) drawn from the south toward J, so J is S's `to` end.
+        let net = try Self.network([
+            RoadFixture.way(1, Self.road, [Node(id: 1, east: -300, north: 0), Node(id: 10, east: 0, north: 0),
+                                           Node(id: 2, east: 300, north: 0)]),
+            RoadFixture.way(2, Self.road, [Node(id: 3, east: 0, north: -300), Node(id: 10, east: 0, north: 0)]),
+        ])
+        // 1000 m span: radius 51.6 m, 8 pt = 9.4 m, σ/2 = 41.7 m. Tap 43 m
+        // along N from J and 27 m off it: N at 27 m; S's nearest point is J
+        // at 50.8 m (< 2 × 27 m, and 43 m from N's point: not close roads).
+        // J is a node of N's way, so S is no rival and N wins outright; were
+        // J not seen as S's end node, S would be contested and the tap
+        // ambiguous.
+        let o = Self.snap(43, 27, span: 1000, network: net)
+        guard case .edge(let s) = o.result else { Issue.record("\(o.result)"); return }
+        #expect(s.candidate.osmWayID == 1)
+        #expect(s.decision == .onlyRoad)
+        #expect(o.contested.isEmpty)
+        Self.expectAt(s, 43, 0)
+    }
+
+    @Test("R84.1-3: a dead end within 8 pt is not a junction: the node must end at least two candidate edges")
+    func deadEndIsNotAJunction() throws {
+        // Through road A (way 1) on north = 0; road B (way 2) ends at (5, 10)
+        // and runs north from there.
+        let net = try Self.network([
+            RoadFixture.way(1, Self.road, [Node(id: 1, east: -300, north: 0), Node(id: 2, east: 300, north: 0)]),
+            RoadFixture.way(2, Self.road, [Node(id: 3, east: 5, north: 10), Node(id: 4, east: 5, north: 300)]),
+        ])
+        // 1500 m span: 8 pt = 14.1 m. Tap 3 m from A; B's dead end 7 m away.
+        let o = Self.snap(5, 3, span: 1500, network: net)
+        guard case .edge(let s) = o.result else { Issue.record("expected an edge, got \(o.result)"); return }
+        #expect(s.candidate.osmWayID == 1 && s.decision == .clearlyNearer)
+        Self.expectAt(s, 5, 0)
+    }
+
     // MARK: Ambiguity
 
     /// Two parallel east-west roads, 20 m apart (north = 0 and north = 20).
