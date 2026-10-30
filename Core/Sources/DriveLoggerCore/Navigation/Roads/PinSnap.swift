@@ -25,8 +25,13 @@ import Foundation
 ///    way: two carriageways of one dual road are two roads here.
 ///    - No competitor, or the nearest competitor at least
 ///      `clearlyNearerRatio` (2×) as far as N (and further than N) → N.
-///    - Otherwise the **cloud** decides between N and every competitor
-///      nearer than `clearlyNearerRatio` × N's distance: a candidate's
+///    - **Close roads** (user decision 2026-10-30): a competitor nearer than
+///      `clearlyNearerRatio` × N's distance whose snapped point is at most
+///      `closeRoadsSigmaFraction` × σ_pin (σ/2) from N's is treated as the
+///      same road as N: the choice moves the pin less than half its own σ.
+///      If every such competitor is that close → N (`closeRoads`).
+///    - Otherwise the **cloud** decides between N and every remaining
+///      competitor nearer than `clearlyNearerRatio` × N's distance: a candidate's
 ///      support is the weight of the particles within
 ///      `cloudRadiusSigmas` × σ_pin (2σ) of its snapped point whose heading
 ///      is within `headingToleranceDeg` (45°) of the edge's bearing: either
@@ -63,6 +68,9 @@ public enum PinSnap {
         /// Particles within this many σ_pin of a candidate's snapped point
         /// support it.
         public var cloudRadiusSigmas = 2.0
+        /// Contested roads whose snapped points are at most this × σ_pin from
+        /// the nearest road's are the same road as it (σ/2).
+        public var closeRoadsSigmaFraction = 0.5
         /// Heading consistency, degrees: either travel direction on a two-way
         /// edge, the driving direction on a one-way edge.
         public var headingToleranceDeg = 45.0
@@ -110,6 +118,9 @@ public enum PinSnap {
         case clearlyNearer
         /// The particle cloud's support (may not be the nearest road).
         case cloud
+        /// The nearest road; the other contested roads' points are within
+        /// σ_pin / 2 of its point (`closeRoadsSigmaFraction`).
+        case closeRoads
         /// A junction node within `junctionRadiusPt`.
         case junction
     }
@@ -162,7 +173,9 @@ public enum PinSnap {
         public var nearest: Candidate?
         /// The candidates the ambiguity rule weighed (N first, then the
         /// competitors nearer than `clearlyNearerRatio` × N's distance), one
-        /// per road; empty when it was not needed.
+        /// per road; empty when it was not needed. For a `closeRoads` snap
+        /// every such competitor; when the cloud is consulted, only those
+        /// further than σ/2 from N's point (close ones count as N).
         public var contested: [Candidate]
         /// The cloud support of each `contested` candidate (same order);
         /// empty when the cloud was not consulted or not available.
@@ -277,7 +290,21 @@ public enum PinSnap {
                                         decision: competitors.isEmpty ? .onlyRoad : .clearlyNearer))
             return outcome
         }
-        let contested = [nearest] + competitors.filter { !($0.distanceM > nearest.distanceM && $0.distanceM >= ratio * nearest.distanceM) }
+        let rivals = competitors.filter { !($0.distanceM > nearest.distanceM && $0.distanceM >= ratio * nearest.distanceM) }
+        // Close roads: a rival whose point is within σ/2 of N's is N's road.
+        let close = parameters.closeRoadsSigmaFraction * sigma
+        let n = frame.offset(latitude: nearest.latitude, longitude: nearest.longitude)
+        let far = rivals.filter { c in
+            let p = frame.offset(latitude: c.latitude, longitude: c.longitude)
+            return ((p.x - n.x) * (p.x - n.x) + (p.y - n.y) * (p.y - n.y)).squareRoot() > close
+        }
+        guard !far.isEmpty else {
+            outcome.contested = [nearest] + rivals
+            outcome.result = .edge(Snap(latitude: nearest.latitude, longitude: nearest.longitude,
+                                        distanceM: nearest.distanceM, candidate: nearest, decision: .closeRoads))
+            return outcome
+        }
+        let contested = [nearest] + far
         outcome.contested = contested
         outcome.result = .ambiguous
         guard let cloud, !cloud.isEmpty else { return outcome }

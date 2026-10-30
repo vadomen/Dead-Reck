@@ -158,9 +158,10 @@ struct PinSnapTests {
         guard case .edge(let e) = beyond.result else { Issue.record("\(beyond.result)"); return }
         #expect(e.candidate.osmWayID == 1 && e.decision == .clearlyNearer)
         Self.expectAt(e, 14.2, 0)
-        // At 300 m span 8 pt is 2.8 m: (5, 6) is a contested corner, 6 vs 5 m.
+        // At 300 m span 8 pt is 2.8 m: (5, 6) is a contested corner, 6 vs 5 m;
+        // the two points are 7.8 m apart (≤ σ/2 = 15 m): the nearer road.
         let corner = Self.snap(5, 6, span: 300, network: net)
-        #expect(corner.result == .ambiguous)
+        #expect(corner.result.snap?.candidate.osmWayID == 2 && corner.result.snap?.decision == .closeRoads)
         #expect(corner.contested.map(\.osmWayID) == [2, 1])
     }
 
@@ -298,18 +299,26 @@ struct PinSnapTests {
             RoadFixture.way(2, ["highway": "primary", "bridge": "yes", "layer": "1"],
                             [Node(id: 3, east: 0, north: -300), Node(id: 4, east: 0, north: 300)]),
         ])
-        // On the crossing, well inside the junction radius: no node.
-        #expect(Self.snap(1, 1, span: 1500, network: net).result == .ambiguous)
+        // On the crossing, well inside the junction radius: no node (the two
+        // points are 1.4 m apart: the nearer road, as close roads).
+        let onCrossing = Self.snap(1, 1, span: 1500, network: net)
+        if case .node = onCrossing.result { Issue.record("no shared node: never a node snap") }
+        #expect(onCrossing.result.snap?.decision == .closeRoads)
+        // 300 m span (σ 30 m, σ/2 15 m): points (10, 0) and (0, 12) are 15.6 m
+        // apart, so the cloud decides.
         let tap = (east: 10.0, north: 12.0)  // way 2 at 10 m, way 1 at 12 m
-        #expect(Self.snap(tap.east, tap.north, span: 1500, network: net).result == .ambiguous)
+        #expect(Self.snap(tap.east, tap.north, span: 300, network: net).result == .ambiguous)
+        // At 1500 m (σ/2 62.5 m) the same tap is a close-roads snap to the nearer, way 2.
+        let wide = Self.snap(tap.east, tap.north, span: 1500, network: net, cloud: Self.cloud(10, 0, headingDeg: 85))
+        #expect(wide.result.snap?.candidate.osmWayID == 2 && wide.result.snap?.decision == .closeRoads)
         // Heading east: way 1, although way 2 is nearer.
-        let east = Self.snap(tap.east, tap.north, span: 1500, network: net, cloud: Self.cloud(10, 0, headingDeg: 85))
+        let east = Self.snap(tap.east, tap.north, span: 300, network: net, cloud: Self.cloud(10, 0, headingDeg: 85))
         guard case .edge(let s) = east.result else { Issue.record("\(east.result)"); return }
         #expect(s.candidate.osmWayID == 1 && s.decision == .cloud)
         #expect(east.nearest?.osmWayID == 2)
         Self.expectAt(s, 10, 0)
         // Heading south (bridge drawn south to north): way 2.
-        let south = Self.snap(tap.east, tap.north, span: 1500, network: net, cloud: Self.cloud(0, 12, headingDeg: 180))
+        let south = Self.snap(tap.east, tap.north, span: 300, network: net, cloud: Self.cloud(0, 12, headingDeg: 180))
         #expect(south.result.snap?.candidate.osmWayID == 2)
         #expect(south.result.snap?.candidate.level == 1)
         Self.expectAt(south.result.snap, 0, 12)
@@ -322,10 +331,51 @@ struct PinSnapTests {
             RoadFixture.way(2, Self.road, [Node(id: 3, east: -300, north: 18), Node(id: 4, east: 300, north: 18)]),
             RoadFixture.way(3, Self.road, [Node(id: 5, east: -300, north: -40), Node(id: 6, east: 300, north: -40)]),
         ])
-        // Way 1 at 8 m, way 2 at 10 m, way 3 at 48 m (> 16 m).
+        // Way 1 at 8 m, way 2 at 10 m, way 3 at 48 m (> 16 m). Ways 1 and 2's
+        // points are 18 m apart (≤ σ/2 = 62.5 m): close roads, the nearer.
         let o = Self.snap(0, 8, span: 1500, network: net)
-        #expect(o.result == .ambiguous)
+        #expect(o.result.snap?.candidate.osmWayID == 1 && o.result.snap?.decision == .closeRoads)
         #expect(o.contested.map(\.osmWayID) == [1, 2])
+    }
+
+    /// Two two-way roads `gap` metres apart (north = 0 and north = gap).
+    static func pair(gap: Double) throws -> RoadNetwork {
+        try network([
+            RoadFixture.way(1, Self.road, [Node(id: 1, east: -300, north: 0), Node(id: 2, east: 300, north: 0)]),
+            RoadFixture.way(2, Self.road, [Node(id: 3, east: -300, north: gap), Node(id: 4, east: 300, north: gap)]),
+        ])
+    }
+
+    @Test("Close roads: contested roads 2–5 m apart are one road, the nearer wins without the cloud")
+    func closeRoads() throws {
+        for gap in [2.0, 3.5, 5.0] {
+            let net = try Self.pair(gap: gap)
+            // Tap 45 % of the way across: nearer way 1, contested (ratio < 2).
+            let o = Self.snap(0, 0.45 * gap, span: 300, network: net, cloud: Self.cloud(0, gap, headingDeg: 90))
+            guard case .edge(let s) = o.result else { Issue.record("gap \(gap): \(o.result)"); continue }
+            #expect(s.candidate.osmWayID == 1 && s.decision == .closeRoads, "gap \(gap)")
+            #expect(o.contested.map(\.osmWayID) == [1, 2])
+            #expect(o.support.isEmpty, "the cloud is not consulted")
+            Self.expectAt(s, 0, 0)
+            // The other side: way 2.
+            #expect(Self.snap(0, 0.55 * gap, span: 300, network: net).result.snap?.candidate.osmWayID == 2)
+        }
+    }
+
+    @Test("Close roads boundary: points 14.6 m apart at σ 30 m are one road; 15.4 m apart go to the cloud or stay ambiguous")
+    func closeRoadsBoundary() throws {
+        // 300 m span: σ 30 m, σ/2 15 m; radius 15.5 m.
+        let near = try Self.pair(gap: 14.6)
+        #expect(Self.snap(0, 7, span: 300, network: near).result.snap?.decision == .closeRoads)
+        let apart = try Self.pair(gap: 15.4)
+        let alone = Self.snap(0, 7, span: 300, network: apart)
+        #expect(alone.result == .ambiguous)
+        #expect(alone.contested.map(\.osmWayID) == [1, 2])
+        // A cloud 50 m south of way 1 (65.4 m from way 2's point, beyond 2σ = 60 m): way 1 by the cloud.
+        let cloud = Self.snap(0, 7, span: 300, network: apart, cloud: Self.cloud(0, -50, headingDeg: 90))
+        #expect(cloud.result.snap?.candidate.osmWayID == 1 && cloud.result.snap?.decision == .cloud)
+        // At a 1000 m span (σ/2 41.7 m) the same pair is one road.
+        #expect(Self.snap(0, 7, span: 1000, network: apart).result.snap?.decision == .closeRoads)
     }
 
     @Test("Deterministic: the same tap gives the same outcome; pack order does not matter")
