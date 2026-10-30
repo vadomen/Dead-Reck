@@ -203,6 +203,7 @@ struct ReplayPinSnapTests {
         #expect(s.differsFromNearest == true)
         #expect(abs((s.snapDistanceM ?? 0) - 12) < 0.2)
         #expect(s.contested == 2)
+        #expect(abs((s.contestedSpreadM ?? 0) - 20) < 0.2, "the two contested points are 20 m apart")
         #expect(ReplayReport.summary(r).contains("not the nearest edge 1"))
     }
 

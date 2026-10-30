@@ -343,6 +343,28 @@ struct PinSnapTests {
         #expect(o.result.snap?.decision == .closeRoads)
     }
 
+    @Test("One candidate per road: a rival way with two edges in reach is weighed once (else its own two edges would split the cloud's support)")
+    func onePerRoadInTheContest() throws {
+        // Way 1 on north = 0; way 2 on north = 20, split at (5, 20) by side
+        // road way 3 going north. 300 m span: radius 15.5 m, σ 30 m.
+        let net = try Self.network([
+            RoadFixture.way(1, Self.road, [Node(id: 1, east: -300, north: 0), Node(id: 2, east: 300, north: 0)]),
+            RoadFixture.way(2, Self.road, [Node(id: 3, east: -300, north: 20), Node(id: 10, east: 5, north: 20),
+                                           Node(id: 4, east: 300, north: 20)]),
+            RoadFixture.way(3, Self.road, [Node(id: 10, east: 5, north: 20), Node(id: 5, east: 5, north: 300)]),
+        ])
+        // Tap (0, 8): way 1 at 8 m, way 2's west edge at 12 m, its east edge
+        // and way 3 at 13 m (both at the node (5, 20)).
+        let alone = Self.snap(0, 8, span: 300, network: net)
+        #expect(alone.result == .ambiguous)
+        #expect(alone.contested.map(\.osmWayID) == [1, 2, 3])
+        // A cloud 45 m north of way 2 heading east: only way 2 is supported
+        // (way 1's point is 65 m away, way 3 runs north): way 2 by the cloud.
+        let cloud = Self.snap(0, 8, span: 300, network: net, cloud: Self.cloud(0, 65, headingDeg: 90))
+        #expect(cloud.contested.map(\.osmWayID) == [1, 2, 3])
+        #expect(cloud.result.snap?.candidate.osmWayID == 2 && cloud.result.snap?.decision == .cloud, "\(cloud.support)")
+    }
+
     // MARK: Ambiguity
 
     /// Two parallel east-west roads, 20 m apart (north = 0 and north = 20).
