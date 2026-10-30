@@ -41,8 +41,17 @@ public enum LogFormatVersion: Int, Hashable, Sendable, Codable, CaseIterable, Co
     /// and replay the drive from a fresh start.
     case v5 = 5
 
+    /// v5 plus two optional `manualFix` fields, `tapLatitude`/`tapLongitude`:
+    /// the raw point under the finger, written only when the pin snapped to
+    /// a road. `latitude`/`longitude` stay the pin (the engine input: the
+    /// snapped point when snapped). No kind added; every v5 row decodes
+    /// exactly as before, and v1–v5 files have no tap fields. A v5 reader
+    /// refuses a v6 header rather than take the snapped point for the place
+    /// the driver marked and drop the tap on re-export.
+    case v6 = 6
+
     /// The version new recordings are written in.
-    public static let current: LogFormatVersion = .v5
+    public static let current: LogFormatVersion = .v6
 
     public static func < (lhs: LogFormatVersion, rhs: LogFormatVersion) -> Bool {
         lhs.rawValue < rhs.rawValue

@@ -705,15 +705,15 @@ struct LogFormatCompatibilityV5Tests {
         #expect(rewritten == original + Data("\n".utf8))
     }
 
-    @Test("v5 is a declared, readable version; the next one is refused as v4 refused v5")
+    @Test("v5 is a declared, readable version")
     func version5IsDeclared() {
+        // Until v6 this test also asserted that version 6 was undeclared and
+        // refused: a fact about the then-current state, false once v6
+        // exists. That check now lives in `LogFormatCurrentStateTests`
+        // (`refusesNextVersion`), which moves with every bump. The fixture
+        // above is unchanged.
         #expect(LogFormatVersion(rawValue: 5) == .v5)
         #expect(LogFormatVersion.v5 <= .current)
-        #expect(LogFormatVersion(rawValue: 6) == nil)
-        let v6 = Self.version5Recording.replacingOccurrences(of: #""formatVersion":5"#, with: #""formatVersion":6"#)
-        #expect(throws: LogDecodingError.unsupportedFormatVersion(6)) {
-            try codec.document(from: Data(v6.utf8))
-        }
     }
 
     @Test("The v5 kind, its keys and the vocabularies are stable on-disk strings")
@@ -730,5 +730,143 @@ struct LogFormatCompatibilityV5Tests {
             estimateT: MonotonicTimestamp(nanoseconds: -850_000_000))
         let line = try codec.line(for: LogEvent(timestamp: Self.ms(2), payload: .navPrior(sample)))
         #expect(String(decoding: line, as: UTF8.self) == #"{"data":{"converged":true,"covEE":25,"covEN":-2.5,"covNN":36,"estimateT":-850000000,"headingDeg":271.5,"headingStdDeg":3.25,"latitude":0.0125,"longitude":-0.025,"obdSpeedKmh":80,"restoreClass":"moving","source":"navigate","speedMps":22.25},"kind":"navPrior","t":2000000}"# + "\n")
+    }
+}
+
+/// Format v6 counterpart. Same rule: frozen when v6 was introduced (prompt
+/// 46, pins snap to the road) and never edited to fit a later change. v6 =
+/// v5 + the optional `manualFix` fields `tapLatitude`/`tapLongitude`, the raw
+/// tap of a pin that snapped (`latitude`/`longitude` = the snapped point,
+/// the engine input). The fixture has a snapped pin at a 1500 m span (above
+/// the 300 m an unsnapped pin may have), an unsnapped pin with no tap
+/// fields, and a snapped pin whose tap equals the snapped point (a tap
+/// already on the road: still snapped, still written). Coordinates are
+/// small offsets from (0, 0): no real place.
+@Suite("Log format compatibility v6")
+struct LogFormatCompatibilityV6Tests {
+    let codec = LogCodec()
+
+    static let version6Recording = #"""
+        {"app":{"build":"60","name":"DriveLogger","version":"0.6.0"},"device":{"model":"iPhone16,1","systemName":"iOS","systemVersion":"18.6"},"formatVersion":6,"mount":"windscreen, portrait","polling":{"adaptiveTiming":1,"command":"010D0C1","multiPID":true,"pids":[13,12],"requestHeader":"7E0","responseCount":1,"rpmEvery":1,"timeoutMs":200},"referenceUptimeSeconds":5400.75,"sessionID":"6C8DAE2F-3A4B-4C5D-9E7F-8091A2B3C4D5","startedAt":"2026-04-01T00:00:00Z","timeZone":"UTC","vehicle":"test vehicle"}
+        {"data":{"event":"start"},"kind":"lifecycle","t":0}
+        {"data":{"command":"010D0C1","ecu":"7E8","pid":13,"raw":"7E803410D1E\r\r","requestT":950000000,"seq":3,"unit":"km/h","value":30},"kind":"obd","t":1000000000}
+        {"data":{"gateSpeedKmh":30,"latitude":0.0126,"longitude":-0.0249,"mapSpanM":1500,"obdSpeedKmh":30,"obdSpeedT":1000000000,"pressedT":2500000000,"speedSource":"obd","tapLatitude":0.0125,"tapLongitude":-0.025},"kind":"manualFix","t":2500000000}
+        {"data":{"latitude":-0.0375,"longitude":0.05,"mapSpanM":250,"pressedT":6000000000,"speedSource":"unknown"},"kind":"manualFix","t":6000000000}
+        {"data":{"latitude":0.025,"longitude":0.0125,"mapSpanM":800.5,"pressedT":8000000000,"speedSource":"unknown","tapLatitude":0.025,"tapLongitude":0.0125},"kind":"manualFix","t":8000000000}
+        {"data":{"bytesWritten":2048,"counts":{"lifecycle":1,"manualFix":3,"obd":1},"dropped":0,"gaps":{"accel":0,"gyro":0,"motion":0},"maxGapMs":{},"motionHz":0,"obdHz":0.1,"queueDepthMax":1,"timeouts":0,"windowS":10},"kind":"stats","t":10000000000}
+        {"data":{"detail":"user","event":"stop"},"kind":"lifecycle","t":10500000000}
+        """#
+
+    var document: LogDocument {
+        get throws { try codec.document(from: Data(Self.version6Recording.utf8)) }
+    }
+
+    static func ms(_ value: Int64) -> MonotonicTimestamp {
+        MonotonicTimestamp(nanoseconds: value * 1_000_000)
+    }
+
+    static func fixes(_ events: [LogEvent]) -> [(t: MonotonicTimestamp, sample: ManualFixSample)] {
+        events.compactMap { if case .manualFix(let sample) = $0.payload { ($0.timestamp, sample) } else { nil } }
+    }
+
+    @Test("A v6 recording parses")
+    func readsVersion6Header() throws {
+        let header = try document.header
+        #expect(header.formatVersion == .v6)
+        #expect(header.startedAt == Date(timeIntervalSince1970: 1_775_001_600))
+        #expect(header.referenceUptimeSeconds == 5_400.75)
+        #expect(header.polling?.requestHeader == "7E0")
+        #expect(header.timeZone == "UTC")
+    }
+
+    @Test("Every v6 row decodes to its own payload, none as unrecognized")
+    func readsEveryRow() throws {
+        let events = try document.events
+        #expect(events.count == 7)
+        #expect(events.map(\.payload.kind) == [
+            "lifecycle", "obd", "manualFix", "manualFix", "manualFix", "stats", "lifecycle",
+        ])
+        for event in events {
+            if case .unrecognized(let kind, _) = event.payload {
+                Issue.record("\(kind) decoded as unrecognized")
+            }
+        }
+    }
+
+    @Test("manualFix rows keep the snapped point and the raw tap; an unsnapped row has no tap")
+    func readsManualFixes() throws {
+        let rows = Self.fixes(try document.events)
+        #expect(rows.count == 3)
+
+        #expect(rows[0].t == Self.ms(2_500))
+        #expect(rows[0].sample == ManualFixSample(
+            latitude: 0.0126, longitude: -0.0249, pressedT: Self.ms(2_500), mapSpanM: 1_500,
+            obdSpeedKmh: 30, obdSpeedT: Self.ms(1_000), speedSource: "obd", gateSpeedKmh: 30,
+            tapLatitude: 0.0125, tapLongitude: -0.025))
+        #expect(rows[0].sample.isSnapped)
+        #expect(rows[0].sample.mapSpanM == 1_500, "a snapped pin may exceed the unsnapped 300 m span")
+
+        #expect(rows[1].sample == ManualFixSample(
+            latitude: -0.0375, longitude: 0.05, pressedT: Self.ms(6_000), mapSpanM: 250, speedSource: "unknown"))
+        #expect(!rows[1].sample.isSnapped)
+        #expect(rows[1].sample.tapLatitude == nil && rows[1].sample.tapLongitude == nil)
+
+        #expect(rows[2].sample.isSnapped, "a tap already on the road still counts as snapped")
+        #expect(rows[2].sample.tapLatitude == rows[2].sample.latitude)
+        #expect(rows[2].sample.tapLongitude == rows[2].sample.longitude)
+        #expect(rows[2].sample.mapSpanM == 800.5)
+    }
+
+    @Test("Pin truth is the raw tap when present, else latitude/longitude; the engine input stays latitude/longitude")
+    func truthIsTheTap() throws {
+        let rows = Self.fixes(try document.events)
+        #expect(rows[0].sample.truthLatitude == 0.0125)
+        #expect(rows[0].sample.truthLongitude == -0.025)
+        #expect(rows[0].sample.latitude == 0.0126)
+        #expect(rows[0].sample.longitude == -0.0249)
+        #expect(rows[1].sample.truthLatitude == -0.0375)
+        #expect(rows[1].sample.truthLongitude == 0.05)
+        #expect(rows[2].sample.truthLatitude == 0.025)
+        #expect(rows[2].sample.truthLongitude == 0.0125)
+    }
+
+    @Test("Older manualFix rows (v3 fixture) have no tap: truth is latitude/longitude")
+    func olderRowsHaveNoTap() throws {
+        let v3 = try codec.document(from: Data(LogFormatCompatibilityV3Tests.version3Recording.utf8))
+        let rows = Self.fixes(v3.events)
+        #expect(rows.count == 3)
+        for (_, sample) in rows {
+            #expect(!sample.isSnapped)
+            #expect(sample.tapLatitude == nil && sample.tapLongitude == nil)
+            #expect(sample.truthLatitude == sample.latitude)
+            #expect(sample.truthLongitude == sample.longitude)
+        }
+    }
+
+    @Test("Rewriting a v6 recording reproduces it unchanged")
+    func rewritesVersion6Identically() throws {
+        let original = Data(Self.version6Recording.utf8)
+        let rewritten = try codec.encode(try document)
+        #expect(rewritten == original + Data("\n".utf8))
+    }
+
+    @Test("v6 is a declared, readable version")
+    func version6IsDeclared() {
+        #expect(LogFormatVersion(rawValue: 6) == .v6)
+        #expect(LogFormatVersion.v6 <= .current)
+    }
+
+    @Test("The v6 keys are stable on-disk strings; a row without a tap writes no tap keys")
+    func stringsAreStable() throws {
+        let snapped = ManualFixSample(
+            latitude: 0.0126, longitude: -0.0249, pressedT: Self.ms(2_500), mapSpanM: 1_500,
+            obdSpeedKmh: 30, obdSpeedT: Self.ms(1_000), speedSource: "obd", gateSpeedKmh: 30,
+            tapLatitude: 0.0125, tapLongitude: -0.025)
+        let line = try codec.line(for: LogEvent(timestamp: Self.ms(2_500), payload: .manualFix(snapped)))
+        #expect(String(decoding: line, as: UTF8.self) == #"{"data":{"gateSpeedKmh":30,"latitude":0.0126,"longitude":-0.0249,"mapSpanM":1500,"obdSpeedKmh":30,"obdSpeedT":1000000000,"pressedT":2500000000,"speedSource":"obd","tapLatitude":0.0125,"tapLongitude":-0.025},"kind":"manualFix","t":2500000000}"# + "\n")
+
+        let plain = ManualFixSample(latitude: -0.0375, longitude: 0.05, pressedT: Self.ms(6_000), mapSpanM: 250, speedSource: "unknown")
+        let plainLine = try codec.line(for: LogEvent(timestamp: Self.ms(6_000), payload: .manualFix(plain)))
+        #expect(String(decoding: plainLine, as: UTF8.self) == #"{"data":{"latitude":-0.0375,"longitude":0.05,"mapSpanM":250,"pressedT":6000000000,"speedSource":"unknown"},"kind":"manualFix","t":6000000000}"# + "\n")
     }
 }
