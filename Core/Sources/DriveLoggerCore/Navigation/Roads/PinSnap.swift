@@ -29,8 +29,12 @@ import Foundation
 ///      nearer than `clearlyNearerRatio` × N's distance: a candidate's
 ///      support is the weight of the particles within
 ///      `cloudRadiusSigmas` × σ_pin (2σ) of its snapped point whose heading
-///      is within `headingToleranceDeg` (45°) of the edge's bearing, either
-///      travel direction. The candidate with at least `cloudRatio` (2×) the
+///      is within `headingToleranceDeg` (45°) of the edge's bearing: either
+///      travel direction on a two-way edge, only its driving direction on a
+///      one-way edge (as the engine's road matcher,
+///      `RoadGeometry.headingDifference(oneway:)`), so the two carriageways
+///      of a dual road are told apart by the car's heading. The candidate
+///      with at least `cloudRatio` (2×) the
 ///      support of each other one (and some support) wins, even if it is
 ///      not the nearest.
 ///    - Otherwise `.ambiguous`.
@@ -59,7 +63,8 @@ public enum PinSnap {
         /// Particles within this many σ_pin of a candidate's snapped point
         /// support it.
         public var cloudRadiusSigmas = 2.0
-        /// Heading consistency, degrees, either travel direction.
+        /// Heading consistency, degrees: either travel direction on a two-way
+        /// edge, the driving direction on a one-way edge.
         public var headingToleranceDeg = 45.0
         /// σ_pin = max(sigmaMinM, mapSpanM / spanDivisor): the engine's
         /// default `manualFixSigmaMinM` / `manualFixSpanDivisor`.
@@ -281,9 +286,9 @@ public enum PinSnap {
         let reach = parameters.cloudRadiusSigmas * sigma
         let reach2 = reach * reach
         let tolerance = parameters.headingToleranceDeg * .pi / 180
-        let targets = contested.map { c -> (x: Double, y: Double, bearing: Double) in
+        let targets = contested.map { c -> (x: Double, y: Double, bearing: Double, oneway: Bool) in
             let p = frame.offset(latitude: c.latitude, longitude: c.longitude)
-            return (p.x, p.y, c.bearingDeg * .pi / 180)
+            return (p.x, p.y, c.bearingDeg * .pi / 180, c.isOneway)
         }
         var support = [Double](repeating: 0, count: contested.count)
         for particle in cloud where particle.weight > 0 && particle.weight.isFinite {
@@ -291,7 +296,8 @@ public enum PinSnap {
             for (k, target) in targets.enumerated() {
                 let dx = p.x - target.x, dy = p.y - target.y
                 guard dx * dx + dy * dy <= reach2 else { continue }
-                if RoadGeometry.headingDifference(heading: particle.headingRad, bearing: target.bearing, oneway: false)
+                if RoadGeometry.headingDifference(heading: particle.headingRad, bearing: target.bearing,
+                                                  oneway: target.oneway)
                     <= tolerance {
                     support[k] += particle.weight
                 }

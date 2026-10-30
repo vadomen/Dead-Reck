@@ -239,6 +239,44 @@ struct PinSnapTests {
         #expect(Self.snap(0, 8, span: 300, network: net, cloud: []).result == .ambiguous)
     }
 
+    /// A dual carriageway: way 1 eastbound one-way on north = 0, way 2
+    /// westbound one-way on north = 44 (stored in driving order).
+    static func carriageways() throws -> RoadNetwork {
+        try network([
+            RoadFixture.way(1, ["highway": "primary", "oneway": "yes"],
+                            [Node(id: 1, east: -400, north: 0), Node(id: 2, east: 400, north: 0)]),
+            RoadFixture.way(2, ["highway": "primary", "oneway": "yes"],
+                            [Node(id: 3, east: 400, north: 44), Node(id: 4, east: -400, north: 44)]),
+        ])
+    }
+
+    @Test("One-way carriageways: a tap between them (17.7 / 26.3 m) goes to the one the cloud drives along, in its direction")
+    func oneWayCarriageways() throws {
+        let net = try Self.carriageways()
+        // 600 m span: radius 31 m, σ 50 m, reach 100 m; both carriageways' points are in reach of the cloud.
+        let alone = Self.snap(0, 17.7, span: 600, network: net)
+        #expect(alone.result == .ambiguous)
+        #expect(alone.contested.map(\.osmWayID) == [1, 2])
+        #expect(alone.contested.map(\.isOneway) == [true, true])
+        #expect(abs(alone.contested[1].bearingDeg - 270) < 0.01, "way 2 is stored westbound")
+        // The car on way 1, 30 m from the tap, eastbound at 50 km/h.
+        let east = Self.snap(0, 17.7, span: 600, network: net, cloud: Self.cloud(30, 0, headingDeg: 90))
+        #expect(east.support.count == 2 && abs(east.support[0] - 1) < 1e-9 && east.support[1] == 0)
+        guard case .edge(let s) = east.result else { Issue.record("\(east.result)"); return }
+        #expect(s.candidate.osmWayID == 1 && s.decision == .cloud)
+        Self.expectAt(s, 0, 0)
+        // The car on way 2, westbound: way 2, although way 1 is nearer.
+        let west = Self.snap(0, 17.7, span: 600, network: net, cloud: Self.cloud(-30, 44, headingDeg: 270))
+        #expect(west.support.count == 2 && west.support[0] == 0 && abs(west.support[1] - 1) < 1e-9)
+        #expect(west.result.snap?.candidate.osmWayID == 2)
+        Self.expectAt(west.result.snap, 0, 44)
+        // Heading against both one-ways' directions? None: a westbound cloud
+        // on way 1's line supports way 2 only (its direction), not way 1.
+        let wrongWay = Self.snap(0, 17.7, span: 600, network: net, cloud: Self.cloud(30, 0, headingDeg: 270))
+        #expect(wrongWay.support.count == 2 && wrongWay.support[0] == 0 && abs(wrongWay.support[1] - 1) < 1e-9)
+        // A two-way road still accepts either direction (parallelCloud).
+    }
+
     @Test("Cloud ratio: 2× the support decides, 1.9× does not")
     func cloudRatio() throws {
         let net = try Self.parallel()
