@@ -55,6 +55,16 @@ struct NavigationNoOBDModeTests {
         return config
     }
 
+    /// Prompt 46's "hold the state before the gap" rule (selectable, not
+    /// the default): floor 0, soft gate, decay 500 s.
+    static func config46(robust: Int = 0, fixSpeed: Int = 1, particles: Int = 300, seed: UInt64 = 5) -> NavigationConfig {
+        var config = Self.config(robust: robust, fixSpeed: fixSpeed, particles: particles, seed: seed)
+        config.noOBDFixSpeedFloorKmh = 0
+        config.noOBDFixSpeedGate = 2
+        config.noOBDFixSpeedDecayS = 500
+        return config
+    }
+
     /// The four switch combinations: off, (e) only, (a) only, both.
     static let switches: [(robust: Int, fixSpeed: Int)] = [(0, 0), (1, 0), (0, 1), (1, 1)]
 
@@ -90,8 +100,8 @@ struct NavigationNoOBDModeTests {
         #expect(d.noOBDNetworkFixScaleFloorM == 5 && d.noOBDNetworkFixTowerAccuracyM == 1_000)
         #expect(d.noOBDNetworkFixTowerScaleM == 120 && d.noOBDNetworkFixCorrelationS == 30)
         #expect(d.noOBDFixSpeedWindowS == 120 && d.noOBDFixSpeedMinSpanS == 10 && d.noOBDFixSpeedMaxKmh == 110)
-        #expect(d.noOBDFixSpeedHoldS == 30 && d.noOBDFixSpeedDecayS == 500 && d.noOBDFixSpeedFloorKmh == 0)
-        #expect(d.noOBDFixSpeedGate == 2 && d.noOBDFixSpeedGateK == 2.15 && d.noOBDFixSpeedGateSigmaLowM == 8)
+        #expect(d.noOBDFixSpeedHoldS == 30 && d.noOBDFixSpeedDecayS == 30 && d.noOBDFixSpeedFloorKmh == 30)
+        #expect(d.noOBDFixSpeedGate == 0 && d.noOBDFixSpeedGateK == 2.15 && d.noOBDFixSpeedGateSigmaLowM == 8)
         #expect(d.noOBDFixSpeedGateSigmaMidM == 170 && d.noOBDFixSpeedGateSigmaTowerM == 240)
         #expect(NavigationConfig.noOBDFixSpeedGateMidAccuracyM == 100 && NavigationConfig.noOBDFixSpeedGateTowerAccuracyM == 1_000)
 
@@ -345,18 +355,19 @@ struct NavigationNoOBDModeTests {
 
     // MARK: 5. Fixes stop for 10 min
 
-    @Test("Fixes stop for 10 min in no-OBD mode: estimate, ellipse, μ and weights stay finite; μ holds 30 s then relaxes from the gated estimate to the floor (default: 0, τ 500 s; prompt 45's config: 30 km/h, τ 30 s); the same with no motion samples (catch-up macro steps)")
+    @Test("Fixes stop for 10 min in no-OBD mode: estimate, ellipse, μ and weights stay finite; μ holds 30 s then relaxes from the gated estimate to the floor (default = prompt 45's (a): 30 km/h, τ 30 s; prompt 46's rule: 0, τ 500 s); the same with no motion samples (catch-up macro steps)")
     func fixesStopForTenMinutes() throws {
         let long = S(initialHeadingDeg: 0, initialSpeed: Self.kmh50, [.straight(seconds: 760, speed: Self.kmh50)])
         let lastFix = 152.0
         let fix = Self.networkFix(accuracy: 1_414, noise: 200)
         let events = long.events(gyroNoise: 0.002, obdSpeed: Self.noOBD, fixEvery: 8,
                                  fix: { t, s, rng in t <= lastFix ? fix(t, s, &rng) : nil })
-        let runs = Self.switches.map { (robust: $0.robust, fixSpeed: $0.fixSpeed, is45: false) }
-            + [(robust: 0, fixSpeed: 1, is45: true)]
+        let runs = Self.switches.map { (robust: $0.robust, fixSpeed: $0.fixSpeed, is45: true) }
+            + [(robust: 0, fixSpeed: 1, is45: false)]
         for (robust, fixSpeed, is45) in runs {
             let times = Array(stride(from: 10.0, through: 760, by: 10))
-            let config = is45 ? Self.config45() : Self.config(robust: robust, fixSpeed: fixSpeed)
+            let config = is45 ? Self.config(robust: robust, fixSpeed: fixSpeed) : Self.config46()
+            #expect(!is45 || (config.noOBDFixSpeedFloorKmh == 30 && config.noOBDFixSpeedDecayS == 30))
             let floorKmh = config.noOBDFixSpeedFloorKmh, tau = config.noOBDFixSpeedDecayS
             let run = S.run(events, config: config, sampleTimes: times)
             let tag = "\(robust) \(fixSpeed) 45 \(is45)"
