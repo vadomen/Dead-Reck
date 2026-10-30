@@ -537,6 +537,50 @@ struct NavigationNoOBDModeTests {
         #expect(otherKey.east == at30.east && otherKey.north == at30.north)
     }
 
+    @Test("R83.2-1: a robust network fix older than staleFixAgeS at arrival grows its scale by max(staleFixSigmaGrowthMps, 0) × age: a 65 m Wi-Fi fix 7.05 s old has scale 0.21 × 65 + 7.05 = 20.7 m; the identical-particle Kalman shift matches that closed form to 1e-9 m, and the same fix 0.05 s old (scale 13.65 m) matches its own")
+    func robustScaleGrowsWithFixAge() {
+        let p = 400.0, offset = 30.0, accuracy = 65.0, fixT = 8.0, nu = 2.0
+        // Tempering 8 s after the first network fix, over 30 s: the same for both ages.
+        let temper = fixT / 30
+        func predicted(scale: Double) -> Double {
+            let r = scale * scale / temper
+            let m2 = offset * offset / (p + r)
+            let inflation = max(1, (nu + m2) / (nu + 2))
+            return p / (p + r * inflation) * offset
+        }
+        /// The fix (t = 8 s, 30 m east) arriving at `arrival`; no speed
+        /// noise, so the cloud does not move and the fix's latency shift is 0.
+        func shift(arrival: Double) -> (east: Double, north: Double) {
+            var config = Self.config(robust: 1)
+            config.staleSpeedNoiseMpsPerSqrtS = 0
+            var engine = NavigationEngine(config: config)
+            engine.ingest(Self.networkInput(east: 0, north: 0, accuracy: 30, at: 0))
+            engine.ingest(Self.still(at: arrival))
+            Self.setIdenticalCloud(&engine, variance: p)
+            var fix = Self.networkInput(east: offset, north: 0, accuracy: accuracy, at: fixT)
+            if case .location(var sample, let t) = fix {
+                sample.receivedT = S.ms(arrival)
+                sample.ageS = arrival - fixT
+                fix = .location(sample, at: t)
+            }
+            let used = engine.counters.networkFixesUsed
+            engine.ingest(fix)
+            #expect(engine.counters.networkFixesUsed == used + 1)
+            return Self.weightedMean(engine)
+        }
+        let config = NavigationConfig()
+        #expect(config.staleFixAgeS == 5 && config.maxFixAgeS == 10 && config.staleFixSigmaGrowthMps == 1)
+        let band = 0.21 * accuracy
+        let stale = shift(arrival: fixT + 7.05)
+        let fresh = shift(arrival: fixT + 0.05)
+        let staleScale = band + max(config.staleFixSigmaGrowthMps, 0) * 7.05
+        #expect(abs(stale.east - predicted(scale: staleScale)) < 1e-9, "\(stale.east) vs \(predicted(scale: staleScale))")
+        #expect(abs(fresh.east - predicted(scale: band)) < 1e-9, "\(fresh.east) vs \(predicted(scale: band))")
+        #expect(abs(stale.north) < 1e-9 && abs(fresh.north) < 1e-9)
+        // ≈ 6.0 m against ≈ 10.9 m: the older fix pulls less.
+        #expect(fresh.east > 1.5 * stale.east && stale.east > 3)
+    }
+
     // MARK: Keys
 
     @Test("No-OBD keys: decoding without them gives the defaults (off); refused values")

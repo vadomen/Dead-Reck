@@ -1202,3 +1202,13 @@ Reviewers: one opus reviewer. Bit-identity re-run by the reviewer: clean seed 1,
 | R83.1-4 | MINOR | `docs/NAVIGATION.md`: "(123.2 m)" is given as the 0.7 × display line; it is the engine median 123.21 m, the line is 0.7 × 176.3 = 123.38 m. | FIXED in round 1 | One-line factual fix in a decision table. |
 
 Round 1 outcome: R83.1-1, R83.1-2 fixed with regression tests (mutations M2, M3 now killed), R83.1-4 fixed, R83.1-3 deferred; `swift test` 1226 tests in 149 suites passed (36 known issues); release perf gate 9 passed.
+
+### Round 2
+
+Reviewers: one opus reviewer (fresh). Engine unchanged since round 1 (tests and docs only), so the round-1 bit-identity holds. Mutations: A (author's, macroStep fix-speed distance) killed; B (robust branch staleGrowth → 0) survived; C (noteFixSpeed on the initialisation path) killed.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R83.2-1 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/NavigationEngine.swift:1570-1571`: the robust branch's stale-age σ growth (`staleGrowth`) is untested; removing it leaves the suite green, so a late Wi-Fi fix could be weighted ~1.5× too tight unnoticed. | CONFIRMED | Fixed: regression test `robustScaleGrowsWithFixAge` (mutation B now killed), review round 2 commit. |
+
+Round 2 outcome: R83.2-1 fixed; `swift test` 1227 tests in 149 suites passed (36 known issues).
