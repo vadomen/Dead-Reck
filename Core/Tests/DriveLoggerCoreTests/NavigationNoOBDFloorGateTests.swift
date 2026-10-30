@@ -8,10 +8,8 @@ import Testing
 /// when they stop it relaxes, after the hold, from the gated estimate
 /// (`noOBDFixSpeedGate`: a window that moves less than the noise of two
 /// fixes is damped) towards `noOBDFixSpeedFloorKmh` = 0 with τ
-/// `noOBDFixSpeedDecayS` = 500 s. Selectable by those keys
-/// (`NavigationNoOBDModeTests.config46`); the defaults stay prompt 45's (a)
-/// because the rule failed its replay gate on one drive. Synthetic drives
-/// from (0, 0) only; no real place, date or recording.
+/// `noOBDFixSpeedDecayS` = 500 s. Synthetic drives from (0, 0) only; no
+/// real place, date or recording.
 @Suite("Navigation prompt 46: no-OBD fix-speed floor and displacement gate")
 struct NavigationNoOBDFloorGateTests {
     typealias S = SyntheticDrive
@@ -60,8 +58,7 @@ struct NavigationNoOBDFloorGateTests {
         }
         let r2 = 2.0.squareRoot()
         let d0Low = 2.15 * r2 * 8, d0Mid = 2.15 * r2 * 170, d0Tower = 2.15 * r2 * 240
-        #expect(c.noOBDFixSpeedGate == 0)
-        c.noOBDFixSpeedGate = 2
+        #expect(c.noOBDFixSpeedGate == 2)
         // Soft: (d/D0)² below D0, 1 from it.
         #expect(abs(f(d0Low / 2, 30, 30) - 0.25) < 1e-12)
         #expect(abs(f(d0Mid / 2, 500, 500) - 0.25) < 1e-12)
@@ -115,7 +112,7 @@ struct NavigationNoOBDFloorGateTests {
             #expect(!run.engine.obdEverIngested && run.engine.counters.networkFixesUsed >= 14)
             return (worst, Self.distance(try #require(run.samples.last!), start), run.engine.fixSpeedEstimate?.mps)
         }
-        let now = try drift(M.config46(fixSpeed: 1, particles: 2_000))
+        let now = try drift(M.config(fixSpeed: 1, particles: 2_000))
         #expect(now.max < 50, "max drift \(now.max) m, at the end \(now.end) m, μ̂ \(now.mu ?? .nan) m/s")
         // Parked Wi-Fi fixes: μ̂ well under 1 km/h.
         #expect((now.mu ?? .nan) * 3.6 < 1)
@@ -142,7 +139,7 @@ struct NavigationNoOBDFloorGateTests {
             let d = try run.samples.map { Self.distance(try #require($0), (car.east, car.north)) }
             return (d.reduce(0, +) / Double(d.count), d.max()!, run.samples)
         }
-        let now = try drift(M.config46(fixSpeed: 1, particles: 2_000))
+        let now = try drift(M.config(fixSpeed: 1, particles: 2_000))
         #expect(now.mean < 150, "mean drift \(now.mean) m, worst \(now.max) m")
         let old = try drift(M.config45(particles: 2_000))
         #expect(now.samples == old.samples, "now \(now.mean) m, prompt 45 \(old.mean) m")
@@ -155,7 +152,7 @@ struct NavigationNoOBDFloorGateTests {
         let straight = S(initialHeadingDeg: 30, initialSpeed: Self.kmh50, [.straight(seconds: 300, speed: Self.kmh50)])
         let events = straight.events(gyroNoise: 0.002, obdSpeed: M.noOBD, fixEvery: 8,
                                      fix: M.networkFix(accuracy: 1_414, noise: 200))
-        var gated = NavigationEngine(config: M.config46(fixSpeed: 1))
+        var gated = NavigationEngine(config: M.config(fixSpeed: 1))
         var old = NavigationEngine(config: M.config45())
         var window: [(t: Double, east: Double, north: Double)] = []
         let d0 = 2.15 * 2.0.squareRoot() * 240
@@ -204,7 +201,7 @@ struct NavigationNoOBDFloorGateTests {
         let fix = M.networkFix(accuracy: 1_414, noise: 200)
         let events = long.events(gyroNoise: 0.002, obdSpeed: M.noOBD, fixEvery: 8,
                                  fix: { t, s, rng in t <= lastFix ? fix(t, s, &rng) : nil })
-        let config = M.config46(fixSpeed: 1, particles: 2_000)
+        let config = M.config(fixSpeed: 1, particles: 2_000)
         #expect(config.noOBDFixSpeedDecayS == tau && config.noOBDFixSpeedFloorKmh == 0)
         let run = S.run(events, config: config, sampleTimes: [lastFix + 30, end])
         let estimate = try #require(run.engine.fixSpeedEstimate)
@@ -228,7 +225,7 @@ struct NavigationNoOBDFloorGateTests {
 
         // A parked window (tower jitter, d below D0) then a gap: the gap
         // starts from the gated value, not from the noise speed.
-        var engine = NavigationEngine(config: M.config46(fixSpeed: 1))
+        var engine = NavigationEngine(config: M.config(fixSpeed: 1))
         engine.ingest(M.networkInput(east: 0, north: 0, accuracy: 1_414, at: 0))
         engine.ingest(M.networkInput(east: 180, north: 240, accuracy: 1_414, at: 60))
         let parked = try #require(engine.fixSpeedEstimate)
@@ -241,7 +238,7 @@ struct NavigationNoOBDFloorGateTests {
         let closed = 30 * parked.mps + parked.gatedMps * 500 * -expm1(-110.0 / 500)
         let parkedIntegral = engine.fixSpeedMeanIntegral(from: S.ms(60).nanoseconds, to: S.ms(200).nanoseconds)
         #expect(abs(parkedIntegral - closed) < 1e-9 * closed, "\(parkedIntegral) vs \(closed)")
-        var hard = M.config46(fixSpeed: 1)
+        var hard = M.config(fixSpeed: 1)
         hard.noOBDFixSpeedGate = 1
         var e1 = NavigationEngine(config: hard)
         e1.ingest(M.networkInput(east: 0, north: 0, accuracy: 1_414, at: 0))

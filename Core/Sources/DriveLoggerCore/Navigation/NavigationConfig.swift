@@ -277,17 +277,16 @@ public struct NavigationConfig: Hashable, Sendable, Codable {
     public var noOBDFixSpeedHoldS = 30.0
     /// Then it relaxes exponentially with this time constant, s (0: at
     /// once): μ = floor + (μ_gated − floor) · exp(−(age − hold)/τ), age the
-    /// time since the estimate's newest fix. Default 30 s (prompt 45's
-    /// (a)). Prompt 46's "hold the state before the gap" rule uses 500 s,
-    /// the mean time from a moving instant to the next stop of 60 s or more
-    /// (or the drive's end) on cal-1..cal-5 (508 s; median 453 s); it
-    /// failed its replay gate on one drive, so it is selectable, not the
-    /// default. Valid: finite, ≥ 0.
-    public var noOBDFixSpeedDecayS = 30.0
-    /// …towards this speed, km/h. Default 30 (prompt 45's (a)); prompt
-    /// 46's rule uses 0, so with no fix μ ends at 0 and the OU spread alone
-    /// keeps the ellipse honest. Valid: finite, ≥ 0.
-    public var noOBDFixSpeedFloorKmh = 30.0
+    /// time since the estimate's newest fix. Prompt 46: 500 s, the mean
+    /// time from a moving instant to the next stop of 60 s or more (or the
+    /// drive's end) on cal-1..cal-5 (508 s; median 453 s): the car is
+    /// expected to keep going about that long. Prompt 45's (a): 30 s.
+    /// Valid: finite, ≥ 0.
+    public var noOBDFixSpeedDecayS = 500.0
+    /// …towards this speed, km/h (prompt 46: 0, so with no fix μ ends at 0
+    /// and the OU spread alone keeps the ellipse honest; 30 is prompt 45's
+    /// (a)). Valid: finite, ≥ 0.
+    public var noOBDFixSpeedFloorKmh = 0.0
     /// Displacement significance gate on the μ a fix gap starts from
     /// (prompt 46, user rule "hold the state before the gap"), read only
     /// with `noOBDFixSpeedMean` on in no-OBD mode. While fixes arrive (μ
@@ -299,10 +298,8 @@ public struct NavigationConfig: Hashable, Sendable, Codable {
     /// (prompt 45); 1: hard, 0 below D0; 2: soft, scaled by min(1, (d/D0)²)
     /// (calibration, cal-1..cal-5: the hard gate zeroed 61 % of the
     /// fresh-estimate time at 5–20 km/h; the soft one halves a parked car's
-    /// noise speed and leaves μ unchanged at d ≥ D0). Default 0 (prompt
-    /// 45's (a)); prompt 46's rule uses 2 with floor 0 and decay 500 s.
-    /// Valid: 0, 1 or 2.
-    public var noOBDFixSpeedGate = 0
+    /// noise speed and leaves μ unchanged at d ≥ D0). Valid: 0, 1 or 2.
+    public var noOBDFixSpeedGate = 2
     /// D0 in units of √2 · σ: 2.15 is the 90 % point of the Rayleigh
     /// distance between two fixes of a parked car (√(2 ln 10)); 1.67 its
     /// 75 % point. Valid: finite, > 0.
