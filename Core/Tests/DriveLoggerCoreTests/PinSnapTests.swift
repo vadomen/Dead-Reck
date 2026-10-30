@@ -1,0 +1,362 @@
+import Foundation
+import Testing
+
+@testable import DriveLoggerCore
+
+/// `PinSnap` (prompt 46 Part B): the snapping geometry on synthetic roads
+/// near (0, 0) (`RoadFixture`), in local metres. No real place.
+@Suite("Pin snap")
+struct PinSnapTests {
+    typealias Node = RoadFixture.Node
+
+    /// The reference viewport height (points) used with these spans.
+    static let viewport = 852.0
+
+    static func network(_ lines: [String]) throws -> RoadNetwork {
+        try RoadNetwork(packs: [RoadFixture.build(lines)])
+    }
+
+    static func degrees(_ east: Double, _ north: Double) -> (latitude: Double, longitude: Double) {
+        let k = RoadFixture.metresPerE7
+        return (north / k.lat / 1e7, east / k.lon / 1e7)
+    }
+
+    static func metres(latitude: Double, longitude: Double) -> (east: Double, north: Double) {
+        let k = RoadFixture.metresPerE7
+        return (longitude * 1e7 * k.lon, latitude * 1e7 * k.lat)
+    }
+
+    static func snap(
+        _ east: Double, _ north: Double, span: Double?, network: RoadNetwork?, cloud: [PinSnap.Particle]? = nil
+    ) -> PinSnap.Outcome {
+        let p = degrees(east, north)
+        return PinSnap.snap(latitude: p.latitude, longitude: p.longitude, mapSpanM: span,
+                            viewportHeightPt: viewport, network: network, cloud: cloud)
+    }
+
+    /// `count` equal-weight particles at (east, north) with `headingDeg`.
+    static func cloud(_ east: Double, _ north: Double, headingDeg: Double, count: Int = 10) -> [PinSnap.Particle] {
+        let p = degrees(east, north)
+        return (0..<count).map { _ in
+            PinSnap.Particle(latitude: p.latitude, longitude: p.longitude, headingRad: headingDeg * .pi / 180,
+                             weight: 1 / Double(count))
+        }
+    }
+
+    static func expectAt(_ snap: PinSnap.Snap?, _ east: Double, _ north: Double, tolerance: Double = 0.05,
+                         sourceLocation: SourceLocation = #_sourceLocation) {
+        guard let snap else {
+            Issue.record("no snap", sourceLocation: sourceLocation)
+            return
+        }
+        let m = metres(latitude: snap.latitude, longitude: snap.longitude)
+        #expect(abs(m.east - east) <= tolerance && abs(m.north - north) <= tolerance,
+                "at \(m.east), \(m.north)", sourceLocation: sourceLocation)
+    }
+
+    static let road: [String: String] = ["highway": "residential"]
+
+    /// One east-west road along north = 0.
+    static func straight() throws -> RoadNetwork {
+        try network([RoadFixture.way(1, Self.road, [Node(id: 1, east: -500, north: 0), Node(id: 2, east: 500, north: 0)])])
+    }
+
+    // MARK: Radius
+
+    @Test("Radius: points × span / viewport height; σ = max(30, span / 12); unusable inputs give nil")
+    func radius() {
+        #expect(PinSnap.radiusM(points: 44, mapSpanM: 852, viewportHeightPt: 852) == 44)
+        let r = PinSnap.radiusM(points: 44, mapSpanM: 1500, viewportHeightPt: 852)
+        #expect(abs((r ?? 0) - 77.464788) < 1e-5)
+        #expect(PinSnap.radiusM(points: 8, mapSpanM: 426, viewportHeightPt: 852) == 4)
+        for span in [nil, 0, -1, Double.nan, .infinity] as [Double?] {
+            #expect(PinSnap.radiusM(points: 44, mapSpanM: span, viewportHeightPt: 852) == nil)
+        }
+        #expect(PinSnap.radiusM(points: 44, mapSpanM: 1000, viewportHeightPt: 0) == nil)
+        #expect(PinSnap.sigmaM(mapSpanM: 1500) == 125)
+        #expect(PinSnap.sigmaM(mapSpanM: 300) == 30)
+        #expect(PinSnap.sigmaM(mapSpanM: nil) == 30)
+        #expect(PinSnap.sigmaM(mapSpanM: 600) == 50)
+    }
+
+    // MARK: Nearest edge
+
+    @Test("Nearest edge: the foot of the perpendicular, within the radius at this zoom only")
+    func nearestEdge() throws {
+        let net = try Self.straight()
+        let o = Self.snap(100, 20, span: 1500, network: net)
+        guard case .edge(let s) = o.result else { Issue.record("\(o.result)"); return }
+        Self.expectAt(s, 100, 0)
+        #expect(abs(s.distanceM - 20) < 0.05)
+        #expect(s.decision == .onlyRoad)
+        #expect(s.candidate.osmWayID == 1)
+        #expect(abs(s.candidate.bearingDeg - 90) < 0.01)
+        #expect(o.nearest?.edge == s.candidate.edge)
+        // 20 m is outside 44 pt at a 300 m span (15.5 m) and 77.5 m at 1500.
+        #expect(Self.snap(100, 20, span: 300, network: net).result == .noEdgeInRadius)
+        #expect(Self.snap(100, 15, span: 300, network: net).result.snap != nil)
+        #expect(Self.snap(100, 78, span: 1500, network: net).result == .noEdgeInRadius)
+        #expect(Self.snap(100, 77, span: 1500, network: net).result.snap != nil)
+        // No usable span: no radius, no snap.
+        #expect(Self.snap(100, 1, span: nil, network: net).result == .noEdgeInRadius)
+    }
+
+    @Test("A radius wider than a grid cell finds an edge several cells away")
+    func radiusAcrossCells() throws {
+        let net = try Self.straight()
+        // 6000 m span: 44 pt = 310 m, about 5 cells of 64 m.
+        let o = Self.snap(37, 290, span: 6000, network: net)
+        Self.expectAt(o.result.snap, 37, 0)
+    }
+
+    @Test("No network: noNetwork, whatever the tap")
+    func noNetwork() {
+        #expect(Self.snap(0, 0, span: 1000, network: nil).result == .noNetwork)
+        #expect(Self.snap(0, 0, span: 1000, network: nil, cloud: Self.cloud(0, 0, headingDeg: 0)).result == .noNetwork)
+    }
+
+    @Test("Non-drivable ways are not in the graph: a footway nearer the tap is ignored")
+    func nonDrivableIgnored() throws {
+        let net = try Self.network([
+            RoadFixture.way(1, ["highway": "footway"], [Node(id: 1, east: -300, north: 5), Node(id: 2, east: 300, north: 5)]),
+            RoadFixture.way(2, Self.road, [Node(id: 3, east: -300, north: -20), Node(id: 4, east: 300, north: -20)]),
+        ])
+        let o = Self.snap(0, 3, span: 1500, network: net)
+        guard case .edge(let s) = o.result else { Issue.record("\(o.result)"); return }
+        #expect(s.candidate.osmWayID == 2)
+        #expect(s.decision == .onlyRoad)
+        Self.expectAt(s, 0, -20)
+        // Only the footway in reach: nothing to snap to.
+        #expect(Self.snap(0, 70, span: 1500, network: net).result == .noEdgeInRadius)
+    }
+
+    // MARK: Junction
+
+    /// Two roads crossing at grade: way 1 east-west, way 2 north-south,
+    /// sharing node 10 at (0, 0).
+    static func crossing() throws -> RoadNetwork {
+        try network([
+            RoadFixture.way(1, Self.road, [Node(id: 1, east: -300, north: 0), Node(id: 10, east: 0, north: 0),
+                                      Node(id: 2, east: 300, north: 0)]),
+            RoadFixture.way(2, Self.road, [Node(id: 3, east: 0, north: -300), Node(id: 10, east: 0, north: 0),
+                                      Node(id: 4, east: 0, north: 300)]),
+        ])
+    }
+
+    @Test("Junction: within 8 pt of a shared node → the node; beyond, the nearer road if clearly nearer, else ambiguous")
+    func junctionNode() throws {
+        let net = try Self.crossing()
+        // 1500 m span: 8 pt = 14.08 m.
+        let o = Self.snap(5, 6, span: 1500, network: net)
+        guard case .node(let s) = o.result else { Issue.record("\(o.result)"); return }
+        Self.expectAt(s, 0, 0, tolerance: 0.01)
+        #expect(s.decision == .junction)
+        #expect(abs(s.distanceM - (25.0 + 36.0).squareRoot()) < 0.05)
+        // 13.9 m from the node: still the node; 14.2 m: not.
+        if case .node = Self.snap(13.9, 0.5, span: 1500, network: net).result {} else { Issue.record("13.9 m") }
+        let beyond = Self.snap(14.2, 0.5, span: 1500, network: net)
+        guard case .edge(let e) = beyond.result else { Issue.record("\(beyond.result)"); return }
+        #expect(e.candidate.osmWayID == 1 && e.decision == .clearlyNearer)
+        Self.expectAt(e, 14.2, 0)
+        // At 300 m span 8 pt is 2.8 m: (5, 6) is a contested corner, 6 vs 5 m.
+        let corner = Self.snap(5, 6, span: 300, network: net)
+        #expect(corner.result == .ambiguous)
+        #expect(corner.contested.map(\.osmWayID) == [2, 1])
+    }
+
+    @Test("Edges of one road meeting at a node are not rivals: a continuation way ends where the tap's road does")
+    func sameRoadAtJunction() throws {
+        // One road split into two ways at node 10 (no side road).
+        let net = try Self.network([
+            RoadFixture.way(1, Self.road, [Node(id: 1, east: -300, north: 0), Node(id: 10, east: 0, north: 0)]),
+            RoadFixture.way(3, Self.road, [Node(id: 10, east: 0, north: 0), Node(id: 2, east: 300, north: 0)]),
+        ])
+        // Way 1 at 10 m; way 3's nearest point is the shared node at 15.6 m
+        // (< 2 × 10 m, and outside the 14.1 m junction radius).
+        let o = Self.snap(-12, 10, span: 1500, network: net)
+        guard case .edge(let s) = o.result else { Issue.record("\(o.result)"); return }
+        #expect(s.candidate.osmWayID == 1)
+        #expect(s.decision == .onlyRoad)
+        #expect(o.contested.isEmpty)
+        Self.expectAt(s, -12, 0)
+    }
+
+    // MARK: Ambiguity
+
+    /// Two parallel east-west roads, 20 m apart (north = 0 and north = 20).
+    static func parallel() throws -> RoadNetwork {
+        try network([
+            RoadFixture.way(1, Self.road, [Node(id: 1, east: -300, north: 0), Node(id: 2, east: 300, north: 0)]),
+            RoadFixture.way(2, Self.road, [Node(id: 3, east: -300, north: 20), Node(id: 4, east: 300, north: 20)]),
+        ])
+    }
+
+    @Test("Parallel roads: the nearer one when ≥ 2× nearer, else ambiguous without a cloud")
+    func parallelRatio() throws {
+        let net = try Self.parallel()
+        // 6 vs 14 m: 2.33×.
+        let clear = Self.snap(0, 6, span: 300, network: net)
+        guard case .edge(let s) = clear.result else { Issue.record("\(clear.result)"); return }
+        #expect(s.candidate.osmWayID == 1 && s.decision == .clearlyNearer)
+        // Exactly 2×: 20/3 vs 40/3 m → clearly nearer (the ratio is inclusive).
+        let edge = Self.snap(0, 20.0 / 3, span: 300, network: net)
+        #expect(edge.result.snap?.candidate.osmWayID == 1)
+        // 8 vs 12 m: contested.
+        let close = Self.snap(0, 8, span: 300, network: net)
+        #expect(close.result == .ambiguous)
+        #expect(close.contested.map(\.osmWayID) == [1, 2])
+        #expect(close.support.isEmpty)
+        // From the other side, mirrored.
+        #expect(Self.snap(0, 14, span: 300, network: net).result.snap?.candidate.osmWayID == 2)
+        // Equidistant (10 / 10 m): contested.
+        #expect(Self.snap(0, 10, span: 300, network: net).result == .ambiguous)
+    }
+
+    @Test("Parallel roads: the cloud decides with ≥ 2× support within 2σ and heading within 45°, either direction")
+    func parallelCloud() throws {
+        let net = try Self.parallel()
+        // 300 m span: σ 30 m, reach 60 m. Tap 8 m from way 1, 12 m from way 2.
+        // Particles 45 m south of way 1 (65 m from way 2's point): way 1 only.
+        let south = Self.snap(0, 8, span: 300, network: net, cloud: Self.cloud(0, -45, headingDeg: 90))
+        guard case .edge(let s) = south.result else { Issue.record("\(south.result)"); return }
+        #expect(s.candidate.osmWayID == 1 && s.decision == .cloud)
+        #expect(south.support.count == 2 && abs(south.support[0] - 1) < 1e-12 && south.support[1] == 0)
+        // Westbound is as consistent as eastbound on a two-way road.
+        #expect(Self.snap(0, 8, span: 300, network: net, cloud: Self.cloud(0, -45, headingDeg: 270)).result.snap?.candidate.osmWayID == 1)
+        // 45° off is still consistent; 46° is not.
+        #expect(Self.snap(0, 8, span: 300, network: net, cloud: Self.cloud(0, -45, headingDeg: 135)).result.snap != nil)
+        #expect(Self.snap(0, 8, span: 300, network: net, cloud: Self.cloud(0, -45, headingDeg: 136)).result == .ambiguous)
+        // The cloud picks the farther road: particles 45 m north of way 2.
+        let north = Self.snap(0, 8, span: 300, network: net, cloud: Self.cloud(0, 65, headingDeg: 90))
+        #expect(north.result.snap?.candidate.osmWayID == 2)
+        #expect(north.result.snap?.decision == .cloud)
+        #expect(north.nearest?.osmWayID == 1)
+        // Between the roads: both supported equally → ambiguous.
+        #expect(Self.snap(0, 8, span: 300, network: net, cloud: Self.cloud(0, 10, headingDeg: 90)).result == .ambiguous)
+        // Heading across both roads: no support → ambiguous.
+        #expect(Self.snap(0, 8, span: 300, network: net, cloud: Self.cloud(0, -45, headingDeg: 0)).result == .ambiguous)
+        // Empty cloud: ambiguous.
+        #expect(Self.snap(0, 8, span: 300, network: net, cloud: []).result == .ambiguous)
+    }
+
+    @Test("Cloud ratio: 2× the support decides, 1.9× does not")
+    func cloudRatio() throws {
+        let net = try Self.parallel()
+        func split(_ a: Int, _ b: Int) -> [PinSnap.Particle] {
+            let n = Double(a + b)
+            let pa = Self.degrees(0, -45), pb = Self.degrees(0, 65)
+            return (0..<a).map { _ in PinSnap.Particle(latitude: pa.latitude, longitude: pa.longitude, headingRad: .pi / 2, weight: 1 / n) }
+                + (0..<b).map { _ in PinSnap.Particle(latitude: pb.latitude, longitude: pb.longitude, headingRad: .pi / 2, weight: 1 / n) }
+        }
+        #expect(Self.snap(0, 8, span: 300, network: net, cloud: split(20, 10)).result.snap?.candidate.osmWayID == 1)
+        #expect(Self.snap(0, 8, span: 300, network: net, cloud: split(19, 10)).result == .ambiguous)
+        #expect(Self.snap(0, 8, span: 300, network: net, cloud: split(10, 20)).result.snap?.candidate.osmWayID == 2)
+    }
+
+    @Test("Overpass: different roads crossing without a shared node never snap to a node; heading picks the road")
+    func overpass() throws {
+        let net = try Self.network([
+            RoadFixture.way(1, Self.road, [Node(id: 1, east: -300, north: 0), Node(id: 2, east: 300, north: 0)]),
+            RoadFixture.way(2, ["highway": "primary", "bridge": "yes", "layer": "1"],
+                            [Node(id: 3, east: 0, north: -300), Node(id: 4, east: 0, north: 300)]),
+        ])
+        // On the crossing, well inside the junction radius: no node.
+        #expect(Self.snap(1, 1, span: 1500, network: net).result == .ambiguous)
+        let tap = (east: 10.0, north: 12.0)  // way 2 at 10 m, way 1 at 12 m
+        #expect(Self.snap(tap.east, tap.north, span: 1500, network: net).result == .ambiguous)
+        // Heading east: way 1, although way 2 is nearer.
+        let east = Self.snap(tap.east, tap.north, span: 1500, network: net, cloud: Self.cloud(10, 0, headingDeg: 85))
+        guard case .edge(let s) = east.result else { Issue.record("\(east.result)"); return }
+        #expect(s.candidate.osmWayID == 1 && s.decision == .cloud)
+        #expect(east.nearest?.osmWayID == 2)
+        Self.expectAt(s, 10, 0)
+        // Heading south (bridge drawn south to north): way 2.
+        let south = Self.snap(tap.east, tap.north, span: 1500, network: net, cloud: Self.cloud(0, 12, headingDeg: 180))
+        #expect(south.result.snap?.candidate.osmWayID == 2)
+        #expect(south.result.snap?.candidate.level == 1)
+        Self.expectAt(south.result.snap, 0, 12)
+    }
+
+    @Test("A third road beyond 2× does not join the contest")
+    func contestedSet() throws {
+        let net = try Self.network([
+            RoadFixture.way(1, Self.road, [Node(id: 1, east: -300, north: 0), Node(id: 2, east: 300, north: 0)]),
+            RoadFixture.way(2, Self.road, [Node(id: 3, east: -300, north: 18), Node(id: 4, east: 300, north: 18)]),
+            RoadFixture.way(3, Self.road, [Node(id: 5, east: -300, north: -40), Node(id: 6, east: 300, north: -40)]),
+        ])
+        // Way 1 at 8 m, way 2 at 10 m, way 3 at 48 m (> 16 m).
+        let o = Self.snap(0, 8, span: 1500, network: net)
+        #expect(o.result == .ambiguous)
+        #expect(o.contested.map(\.osmWayID) == [1, 2])
+    }
+
+    @Test("Deterministic: the same tap gives the same outcome; pack order does not matter")
+    func deterministic() throws {
+        let a = try Self.parallel()
+        let lines = [
+            RoadFixture.way(2, Self.road, [Node(id: 3, east: -300, north: 20), Node(id: 4, east: 300, north: 20)]),
+            RoadFixture.way(1, Self.road, [Node(id: 1, east: -300, north: 0), Node(id: 2, east: 300, north: 0)]),
+        ]
+        let b = try Self.network(lines)
+        let cloud = Self.cloud(0, -45, headingDeg: 90)
+        for tap in [(0.0, 8.0), (3.0, 10.0), (-7.0, 13.0)] {
+            let x = Self.snap(tap.0, tap.1, span: 300, network: a, cloud: cloud)
+            #expect(x == Self.snap(tap.0, tap.1, span: 300, network: a, cloud: cloud))
+            #expect(x.result.snap?.latitude == Self.snap(tap.0, tap.1, span: 300, network: b, cloud: cloud).result.snap?.latitude)
+        }
+    }
+
+    // MARK: Accept / refuse
+
+    @Test("Placement: snapped up to 1500 m at the road with the tap kept; otherwise the 300 m rule")
+    func placement() throws {
+        let net = try Self.straight()
+        let tap = Self.degrees(100, 20)
+        let snapped = Self.snap(100, 20, span: 1500, network: net).result
+        let pin = try #require(snapped.snap)
+        for span in [100.0, 1200, 1500] {
+            #expect(PinSnap.placement(tapLatitude: tap.latitude, tapLongitude: tap.longitude, mapSpanM: span, result: snapped)
+                    == .place(latitude: pin.latitude, longitude: pin.longitude, tapLatitude: tap.latitude, tapLongitude: tap.longitude))
+        }
+        #expect(PinSnap.placement(tapLatitude: tap.latitude, tapLongitude: tap.longitude, mapSpanM: 1500.1, result: snapped) == .zoomIn)
+        for result in [PinSnap.Result.ambiguous, .noEdgeInRadius, .noNetwork] {
+            #expect(PinSnap.placement(tapLatitude: tap.latitude, tapLongitude: tap.longitude, mapSpanM: 300, result: result)
+                    == .place(latitude: tap.latitude, longitude: tap.longitude, tapLatitude: nil, tapLongitude: nil))
+            #expect(PinSnap.placement(tapLatitude: tap.latitude, tapLongitude: tap.longitude, mapSpanM: 300.1, result: result) == .zoomIn)
+        }
+        for span in [nil, Double.nan, -1] as [Double?] {
+            #expect(PinSnap.placement(tapLatitude: tap.latitude, tapLongitude: tap.longitude, mapSpanM: span, result: snapped) == .zoomIn)
+        }
+        let node = try #require(Self.snap(5, 6, span: 1500, network: Self.crossing()).result.snap)
+        #expect(PinSnap.placement(tapLatitude: 0, tapLongitude: 0, mapSpanM: 1500, result: .node(node))
+                == .place(latitude: node.latitude, longitude: node.longitude, tapLatitude: 0, tapLongitude: 0))
+    }
+
+    // MARK: Engine accessors
+
+    @Test("Engine: no cloud before initialisation; the cloud after a pin; snapPin without roads is noNetwork")
+    func engineAccessors() throws {
+        var config = NavigationConfig()
+        config.particleCount = 200
+        var engine = NavigationEngine(config: config)
+        #expect(engine.pinSnapCloud() == nil)
+        let p = Self.degrees(30, 40)
+        let fix = ManualFixSample(latitude: p.latitude, longitude: p.longitude, pressedT: .zero, mapSpanM: 300, speedSource: "unknown")
+        engine.ingest(.manualFix(fix, at: .zero))
+        let cloud = try #require(engine.pinSnapCloud())
+        #expect(cloud.count == 200)
+        #expect(abs(cloud.reduce(0) { $0 + $1.weight } - 1) < 1e-9)
+        let mean = cloud.reduce((0.0, 0.0)) { ($0.0 + $1.weight * $1.latitude, $0.1 + $1.weight * $1.longitude) }
+        let m = Self.metres(latitude: mean.0, longitude: mean.1)
+        #expect(abs(m.east - 30) < 15 && abs(m.north - 40) < 15)
+        let before = engine.estimate(at: .zero)
+        #expect(engine.snapPin(latitude: p.latitude, longitude: p.longitude, mapSpanM: 300, viewportHeightPt: 852).result == .noNetwork)
+        #expect(engine.estimate(at: .zero) == before)
+
+        // With roads: the engine's network.
+        var withRoads = NavigationEngine(config: config, roads: try Self.straight())
+        withRoads.ingest(.manualFix(fix, at: .zero))
+        let o = withRoads.snapPin(latitude: p.latitude, longitude: p.longitude, mapSpanM: 1500, viewportHeightPt: 852)
+        Self.expectAt(o.result.snap, 30, 0)
+    }
+}
