@@ -182,15 +182,21 @@ struct RecordingAnalysisTests {
         analyzer.observe(LogEvent(timestamp: F.ms(9_000), payload: .manualFix(
             ManualFixSample(latitude: 0, longitude: 0, pressedT: F.ms(8_500), speedSource: "unknown")
         )))
+        analyzer.observe(LogEvent(timestamp: F.ms(12_000), payload: .manualFix(
+            ManualFixSample(latitude: 0.0126, longitude: -0.0249, pressedT: F.ms(12_000), speedSource: "unknown",
+                            tapLatitude: 0.0125, tapLongitude: -0.025)
+        )))
         let summary = analyzer.summary(report: LogReadReport(members: 1, truncatedTail: false, skippedLineIndices: []))
-        #expect(summary.manualFixes.count == 2)
+        #expect(summary.manualFixes.count == 3)
         #expect(summary.manualFixes.first?.t == F.ms(4_200))
         #expect(summary.manualFixes.first?.sample.speedSource == "obd")
-        #expect(summary.kinds.first { $0.kind == "manualFix" }?.count == 2)
+        #expect(summary.kinds.first { $0.kind == "manualFix" }?.count == 3)
 
         let text = summary.render()
+        #expect(!text.contains("0.0000000, 0.0000000  tap"), "an unsnapped pin lists no tap")
         for needle in [
-            "Manual fixes  2",
+            "Manual fixes  3",
+            "12.000 s  unknown -  pressed 0.00 s earlier  0.0126000, -0.0249000  tap 0.0125000, -0.0250000",
             "4.200 s  obd 5.0 km/h  pressed 2.40 s earlier  0.0125000, -0.0250000  note: tunnel exit",
             "9.000 s  unknown -  pressed 0.50 s earlier  0.0000000, 0.0000000",
         ] {
@@ -365,16 +371,23 @@ struct RecordingCSVTests {
     func manualFixValues() {
         #expect(RecordingCSV.columns(for: "manualFix") == [
             "t", "latitude", "longitude", "pressedT", "mapSpanM", "obdSpeedKmh", "obdSpeedT",
-            "gpsSpeedKmh", "speedSource", "gateSpeedKmh", "note",
+            "gpsSpeedKmh", "speedSource", "gateSpeedKmh", "note", "tapLatitude", "tapLongitude",
         ])
         #expect(RecordingCSV.values(for: AnalysisFixtures.manualFix(at: 4_200)) == [
             "4200000000", "0.0125", "-0.025", "1800000000", "250.0", "5.0", "1000000000",
-            "5.4", "obd", "5.0", "tunnel exit",
+            "5.4", "obd", "5.0", "tunnel exit", "", "",
         ])
         let minimal = LogEvent(timestamp: .zero, payload: .manualFix(
             ManualFixSample(latitude: 0, longitude: 0, pressedT: .zero, speedSource: "unknown")
         ))
-        #expect(RecordingCSV.values(for: minimal) == ["0", "0.0", "0.0", "0", "", "", "", "", "unknown", "", ""])
+        #expect(RecordingCSV.values(for: minimal) == ["0", "0.0", "0.0", "0", "", "", "", "", "unknown", "", "", "", ""])
+        // v6: a snapped pin's raw tap in the last two columns.
+        let snapped = LogEvent(timestamp: .zero, payload: .manualFix(ManualFixSample(
+            latitude: 0.0126, longitude: -0.0249, pressedT: .zero, mapSpanM: 1_500, speedSource: "unknown",
+            tapLatitude: 0.0125, tapLongitude: -0.025)))
+        #expect(RecordingCSV.values(for: snapped) == [
+            "0", "0.0126", "-0.0249", "0", "1500.0", "", "", "", "unknown", "", "", "0.0125", "-0.025",
+        ])
         #expect(RecordingCSV.fileName(for: "manualFix") == "manualFix.csv")
     }
 

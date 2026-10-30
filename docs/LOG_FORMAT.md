@@ -4,7 +4,7 @@ Field-by-field reference for DriveLogger recordings. The code in
 `Core/Sources/DriveLoggerCore/Log/` is authoritative; this file must be updated
 in the same commit as any change to it.
 
-Current version: **5** (`LogFormatVersion.current`). Readable: **1, 2, 3, 4, 5**.
+Current version: **6** (`LogFormatVersion.current`). Readable: **1, 2, 3, 4, 5, 6**.
 
 ## File
 
@@ -572,15 +572,16 @@ was the confirm delay, and the recorder refused a fix above 10 km/h.
 
 | Field | Type, unit | Meaning |
 |---|---|---|
-| `latitude`, `longitude` | double, degrees WGS 84 | The point under the finger at the tap (older: the confirmed pin). Always present. |
+| `latitude`, `longitude` | double, degrees WGS 84 | The pin, the navigator's input. When the pin snapped to a road (v6, `tapLatitude`/`tapLongitude` present): the snapped point on the road. Otherwise the point under the finger at the tap (older: the confirmed pin). Always present. |
 | `pressedT` | int, ns | The tap time; equal to `t`. Always present. |
-| `mapSpanM` | double, m | Visible map span at the tap, before the double tap's own zoom: how precisely the point could be placed. The height of the map viewport in metres, the same in north-up and heading-up (north-up: the map region's N-S extent; heading-up: derived from the camera distance, approximate). Recordings made before the 2026-10-17 backlog sweep (M10.1-3) in heading-up carry the N-S extent of the rotated viewport's bounding box instead: H|cos θ| + W|sin θ| for a viewport of height H and width W, which on a portrait screen is between ~0.5 and ~1.15 times the viewport height, smallest near east/west headings and largest near 25-30 degrees. Such a value can understate the span, not only overstate it. At most 300 m for a new row. Optional. |
+| `mapSpanM` | double, m | Visible map span at the tap, before the double tap's own zoom: how precisely the point could be placed. The height of the map viewport in metres, the same in north-up and heading-up (north-up: the map region's N-S extent; heading-up: derived from the camera distance, approximate). Recordings made before the 2026-10-17 backlog sweep (M10.1-3) in heading-up carry the N-S extent of the rotated viewport's bounding box instead: H|cos θ| + W|sin θ| for a viewport of height H and width W, which on a portrait screen is between ~0.5 and ~1.15 times the viewport height, smallest near east/west headings and largest near 25-30 degrees. Such a value can understate the span, not only overstate it. A new row has at most 300 m, or at most 1500 m when the pin snapped (v6, tap fields present); rows written before v6 have at most 300 m. Optional. |
 | `obdSpeedKmh` | double, km/h | Last vehicle speed (PID 0x0D) from the primary ECU (`7E8`) at the tap. Absent when the link had none. Present even when too old to count as the fix's speed. |
 | `obdSpeedT` | int, ns | When that reply arrived: the `t` of its `obd` row in this file. Present exactly when `obdSpeedKmh` is. `t − obdSpeedT` is the speed's age. No speed is carried over from before Start: a fix before the recording's first speed reading has no OBD speed. Recordings made before the 2026-10-17 backlog sweep (M8.1-3) can carry a pre-Start reading: an `obdSpeedT` with no `obd` row, possibly negative. |
 | `gpsSpeedKmh` | double, km/h | Speed of the latest reference fix at the tap, whenever it had `speed ≥ 0`, however old or inaccurate. **Reference only**: it is the fix's speed only when `speedSource` is `gps`. |
 | `speedSource` | string | Which speed describes the fix: `obd`, `gps` or `unknown`. Always present. |
 | `gateSpeedKmh` | double, km/h | The speed `speedSource` names: the speed of the car at the tap. Absent when `speedSource` is `unknown`. The name is from the 10 km/h gate older builds applied. |
 | `note` | string | Free text: trimmed, at most 80 characters. Absent when empty. The double-tap flow writes none; older recordings may carry one. |
+| `tapLatitude`, `tapLongitude` | double, degrees WGS 84 | Since v6. The raw tap, the point under the finger, when the pin snapped to a road; `latitude`/`longitude` are then the snapped point. Written only when the pin snapped, always as a pair; absent when it did not snap and in every row before v6. A tap already on the road is still written (equal to `latitude`/`longitude`). |
 
 There is no speed limit: a fix while driving is recorded with its speed (an
 analysis may weigh it: the point is where the finger was, not where the car
@@ -612,6 +613,14 @@ existed, even one too old (or, for GPS, too inaccurate) to count. So a row with
 was more than 2 s old at the tap.
 
 `speedSource` values are frozen strings (`ManualFixSample.SpeedSource`).
+
+**Pin truth.** Where the driver marked the car is the raw tap: `tapLatitude`,
+`tapLongitude` when present, otherwise `latitude`, `longitude` (every row
+before v6, and an unsnapped v6 row). Core: `ManualFixSample.truthLatitude`,
+`truthLongitude` (`isSnapped` says which). Score estimates and build truth
+against these. `latitude`/`longitude` stay what the navigator ingested, so a
+replay feeds the engine the same point the live run did. A row with only one
+tap field is never written; a reader treats it as not snapped.
 
 ### `gpsSwitch`
 
@@ -702,6 +711,7 @@ are frozen strings (`NavigationRestoreClass`, `NavPriorSample.Source`).
 | 3 | New kind `manualFix` (`speedSource` vocabulary `obd`, `gps`, `unknown`). Nothing else changed: every v2 row is written and read exactly as before. A v2 reader refuses a v3 file rather than keep the new rows as unrecognized. |
 | 4 | New kind `gpsSwitch` (`on`, `source`; `source` vocabulary `driver`, open). Nothing else changed: every v3 row is written and read exactly as before. A v3 reader refuses a v4 file rather than keep the switch rows as unrecognized and replay the drive as if GPS had stayed on. |
 | 5 | New kind `navPrior` (the Navigate to Record hand-over estimate; `restoreClass` vocabulary `moving`, `standingStop`, `parked`; `source` vocabulary `navigate`, open). Nothing else changed: every v4 row is written and read exactly as before. A v4 reader refuses a v5 file rather than keep the row as unrecognized and replay the drive from a fresh start. |
+| 6 | `manualFix` gains the optional `tapLatitude`, `tapLongitude` (the raw tap of a pin that snapped to a road; `latitude`/`longitude` are then the snapped point), and `mapSpanM` may be up to 1500 m for a snapped pin. No new kind; every v5 row is written and read exactly as before. Pin truth is the tap when present (see `manualFix`). A v5 reader refuses a v6 file rather than take the snapped point for the place the driver marked and drop the tap on re-export. |
 
 Within v2, without a version bump (both read unchanged by every v2 reader):
 M4 added the `lifecycle` value `locationAuthorization` (`event` is an open
@@ -716,7 +726,8 @@ per recording.
 
 Every version stays readable. v2 only adds optional fields, so DriveLogger
 decodes a v1 file into the same types with those fields absent. v3, v4 and v5
-each only add a kind. Frozen fixtures for all five versions are in
+each only add a kind. v6 only adds two optional `manualFix` fields, absent
+when reading an older file. Frozen fixtures for all six versions are in
 `LogFormatCompatibilityTests`.
 
 ## Reading recordings outside DriveLogger
@@ -746,12 +757,13 @@ cd Core && swift run -c release inspect_log <file.jsonl.gz|file.jsonl> [--csv <d
 Prints the header, events per kind, rates, gaps over 50 ms, OBD latency
 (`t − requestT`) percentiles, `elm` outcome counts and a damage/truncation
 report, and lists every `manualFix` (`t`, `speedSource`, gate speed,
-press-to-confirm delay, coordinates, note) and every `gpsSwitch` change
+press-to-confirm delay, coordinates, `tap` and the raw tap for a snapped pin,
+note) and every `gpsSwitch` change
 (`GPS switch` line: `t`, off/on, source; a v4 file without one says
 `none (GPS on throughout)`) and the `navPrior` row (`Nav prior` line; a v5 file
 without one says `Nav prior none (navigation started fresh)`; warnings for more
 than one row, a row after the first input, and an invalid row). `--csv` writes one CSV per kind
-(`manualFix.csv` has every field; `gpsSwitch.csv` is `t,on,source` with
+(`manualFix.csv` has every field, `tapLatitude`, `tapLongitude` last; `gpsSwitch.csv` is `t,on,source` with
 `on` as `true`/`false`; `navPrior.csv` has every field): `t` in integer nanoseconds, empty cell
 for an absent field, RFC 4180 quoting, compact JSON for `stats.counts` and for
 unknown kinds. `--strict` stops at the first damaged member or malformed line.
