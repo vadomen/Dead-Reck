@@ -1260,3 +1260,15 @@ One fresh opus reviewer, whole range f063768..f6c62dc. Round-1 fixes verified (R
 | R84.2-2 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/NavigationEngine+PinSnap.swift:18`: nothing tests that `pinSnapCloud` passes the engine heading (mutation `heading[i] + .pi` survived); a regression would snap a dual-carriageway tap to the opposite carriageway. | CONFIRMED | Fixed a4c2223: `PinSnapTests/engineCloudHeadingPicksCarriageway` (real engine eastbound, cloud mean heading = estimate, `snapPin` picks the eastbound way by cloud). |
 
 Round 2 outcome: R84.2-1..2 fixed (regression tests only, no code change); `swift test` in Core 1280 tests in 153 suites passed (36 known issues); no App change.
+
+### Round 3
+One fresh opus reviewer, whole range f063768..de856e0. Round-2 tests verified. Bit-identical re-run (manual, seed 1, roads, f063768 vs de856e0): GeoJSON byte-identical. Mutations: 3 new survivors (below).
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R84.3-1 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/Roads/PinSnap.swift:277`: "a side road meeting any node of N's way is no rival" untested (mutation `Set(nearest.nodeKeys)` survived); a regression shows "zoom in" on common city taps at 1.5 km spans. | CONFIRMED | Fixed 09de19c: `PinSnapTests/sideRoadAtJunctionOnAnotherEdgeOfN`. |
+| R84.3-2 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/Replay/ReplayPinSnap.swift:94-98, 106`: zoomIn branch (engine gets the raw tap) and `differsFromNearest` (only ever asserted false) untested; two mutants survived. | CONFIRMED | Fixed 09de19c: `ReplayPinSnapTests/zoomInGivesTheTap`, `cloudPicksTheFartherRoad`. |
+
+Author mutation sweep after the round (30 mutants over PinSnap, ReplayPinSnap, NavigationReplay, replay_nav): 25 killed by existing or new tests (09de19c, 4521601: `junctionReportsNearestEdge`, `tapOnCrossingIsContested`, `onePerRoadInTheContest`, `contestedSpreadM` assertion); 3 equivalent (search radius without frame scale, the weight > 0 particle filter, tap fields on the engine's copy); 2 survivors in replay_nav's inline `--snap-pins` flag checks fixed by moving them into Core with tests (545a1ce: `ReplayPinSnap.refusedFlags`, `needsSnapPins`, `isValidViewportHeightPt`, `isValidSpanOverrideM`; `flagRefusals`, `flagValues`; behaviour and messages unchanged).
+
+Round 3 outcome: R84.3-1..2 fixed (tests), flag checks moved to Core; `swift test` in Core 1288 tests in 153 suites passed (36 known issues); no App change.
