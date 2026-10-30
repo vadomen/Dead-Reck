@@ -59,8 +59,8 @@ public struct LogEvent: Hashable, Sendable, Codable {
         case link(LinkSample)
         case lifecycle(LifecycleSample)
         case stats(StatsSample)
-        /// A position the driver confirmed on the map (v3). `t` is the
-        /// confirm time.
+        /// A position the driver marked on the map (v3; v6 adds the raw tap
+        /// of a pin that snapped to a road). `t` is the tap time (older: confirm time).
         case manualFix(ManualFixSample)
         /// The driver's "GPS off" switch (v4). `t` is the tap.
         case gpsSwitch(GPSSwitchSample)

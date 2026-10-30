@@ -194,18 +194,22 @@ public struct NavigationEngine: Sendable {
     /// reset, a reseed, a restored prior or its rejection. No-OBD mode is
     /// a no-OBD switch on and this false.
     private(set) var obdEverIngested = false
-    /// A network fix in the fix-speed window: its `t` and position.
+    /// A network fix in the fix-speed window: its `t`, position and claimed
+    /// accuracy (for the displacement gate's band).
     struct FixSpeedPoint: Sendable, Equatable {
         var ns: Int64
         var latitude: Double
         var longitude: Double
+        var accuracy: Double
     }
     /// The network fixes used within `noOBDFixSpeedWindowS` of the newest
     /// one, by fix time (no-OBD mode with `noOBDFixSpeedMean` only).
     private var fixSpeedWindow: [FixSpeedPoint] = []
-    /// The latest fix-speed estimate: m/s, and the fix time of the newest
-    /// fix it used; nil before the first.
-    private(set) var fixSpeedEstimate: (mps: Double, newestNs: Int64)?
+    /// The latest fix-speed estimate: m/s (ungated, μ while held), the
+    /// gated m/s a fix gap relaxes from (`noOBDFixSpeedGate`; = `mps` with
+    /// the gate off), and the fix time of the newest fix it used; nil
+    /// before the first.
+    private(set) var fixSpeedEstimate: (mps: Double, gatedMps: Double, newestNs: Int64)?
 
     /// The robust network-fix likelihood acts (no-OBD mode).
     var noOBDRobustNetworkFixActive: Bool { config.noOBDRobustNetworkFix == 1 && !obdEverIngested }
@@ -1762,10 +1766,13 @@ public struct NavigationEngine: Sendable {
     /// `noOBDFixSpeedWindowS` older than the newest; once its oldest and
     /// newest are at least `noOBDFixSpeedMinSpanS` apart, μ is their
     /// straight-line distance over that time, clamped to
-    /// 0…`noOBDFixSpeedMaxKmh`. A window that cannot estimate leaves the
-    /// previous estimate (and its age) as it was.
+    /// 0…`noOBDFixSpeedMaxKmh`; its gated value (for a fix gap) is that
+    /// times the displacement gate (`fixSpeedGateFactor`), clamped alike. A
+    /// window that cannot estimate leaves the previous estimate (and its
+    /// age) as it was.
     private mutating func noteFixSpeed(_ sample: LocationSample, fixNs: Int64) {
-        let point = FixSpeedPoint(ns: fixNs, latitude: sample.latitude, longitude: sample.longitude)
+        let point = FixSpeedPoint(ns: fixNs, latitude: sample.latitude, longitude: sample.longitude,
+                                  accuracy: sample.horizontalAccuracy)
         // By fix time; a fix arriving late slots in behind newer ones.
         let index = (fixSpeedWindow.lastIndex { $0.ns <= fixNs } ?? -1) + 1
         fixSpeedWindow.insert(point, at: index)
@@ -1780,15 +1787,47 @@ public struct NavigationEngine: Sendable {
         guard spanS >= config.noOBDFixSpeedMinSpanS else { return }
         let d = LocalTangentPlane(latitude: oldest.latitude, longitude: oldest.longitude)
             .enu(latitude: newest.latitude, longitude: newest.longitude)
-        let mps = (d.east * d.east + d.north * d.north).squareRoot() / spanS
+        let distance = (d.east * d.east + d.north * d.north).squareRoot()
+        let mps = distance / spanS
         guard mps.isFinite else { return }
-        fixSpeedEstimate = (min(max(mps, 0), config.noOBDFixSpeedMaxKmh / 3.6), newest.ns)
+        let maxMps = config.noOBDFixSpeedMaxKmh / 3.6
+        let raw = min(max(mps, 0), maxMps)
+        var gated = raw
+        if config.noOBDFixSpeedGate != 0 {
+            let factor = Self.fixSpeedGateFactor(distance: distance, oldestAccuracy: oldest.accuracy,
+                                                 newestAccuracy: newest.accuracy, config: config)
+            gated = min(max(mps * factor, 0), maxMps)
+        }
+        fixSpeedEstimate = (raw, gated, newest.ns)
+    }
+
+    /// The displacement gate's factor on μ (`noOBDFixSpeedGate`): with
+    /// D0 = `noOBDFixSpeedGateK` · √2 · σ, σ the larger of the two
+    /// endpoints' band σ (`noOBDFixSpeedGateSigma…M` by claimed accuracy),
+    /// 1 at d ≥ D0; below it 0 (hard, 1) or (d/D0)² (soft, 2); 1 when off.
+    /// A NaN accuracy falls in the tower band (the widest σ by default).
+    static func fixSpeedGateFactor(distance: Double, oldestAccuracy: Double, newestAccuracy: Double,
+                                   config: NavigationConfig) -> Double {
+        func sigma(_ accuracy: Double) -> Double {
+            if accuracy < NavigationConfig.noOBDFixSpeedGateMidAccuracyM { return config.noOBDFixSpeedGateSigmaLowM }
+            if accuracy < NavigationConfig.noOBDFixSpeedGateTowerAccuracyM { return config.noOBDFixSpeedGateSigmaMidM }
+            return config.noOBDFixSpeedGateSigmaTowerM
+        }
+        let d0 = config.noOBDFixSpeedGateK * 2.0.squareRoot() * max(sigma(oldestAccuracy), sigma(newestAccuracy))
+        guard distance < d0 else { return 1 }
+        switch config.noOBDFixSpeedGate {
+        case 1: return 0
+        case 2:
+            let x = distance / d0
+            return x * x
+        default: return 1
+        }
     }
 
     /// The fix-speed mean μ at `ns`, m/s (`noOBDFixSpeedMean`): 0 before
     /// the first estimate; the estimate μ̂ while `ns` is at most
     /// `noOBDFixSpeedHoldS` after its newest fix; then
-    /// floor + (μ̂ − floor)·exp(−(age − hold)/τ), floor
+    /// floor + (μ̂_gated − floor)·exp(−(age − hold)/τ), floor
     /// `noOBDFixSpeedFloorKmh`, τ `noOBDFixSpeedDecayS` (0: the floor at
     /// once). Read only in no-OBD mode.
     func fixSpeedMean(at ns: Int64) -> Double {
@@ -1798,11 +1837,12 @@ public struct NavigationEngine: Sendable {
         let floor = config.noOBDFixSpeedFloorKmh / 3.6
         let tau = config.noOBDFixSpeedDecayS
         guard tau > 0 else { return floor }
-        return floor + (estimate.mps - floor) * exp(-after / tau)
+        return floor + (estimate.gatedMps - floor) * exp(-after / tau)
     }
 
     /// ∫ μ dt from `from` to `to`, metres (0 when `to` ≤ `from`): exact for
-    /// the held-then-relaxing μ of `fixSpeedMean(at:)`.
+    /// the held-then-relaxing μ of `fixSpeedMean(at:)` (μ̂ while held, from
+    /// μ̂_gated after).
     func fixSpeedMeanIntegral(from: Int64, to: Int64) -> Double {
         guard let estimate = fixSpeedEstimate, to > from else { return 0 }
         let hold = config.noOBDFixSpeedHoldS
@@ -1818,7 +1858,7 @@ public struct NavigationEngine: Sendable {
             total += floor * (b - u)
             if tau > 0 {
                 // (μ̂ − floor)·τ·(e^(−u/τ) − e^(−b/τ)), cancellation-free.
-                total += (estimate.mps - floor) * tau * exp(-u / tau) * -expm1(-(b - u) / tau)
+                total += (estimate.gatedMps - floor) * tau * exp(-u / tau) * -expm1(-(b - u) / tau)
             }
         }
         return total

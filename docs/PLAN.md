@@ -549,6 +549,17 @@ Items 1-7 above (demo pipeline) and the airplane-mode check (item 1) cover the d
 5. **Another language:** an iPhone set to another language (for example German) shows the English UI; pack titles follow the app language.
 6. **`replay_nav --start-at` on a v5 file:** run `replay_nav --start-at <X>` on the first real v5 recording that has a `navPrior` row: the Prior line shows the estimate at the cut, and the label is `-from-X-prior`.
 
+### Added by pin snapping and the no-OBD speed (prompt 46, UX-43, NAV-NOOBD-46) — not verified on a device
+1. **Tap near a road at about 1 km span:** with packs and a running Navigate or Record, a double tap near a road at a visible span of about 1 km puts the pin on the road; no "Zoom in" hint; Undo removes it.
+2. **Reduce Motion:** with Reduce Motion on, a snapped pin does not fly the camera.
+3. **Overpass:** a tap on a road under or over another road snaps to the one the car is on (the cloud decides); note which road was chosen.
+4. **Dual carriageway:** while driving on one carriageway, a tap between the two snaps to the own carriageway (one-way edges count only in their driving direction).
+5. **Junction:** a tap within about 8 pt of a junction snaps to the node.
+6. **No packs:** with no road packs installed (or no engine running) the 300 m rule applies as before: a pin above 300 m span is refused with the hint.
+7. **Log fields:** a Record log has `tapLatitude`/`tapLongitude` only on snapped `manualFix` rows (`inspect_log` prints `tap` on those), and `replay_nav --as-live --compare` of that recording still passes.
+8. **Snap time:** the time for one double tap to snap (Core measured 0.08 ms mean, 0.29 ms worst on a Mac; device unmeasured) is not noticeable; note it from the sidecar or a stopwatch.
+9. **Parked phone, no OBD, no fixes:** a phone without OBD, parked with no fixes arriving (for example indoors), holds still: the estimate does not drift away.
+
 ### Added by run 60, push_packs.sh app guard (not verified on a device)
 1. **Process list shape:** with the phone connected and unlocked and the app open, save `xcrun devicectl device info processes --device <id> --json-output -` and check that `result.runningProcesses[].executable` holds a `file:///…/DriveLogger.app/DriveLogger` URL (the parser's shape was inferred from devicectl's strings, never seen in real output). If the shape differs, the guard refuses ("cannot tell whether the app is running"); fix the parser rather than using `--force` by habit.
 2. **Suspended app:** leave the app in the app switcher (not swiped away) and run `scripts/push_packs.sh --dry-run`: Guard 1 reports it would refuse. Swipe it away: Guard 1 is clear.

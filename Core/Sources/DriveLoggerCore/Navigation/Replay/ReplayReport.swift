@@ -100,6 +100,10 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
     /// initialised (`ReplayResult.essMin`). nil (absent) when the engine
     /// never initialised, and in files written before it.
     public var essMin: Double?
+    /// Prompt 46 (`--snap-pins`): the snap at each manual fix
+    /// (`ReplayPinSnap.Record`). nil (absent) without the flag, and in files
+    /// written before it.
+    public var pinSnaps: [ReplayPinSnap.Record]?
 
     public init(_ result: ReplayResult) {
         logName = result.logName
@@ -151,6 +155,7 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
         errorP90Percent = result.errorAggregates.errorP90Percent
         ellipseSemiMajorMedianM = result.errorAggregates.ellipseSemiMajorMedianM
         essMin = result.essMin
+        pinSnaps = result.pinSnaps
     }
 
     /// `metrics.json` key: one row per log and mode.
@@ -175,6 +180,7 @@ extension ReplayMetrics {
         case restore
         case obdWithheld, fixAccounting, lastFixBaseline
         case errorMedianM, errorP90M, errorMedianPercent, errorP90Percent, ellipseSemiMajorMedianM, essMin
+        case pinSnaps
     }
 
     /// Keys every `metrics.json` row has had since the first one (N2). A row
@@ -194,7 +200,7 @@ extension ReplayMetrics {
     ///   `attachedRoadSetHash`, `roadsExtendedAfterInputs`, `fixesExcludedByTruth`, `fixPinDecisions`, `maxErrorByKind`, `gpsSwitch`, `restore`,
     ///   `obdWithheld`, `fixAccounting`, `lastFixBaseline`, `errorMedianM`,
     ///   `errorP90M`, `errorMedianPercent`, `errorP90Percent`,
-    ///   `ellipseSemiMajorMedianM`, `essMin` (and any key a
+    ///   `ellipseSemiMajorMedianM`, `essMin`, `pinSnaps` (and any key a
     ///   later build adds, which must be optional or take a default here).
     /// - `config` and `counters` decode tolerantly themselves: a config key
     ///   or counter added later takes its default (0 for a counter).
@@ -250,6 +256,7 @@ extension ReplayMetrics {
         errorP90Percent = try c.decodeIfPresent(Double.self, forKey: .errorP90Percent)
         ellipseSemiMajorMedianM = try c.decodeIfPresent(Double.self, forKey: .ellipseSemiMajorMedianM)
         essMin = try c.decodeIfPresent(Double.self, forKey: .essMin)
+        pinSnaps = try c.decodeIfPresent([ReplayPinSnap.Record].self, forKey: .pinSnaps)
     }
 }
 
@@ -361,11 +368,24 @@ public enum ReplayReport {
         return String(format: "%.2f km", value / 1000)
     }
 
+    /// `--snap-pins`: counts by result, raw → snapped distance (median, p90,
+    /// nearest rank) and edges other than the nearest.
+    public static func pinSnapText(_ snaps: [ReplayPinSnap.Record]) -> String {
+        let count = { (name: String) in snaps.filter { $0.result == name }.count }
+        let distances = snaps.compactMap(\.snapDistanceM)
+        let differs = snaps.filter { $0.differsFromNearest == true }.count
+        return "\(snaps.count) pins: edge \(count("edge")), node \(count("node")), ambiguous \(count("ambiguous")), "
+            + "no edge \(count("noEdgeInRadius")), no network \(count("noNetwork")); raw → snapped median "
+            + "\(m(NearestRank.percentile(distances, 50))) m, p90 \(m(NearestRank.percentile(distances, 90))) m; "
+            + "not the nearest edge \(differs)"
+    }
+
     /// Human-readable summary of one run for the terminal.
     public static func summary(_ result: ReplayResult) -> String {
         var lines: [String] = []
         lines.append("Log           \(result.logName)  [\(result.mode)]")
         if let withheld = result.obdWithheld { lines.append("OBD           " + obdNoneText(withheld)) }
+        if let snaps = result.pinSnaps { lines.append("Pin snap      " + pinSnapText(snaps)) }
         lines.append(String(format: "Span          %.1f … %.1f s, distance %.0f m, %d steps", result.startT, result.endT, result.distanceM, result.steps)
             + (result.motionStartT.map { String(format: ", motion starts %.1f s", $0) } ?? ", no motion start"))
         lines.append(String(format: "Engine        %.3f ms/step (max ingest %.2f ms), %d particles, seed %llu",

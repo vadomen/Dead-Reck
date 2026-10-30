@@ -125,7 +125,10 @@ public enum NavSidecar {
     public struct Pin: Hashable, Sendable, Codable {
         /// The fix's `t` (its confirm time).
         public var t: MonotonicTimestamp
-        /// Where the driver put the pin.
+        /// Where the driver put the pin: the raw tap
+        /// (`ManualFixSample.truthLatitude`/`truthLongitude`), also when the
+        /// pin snapped to a road and the engine got the snapped point
+        /// (format v6). Before v6 the two are the same.
         public var latitude: Double
         public var longitude: Double
         public var mapSpanM: Double?
@@ -135,8 +138,8 @@ public enum NavSidecar {
 
         public init(_ sample: ManualFixSample, at t: MonotonicTimestamp, prior: Estimate?) {
             self.t = t
-            latitude = sample.latitude
-            longitude = sample.longitude
+            latitude = sample.truthLatitude
+            longitude = sample.truthLongitude
             mapSpanM = sample.mapSpanM
             self.prior = prior
         }

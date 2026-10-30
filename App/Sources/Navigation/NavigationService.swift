@@ -784,6 +784,23 @@ actor NavigationService {
         return snapshot
     }
 
+    /// Where a double-tapped pin snaps on the current run's road network
+    /// (prompt 46 Part B). Read-only: the engine is not changed. Without a run
+    /// (UX-1 (d): no OBD, no engine) or without roads attached the answer is
+    /// `.noNetwork`, and the caller keeps the 300 m rule.
+    func snapPin(
+        latitude: Double, longitude: Double, mapSpanM: Double?, viewportHeightPt: Double
+    ) -> PinSnap.Result {
+        guard let generation = current, let run = runs[generation] else {
+            return PinSnap.snap(
+                latitude: latitude, longitude: longitude, mapSpanM: mapSpanM,
+                viewportHeightPt: viewportHeightPt, network: nil, cloud: nil).result
+        }
+        return run.live.snapPin(
+            latitude: latitude, longitude: longitude, mapSpanM: mapSpanM,
+            viewportHeightPt: viewportHeightPt).result
+    }
+
     /// `snapshot(at: clock.now())` on the newest run's clock.
     func snapshot() -> NavigationSnapshot {
         guard let clock else { return .idle(at: .zero) }

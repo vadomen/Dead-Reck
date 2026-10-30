@@ -15,6 +15,18 @@ import Foundation
 //       [--fixpin-inject <out.jsonl> [--fixpin-two-pins] [--fixpin-survey] [--fixpin-pins <n>] [--fixpin-separation <s>] [--fixpin-engine-no-roads]]
 //       [--save-prior <state.json> [--save-prior-at <s>|end] [--save-prior-engine-off]]
 //       [--prior <state.json> [--prior-offset <dE>,<dN>]] [--start-at <s>] [--no-prior]
+//       [--snap-pins [--snap-viewport <pt>] [--snap-span <m>]]
+//
+// --snap-pins (prompt 46, replay only; off by default): each manual fix is
+// snapped to the road as the app would (`PinSnap`, `ReplayPinSnap`), from
+// its raw tap and logged mapSpanM, with the engine's network and cloud just
+// before the pin; the engine gets the snapped point, scoring keeps the raw
+// tap. The viewport height is not logged: 852 pt unless --snap-viewport.
+// --snap-span <m> (stress test): snap and place every pin as if tapped on a
+// map <m> metres tall (label -span-<m>); the engine's pin σ keeps the row's span.
+// Label part -snap-pins; summary line "Pin snap"; metrics.json `pinSnaps`.
+// Without --roads every pin is `noNetwork` (the raw tap). Refused with
+// --compare, --write-sidecar, --fixpin-inject, --fix-offset (status 2).
 //
 // --obd none (NAV-NOOBD, replay only; default use): every OBD reply (all
 // ECUs, all PIDs) is withheld from the engine, causally, like a withheld
@@ -195,6 +207,7 @@ let usage = """
            [--fixpin-inject <out.jsonl> [--fixpin-two-pins] [--fixpin-survey] [--fixpin-pins <n>] [--fixpin-separation <s>] [--fixpin-engine-no-roads]]
            [--save-prior <state.json> [--save-prior-at <s>|end] [--save-prior-engine-off]]
            [--prior <state.json> [--prior-offset <dE>,<dN>]] [--start-at <s>] [--no-prior]
+           [--snap-pins [--snap-viewport <pt>] [--snap-span <m>]]
     """
 
 var arguments = Array(CommandLine.arguments.dropFirst())
@@ -238,6 +251,9 @@ var priorPath: String?
 var priorOffset: (east: Double, north: Double)?
 var startAt: Double?
 var noPrior = false
+var snapPins = false
+var snapViewport = ReplayPinSnap.defaultViewportHeightPt
+var snapSpan: Double?
 
 func number(_ text: String, _ flag: String) -> Double {
     guard let value = Double(text), value.isFinite else { fail("\(flag) needs a number, got \(text)\n\(usage)", status: 2) }
@@ -413,6 +429,15 @@ while !arguments.isEmpty {
         startAt = number(value(), argument)
     case "--no-prior":
         noPrior = true
+    case "--snap-pins":
+        snapPins = true
+    case "--snap-viewport":
+        snapViewport = number(value(), argument)
+        guard ReplayPinSnap.isValidViewportHeightPt(snapViewport) else { fail("--snap-viewport needs a positive height in points\n\(usage)", status: 2) }
+    case "--snap-span":
+        let span = number(value(), argument)
+        guard ReplayPinSnap.isValidSpanOverrideM(span) else { fail("--snap-span needs a positive span in metres\n\(usage)", status: 2) }
+        snapSpan = span
     case "-h", "--help":
         print(usage)
         exit(EXIT_SUCCESS)
@@ -422,6 +447,16 @@ while !arguments.isEmpty {
     }
 }
 guard !paths.isEmpty else { fail(usage, status: 2) }
+// Prompt 46: --snap-pins changes the engine's pin input, so it cannot
+// reproduce a live run or feed a study that builds its own inputs.
+if snapPins {
+    let refused = ReplayPinSnap.refusedFlags(givenFlags)
+    guard refused.isEmpty else {
+        fail("--snap-pins changes the pins the engine gets: drop \(refused.joined(separator: ", "))\n\(usage)", status: 2)
+    }
+} else if ReplayPinSnap.needsSnapPins(givenFlags) {
+    fail("--snap-viewport and --snap-span need --snap-pins\n\(usage)", status: 2)
+}
 // NAV-NOOBD: what cannot run without OBD, or would reproduce a live run
 // that had it.
 if obd == .none {
@@ -561,7 +596,7 @@ if !fixOffsetWindows.isEmpty {
         }
         let pins: [(t: Double, latitude: Double, longitude: Double)] = events.compactMap { event in
             guard case .manualFix(let pin) = event.payload else { return nil }
-            return (event.timestamp.seconds, pin.latitude, pin.longitude)
+            return (event.timestamp.seconds, pin.truthLatitude, pin.truthLongitude)
         }
         for check in FixOffsetScan.pinChecks(pins: pins, fixes: fixes) {
             print("Pin           " + FixOffsetScan.text(check))
@@ -675,6 +710,7 @@ if let wrongRoadTolerance { baseOptions.wrongRoadToleranceM = wrongRoadTolerance
 baseOptions.asLive = asLive
 baseOptions.fileOrder = asLive || fileOrder
 baseOptions.pinPairWindowS = pinPairWindow
+if snapPins { baseOptions.snapPins = ReplayPinSnap(viewportHeightPt: snapViewport, spanOverrideM: snapSpan) }
 if asLive && (gps != .use || holdOut != nil) {
     print("note: --as-live with \(baseOptions.label): the live app received every fix; this run withholds some")
 }

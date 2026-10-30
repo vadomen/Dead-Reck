@@ -46,6 +46,15 @@ struct NavigationNoOBDModeTests {
         return config
     }
 
+    /// Prompt 45's (a): the floor 30 km/h, decay 30 s and no displacement gate.
+    static func config45(robust: Int = 0, fixSpeed: Int = 1, particles: Int = 300, seed: UInt64 = 5) -> NavigationConfig {
+        var config = Self.config(robust: robust, fixSpeed: fixSpeed, particles: particles, seed: seed)
+        config.noOBDFixSpeedFloorKmh = 30
+        config.noOBDFixSpeedGate = 0
+        config.noOBDFixSpeedDecayS = 30
+        return config
+    }
+
     /// The four switch combinations: off, (e) only, (a) only, both.
     static let switches: [(robust: Int, fixSpeed: Int)] = [(0, 0), (1, 0), (0, 1), (1, 1)]
 
@@ -81,7 +90,10 @@ struct NavigationNoOBDModeTests {
         #expect(d.noOBDNetworkFixScaleFloorM == 5 && d.noOBDNetworkFixTowerAccuracyM == 1_000)
         #expect(d.noOBDNetworkFixTowerScaleM == 120 && d.noOBDNetworkFixCorrelationS == 30)
         #expect(d.noOBDFixSpeedWindowS == 120 && d.noOBDFixSpeedMinSpanS == 10 && d.noOBDFixSpeedMaxKmh == 110)
-        #expect(d.noOBDFixSpeedHoldS == 30 && d.noOBDFixSpeedDecayS == 30 && d.noOBDFixSpeedFloorKmh == 30)
+        #expect(d.noOBDFixSpeedHoldS == 30 && d.noOBDFixSpeedDecayS == 500 && d.noOBDFixSpeedFloorKmh == 0)
+        #expect(d.noOBDFixSpeedGate == 2 && d.noOBDFixSpeedGateK == 2.15 && d.noOBDFixSpeedGateSigmaLowM == 8)
+        #expect(d.noOBDFixSpeedGateSigmaMidM == 170 && d.noOBDFixSpeedGateSigmaTowerM == 240)
+        #expect(NavigationConfig.noOBDFixSpeedGateMidAccuracyM == 100 && NavigationConfig.noOBDFixSpeedGateTowerAccuracyM == 1_000)
 
         // Explicitly off, every parameter moved off its default.
         var off = Self.config()
@@ -97,6 +109,11 @@ struct NavigationNoOBDModeTests {
         off.noOBDFixSpeedHoldS = 0
         off.noOBDFixSpeedDecayS = 1
         off.noOBDFixSpeedFloorKmh = 80
+        off.noOBDFixSpeedGate = 1
+        off.noOBDFixSpeedGateK = 9
+        off.noOBDFixSpeedGateSigmaLowM = 300
+        off.noOBDFixSpeedGateSigmaMidM = 400
+        off.noOBDFixSpeedGateSigmaTowerM = 500
         #expect(off.invalidReason == nil)
         let fixes = Self.networkFix(accuracy: 300, noise: 60)
         for obd in [true, false] {
@@ -328,17 +345,21 @@ struct NavigationNoOBDModeTests {
 
     // MARK: 5. Fixes stop for 10 min
 
-    @Test("Fixes stop for 10 min in no-OBD mode: estimate, ellipse, μ and weights stay finite; μ holds 30 s then relaxes to 30 km/h; the same with no motion samples (catch-up macro steps)")
+    @Test("Fixes stop for 10 min in no-OBD mode: estimate, ellipse, μ and weights stay finite; μ holds 30 s then relaxes from the gated estimate to the floor (default: 0, τ 500 s; prompt 45's config: 30 km/h, τ 30 s); the same with no motion samples (catch-up macro steps)")
     func fixesStopForTenMinutes() throws {
         let long = S(initialHeadingDeg: 0, initialSpeed: Self.kmh50, [.straight(seconds: 760, speed: Self.kmh50)])
         let lastFix = 152.0
         let fix = Self.networkFix(accuracy: 1_414, noise: 200)
         let events = long.events(gyroNoise: 0.002, obdSpeed: Self.noOBD, fixEvery: 8,
                                  fix: { t, s, rng in t <= lastFix ? fix(t, s, &rng) : nil })
-        for (robust, fixSpeed) in Self.switches {
+        let runs = Self.switches.map { (robust: $0.robust, fixSpeed: $0.fixSpeed, is45: false) }
+            + [(robust: 0, fixSpeed: 1, is45: true)]
+        for (robust, fixSpeed, is45) in runs {
             let times = Array(stride(from: 10.0, through: 760, by: 10))
-            let run = S.run(events, config: Self.config(robust: robust, fixSpeed: fixSpeed), sampleTimes: times)
-            let tag = "\(robust) \(fixSpeed)"
+            let config = is45 ? Self.config45() : Self.config(robust: robust, fixSpeed: fixSpeed)
+            let floorKmh = config.noOBDFixSpeedFloorKmh, tau = config.noOBDFixSpeedDecayS
+            let run = S.run(events, config: config, sampleTimes: times)
+            let tag = "\(robust) \(fixSpeed) 45 \(is45)"
             for estimate in run.samples {
                 let e = try #require(estimate, "\(tag)")
                 #expect([e.latitude, e.longitude, e.headingDeg, e.speedMps, e.ellipse.semiMajorM, e.ellipse.semiMinorM,
@@ -348,7 +369,11 @@ struct NavigationNoOBDModeTests {
             guard fixSpeed == 1 else { continue }
             let estimate = try #require(run.engine.fixSpeedEstimate)
             #expect(estimate.newestNs == S.ms(lastFix).nanoseconds)
-            let floor = 30 / 3.6
+            let floor = floorKmh / 3.6
+            // The 50 km/h track moves far beyond the gate's D0: μ̂ is the
+            // track speed whatever the floor.
+            #expect(abs(estimate.mps - Self.kmh50) * 3.6 < 15, "\(tag): μ̂ \(estimate.mps * 3.6) km/h")
+            #expect(estimate.gatedMps == estimate.mps)
             var previous = estimate.mps
             for t in stride(from: lastFix, through: 760, by: 5) {
                 let mu = run.engine.fixSpeedMean(at: S.ms(t).nanoseconds)
@@ -361,9 +386,11 @@ struct NavigationNoOBDModeTests {
                 }
                 previous = mu
             }
-            #expect(abs(run.engine.fixSpeedMean(at: S.ms(760).nanoseconds) - floor) * 3.6 < 0.01)
-            let mid = lastFix + 30 + 30
-            let expected = floor + (estimate.mps - floor) * exp(-1)
+            let end = floor + (estimate.gatedMps - floor) * exp(-(760 - lastFix - 30) / tau)
+            #expect(abs(run.engine.fixSpeedMean(at: S.ms(760).nanoseconds) - end) < 1e-9)
+            if is45 { #expect(abs(end - floor) * 3.6 < 0.01) }
+            let mid = lastFix + 30 + tau
+            let expected = floor + (estimate.gatedMps - floor) * exp(-1)
             #expect(abs(run.engine.fixSpeedMean(at: S.ms(mid).nanoseconds) - expected) < 1e-9)
         }
 
@@ -402,7 +429,7 @@ struct NavigationNoOBDModeTests {
 
     @Test("∫μ dt in closed form matches the held-then-relaxing μ integrated numerically, across the hold's end; τ = 0 jumps to the floor")
     func fixSpeedIntegral() throws {
-        var engine = NavigationEngine(config: Self.config(fixSpeed: 1))
+        var engine = NavigationEngine(config: Self.config45())
         engine.ingest(Self.networkInput(east: 0, north: 0, accuracy: 30, at: 0))
         engine.ingest(Self.networkInput(east: 200, north: 0, accuracy: 30, at: 10))
         let estimate = try #require(engine.fixSpeedEstimate)
@@ -428,7 +455,7 @@ struct NavigationNoOBDModeTests {
         #expect(abs(engine.fixSpeedMeanAverage(from: S.ms(60).nanoseconds, to: S.ms(60.1).nanoseconds)
                     - engine.fixSpeedMean(at: S.ms(60.05).nanoseconds)) < 1e-5)
 
-        var instant = Self.config(fixSpeed: 1)
+        var instant = Self.config45()
         instant.noOBDFixSpeedDecayS = 0
         var e0 = NavigationEngine(config: instant)
         e0.ingest(Self.networkInput(east: 0, north: 0, accuracy: 30, at: 0))
@@ -473,7 +500,7 @@ struct NavigationNoOBDModeTests {
     func fixSpeedMeanThroughMacroSteps() throws {
         func run(fixSpeed: Int, maxCatchUpSteps: Int = 100) throws -> (displacement: (east: Double, north: Double),
                                                                          expected: Double, macroSteps: Int) {
-            var config = Self.config(fixSpeed: fixSpeed)
+            var config = Self.config45(fixSpeed: fixSpeed)
             config.maxCatchUpSteps = maxCatchUpSteps
             var engine = NavigationEngine(config: config)
             // μ̂ = 200 m / 10 s from the fixes at 0 and 10 s (newest at 10 s).
@@ -713,7 +740,9 @@ struct NavigationNoOBDModeTests {
         let keys = ["noOBDRobustNetworkFix", "noOBDNetworkFixNu", "noOBDNetworkFixScalePerAccuracy",
                     "noOBDNetworkFixScaleFloorM", "noOBDNetworkFixTowerAccuracyM", "noOBDNetworkFixTowerScaleM",
                     "noOBDNetworkFixCorrelationS", "noOBDFixSpeedMean", "noOBDFixSpeedWindowS", "noOBDFixSpeedMinSpanS",
-                    "noOBDFixSpeedMaxKmh", "noOBDFixSpeedHoldS", "noOBDFixSpeedDecayS", "noOBDFixSpeedFloorKmh"]
+                    "noOBDFixSpeedMaxKmh", "noOBDFixSpeedHoldS", "noOBDFixSpeedDecayS", "noOBDFixSpeedFloorKmh",
+                    "noOBDFixSpeedGate", "noOBDFixSpeedGateK", "noOBDFixSpeedGateSigmaLowM", "noOBDFixSpeedGateSigmaMidM",
+                    "noOBDFixSpeedGateSigmaTowerM"]
         var json = try #require(try JSONSerialization.jsonObject(with: NavigationConfig().canonicalJSON()) as? [String: Any])
         for key in keys { #expect(json[key] != nil, "\(key)") }
         for key in keys { json.removeValue(forKey: key) }
@@ -734,6 +763,8 @@ struct NavigationNoOBDModeTests {
             #expect(refused { $0.noOBDRobustNetworkFix = bad }?.contains("noOBDRobustNetworkFix") == true)
             #expect(refused { $0.noOBDFixSpeedMean = bad }?.contains("noOBDFixSpeedMean") == true)
         }
+        for good in [0, 1, 2] { #expect(refused { $0.noOBDFixSpeedGate = good } == nil) }
+        for bad in [3, -1] { #expect(refused { $0.noOBDFixSpeedGate = bad }?.contains("noOBDFixSpeedGate") == true) }
         let positive: [(String, WritableKeyPath<NavigationConfig, Double>)] = [
             ("noOBDNetworkFixNu", \.noOBDNetworkFixNu), ("noOBDNetworkFixScalePerAccuracy", \.noOBDNetworkFixScalePerAccuracy),
             ("noOBDNetworkFixScaleFloorM", \.noOBDNetworkFixScaleFloorM),
@@ -741,6 +772,9 @@ struct NavigationNoOBDModeTests {
             ("noOBDNetworkFixTowerScaleM", \.noOBDNetworkFixTowerScaleM),
             ("noOBDNetworkFixCorrelationS", \.noOBDNetworkFixCorrelationS),
             ("noOBDFixSpeedMinSpanS", \.noOBDFixSpeedMinSpanS), ("noOBDFixSpeedWindowS", \.noOBDFixSpeedWindowS),
+            ("noOBDFixSpeedGateK", \.noOBDFixSpeedGateK), ("noOBDFixSpeedGateSigmaLowM", \.noOBDFixSpeedGateSigmaLowM),
+            ("noOBDFixSpeedGateSigmaMidM", \.noOBDFixSpeedGateSigmaMidM),
+            ("noOBDFixSpeedGateSigmaTowerM", \.noOBDFixSpeedGateSigmaTowerM),
         ]
         for (name, key) in positive {
             for bad in [0.0, -1, .infinity, .nan] {
