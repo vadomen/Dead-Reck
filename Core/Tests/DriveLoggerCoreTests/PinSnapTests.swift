@@ -236,6 +236,68 @@ struct PinSnapTests {
         Self.expectAt(s, 5, 0)
     }
 
+    /// A through road on north = 0 with side roads north from junctions at
+    /// east = `a` and east = `b`.
+    static func twoJunctions(_ a: Double, _ b: Double) throws -> RoadNetwork {
+        try network([
+            RoadFixture.way(1, Self.road, [Node(id: 1, east: -300, north: 0), Node(id: 10, east: a, north: 0),
+                                           Node(id: 11, east: b, north: 0), Node(id: 2, east: 300, north: 0)]),
+            RoadFixture.way(2, Self.road, [Node(id: 10, east: a, north: 0), Node(id: 3, east: a, north: 300)]),
+            RoadFixture.way(3, Self.road, [Node(id: 11, east: b, north: 0), Node(id: 4, east: b, north: 300)]),
+        ])
+    }
+
+    @Test("R84.2-1: two junction nodes within 8 pt: the nearer one wins")
+    func nearestJunctionWins() throws {
+        let net = try Self.twoJunctions(0, 40)
+        // 6000 m span: 8 pt = 56.3 m, both junctions in reach.
+        let west = Self.snap(12, 5, span: 6000, network: net)  // 13.0 m vs 28.4 m
+        guard case .node(let w) = west.result else { Issue.record("\(west.result)"); return }
+        Self.expectAt(w, 0, 0, tolerance: 0.01)
+        let east = Self.snap(30, 5, span: 6000, network: net)  // 30.4 m vs 11.2 m
+        guard case .node(let e) = east.result else { Issue.record("\(east.result)"); return }
+        Self.expectAt(e, 40, 0, tolerance: 0.01)
+    }
+
+    @Test("R84.2-1: two junction nodes exactly equidistant: the smaller node key wins (the east one here, positive longitude)")
+    func equidistantJunctionsTieBreak() throws {
+        // Nodes at ±20 m east: their E7 longitudes are exact negatives, so a
+        // tap on east = 0 is exactly as far from both.
+        let net = try Self.twoJunctions(-20, 20)
+        let west = RoadFixture.point(-20, 0), east = RoadFixture.point(20, 0)
+        #expect(west.lonE7 == -east.lonE7 && west.latE7 == east.latE7)
+        #expect(PinSnap.key(east) < PinSnap.key(west))
+        let o = Self.snap(0, 5, span: 6000, network: net)
+        guard case .node(let n) = o.result else { Issue.record("\(o.result)"); return }
+        #expect(abs(n.distanceM - (400.0 + 25).squareRoot()) < 0.05)
+        Self.expectAt(n, 20, 0, tolerance: 0.01)
+    }
+
+    @Test("R84.2-2: the engine's own cloud carries its heading: driving east on the eastbound carriageway, a tap between the carriageways snaps to it")
+    func engineCloudHeadingPicksCarriageway() throws {
+        let net = try Self.carriageways()
+        // 40 s east at 10 m/s along way 1 (north = 0, eastbound one-way),
+        // clean fixes with course, OBD speed.
+        let drive = SyntheticDrive(initialHeadingDeg: 90, initialSpeed: 10, [.straight(seconds: 40, speed: 10)])
+        var engine = NavigationEngine(config: SyntheticDrive.config(), roads: net)
+        for input in SyntheticDrive.inputs(drive.events(fix: SyntheticDrive.cleanFix())) { engine.ingest(input) }
+        let end = drive.truth(at: drive.duration)
+        let estimate = try #require(engine.estimate(at: SyntheticDrive.ms(drive.duration)))
+        #expect(abs(angleDifference(estimate.headingDeg, 90)) < 5, "engine heading \(estimate.headingDeg)")
+        // The cloud's weighted circular mean heading is the estimate's.
+        let cloud = try #require(engine.pinSnapCloud())
+        let s = cloud.reduce(0) { $0 + $1.weight * sin($1.headingRad) }
+        let c = cloud.reduce(0) { $0 + $1.weight * cos($1.headingRad) }
+        #expect(abs(angleDifference(atan2(s, c) * 180 / .pi, estimate.headingDeg)) < 0.01)
+        // Tap 17.7 m north of the car: way 1 at 17.7 m, way 2 (westbound) at
+        // 26.3 m; 600 m span (σ/2 25 m < 44 m apart): the cloud decides.
+        let tap = SyntheticDrive.plane.geodetic(east: end.east, north: 17.7)
+        let o = engine.snapPin(latitude: tap.latitude, longitude: tap.longitude, mapSpanM: 600, viewportHeightPt: 852)
+        guard case .edge(let snap) = o.result else { Issue.record("\(o.result) support \(o.support)"); return }
+        #expect(snap.candidate.osmWayID == 1 && snap.decision == .cloud)
+        #expect(o.support.count == 2 && o.support[0] > 0.9 && o.support[1] < 0.05, "\(o.support)")
+    }
+
     // MARK: Ambiguity
 
     /// Two parallel east-west roads, 20 m apart (north = 0 and north = 20).
