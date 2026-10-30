@@ -1272,3 +1272,8 @@ One fresh opus reviewer, whole range f063768..de856e0. Round-2 tests verified. B
 Author mutation sweep after the round (30 mutants over PinSnap, ReplayPinSnap, NavigationReplay, replay_nav): 25 killed by existing or new tests (09de19c, 4521601: `junctionReportsNearestEdge`, `tapOnCrossingIsContested`, `onePerRoadInTheContest`, `contestedSpreadM` assertion); 3 equivalent (search radius without frame scale, the weight > 0 particle filter, tap fields on the engine's copy); 2 survivors in replay_nav's inline `--snap-pins` flag checks fixed by moving them into Core with tests (545a1ce: `ReplayPinSnap.refusedFlags`, `needsSnapPins`, `isValidViewportHeightPt`, `isValidSpanOverrideM`; `flagRefusals`, `flagValues`; behaviour and messages unchanged).
 
 Round 3 outcome: R84.3-1..2 fixed (tests), flag checks moved to Core; `swift test` in Core 1288 tests in 153 suites passed (36 known issues); no App change.
+
+### Round 4
+One fresh opus reviewer, whole range f063768..1b6935d. Round-3 fixes verified. 545a1ce behaviour-identical in replay_nav (19 flag combinations, de856e0 vs HEAD release binaries: same output and exit codes; same-drive `--snap-pins` replay GeoJSON byte-identical). Mutations: 2 new, both killed (`NavSidecar.swift:141-142` pin from latitude/longitude; `PinSnap.swift:282` any shared node). No findings.
+
+Run 84 closed: 4 rounds; 8 MAJOR confirmed and fixed (R84.1-1..4, R84.2-1..2, R84.3-1..2: one docs fix, the rest regression tests; no code bug), 0 rejected, 5 MINOR deferred (R84.1-5..9); Core 1288 tests in 153 suites passed (36 known issues); App 850 passed at 5ed8883 (no App change since).
