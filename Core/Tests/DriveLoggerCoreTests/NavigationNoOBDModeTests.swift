@@ -281,7 +281,7 @@ struct NavigationNoOBDModeTests {
         #expect(abs(on.speedMps - Self.kmh50) < 3, "speed \(on.speedMps * 3.6) km/h")
     }
 
-    @Test("Fix-speed estimate: endpoint distance over time, clamped to 0…110 km/h; the window drops fixes over 120 s behind the newest; a late fix slots in by its time")
+    @Test("Fix-speed estimate: endpoint distance over time, clamped to 0…110 km/h; the window drops fixes over 120 s behind the newest; a late fix slots in by its time; of two fixes with the same time the later arrival is the newest")
     func fixSpeedEstimateRules() {
         func run(_ fixes: [(t: Double, east: Double)], config: NavigationConfig = Self.config(fixSpeed: 1)) -> NavigationEngine {
             var engine = NavigationEngine(config: config)
@@ -296,9 +296,14 @@ struct NavigationNoOBDModeTests {
         // 2 km in 10 s = 720 km/h: clamped to 110.
         #expect(abs((run([(0, 0), (10, 2_000)]).fixSpeedEstimate?.mps ?? .nan) - 110 / 3.6) < 1e-12)
         // The window: from 200 s, the fix at 0 s is out (> 120 s behind),
-        // the one at 100 s in: (2000 − 1000) m / 100 s.
-        let w = run([(0, 0), (100, 1_000), (200, 2_000)])
-        #expect(abs((w.fixSpeedEstimate?.mps ?? .nan) - 10) < 1e-3)
+        // the one at 100 s in: (3000 − 1000) m / 100 s = 20 m/s (with the
+        // fix at 0 s kept it would be 3000 m / 200 s = 15).
+        let w = run([(0, 0), (100, 1_000), (200, 3_000)])
+        #expect(abs((w.fixSpeedEstimate?.mps ?? .nan) - 20) < 1e-3)
+        // Two fixes with the same `t`: the later arrival is the newest
+        // (ties go to the later one): 300 m / 10 s, not 100 m / 10 s.
+        let tie = run([(0, 0), (10, 100), (10, 300)])
+        #expect(abs((tie.fixSpeedEstimate?.mps ?? .nan) - 30) < 1e-3)
         // Exactly 120 s behind is still in the window.
         let edge = run([(0, 0), (120, 1_200)])
         #expect(abs((edge.fixSpeedEstimate?.mps ?? .nan) - 10) < 1e-3)
@@ -416,6 +421,9 @@ struct NavigationNoOBDModeTests {
             #expect(abs(closed - numeric(a, b)) < 1e-4 * max(1, closed), "\(a)…\(b): \(closed) vs \(numeric(a, b))")
         }
         #expect(engine.fixSpeedMeanIntegral(from: S.ms(50).nanoseconds, to: S.ms(50).nanoseconds) == 0)
+        // An empty step's mean is μ at that instant.
+        #expect(engine.fixSpeedMeanAverage(from: S.ms(50).nanoseconds, to: S.ms(50).nanoseconds)
+                == engine.fixSpeedMean(at: S.ms(50).nanoseconds))
         // A 0.1 s step: its mean is the midpoint value to second order.
         #expect(abs(engine.fixSpeedMeanAverage(from: S.ms(60).nanoseconds, to: S.ms(60.1).nanoseconds)
                     - engine.fixSpeedMean(at: S.ms(60.05).nanoseconds)) < 1e-5)
@@ -523,7 +531,13 @@ struct NavigationNoOBDModeTests {
             // A tower fix (scale 120 m) 300 m east, 15 s after the first; no step between.
             engine.ingest(Self.networkInput(east: offset, north: 0, accuracy: 1414, at: dt))
             #expect(engine.lastStepTime == S.ms(dt))
-            return Self.weightedMean(engine)
+            let after = Self.weightedMean(engine)
+            // The same fix again (same `t`, same arrival): Δt = 0, weight 0,
+            // no update at all.
+            let weights = engine.weight, east = engine.east, cov = engine.covEE
+            engine.ingest(Self.networkInput(east: offset, north: 0, accuracy: 1414, at: dt))
+            #expect(engine.weight == weights && engine.east == east && engine.covEE == cov)
+            return after
         }
         let at30 = shift { _ in }
         let at60 = shift { $0.noOBDNetworkFixCorrelationS = 60 }
@@ -581,6 +595,117 @@ struct NavigationNoOBDModeTests {
         #expect(fresh.east > 1.5 * stale.east && stale.east > 3)
     }
 
+    @Test("R83.3-1: the robust particle log-weight (ν = 2 and 5) is the bivariate Student-t −(ν + 2)/2 · log(1 + m²/ν) − ½ log|S|, S = P + (s²/w)·I: two particles at different offsets, with equal and then unequal (correlated) covariances, take log-weights whose difference matches the closed form to 1e-9")
+    func robustWeightIsTheStudentT() {
+        for nu in [2.0, 5.0] { Self.robustWeight(nu: nu) }
+    }
+
+    static func robustWeight(nu: Double) {
+        let scale = 120.0, dt = 15.0
+        let r = scale * scale / min(1, dt / 30)  // tempered 15 s / 30 s
+        let fix = (east: 300.0, north: 200.0)
+        let positions = [(east: 0.0, north: 0.0), (east: 80.0, north: -40.0)]
+        /// Log-likelihood of particle `k` with covariance (ee, en, nn), constants dropped.
+        func expected(_ k: Int, _ c: (ee: Double, en: Double, nn: Double)) -> Double {
+            let see = c.ee + r, snn = c.nn + r, sen = c.en
+            let det = see * snn - sen * sen
+            let de = fix.east - positions[k].east, dn = fix.north - positions[k].north
+            let m2 = (snn * de * de - 2 * sen * de * dn + see * dn * dn) / det
+            return -(nu + 2) / 2 * log(1 + m2 / nu) - 0.5 * log(det)
+        }
+        func logWeightDifference(_ covs: [(ee: Double, en: Double, nn: Double)]) -> Double {
+            var config = Self.config(robust: 1, particles: 2)
+            config.staleSpeedNoiseMpsPerSqrtS = 0
+            config.noOBDNetworkFixNu = nu
+            var engine = NavigationEngine(config: config)
+            engine.ingest(Self.networkInput(east: 0, north: 0, accuracy: 30, at: 0))
+            engine.ingest(Self.still(at: dt + 0.05))
+            #expect(engine.east.count == 2)
+            for k in 0..<2 {
+                engine.east[k] = positions[k].east
+                engine.north[k] = positions[k].north
+                engine.covEE[k] = covs[k].ee
+                engine.covEN[k] = covs[k].en
+                engine.covNN[k] = covs[k].nn
+                engine.logWeight[k] = -log(2)
+            }
+            engine.normalizeWeights()
+            engine.ingest(Self.networkInput(east: fix.east, north: fix.north, accuracy: 1414, at: dt))
+            #expect(engine.lastStepTime == S.ms(dt))
+            #expect(engine.weight.allSatisfy { $0.isFinite && $0 > 0 })
+            return engine.logWeight[0] - engine.logWeight[1]
+        }
+        let equal = [(ee: 400.0, en: 0.0, nn: 400.0), (ee: 400.0, en: 0.0, nn: 400.0)]
+        let unequal = [(ee: 400.0, en: 100.0, nn: 900.0), (ee: 2_500.0, en: -300.0, nn: 1_600.0)]
+        for covs in [equal, unequal] {
+            let got = logWeightDifference(covs)
+            let want = expected(0, covs[0]) - expected(1, covs[1])
+            #expect(abs(got - want) < 1e-9, "ν \(nu): log-weight difference \(got) vs \(want)")
+            #expect(abs(want) > 1e-3)
+        }
+    }
+
+    /// A no-OBD engine with μ on, without speed, heading or scale noise:
+    /// every particle moves exactly at μ (or at the OBD speed), so a mean
+    /// displacement is a closed form. `setIdenticalCloud` sets the headings
+    /// east and the scales to 1.
+    static func noiselessConfig(fixSpeed: Int = 1, maxCatchUpSteps: Int = 100) -> NavigationConfig {
+        var config = Self.config(fixSpeed: fixSpeed)
+        config.staleSpeedNoiseMpsPerSqrtS = 0
+        config.headingNoiseDegPerSqrtS = 0
+        config.scaleNoisePerSqrtS = 0
+        config.maxCatchUpSteps = maxCatchUpSteps
+        return config
+    }
+
+    @Test("Sweep: without speed, heading or scale noise the cloud moves exactly ∫μ dt (to 1e-6 relative) over an 80 s gap, through macro steps and stepping one by one alike (μ averaged over each step, not its end value)")
+    func fixSpeedMeanExactWithoutNoise() throws {
+        for maxCatchUpSteps in [100, 1_000_000] {
+            var engine = NavigationEngine(config: Self.noiselessConfig(maxCatchUpSteps: maxCatchUpSteps))
+            engine.ingest(Self.networkInput(east: 0, north: 0, accuracy: 30, at: 0))
+            engine.ingest(Self.networkInput(east: 200, north: 0, accuracy: 30, at: 10))
+            engine.ingest(Self.still(at: 20.05))
+            Self.setIdenticalCloud(&engine, variance: 400)
+            for i in engine.scale.indices { engine.scale[i] = 1 }
+            let macroBefore = engine.counters.macroSteps
+            engine.ingest(Self.still(at: 100.05))
+            let expected = engine.fixSpeedMeanIntegral(from: S.ms(20).nanoseconds, to: S.ms(100).nanoseconds)
+            let moved = Self.weightedMean(engine)
+            #expect((engine.counters.macroSteps > macroBefore) == (maxCatchUpSteps == 100))
+            #expect(abs(moved.east - expected) < 1e-6 * expected, "\(maxCatchUpSteps): \(moved.east) vs ∫μ \(expected)")
+            #expect(abs(moved.north) < 1e-6 * expected)
+        }
+    }
+
+    @Test("Sweep: after the first OBD reply μ is never added again: with a speed estimate from the fixes before it, a later OBD dropout (stale steps, then a catch-up gap) moves the cloud at the held OBD speed exactly")
+    func noFixSpeedAfterTheFirstReply() throws {
+        var engine = NavigationEngine(config: Self.noiselessConfig())
+        // No OBD yet: μ̂ = 20 m/s from the network fixes.
+        for (k, t) in [0.0, 10, 20].enumerated() {
+            engine.ingest(Self.networkInput(east: 200 * Double(k), north: 0, accuracy: 30, at: t))
+        }
+        #expect(abs((engine.fixSpeedEstimate?.mps ?? .nan) - 20) < 1e-3)
+        // OBD 36 km/h from 20.5 s to 30 s, then nothing.
+        for t in stride(from: 20.5, through: 30, by: 0.5) {
+            engine.ingest(.obd(OBDSample(pid: .vehicleSpeed, value: 36, unit: .kilometersPerHour, ecu: "7E8"), at: S.ms(t)))
+        }
+        #expect(engine.obdEverIngested && !engine.noOBDFixSpeedMeanActive)
+        #expect(engine.lastStepTime == S.ms(30))
+        Self.setIdenticalCloud(&engine, variance: 400)
+        for i in engine.scale.indices { engine.scale[i] = 1 }
+        let v = (36 + NavigationConfig().obdSpeedOffsetKmh) / 3.6
+        // 30 → 40 s: fresh to 32 s, then stale, stepped one by one.
+        let staleBefore = engine.counters.staleSpeedSteps
+        engine.ingest(Self.still(at: 40.05))
+        #expect(engine.counters.staleSpeedSteps > staleBefore)
+        #expect(abs(Self.weightedMean(engine).east - v * 10) < 1e-6 * v * 10, "\(Self.weightedMean(engine).east) vs \(v * 10)")
+        // 40 → 200 s: no input at all, caught up in macro steps.
+        let macroBefore = engine.counters.macroSteps
+        engine.ingest(Self.still(at: 200.05))
+        #expect(engine.counters.macroSteps > macroBefore)
+        #expect(abs(Self.weightedMean(engine).east - v * 170) < 1e-6 * v * 170, "\(Self.weightedMean(engine).east) vs \(v * 170)")
+    }
+
     // MARK: Keys
 
     @Test("No-OBD keys: decoding without them gives the defaults (off); refused values")
@@ -622,6 +747,7 @@ struct NavigationNoOBDModeTests {
                 #expect(refused { $0[keyPath: key] = bad }?.contains(name) == true, "\(name) \(bad)")
             }
         }
+        #expect(NavigationConfig.maxNoOBDFixSpeedWindowS == 3_600)
         #expect(refused { $0.noOBDFixSpeedWindowS = NavigationConfig.maxNoOBDFixSpeedWindowS } == nil)
         #expect(refused { $0.noOBDFixSpeedWindowS = NavigationConfig.maxNoOBDFixSpeedWindowS + 1 } != nil)
         let nonNegative: [(String, WritableKeyPath<NavigationConfig, Double>)] = [

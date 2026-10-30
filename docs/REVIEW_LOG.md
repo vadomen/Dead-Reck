@@ -1212,3 +1212,15 @@ Reviewers: one opus reviewer (fresh). Engine unchanged since round 1 (tests and 
 | R83.2-1 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/NavigationEngine.swift:1570-1571`: the robust branch's stale-age σ growth (`staleGrowth`) is untested; removing it leaves the suite green, so a late Wi-Fi fix could be weighted ~1.5× too tight unnoticed. | CONFIRMED | Fixed: regression test `robustScaleGrowsWithFixAge` (mutation B now killed), review round 2 commit. |
 
 Round 2 outcome: R83.2-1 fixed; `swift test` 1227 tests in 149 suites passed (36 known issues).
+
+### Round 3
+
+Reviewers: one opus reviewer (fresh). Engine unchanged since 8105503. Mutations: author's staleGrowth killed; step μ average → end value survived (near-equivalent at 0.1 s steps, not reported); Student-t weight (ν+2) → ν survived.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R83.3-1 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/NavigationEngine.swift:1754`: the robust Student-t particle log-weight (−(ν+2)/2·log1p(m²/ν) − ½·log\|S\|) is unpinned; (ν+2) → ν and a dropped log-det term leave the suite green. | CONFIRMED | Fixed: regression test `robustWeightIsTheStudentT` (closed-form weight ratio to 1e-9, ν 2 and 5, equal and unequal correlated covariances; both mutants killed), review round 3 commit. |
+
+Author mutation sweep after three rounds of test gaps in the same code: 77 mutations over every new or changed line of the no-OBD code in NavigationEngine.swift and NavigationConfig.swift, 68 killed, 9 survivors all equivalent (window reset after the mode ends; `stale`/`!vetoed` guards implied by the mode; defensive finiteness/sign guards; τ = 0 and zero-length boundaries). New or strengthened tests: `fixSpeedMeanExactWithoutNoise`, `noFixSpeedAfterTheFirstReply`, `fixSpeedEstimateRules` (window drop, same-time tie), `robustTemperingUsesItsOwnTimeConstant` (zero-weight re-ingest), `fixSpeedIntegral`, `configKeys`.
+
+Round 3 outcome: R83.3-1 fixed; `swift test` 1230 tests in 149 suites passed (36 known issues); release perf gate 9 passed.
