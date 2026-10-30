@@ -96,6 +96,12 @@ public enum ManualFixGate {
     /// (`latitude`, `longitude`) is not a finite WGS 84 position. A non-finite or negative `mapSpanM` is dropped (JSON has no
     /// NaN); `obdSpeedT` is kept only with an OBD speed; `note` goes
     /// through `ManualFixSample.normalizedNote`.
+    ///
+    /// `latitude`/`longitude` are the pin (the snapped point when the pin
+    /// snapped to a road). Pass `tapLatitude`/`tapLongitude` (the raw tap)
+    /// only when it snapped (format v6): they are kept as a pair, and only
+    /// when both form a finite WGS 84 position; otherwise both are dropped
+    /// and the row is written without them.
     public static func sample(
         now: MonotonicTimestamp,
         latitude: Double,
@@ -105,11 +111,16 @@ public enum ManualFixGate {
         obdSpeedKmh: Double?,
         obdSpeedT: MonotonicTimestamp?,
         referenceFix: LocationSample?,
-        note: String? = nil
+        note: String? = nil,
+        tapLatitude: Double? = nil,
+        tapLongitude: Double? = nil
     ) -> ManualFixSample? {
-        guard latitude.isFinite, longitude.isFinite,
-              (-90...90).contains(latitude), (-180...180).contains(longitude) else { return nil }
+        guard isPosition(latitude, longitude) else { return nil }
         let gate = evaluate(now: now, obdSpeedKmh: obdSpeedKmh, obdSpeedT: obdSpeedT, referenceFix: referenceFix)
+        let tap: (latitude: Double, longitude: Double)? = {
+            guard let tapLatitude, let tapLongitude, isPosition(tapLatitude, tapLongitude) else { return nil }
+            return (tapLatitude, tapLongitude)
+        }()
         return ManualFixSample(
             latitude: latitude,
             longitude: longitude,
@@ -120,7 +131,14 @@ public enum ManualFixGate {
             gpsSpeedKmh: referenceSpeedKmh(of: referenceFix),
             speedSource: gate.speedSource.rawValue,
             gateSpeedKmh: gate.speedKmh,
-            note: ManualFixSample.normalizedNote(note)
+            note: ManualFixSample.normalizedNote(note),
+            tapLatitude: tap?.latitude,
+            tapLongitude: tap?.longitude
         )
+    }
+
+    /// A finite WGS 84 position.
+    private static func isPosition(_ latitude: Double, _ longitude: Double) -> Bool {
+        latitude.isFinite && longitude.isFinite && (-90...90).contains(latitude) && (-180...180).contains(longitude)
     }
 }

@@ -549,7 +549,8 @@ public struct RecordingSummary: Hashable, Sendable {
     }
 
     /// `<t> s  <speedSource> <gate speed>  pressed <t − pressedT> s earlier
-    /// <lat>, <lon>[  note: <note>]`. Coordinates are user data, printed
+    /// <lat>, <lon>[  tap <tapLat>, <tapLon>][  note: <note>]` (`tap` only
+    /// for a snapped pin, v6). Coordinates are user data, printed
     /// for the analyst running the tool on their own recording.
     static func describe(_ fix: ManualFix) -> String {
         let sample = fix.sample
@@ -557,6 +558,9 @@ public struct RecordingSummary: Hashable, Sendable {
         var line = "\(format(fix.t.seconds, 3)) s  \(sample.speedSource) \(gate)"
         line += "  pressed \(format(sample.pressedT.interval(to: fix.t), 2)) s earlier"
         line += "  \(format(sample.latitude, 7)), \(format(sample.longitude, 7))"
+        if sample.isSnapped {
+            line += "  tap \(format(sample.truthLatitude, 7)), \(format(sample.truthLongitude, 7))"
+        }
         if let note = sample.note { line += "  note: \(note)" }
         return line
     }

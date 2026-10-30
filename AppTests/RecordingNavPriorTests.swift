@@ -104,7 +104,7 @@ struct RecordingNavPriorTests {
 
         let (header, events, report) = try RecordingFixtures.read(url)
         #expect(report.failure == nil && !report.truncatedTail)
-        #expect(header.formatVersion == .v5)
+        #expect(header.formatVersion == .current && header.formatVersion >= .v5)
         #expect(header.referenceUptimeSeconds == ask.clock.referenceUptimeSeconds, "the clock the provider got is the file's")
         let rows = Self.navPriors(events)
         #expect(rows.count == 1)
