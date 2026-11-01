@@ -97,6 +97,8 @@ struct MapHUDState: Equatable, Sendable {
     var speedText: String
     var gps: HUDIndicator
     var obd: HUDIndicator
+    /// The small note under "km/h": "estimated" for a no-OBD run's estimate (UX-7), else nil.
+    var speedNote: String? = nil
     /// Thermal row text, only when the state is not nominal.
     var thermal: String?
     /// One line for VoiceOver.
@@ -110,10 +112,11 @@ struct MapHUDState: Equatable, Sendable {
         let obdIndicator = HUDIndicator(
             label: obd.label, failed: obd.isFailed, emphasised: speed.source == .obd, absent: obd == .none)
         let thermalText: String? = thermal == .nominal ? nil : String(localized: "Thermal \(ThermalText.label(thermal))")
-        var parts = [String(localized: "\(speed.valueText) km/h"), gpsIndicator.label, obdIndicator.label]
+        var parts = [speed.spokenSpeed, gpsIndicator.label, obdIndicator.label]
         if let thermalText { parts.append(thermalText) }
         return MapHUDState(
             speedText: speed.valueText, gps: gpsIndicator, obd: obdIndicator,
+            speedNote: speed.note,
             thermal: thermalText,
             accessibilitySummary: parts.joined(separator: ", "))
     }
@@ -428,6 +431,10 @@ struct HUDFakes: Equatable, Sendable {
     var calibrating = false
     /// OBD speed 0 km/h (a stop).
     var stopped = false
+    /// UX-7 screenshots: a no-OBD run (`noOBD`), with the position uncertain (`noOBDUncertain`);
+    /// the engine's speed estimate is 34 km/h. Shows no GPS speed (the base speed is none).
+    var noOBDRun = false
+    var noOBDUncertain = false
     /// A synthetic estimate on the map (screenshots; `MapPreviewData.fakeNav`).
     var nav: FakeNav?
     /// UX-15 screenshots: the "Restored · n min ago · not yet confirmed" line (12 min), on `navEllipse`.
@@ -456,6 +463,8 @@ struct HUDFakes: Equatable, Sendable {
             case "calibrating": out.isActive = true; out.calibrating = true
             case "stopped": out.isActive = true; out.stopped = true
             case "restored": out.isActive = true; out.restored = true
+            case "noOBD": out.isActive = true; out.obdNone = true; out.noOBDRun = true
+            case "noOBDUncertain": out.isActive = true; out.obdNone = true; out.noOBDRun = true; out.noOBDUncertain = true
             case "locationDenied": out.isActive = true; out.access.locationDenied = true
             case "navFinding", "navEllipse", "navRoad":
                 out.isActive = true
@@ -467,6 +476,11 @@ struct HUDFakes: Equatable, Sendable {
         return out
     }
 
+    /// The synthetic no-OBD run's display (nil outside one).
+    var noOBD: NoOBDDisplay? {
+        noOBDRun ? NoOBDDisplay(uncertain: noOBDUncertain, estimatedKmh: 34) : nil
+    }
+
     /// The OBD indicator: lost with `obdLost`, "No OBD" with `obdNone`, else connected.
     var obd: HUDOBD { obdLost ? .lost : (obdNone ? .none : .connected) }
 
@@ -474,6 +488,8 @@ struct HUDFakes: Equatable, Sendable {
     var speed: MapSpeedReadout {
         // GPS off and no OBD: no fallback to GPS speed, a dash (the model's rule).
         if gpsOff && (obdLost || obdNone) { return .none }
+        // A fake no-OBD run has no measured speed: the estimate (or nothing) shows.
+        if noOBDRun { return .none }
         return MapSpeedReadout(source: (obdLost || obdNone) ? .gps : .obd, kmh: stopped ? 0 : 27, quality: .good)
     }
 }

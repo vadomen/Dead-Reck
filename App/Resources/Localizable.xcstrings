@@ -389,6 +389,16 @@
         }
       }
     },
+    "about %lld km/h, estimated" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "приблизно %lld км/год, за оцінкою"
+          }
+        }
+      }
+    },
     "Adapter failed" : {
       "localizations" : {
         "uk" : {
@@ -1539,6 +1549,16 @@
         }
       }
     },
+    "estimated" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "оцінка"
+          }
+        }
+      }
+    },
     "Export" : {
       "localizations" : {
         "uk" : {
@@ -1910,6 +1930,16 @@
         }
       }
     },
+    "Keep navigating" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Продовжити навігацію"
+          }
+        }
+      }
+    },
     "Keep recording" : {
       "localizations" : {
         "uk" : {
@@ -2276,6 +2306,16 @@
         }
       }
     },
+    "Navigation without OBD starts again when you reopen the app or the adapter connects." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Навігація без OBD запуститься знову, коли ви повторно відкриєте застосунок або підключиться адаптер."
+          }
+        }
+      }
+    },
     "Nearby" : {
       "localizations" : {
         "uk" : {
@@ -2422,6 +2462,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Без OBD"
+          }
+        }
+      }
+    },
+    "No OBD — lower accuracy" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Без OBD — нижча точність"
           }
         }
       }
@@ -3165,6 +3215,16 @@
         }
       }
     },
+    "Position uncertain" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Позиція невизначена"
+          }
+        }
+      }
+    },
     "Privacy policy" : {
       "localizations" : {
         "uk" : {
@@ -3718,6 +3778,16 @@
         }
       }
     },
+    "Starting without OBD…" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запускаємо без OBD…"
+          }
+        }
+      }
+    },
     "Still searching. Yours may have another name: check the list." : {
       "localizations" : {
         "uk" : {
@@ -3764,6 +3834,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Зупинити демо"
+          }
+        }
+      }
+    },
+    "Stop navigation" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Зупинити навігацію"
+          }
+        }
+      }
+    },
+    "Stop navigation?" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Зупинити навігацію?"
           }
         }
       }

@@ -6,6 +6,9 @@ import Foundation
 /// (speed-dependent zoom) can reuse it.
 enum MapSpeedSource: Hashable, Sendable {
     case obd, gps, none
+    /// UX-7: the engine's own estimate in a no-OBD run (`NoOBDDisplay`). Never
+    /// OBD, never GPS: shown with "≈" and "estimated", with no indicator emphasised.
+    case estimated
 }
 
 /// GPS quality for the chip colour, so jamming stays visible on the map.
@@ -26,20 +29,34 @@ struct MapSpeedReadout: Hashable, Sendable {
 
     static let none = MapSpeedReadout(source: .none, kmh: nil, quality: .unknown)
 
-    /// The large number: `54`, or `—`.
-    var valueText: String { kmh.map(String.init) ?? "—" }
+    /// The large number: `54`, `≈34` (an estimate), or `—`.
+    var valueText: String {
+        guard let kmh else { return "—" }
+        return source == .estimated ? "≈\(kmh)" : String(kmh)
+    }
 
-    /// The chip: `OBD`, `GPS`, or nil when there is no speed.
+    /// The chip: `OBD`, `GPS`, `estimated`, or nil when there is no speed.
     var sourceText: String? {
         switch source {
         case .obd: String(localized: "OBD")
         case .gps: String(localized: "GPS")
+        case .estimated: String(localized: "estimated")
         case .none: nil
         }
     }
 
+    /// The small note under "km/h" in the HUD: only an estimate carries one.
+    var note: String? { source == .estimated ? sourceText : nil }
+
+    /// The speed as VoiceOver reads it: `54 km/h`, or `about 34 km/h, estimated`.
+    var spokenSpeed: String {
+        guard source == .estimated, let kmh else { return String(localized: "\(valueText) km/h") }
+        return String(localized: "about \(kmh) km/h, estimated")
+    }
+
     /// One line, for accessibility and logs of the rule: `54 km/h · OBD`, `— km/h`.
     var summary: String {
+        if source == .estimated { return spokenSpeed }
         guard let chip = sourceText else { return String(localized: "\(valueText) km/h") }
         return String(localized: "\(valueText) km/h · \(chip)")
     }

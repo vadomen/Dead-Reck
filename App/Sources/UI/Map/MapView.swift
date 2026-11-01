@@ -79,9 +79,13 @@ struct MapScreen: View {
         // no dead-reckoning dot or ellipse.
         let status = NavigateStatus.make(
             navigate: session.navigateState, recording: session.state, startedAt: session.navigateStartedAt,
-            timings: session.navigateTimings ?? NavigateConfiguration(), now: .now)
+            timings: session.navigateTimings ?? NavigateConfiguration(), now: .now,
+            noOBD: session.noOBDNavigation, noOBDStartArmedAt: session.noOBDStartArmedAt)
         // DEBUG `-uiFakeHUD …`: synthetic HUD inputs (screenshots).
         let fake = Self.fakes
+        // UX-7: the no-OBD run's estimate and uncertain state (nil in any other state).
+        let noOBD = fake.noOBD
+            ?? NoOBDDisplay.make(navigate: session.navigateState, status: session.noOBDNavigation)
         let shown = model.shown(whileDemo: demo != nil)
         GPSMapView(
             track: fake.scatter ? MapPreviewData.stopTrack : shown.track,
@@ -89,7 +93,7 @@ struct MapScreen: View {
             lastFixInstant: fake.scatter ? .now : model.lastFixInstant,
             isReceiving: fake.isActive ? !fake.gpsLost : model.isReceiving,
             thermal: fake.thermal ? .fair : thermal,
-            speed: fake.isActive ? fake.speed : model.speed,
+            speed: fake.isActive ? (noOBD?.speed(base: fake.speed) ?? fake.speed) : (noOBD?.speed(base: model.speed) ?? model.speed),
             obd: fake.isActive ? fake.obd : HUDOBD.from(link: link?.state, everConnected: model.obdEverConnected),
             isLive: isSelected && scenePhase == .active,
             follow: $model.follow,
@@ -132,8 +136,13 @@ struct MapScreen: View {
             hasActiveRecording: fake.isActive ? fake.recording : MapRecordingControl.isActive(session.state),
             statusLine: fake.isActive
                 ? (fake.banner ? AnyView(NavigateStatusLabel(status: .waitingForOBD(secondsLeft: 272)))
-                    : fake.calibrating ? AnyView(NavigateStatusLabel(status: .calibrating(secondsLeft: 24))) : nil)
-                : (status.text == nil ? nil : AnyView(MapNavigateStatusLine(session: session)))
+                    : fake.calibrating ? AnyView(NavigateStatusLabel(status: .calibrating(secondsLeft: 24)))
+                    : fake.noOBD.map { AnyView(NavigateStatusLabel(status: .noOBD(uncertain: $0.uncertain))) })
+                : (status.text == nil ? nil : AnyView(MapNavigateStatusLine(session: session))),
+            noOBD: noOBD,
+            onPositionUncertain: { [voice] uncertain, run in
+                voice.noteUncertain(uncertain, run: run, enabled: speaksGPSChanges)
+            }
         )
         .onReceive(NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)) { _ in
             thermal = ProcessInfo.processInfo.thermalState
@@ -413,6 +422,10 @@ struct GPSMapView: View {
     var hasActiveRecording = false
     /// Navigate's calibration / OBD-lost banner (UX-1), in the bottom-left zone; nil when it has no text.
     var statusLine: AnyView?
+    /// UX-7: set during a no-OBD run (the estimate, the uncertain state); nil otherwise.
+    var noOBD: NoOBDDisplay?
+    /// The uncertain state changed (voice); the run is the no-OBD run's generation, nil without one.
+    var onPositionUncertain: (Bool, Int?) -> Void = { _, _ in }
 
     @Environment(\.colorScheme) private var scheme
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -497,7 +510,9 @@ struct GPSMapView: View {
         offerShown: Bool = false,
         recordingControl: AnyView? = nil,
         hasActiveRecording: Bool = false,
-        statusLine: AnyView? = nil
+        statusLine: AnyView? = nil,
+        noOBD: NoOBDDisplay? = nil,
+        onPositionUncertain: @escaping (Bool, Int?) -> Void = { _, _ in }
     ) {
         self.track = track
         self.latest = latest
@@ -539,6 +554,8 @@ struct GPSMapView: View {
         self.recordingControl = recordingControl
         self.hasActiveRecording = hasActiveRecording
         self.statusLine = statusLine
+        self.noOBD = noOBD
+        self.onPositionUncertain = onPositionUncertain
         self._toast = State(initialValue: initialToast)
     }
 
@@ -570,7 +587,7 @@ struct GPSMapView: View {
             }
             .onChange(of: HeadingInputs(
                 fix: latest, bearing: bearing, frozen: isStationary,
-                headingUp: headingUp, following: follow.isFollowing, speedKmh: speed.kmh
+                headingUp: headingUp, following: follow.isFollowing, speedKmh: speed.measuredKmh
             ), initial: true) { _, new in
                 inputs = new
             }
@@ -700,6 +717,8 @@ struct GPSMapView: View {
         // Top-left card (UX-32): the only thing at the top.
         .overlay(alignment: .topLeading) { hudCard }
         .onChange(of: gpsHUD, initial: true) { _, state in onGPSState(state, gpsVoiceRun) }
+        // UX-7: "Position uncertain", once per episode, only during a no-OBD run.
+        .onChange(of: uncertainVoice, initial: true) { _, state in onPositionUncertain(state.uncertain, state.run) }
         // R76.2-1: the voice takes a run's baseline only once the state is that run's own.
         .onChange(of: gpsVoiceRun) { _, _ in onGPSState(gpsHUD, gpsVoiceRun) }
         // A new run: the previous run's engine state must not show for even one frame.
@@ -760,6 +779,16 @@ struct GPSMapView: View {
     private var gpsHUD: HUDGPS {
         MapHUDState.gpsState(
             stale: stale, switchedOff: !gpsSwitchOn, engine: estimate?.gps, currentRun: runGeneration)
+    }
+
+    private struct UncertainVoice: Equatable {
+        var uncertain: Bool
+        var run: Int?
+    }
+
+    private var uncertainVoice: UncertainVoice {
+        noOBD == nil ? UncertainVoice(uncertain: false, run: nil)
+            : UncertainVoice(uncertain: noOBD?.uncertain ?? false, run: runGeneration)
     }
 
     private var gpsVoiceRun: Int? {
@@ -900,7 +929,7 @@ struct GPSMapView: View {
                 if let estimate {
                     NavOverlay(
                         feed: estimate, headingUp: headingUp, cameraHeading: cameraHeading, showEdge: showNavStats,
-                        dark: scheme == .dark)
+                        dark: scheme == .dark, uncertain: noOBD?.uncertain ?? false)
                 }
                 if let latest, let band = AccuracyBand(accuracy: latest.horizontalAccuracy) {
                     let c = color(band, stale: stale)
@@ -1356,6 +1385,8 @@ private struct NavOverlay: MapContent {
     var showEdge: Bool
     /// Explicit colours per scheme: MapKit overlays ignore dynamic ones.
     var dark: Bool
+    /// UX-7: no accepted fix for 120 s in a no-OBD run: dashed ellipse, dimmed dot.
+    var uncertain = false
 
     var body: some MapContent {
         if let edge = RoadDebugOverlay.edge(enabled: showEdge, points: feed.matchedEdge) {
@@ -1370,12 +1401,15 @@ private struct NavOverlay: MapContent {
         if let nav = feed.display {
             if NavLayers.showEllipse(nav) {
                 MapPolygon(coordinates: EllipsePolygon.ring(nav).map(\.coordinate))
-                    .foregroundStyle(Color.blue.opacity(0.15))
-                    .stroke(Color.blue.opacity(0.8), lineWidth: 2)
+                    .foregroundStyle(Color.blue.opacity(uncertain ? 0.06 : 0.15))
+                    .stroke(
+                        Color.blue.opacity(uncertain ? 0.55 : 0.8),
+                        style: StrokeStyle(lineWidth: 2, dash: uncertain ? [8, 6] : []))
             }
             if NavLayers.showDot(nav) {
                 Annotation("", coordinate: nav.position.coordinate) {
                     NavMarker(nav: nav, headingUp: headingUp, cameraHeading: cameraHeading)
+                        .opacity(uncertain ? 0.45 : 1)
                         .accessibilityHidden(true)
                 }
             }

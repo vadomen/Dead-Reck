@@ -66,6 +66,12 @@ struct MapHUDCard<Extra: View, Recording: View>: View {
                         Text("km/h")
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(HUDColors.muted)
+                        // UX-7: an estimate is marked, never styled as a measurement.
+                        if let note = state.speedNote {
+                            Text(note)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(HUDColors.muted)
+                        }
                         extra()
                     }
                 }

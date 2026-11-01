@@ -89,6 +89,33 @@ struct GPSPhraseTracker: Equatable, Sendable {
     }
 }
 
+/// UX-7: one spoken line per "position uncertain" episode of a no-OBD run.
+/// An episode starts when the state turns uncertain and ends at the next
+/// accepted fix or pin; two episodes are at least the 120 s threshold apart,
+/// so no 5 minute limiter is applied (it would swallow a real second episode).
+struct PositionUncertainTracker: Equatable, Sendable {
+    private var previous = false
+    private var run: Int?
+
+    /// True when the line is due. `run` is the live no-OBD run's generation, nil
+    /// when none (Stop, a restart with OBD, no run): that resets the tracker, so
+    /// the next run starts certain. A new run's state is its own baseline of
+    /// "certain": a run first seen already uncertain speaks once.
+    mutating func note(_ uncertain: Bool, run: Int?) -> Bool {
+        guard let run else {
+            previous = false
+            self.run = nil
+            return false
+        }
+        if run != self.run {
+            self.run = run
+            previous = false
+        }
+        defer { previous = uncertain }
+        return uncertain && !previous
+    }
+}
+
 /// At most once per `minInterval` per phrase; phrases are independent.
 struct GPSPhraseLimiter: Equatable, Sendable {
     static let minInterval: TimeInterval = 300
@@ -114,6 +141,7 @@ protocol GPSSpeaking: AnyObject {
 final class GPSVoiceAnnouncer {
     private var tracker = GPSPhraseTracker()
     private var limiter = GPSPhraseLimiter()
+    private var uncertainTracker = PositionUncertainTracker()
     private let speaker: any GPSSpeaking
     private let now: () -> TimeInterval
 
@@ -129,6 +157,16 @@ final class GPSVoiceAnnouncer {
               limiter.allow(phrase, now: now()) else { return nil }
         speaker.speak(phrase.spoken)
         return phrase
+    }
+
+    /// UX-7: "Position uncertain", once per episode of a no-OBD run, when the
+    /// Settings switch is on. Fed every state (also with the switch off), with
+    /// the no-OBD run's generation or nil. Returns whether it spoke.
+    @discardableResult
+    func noteUncertain(_ uncertain: Bool, run: Int?, enabled: Bool) -> Bool {
+        guard uncertainTracker.note(uncertain, run: run), enabled else { return false }
+        speaker.speak(String(localized: "Position uncertain"))
+        return true
     }
 }
 
