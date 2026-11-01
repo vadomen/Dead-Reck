@@ -199,8 +199,8 @@ struct NavigateStatusLabel: View {
     // MARK: No-OBD run (UX-7)
 
     /// The persistent honest label, "Position uncertain" under it when it
-    /// applies, and the Stop control (44 pt tall). When the row does not fit
-    /// (large type), Stop drops under the text.
+    /// applies, and the Stop control (48 pt). When the label does not fit on one
+    /// line it wraps beside the Stop button.
     private var noOBDCard: some View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 10) {
@@ -209,13 +209,11 @@ struct NavigateStatusLabel: View {
                 Spacer(minLength: 0)
                 stopButton
             }
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .top, spacing: 10) {
-                    icon
-                    noOBDLabels.fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 0)
-                }
-                HStack { Spacer(minLength: 0); stopButton }
+            HStack(spacing: 10) {
+                icon
+                noOBDLabels.fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                stopButton
             }
             .padding(.vertical, 8)
         }
