@@ -567,8 +567,8 @@ Items 1-7 above (demo pipeline) and the airplane-mode check (item 1) cover the d
 4. **Adapter connects mid-drive:** a seeded OBD restart without a visible jump; "Restored · not yet confirmed" until a fix decides.
 5. **Stop:** after Stop, lock/unlock does not restart the run; background → foreground does (after 30 s).
 6. **Relaunch:** relaunching the app restores the no-OBD estimate (within 24 h).
-7. **Battery, 1 h no-OBD Navigate** (screen on, on the mount): note charge, thermal state and memory (sim estimate: see REPORT_47).
-8. **OBD auto-stop, then no-OBD:** an OBD run auto-stops (5 min without `polling`) with the app in the foreground on the mount; the no-OBD run starts 30 s later and runs until stopped: battery over 1 h (sim estimate: see REPORT_47).
+7. **Battery, 1 h no-OBD Navigate** (screen on, on the mount): note charge, thermal state and memory (simulator model: ~8–22 %/h on a 16 Pro Max, same as an OBD run; also 1 h with the screen locked, not measurable in the simulator).
+8. **OBD auto-stop, then no-OBD:** an OBD run auto-stops (5 min without `polling`) with the app in the foreground on the mount; the no-OBD run starts 30 s later and runs until stopped: battery over 1 h (simulator: the switch confirmed, auto-stop at 300 s, no-OBD run 31 s later; CPU as item 7).
 
 ### Added by run 60, push_packs.sh app guard (not verified on a device)
 1. **Process list shape:** with the phone connected and unlocked and the app open, save `xcrun devicectl device info processes --device <id> --json-output -` and check that `result.runningProcesses[].executable` holds a `file:///…/DriveLogger.app/DriveLogger` URL (the parser's shape was inferred from devicectl's strings, never seen in real output). If the shape differs, the guard refuses ("cannot tell whether the app is running"); fix the parser rather than using `--force` by habit.

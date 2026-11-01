@@ -3179,7 +3179,7 @@ and nothing is written by Navigate. Not verified on a device (PLAN §6
   73 of 73 prompt-44 `--obd use` cells byte-identical to before, and the golden
   tests `NavigationOBDGoldenTests` (Core) and `NavigateOBDGoldenAppTests`
   (through `NavigationService`, captured before any app edit) pass.
-- **Numbers.** (sim estimate: see REPORT_47)
+- **Numbers.** Release simulator, 10 min each, foreground on the map: app CPU 23.6 % of one Mac core for a no-OBD run, 23.7 % for a no-OBD run after an OBD auto-stop, 24.1 % for an OBD run; footprint flat at 116–137 MB; engine ~0.17 ms per step. The engine is ~0.2 % of a core; the moving map (MapKit rendering, SwiftUI updates) is the cost. Modelled device estimate (not measured): ~8–22 %/h on a 16 Pro Max in the foreground, screen on, the same with or without OBD; screen-off background not measurable in the simulator. PLAN §6 is the gate.
 
 ## Known limitations and options
 
