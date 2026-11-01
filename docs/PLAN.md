@@ -560,6 +560,16 @@ Items 1-7 above (demo pipeline) and the airplane-mode check (item 1) cover the d
 8. **Snap time:** the time for one double tap to snap (Core measured 0.08 ms mean, 0.29 ms worst on a Mac; device unmeasured) is not noticeable; note it from the sidecar or a stopwatch.
 9. **Parked phone, no OBD, no fixes:** a phone without OBD, parked with no fixes arriving (for example indoors), holds still: the estimate does not drift away.
 
+### Added by UX-7, Navigate without an OBD adapter (prompt 47, branch `nav-noobd`) — not verified on a device
+1. **Auto-start:** with no adapter, the app in the foreground and Location granted, a no-OBD run starts after 30 s, not before; on a fresh install not before Location is granted. Label "No OBD — lower accuracy" with Stop; estimated speed chip "≈N km/h · estimated" (only when no measured speed).
+2. **Pin:** a double tap during a no-OBD run places and snaps a pin (prompt 46); with no engine running it is still ignored.
+3. **No fix for 2 min** (garage or tunnel): "Position uncertain" (dimmed marker, dashed ellipse, one voice line); the next fix or pin clears it.
+4. **Adapter connects mid-drive:** a seeded OBD restart without a visible jump; "Restored · not yet confirmed" until a fix decides.
+5. **Stop:** after Stop, lock/unlock does not restart the run; background → foreground does (after 30 s).
+6. **Relaunch:** relaunching the app restores the no-OBD estimate (within 24 h).
+7. **Battery, 1 h no-OBD Navigate** (screen on, on the mount): note charge, thermal state and memory (sim estimate: see REPORT_47).
+8. **OBD auto-stop, then no-OBD:** an OBD run auto-stops (5 min without `polling`) with the app in the foreground on the mount; the no-OBD run starts 30 s later and runs until stopped: battery over 1 h (sim estimate: see REPORT_47).
+
 ### Added by run 60, push_packs.sh app guard (not verified on a device)
 1. **Process list shape:** with the phone connected and unlocked and the app open, save `xcrun devicectl device info processes --device <id> --json-output -` and check that `result.runningProcesses[].executable` holds a `file:///…/DriveLogger.app/DriveLogger` URL (the parser's shape was inferred from devicectl's strings, never seen in real output). If the shape differs, the guard refuses ("cannot tell whether the app is running"); fix the parser rather than using `--force` by habit.
 2. **Suspended app:** leave the app in the app switcher (not swiped away) and run `scripts/push_packs.sh --dry-run`: Guard 1 reports it would refuse. Swipe it away: Guard 1 is clear.

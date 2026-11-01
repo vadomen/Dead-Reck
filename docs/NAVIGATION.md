@@ -3114,6 +3114,73 @@ Parked tests: no fixes 41.3 m worst; ±200 m tower jitter 135.4 m mean (= prompt
 UX-7 note (user, 2026-10-30): show "position uncertain" when no fix has arrived
 for N minutes in no-OBD mode (BACKLOG_UX UX-7).
 
+### Live without OBD (UX-7, prompt 47)
+
+Navigate runs without an adapter: network/GNSS fixes, roads and the IMU, no
+OBD speed. App side only plus the items below; no `LogFormatVersion` change
+and nothing is written by Navigate. Not verified on a device (PLAN §6
+"Prompt 47").
+
+- **Config.** `NavigationConfig.noOBDLive(seed:)` = the default config with
+  `noOBDFixSpeedMean` = 1 (its sub-keys at the prompt-46 defaults) and
+  `noOBDRobustNetworkFix` = 0 (robust off, as decided after NAV-NOOBD-B). Built
+  only by `LiveNavigationRun(... noOBD: true)`. Both keys act only until the
+  first OBD reply (`obdEverIngested`). The defaults are untouched: an OBD run's
+  config, and so its sidecar header, is `NavigationConfig(seed:)` as before.
+- **Position uncertain.** `LiveNavigationRun.lastFixOrPinT` is the arrival
+  time of the latest input during whose `ingest` `counters.fixesUsed` or
+  `counters.manualFixes` rose; it starts at the run's first input.
+  `positionUncertain(at:)` is true once `positionUncertainAfterS` = 120 s
+  (a constant of the run, not a `NavigationConfig` key) pass without one.
+  Counts: a location fix (GNSS or network) that initialised or updated the
+  cloud; a held stale fix applied when a later OBD 0 decides it; a pin with a
+  valid position. Does not count: an invalid fix, a fix withheld by the GPS
+  switch, a stale fix ignored, held or dropped, a GNSS fix rejected off road,
+  a fix older than a restored prior's save, any input rejected as a time jump.
+  Bookkeeping only: no estimate, line or config changes. The app shows
+  "Position uncertain" (dimmed marker, dashed ellipse, one voice line); the
+  next accepted fix or pin clears it.
+- **Seeded restart.** When the adapter reaches `polling` during a no-OBD run,
+  the run ends and a fresh OBD run starts in the same main-actor step, its
+  engine seeded with `NavigationPrior.noOBDRestart(from:at:clock:bootSessionID:)`:
+  the no-OBD run's in-memory estimate (the capture the Navigate → Record
+  hand-over uses), `handOver` false (the normal unconfirmed-restore rule: a
+  fix or pin may reject it, the UI says "Restored · not yet confirmed"), class
+  from `restoreClass(engineOff: false)` (`.moving` when the run never had an
+  OBD reply, unless it was itself seeded from a parked or standing-stop prior
+  not yet cleared by the IMU), grown for the gap like any restore. nil (a
+  fresh start) when the state is invalid or its age is outside -5 s...24 h.
+- **State machine.** `NavigateState.runningNoOBD` beside `off`, `calibrating`,
+  `running`, `waitingForOBD`; the full transition table is the doc comment in
+  `App/Sources/Recording/NavigateMode.swift`. Summary: `off` -> `runningNoOBD`
+  when the start rule fires (no calibration phase); `runningNoOBD` -> OBD
+  `calibrating`/`running` (seeded restart) when the link reaches `polling`;
+  other link changes do nothing; the user's Stop -> `off`; Record's Start,
+  `willTerminate`, `disableNavigate()`, the demo's hold -> `off`. No time or
+  parking auto-stop.
+- **Start rule.** A 30 s timer (`NavigateConfiguration.noOBDStartAfter`,
+  `ContinuousClock`) runs while all hold: Navigate enabled; no Navigate run;
+  no recording starting, running or ending; scene active (foreground);
+  Location granted (When In Use or Always; strictly: not denied, restricted
+  or not yet asked); not held for the demo; link not `polling`; no user Stop
+  pending. Any break cancels it; when all hold again it restarts from 0.
+  After an OBD run's auto-stop (5 min without `polling`) the rule applies
+  again, in the foreground only.
+- **Stop.** `stopNoOBDNavigate()` ends the run and keeps the rule off until
+  the app has been in the background and is active again, or an adapter
+  reaches `polling`. Lock/unlock does not re-arm it.
+- **Record from a no-OBD run** uses the prompt-40 hand-over unchanged.
+- **Save and restore** work as for OBD runs (UX-20): the estimate is saved at
+  the run's end and restored for up to 24 h. The invalidate-if-driven rule
+  (`OBDOdometer.metres > 0`) never fires without OBD distance, so a saved
+  no-OBD estimate is not invalidated by driving; the age limit and the first
+  fix decide.
+- **OBD runs are bit-identical.** The OBD config and estimates are unchanged:
+  73 of 73 prompt-44 `--obd use` cells byte-identical to before, and the golden
+  tests `NavigationOBDGoldenTests` (Core) and `NavigateOBDGoldenAppTests`
+  (through `NavigationService`, captured before any app edit) pass.
+- **Numbers.** (sim estimate: see REPORT_47)
+
 ## Known limitations and options
 
 - **Heading convergence with tower fixes only** (manual: 6.8 km against a
