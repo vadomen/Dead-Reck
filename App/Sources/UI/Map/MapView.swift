@@ -74,13 +74,17 @@ struct MapScreen: View {
     @AppStorage(GPSVoiceSetting.key) private var speaksGPSChanges = false
     @State private var voice = GPSVoiceAnnouncer()
 
+    /// R85.1-1: the Start control, never in the demo (the session also says no).
+    private var canStartNoOBD: Bool { session.canStartNoOBDNavigate && demo == nil }
+
     var body: some View {
         // Without OBD, Navigate shows the plain GPS position only (UX-1 (d)):
         // no dead-reckoning dot or ellipse.
         let status = NavigateStatus.make(
             navigate: session.navigateState, recording: session.state, startedAt: session.navigateStartedAt,
             timings: session.navigateTimings ?? NavigateConfiguration(), now: .now,
-            noOBD: session.noOBDNavigation, noOBDStartArmedAt: session.noOBDStartArmedAt)
+            noOBD: session.noOBDNavigation, noOBDStartArmedAt: session.noOBDStartArmedAt,
+            canStartNoOBD: canStartNoOBD)
         // DEBUG `-uiFakeHUD …`: synthetic HUD inputs (screenshots).
         let fake = Self.fakes
         // UX-7: the no-OBD run's estimate and uncertain state (nil in any other state).
@@ -138,7 +142,7 @@ struct MapScreen: View {
                 ? (fake.banner ? AnyView(NavigateStatusLabel(status: .waitingForOBD(secondsLeft: 272)))
                     : fake.calibrating ? AnyView(NavigateStatusLabel(status: .calibrating(secondsLeft: 24)))
                     : fake.noOBD.map { AnyView(NavigateStatusLabel(status: .noOBD(uncertain: $0.uncertain))) })
-                : (status.text == nil ? nil : AnyView(MapNavigateStatusLine(session: session))),
+                : (status.text == nil ? nil : AnyView(MapNavigateStatusLine(session: session, canStartNoOBD: canStartNoOBD))),
             noOBD: noOBD,
             onPositionUncertain: { [voice] uncertain, run in
                 voice.noteUncertain(uncertain, run: run, enabled: speaksGPSChanges)

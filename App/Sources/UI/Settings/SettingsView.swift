@@ -42,8 +42,9 @@ enum SettingsRows {
         let lost = GPSPhrase.lost.spoken(language: language)
         let back = GPSPhrase.back.spoken(language: language)
         let off = GPSPhrase.off.spoken(language: language)
+        let uncertain = GPSPhrase.uncertainSpoken(language: language)
         var text = LocalizedStringResource(
-            "While navigating or recording, says \"\(lost)\", \"\(back)\" or \"\(off)\", at most once every 5 minutes each.")
+            "While navigating or recording, says \"\(lost)\", \"\(back)\" or \"\(off)\", at most once every 5 minutes each. Without OBD, also says \"\(uncertain)\" when the position becomes uncertain.")
         if let language { text.locale = Locale(identifier: language) }
         return String(localized: text)
     }

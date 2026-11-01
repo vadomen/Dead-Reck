@@ -42,6 +42,16 @@ enum GPSPhrase: String, CaseIterable, Hashable, Sendable {
     }
 }
 
+extension GPSPhrase {
+    /// The no-OBD run's "Position uncertain" (once per episode, `noteUncertain`);
+    /// not a case, it has its own tracker. Quoted by the Settings footer.
+    static func uncertainSpoken(language: String?) -> String {
+        var r = LocalizedStringResource("Position uncertain")
+        if let language { r.locale = Locale(identifier: language) }
+        return String(localized: r)
+    }
+}
+
 /// Which phrase, if any, a new HUD GPS state calls for. One per run; it is
 /// reset whenever no run is live, so Stop and the next Start's first fix
 /// never speak.
@@ -165,7 +175,7 @@ final class GPSVoiceAnnouncer {
     @discardableResult
     func noteUncertain(_ uncertain: Bool, run: Int?, enabled: Bool) -> Bool {
         guard uncertainTracker.note(uncertain, run: run), enabled else { return false }
-        speaker.speak(String(localized: "Position uncertain"))
+        speaker.speak(GPSPhrase.uncertainSpoken(language: nil))
         return true
     }
 }

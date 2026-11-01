@@ -14,11 +14,27 @@ struct NoOBDMapTests {
     func status(
         _ navigate: NavigateState, recording: RecordingState = .idle,
         noOBD: NoOBDNavigationStatus? = nil, armedAt: ContinuousClock.Instant? = nil,
-        timings custom: NavigateConfiguration? = nil, after: Duration = .zero
+        timings custom: NavigateConfiguration? = nil, after: Duration = .zero, canStart: Bool = false
     ) -> NavigateStatus {
         NavigateStatus.make(
             navigate: navigate, recording: recording, startedAt: nil, timings: custom ?? timings,
-            now: t0 + after, noOBD: noOBD, noOBDStartArmedAt: armedAt)
+            now: t0 + after, noOBD: noOBD, noOBDStartArmedAt: armedAt, canStartNoOBD: canStart)
+    }
+
+    @Test("The stopped card (Start) shows only from canStartNoOBD, with Navigate off and no recording")
+    func stoppedCard() {
+        let s = status(.off, canStart: true)
+        #expect(s == .noOBDStopped && s.hasStart && !s.hasStop && !s.showsEstimate)
+        #expect(s.text == "Navigation without OBD stopped")
+        #expect(status(.off) == .needsOBD, "not held: no Start")
+        #expect(!status(.off, canStart: false).hasStart)
+        #expect(status(.off, armedAt: t0, canStart: true) == .noOBDStopped)
+        for recording in [RecordingState.calibrating, .recording, .stopping] {
+            #expect(status(.off, recording: recording, canStart: true) == .hidden, "recording: no Start")
+        }
+        for nav in [NavigateState.running, .runningNoOBD, .calibrating] {
+            #expect(!status(nav, canStart: true).hasStart, "a run: no Start")
+        }
     }
 
     // MARK: Card

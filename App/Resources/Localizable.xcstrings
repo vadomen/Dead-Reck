@@ -2306,12 +2306,32 @@
         }
       }
     },
-    "Navigation without OBD starts again when you reopen the app or the adapter connects." : {
+    "It stays off until you tap Start, the adapter connects, or the app is reopened later." : {
       "localizations" : {
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Навігація без OBD запуститься знову, коли ви повторно відкриєте застосунок або підключиться адаптер."
+            "value" : "Вона лишається вимкненою, доки ви не натиснете «Старт», не підключиться адаптер або ви не відкриєте застосунок пізніше."
+          }
+        }
+      }
+    },
+    "Navigation without OBD stopped" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Навігацію без OBD зупинено"
+          }
+        }
+      }
+    },
+    "Start navigation without OBD" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запустити навігацію без OBD"
           }
         }
       }
@@ -4453,12 +4473,12 @@
         }
       }
     },
-    "While navigating or recording, says \"%@\", \"%@\" or \"%@\", at most once every 5 minutes each." : {
+    "While navigating or recording, says \"%@\", \"%@\" or \"%@\", at most once every 5 minutes each. Without OBD, also says \"%@\" when the position becomes uncertain." : {
       "localizations" : {
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Під час навігації або запису озвучує «%1$@», «%2$@» чи «%3$@» — не частіше ніж раз на 5 хвилин кожне."
+            "value" : "Під час навігації або запису озвучує «%1$@», «%2$@» чи «%3$@» — не частіше ніж раз на 5 хвилин кожне. Без OBD також озвучує «%4$@», коли позиція стає невизначеною."
           }
         }
       }
