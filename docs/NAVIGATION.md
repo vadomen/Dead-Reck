@@ -3172,14 +3172,17 @@ and nothing is written by Navigate. Not verified on a device (PLAN §6
   `NavigateConfiguration.noOBDStopReleaseAfterBackground` = 1800 s (then the
   start rule re-arms when the scene becomes `.active`). Lock/unlock (iOS
   reports it as background) and app switching under 30 min never restart the
-  run. Meanwhile the map shows "Navigation without OBD stopped" with a Start
+  run (unless iOS ended the app in the background: the next open is then a
+  cold launch). Meanwhile the map shows "Navigation without OBD stopped" with a Start
   button: `startNoOBDNavigate()` (allowed when `canStartNoOBDNavigate`) starts
   at once, without the 30 s wait, and never prompts for Location.
 - **Screen.** A no-OBD run keeps the screen awake only within
   `noOBDScreenAwakeAfterMotion` = 300 s of motion (engine estimated speed
   above `noOBDMotionSpeedKmh` = 10 km/h and position not uncertain; the run's
-  start counts as motion), then normal iOS auto-lock applies. OBD Navigate and
-  Record are unchanged.
+  start counts as motion), then normal iOS auto-lock applies. The screen also
+  stays awake while the 30 s start countdown is armed, so auto-lock cannot lock
+  the phone and cancel it (R85.2-1); a cancelled countdown releases it. OBD
+  Navigate and Record are unchanged.
 - **Voice.** "Position uncertain" is quoted in the Settings voice footer.
 - **Record from a no-OBD run** uses the prompt-40 hand-over unchanged.
 - **Save and restore** work as for OBD runs (UX-20): the estimate is saved at

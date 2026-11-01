@@ -1292,6 +1292,16 @@ Reviewers: three parallel opus reviewers on disjoint sets: A (Core no-OBD run, N
 | R85.1-4 | MINOR | (B) `ReferenceLocationSource.isLocationGranted` untested. | CONFIRMED | Fixed b6523a1 (`LocationGrantTests/grant`), since trivial. |
 | R85.1-5 | MINOR | (C) The Settings voice footer did not quote "Position uncertain". | CONFIRMED | Fixed b1224f9 (`LocalizationTests.footerQuotesEqualSpoken`). |
 | R85.1-6 | MINOR | (B) No test for a non-polling link change during `runningNoOBD`. | CONFIRMED | Fixed b6523a1 (`nonPollingLinkChangeKeepsNoOBDRun`). |
-| R85.1-7 | MINOR | (A) `App/Sources/Recording/NavigationRestore.swift:562` `noOBDRestart` re-bases savedT to the capture time, so after a seeded restart the "Restored · … · not yet confirmed" line shows "<1 min ago" even when the no-OBD run itself held an unconfirmed restore many hours old. | DEFERRED | See BACKLOG R85.1-7. |
+| R85.1-7 | MINOR | (A) `Core/Sources/DriveLoggerCore/Navigation/NavigationRestore.swift:561` (`NavigationPrior.noOBDRestart`) `noOBDRestart` re-bases savedT to the capture time, so after a seeded restart the "Restored · … · not yet confirmed" line shows "<1 min ago" even when the no-OBD run itself held an unconfirmed restore many hours old. | DEFERRED | See BACKLOG R85.1-7. |
+
+### Round 2
+
+Reviewers: two parallel opus reviewers on disjoint sets: A (Core no-OBD run, NavigationService, state machine, round-1 fixes b6523a1/de96410), B (map UI, voice, strings, docs, project; round-1 fixes b1224f9/2279ee3).
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R85.2-1 | MAJOR | (A) `RecordingSession.updateIdleTimer` kept the screen awake only for a recording or a run, so iOS auto-lock (30 s, forced by Low Power Mode) could lock the phone during the 30 s no-OBD start countdown and cancel it; every unlock re-armed the same race. | CONFIRMED | Fixed 2ceb5f1 (screen awake while the countdown is armed; re-checked when it arms or cancels; tests `screenCountdownAtLaunch`, `screenCountdownAfterAutoStop`, `screenCountdownAfterBackgroundRelease`, `screenCountdownCancelled`; all four fail with the fix reverted). |
+| R85.2-2 | MINOR | (B) The user-Stop hold lives in memory only; if iOS ends the suspended app within the 30 min, the next open is a cold launch and the auto-start re-arms, so docs saying lock/unlock "never" restarts overstate it. | DEFERRED | Docs wording fixed this round (NAVIGATION, PLAN §6, BACKLOG_UX UX-7); persisting the hold with the background time: BACKLOG R85.2-2 (user decision / next UX-7 pass). |
+| R85.2-3 | MINOR | (B) BACKLOG/REVIEW_LOG R85.1-7 cite `App/Sources/Recording/NavigationRestore.swift:562`; the function is `NavigationPrior.noOBDRestart` at `Core/Sources/DriveLoggerCore/Navigation/NavigationRestore.swift:561`. | CONFIRMED | Fixed this round (path corrected in both). |
 
 Note on R84.1-8 (deferred): prompt 47 makes the PLAN.md parked-phone no-OBD check runnable on device (a no-OBD run uses `noOBDFixSpeedMean` = 1); BACKLOG row updated, still DEFERRED for the wording parts.
