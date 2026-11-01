@@ -64,6 +64,16 @@ import Foundation
 /// 5 min stay awake: the driver has just opened the app and the engine has
 /// no speed until its fixes span 10 s). Evaluated on the run's 1 s live
 /// timer, on `RecordingSession`'s injectable `now` (`ContinuousClock`).
+/// The start rule's countdown (R85.2-1) also keeps the screen awake while
+/// it is armed (`noOBDStartArmedAt` non-nil): it needs `.active` for the
+/// whole 30 s, and iOS auto-lock (30 s at its shortest, forced by Low
+/// Power Mode, counted from the last touch) would otherwise land at or
+/// before the start and cancel it, on every unlock, and after an OBD
+/// auto-stop on the mount. Cancelling the countdown (background, a
+/// recording starting, the demo's hold, Location refused, Navigate
+/// disabled, the link polling) releases it; when it fires, the run's own
+/// window takes over in the same step. A user-Stop hold arms no countdown,
+/// so it never keeps the screen awake.
 ///
 /// | From | Event | To |
 /// |---|---|---|

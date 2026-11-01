@@ -633,6 +633,117 @@ struct NavigateNoOBDTests {
         #expect(rig.idle.values.last == false)
     }
 
+    // R85.2-1: the countdown needs `.active` for its whole window, and
+    // iOS auto-lock (30 s at its shortest) would cancel it.
+
+    /// The idle-timer values handed since index `from` (the arming).
+    static func idle(_ rig: NavigateRig, since from: Int) -> [Bool] {
+        Array(rig.idle.values[from...])
+    }
+
+    @Test("Screen: the start countdown keeps it awake while armed (launch → active), and the run takes over when it fires with no release in between")
+    func screenCountdownAtLaunch() async throws {
+        let rig = Self.rig()
+        #expect(rig.idle.values.last != true, "nothing armed yet")
+        let before = rig.idle.values.count
+        rig.session.enableNavigate(Self.config(after: .milliseconds(600)))
+        #expect(rig.session.noOBDStartArmedAt != nil && rig.idle.values.last == true, "armed: awake")
+        let generation = try await Self.noOBDRun(rig)
+        #expect(rig.idle.values.last == true)
+        #expect(Self.idle(rig, since: before) == [true], "handed to the run's window: never released")
+        rig.session.disableNavigate()
+        #expect(rig.idle.values.last == false)
+        #expect(await R.ended(rig.tee.service, generation))
+    }
+
+    @Test("Screen: after an OBD run auto-stops in the foreground the countdown keeps it awake (no release at the stop), then the no-OBD run does")
+    func screenCountdownAfterAutoStop() async throws {
+        let rig = Self.rig()
+        rig.link.state = .polling(protocolNumber: "A6", voltage: 12.4)
+        await rig.connect(speed: 0)
+        rig.session.enableNavigate(Self.config(after: .milliseconds(600), autoStop: .milliseconds(300)))
+        #expect(Self.isOBDRun(rig.session.navigateState) && rig.idle.values.last == true)
+        let before = rig.idle.values.count - 1
+        rig.link.state = .idle
+        #expect(await eventually(5) { rig.session.navigateState == .off })
+        #expect(rig.session.noOBDStartArmedAt != nil && rig.idle.values.last == true, "armed after the stop: awake")
+        let generation = try await Self.noOBDRun(rig)
+        #expect(Self.idle(rig, since: before) == [true], "OBD run → countdown → no-OBD run: never released")
+        rig.session.disableNavigate()
+        #expect(rig.idle.values.last == false)
+        #expect(await R.ended(rig.tee.service, generation))
+    }
+
+    @Test("Screen: a user-Stop hold arms no countdown, so it is not kept awake (also after an unlock under 30 min); 30 min or more in the background re-arms it on .active and keeps it awake until the run takes over")
+    func screenCountdownAfterBackgroundRelease() async throws {
+        let rig = Self.rig()
+        rig.session.enableNavigate(Self.config(after: .milliseconds(600)))
+        let first = try await Self.noOBDRun(rig)
+        rig.session.stopNoOBDNavigate()
+        #expect(rig.session.noOBDStartArmedAt == nil && rig.idle.values.last == false, "held, no countdown: released")
+        #expect(await R.ended(rig.tee.service, first))
+        rig.session.handleScenePhase(.background)
+        rig.clock.advance(.seconds(10 * 60))
+        rig.session.handleScenePhase(.inactive)
+        rig.session.handleScenePhase(.active)
+        #expect(rig.session.noOBDStoppedByUser && rig.idle.values.last == false, "unlock under 30 min: still held, not awake")
+
+        rig.session.handleScenePhase(.background)
+        rig.clock.advance(.seconds(30 * 60))
+        rig.session.handleScenePhase(.inactive)
+        #expect(rig.idle.values.last == false, "inactive: not armed yet")
+        let before = rig.idle.values.count
+        rig.session.handleScenePhase(.active)
+        #expect(rig.session.noOBDStartArmedAt != nil && rig.idle.values.last == true, "re-armed: awake")
+        let second = try await Self.noOBDRun(rig)
+        #expect(Self.idle(rig, since: before) == [true])
+        rig.session.disableNavigate()
+        #expect(await R.ended(rig.tee.service, second))
+    }
+
+    @Test("Screen: each condition cancelling the countdown releases it (a recording keeps it awake on its own; after the recording the countdown does again); re-armed → awake", arguments: Condition.allCases)
+    func screenCountdownCancelled(_ condition: Condition) async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let denied = FakeBackgroundSource(name: "fakeLocation")
+        let grant = FakeGrantSource(name: "fakeGrant")
+        let rig = Self.rig(scratch.store, extraSources: [denied, grant])
+        let window = Duration.milliseconds(600)
+        rig.session.enableNavigate(Self.config(after: window))
+        #expect(rig.session.noOBDStartArmedAt != nil && rig.idle.values.last == true)
+
+        switch condition {
+        case .background: rig.session.handleScenePhase(.background)
+        case .recording: try await rig.session.start(mount: "", vehicle: "", allowWithoutOBD: true, calibration: .zero)
+        case .demo: #expect(rig.session.holdForDemo())
+        case .locationDenied: denied.availability = SensorUnavailableReason.locationDenied.availability
+        case .locationNotGranted: grant.isLocationGranted = false
+        case .navigateDisabled: rig.session.disableNavigate()
+        }
+        #expect(rig.session.noOBDStartArmedAt == nil, "cancelled")
+        if condition == .recording {
+            #expect(rig.idle.values.last == true, "the recording's own hold")
+            await rig.session.stop()
+        } else {
+            #expect(rig.idle.values.last == false, "released")
+            try await Task.sleep(for: .milliseconds(900))
+            #expect(rig.idle.values.last == false && rig.session.navigateState == .off)
+            switch condition {
+            case .background: rig.session.handleScenePhase(.active)
+            case .recording: break
+            case .demo: rig.session.releaseDemoHold()
+            case .locationDenied: denied.availability = .available
+            case .locationNotGranted: grant.isLocationGranted = true
+            case .navigateDisabled: rig.session.enableNavigate(Self.config(after: window))
+            }
+        }
+        #expect(rig.session.noOBDStartArmedAt != nil && rig.idle.values.last == true, "armed again: awake")
+        let generation = try await Self.noOBDRun(rig)
+        rig.session.disableNavigate()
+        #expect(rig.idle.values.last == false)
+        #expect(await R.ended(rig.tee.service, generation))
+    }
+
     // MARK: Record
 
     @Test("Record started from a no-OBD run: the prompt-40 hand-over applies unchanged (navPrior row, the recording starts from it); after Stop the start rule brings the no-OBD run back")

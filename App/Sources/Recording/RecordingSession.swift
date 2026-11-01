@@ -1746,11 +1746,14 @@ final class RecordingSession {
     }
 
     /// Keeps the screen awake while a recording or an OBD Navigate session
-    /// exists, and while a no-OBD session has seen motion within
-    /// `noOBDScreenAwakeAfterMotion` (R85.1-2, `keepsScreenAwake`). Calls
-    /// `setIdleTimerDisabled` only when that changes.
+    /// exists, while a no-OBD session has seen motion within
+    /// `noOBDScreenAwakeAfterMotion` (R85.1-2, `keepsScreenAwake`), and
+    /// while the no-OBD start rule's countdown is armed (R85.2-1: an
+    /// auto-lock during the countdown would cancel it, `.active` being one
+    /// of its conditions). Calls `setIdleTimerDisabled` only when that
+    /// changes.
     private func updateIdleTimer() {
-        let wanted = recording != nil || navigate.map(keepsScreenAwake) == true
+        let wanted = recording != nil || navigate.map(keepsScreenAwake) == true || noOBDStartTimer != nil
         guard wanted != idleTimerDisabled else { return }
         idleTimerDisabled = wanted
         setIdleTimerDisabled(wanted)
@@ -2178,15 +2181,19 @@ final class RecordingSession {
     /// armed, and cancels it when one does not. Idempotent; called at every
     /// transition that can change a condition (Navigate start and end,
     /// enable/disable, Record active, scene phase, a link state change,
-    /// Location authorisation, the demo's hold).
+    /// Location authorisation, the demo's hold). R85.2-1: arming or
+    /// cancelling it re-evaluates the idle timer (the screen stays awake
+    /// while it is armed).
     private func updateNoOBDStartTimer() {
         // R85.1-1: the Start control, re-derived at the same transitions.
         let canStart = noOBDStoppedByUser && noOBDStartConditionsHold
         if canStart != canStartNoOBDNavigate { canStartNoOBDNavigate = canStart }
         guard noOBDStartRuleHolds, let delay = navigateConfiguration?.noOBDStartAfter else {
-            noOBDStartTimer?.cancel()
-            noOBDStartTimer = nil
             if noOBDStartArmedAt != nil { noOBDStartArmedAt = nil }
+            guard let timer = noOBDStartTimer else { return }
+            timer.cancel()
+            noOBDStartTimer = nil
+            updateIdleTimer()
             return
         }
         guard noOBDStartTimer == nil else { return }
@@ -2197,13 +2204,18 @@ final class RecordingSession {
             guard !Task.isCancelled, let self else { return }
             self.noOBDStartTimerFired()
         }
+        updateIdleTimer()
     }
 
+    /// The countdown ran out: the run starts if every condition still
+    /// holds (its own screen window takes over in the same step); if not,
+    /// the countdown's hold on the screen is released.
     private func noOBDStartTimerFired() {
         noOBDStartTimer = nil
         noOBDStartArmedAt = nil
         guard noOBDStartRuleHolds else {
             updateNoOBDStartTimer()
+            updateIdleTimer()
             return
         }
         // The live timer's first pass reads `noOBDNavigation` at once.
