@@ -52,6 +52,21 @@ import Foundation
 /// still in flight): `selectionLog`. These lines never change any other
 /// line.
 ///
+/// **Fix clock (UX-7, prompt 47).** `lastFixOrPinT` is the latest time the
+/// engine accepted a position measurement: the arrival of an input during
+/// whose `ingest` the engine's `counters.fixesUsed` (a location fix, GNSS
+/// or network, that initialised or updated the cloud; also a held stale
+/// fix applied when a later OBD 0 decides it) or `counters.manualFixes` (a
+/// pin with a valid position, which the engine always applies) increased.
+/// Not accepted, so not counted: an invalid fix, a fix withheld by the GPS
+/// switch, a stale fix ignored, held or dropped, a GNSS fix rejected off
+/// road, a fix older than a restored prior's save, any input rejected as a
+/// time jump. It starts at the run's first input (the run's start: the
+/// feed's 100 Hz motion arrives at once). `positionUncertain(at:)` is true
+/// once `positionUncertainAfterS` (120 s) pass without one. Bookkeeping
+/// only: it reads the counters around the engine call and changes no
+/// estimate, line or config.
+///
 /// Deterministic apart from the timing diagnostics: the same inputs, seed,
 /// config and attach point give the same lines, bit for bit.
 public struct LiveNavigationRun: Sendable {
@@ -87,6 +102,29 @@ public struct LiveNavigationRun: Sendable {
     /// Which `roadsSelection` lines were written, and the repeats pending.
     public private(set) var selectionLog = NavSidecar.RoadsSelectionLog()
 
+    /// The latest accepted fix or pin (see "Fix clock" above); the run's
+    /// first input until one; nil before any input.
+    public private(set) var lastFixOrPinT: MonotonicTimestamp?
+
+    /// UX-7: seconds without an accepted fix or pin after which the position
+    /// is uncertain (`positionUncertain(at:)`). Not a `NavigationConfig`
+    /// key: the config is in every sidecar header and must stay unchanged.
+    public static let positionUncertainAfterS = 120.0
+
+    /// Seconds from `lastFixOrPinT` to `t` (negative if `t` is before it);
+    /// nil before any input.
+    public func secondsSinceFixOrPin(at t: MonotonicTimestamp) -> Double? {
+        lastFixOrPinT.map { (Double(t.nanoseconds) - Double($0.nanoseconds)) / 1e9 }
+    }
+
+    /// UX-7 "position uncertain": at least `afterS` seconds (default
+    /// `positionUncertainAfterS`, 120 s) from `lastFixOrPinT` to `t`; false
+    /// before any input. The app shows it in no-OBD Navigate.
+    public func positionUncertain(at t: MonotonicTimestamp, afterS: Double = Self.positionUncertainAfterS) -> Bool {
+        guard let since = secondsSinceFixOrPin(at: t) else { return false }
+        return since >= afterS
+    }
+
     /// The latest selection request; nil before the first, and after an
     /// attach or extension until the next one.
     public var selectionRequest: RoadSelectionRequest? { selectionRule.request }
@@ -97,7 +135,9 @@ public struct LiveNavigationRun: Sendable {
     public static let maxEstimatesPerGap = 600
 
     /// The app's run: the default config with the seed derived from the
-    /// recording's header. `buildConfiguration` goes into the sidecar
+    /// recording's header; with `noOBD` (UX-7, a Navigate run started
+    /// without an adapter) `NavigationConfig.noOBDLive(seed:)` with the same
+    /// seed instead. `buildConfiguration` goes into the sidecar
     /// header (`NavSidecar.Header.buildConfiguration`).
     /// `roads`: attached before the first input (`afterInputs` 0), or
     /// refused (`roadsRefusal`). `prior` (UX-20, Navigate only): a restored
@@ -106,9 +146,10 @@ public struct LiveNavigationRun: Sendable {
     /// It changes no sidecar line's format; the restore's status is in
     /// `snapshot(at:droppedInputs:)`.
     public init(header: LogHeader, appBuild: String, buildConfiguration: String? = nil, roads: RoadNetwork? = nil,
-                prior: NavigationPrior? = nil) {
+                prior: NavigationPrior? = nil, noOBD: Bool = false) {
+        let seed = NavigationSeed.derive(header: header)
         self.init(sessionID: header.sessionID,
-                  config: NavigationConfig(seed: NavigationSeed.derive(header: header)),
+                  config: noOBD ? .noOBDLive(seed: seed) : NavigationConfig(seed: seed),
                   appBuild: appBuild, buildConfiguration: buildConfiguration, roads: roads, prior: prior)
     }
 
@@ -304,6 +345,13 @@ public struct LiveNavigationRun: Sendable {
         inputs += 1
         obdOdometer.observe(input)
         newSelectionRequest = nil
+        if lastFixOrPinT == nil { lastFixOrPinT = input.arrival }
+        let positionsBefore = engine.counters.fixesUsed + engine.counters.manualFixes
+        defer {
+            if engine.counters.fixesUsed + engine.counters.manualFixes != positionsBefore, let last = lastFixOrPinT {
+                lastFixOrPinT = max(last, input.arrival)
+            }
+        }
         guard engine.accepts(input), !input.isGPSSwitch else {
             engine.ingest(input)
             return
@@ -374,7 +422,8 @@ public struct LiveNavigationRun: Sendable {
             ),
             gnssInUse: engine.gnssInUse(at: t),
             gpsSwitchedOff: !engine.gpsOn,
-            restore: engine.restore
+            restore: engine.restore,
+            lastFixOrPinT: lastFixOrPinT
         )
     }
 
@@ -506,10 +555,14 @@ public struct NavigationSnapshot: Hashable, Sendable {
     /// "Restored · <n> min ago · not yet confirmed" while `.unconfirmed`
     /// (`restore.ageS(at: t)`).
     public var restore: NavigationRestore
+    /// UX-7: the run's `LiveNavigationRun.lastFixOrPinT` (the latest
+    /// accepted fix or pin, the run's first input until one); nil without a
+    /// run or before its first input.
+    public var lastFixOrPinT: MonotonicTimestamp?
 
     public init(t: MonotonicTimestamp, sessionID: UUID?, estimate: NavigationEstimate?, stats: Stats,
                 matchedEdgeGeometry: MatchedEdgeGeometry? = nil, gnssInUse: Bool = false, gpsSwitchedOff: Bool = false,
-                restore: NavigationRestore = NavigationRestore()) {
+                restore: NavigationRestore = NavigationRestore(), lastFixOrPinT: MonotonicTimestamp? = nil) {
         self.t = t
         self.sessionID = sessionID
         self.estimate = estimate
@@ -518,6 +571,14 @@ public struct NavigationSnapshot: Hashable, Sendable {
         self.gnssInUse = gnssInUse
         self.gpsSwitchedOff = gpsSwitchedOff
         self.restore = restore
+        self.lastFixOrPinT = lastFixOrPinT
+    }
+
+    /// UX-7 "position uncertain" at `t`: `LiveNavigationRun.positionUncertainAfterS`
+    /// (120 s) or more since `lastFixOrPinT`; false without one.
+    public var positionUncertain: Bool {
+        guard let last = lastFixOrPinT else { return false }
+        return (Double(t.nanoseconds) - Double(last.nanoseconds)) / 1e9 >= LiveNavigationRun.positionUncertainAfterS
     }
 
     /// No recording is navigating.
