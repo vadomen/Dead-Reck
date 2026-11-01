@@ -127,7 +127,12 @@ struct NavigateNoOBDTests {
         #expect(!status.positionUncertain && status.lastFixOrPinT != nil)
         rig.session.disableNavigate()
         #expect(await R.ended(rig.tee.service, generation))
-        #expect(await rig.tee.service.finished.last?.noOBD == true)
+        let finished = try #require(await rig.tee.service.finished.last)
+        #expect(finished.noOBD && finished.generation == generation)
+        // R85.1-3: the engine ran the no-OBD config, not the OBD one.
+        let seed = NavigationSeed.derive(header: feed.header)
+        #expect(NavigationConfig.noOBDLive(seed: seed).hashHex != NavigationConfig(seed: seed).hashHex)
+        #expect(finished.configHash == NavigationConfig.noOBDLive(seed: seed).hashHex)
         #expect(rig.session.noOBDNavigation == nil && rig.source.stops == 1)
     }
 
@@ -258,6 +263,12 @@ struct NavigateNoOBDTests {
         rig.session.disableNavigate()
         #expect(await R.ended(service, obd))
         #expect(await service.finished.first { $0.generation == obd }?.noOBD == false)
+        // R85.1-3: each engine ran its feed's config.
+        let noOBDHeader = try #require(rig.tee.feed(noOBD)).header
+        #expect(await service.finished.first { $0.generation == noOBD }?.configHash
+                == NavigationConfig.noOBDLive(seed: NavigationSeed.derive(header: noOBDHeader)).hashHex)
+        #expect(await service.finished.first { $0.generation == obd }?.configHash
+                == NavigationConfig(seed: NavigationSeed.derive(header: feed.header)).hashHex)
     }
 
     @Test("The adapter reaches polling before the no-OBD engine has an estimate: no capture, so the OBD run restores from the saved estimate as any Navigate start (the prior is not lost)")

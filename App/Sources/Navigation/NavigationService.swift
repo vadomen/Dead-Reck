@@ -110,6 +110,10 @@ actor NavigationService {
         var selectionLines = 0
         /// UX-7: the run's feed was a no-OBD run's (`NavigationConfig.noOBDLive`).
         var noOBD = false
+        /// `NavigationConfig.hashHex` of the config the run's engine ran
+        /// with (read from the engine, not the feed): `noOBDLive(seed:)` for
+        /// a no-OBD feed, `NavigationConfig(seed:)` otherwise (R85.1-3).
+        var configHash = ""
     }
 
     /// UX-7: what an OBD Navigate run that replaced a no-OBD run started
@@ -830,7 +834,8 @@ actor NavigationService {
             roadsRefusal: state?.refusal,
             selectionAttempts: run.live.selectionLog.attempts,
             selectionLines: run.live.selectionLog.lines,
-            noOBD: run.feed.noOBD
+            noOBD: run.feed.noOBD,
+            configHash: run.live.engine.config.hashHex
         ))
         // The newest run still draining, if any, takes over (R77.2-3).
         if current == generation { current = runs.keys.max() }

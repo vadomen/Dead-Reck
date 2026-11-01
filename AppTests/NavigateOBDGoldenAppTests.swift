@@ -119,6 +119,8 @@ struct NavigateOBDGoldenAppTests {
         let finished = try #require(await service.finished.first)
         let estimate = try #require(last?.estimate)
         #expect(finished.roadPackNames == [url.lastPathComponent])
+        // R85.1-3: an OBD Navigate feed's engine runs the OBD config.
+        #expect(finished.configHash == NavigationConfig(seed: NavigationSeed.derive(header: header)).hashHex)
         #expect(hash.value == Self.demoHash, "hash 0x\(String(hash.value, radix: 16))")
         #expect(finished.estimates == Self.demoEstimates, "estimates \(finished.estimates)")
         #expect(estimate.east == Self.demoEast90, "east \(estimate.east)")
@@ -153,6 +155,11 @@ struct NavigateOBDGoldenAppTests {
             }
             tap.finish()
             await task.value
+            // R85.1-3: the Navigate feed's and the Record feed's engines
+            // both run the OBD config.
+            let finished = try #require(await service.finished.first)
+            #expect(!feed.noOBD && finished.configHash == NavigationConfig(seed: NavigationSeed.derive(header: header)).hashHex,
+                    "generation \(generation)")
             hashes.append(hash.value)
             lastEstimates.append(try #require(last?.estimate))
         }
