@@ -1,3 +1,4 @@
+import CoreLocation
 import DriveLoggerCore
 import Foundation
 import Testing
@@ -199,6 +200,9 @@ struct NavigateNoOBDTests {
         #expect(AppServices.navigateConfiguration().noOBDStartAfter == nil)
         let configuration = AppServices.navigateConfiguration()
         #expect(configuration.stillCalibration == .seconds(5) && configuration.autoStopAfter == .seconds(300))
+        // R85.1-1/-2: the decided values.
+        #expect(configuration.noOBDStopReleaseAfterBackground == .seconds(1_800))
+        #expect(configuration.noOBDScreenAwakeAfterMotion == .seconds(300) && configuration.noOBDMotionSpeedKmh == 10)
     }
 
     // MARK: Restart with OBD
@@ -326,40 +330,296 @@ struct NavigateNoOBDTests {
 
     // MARK: Stop
 
-    @Test("User Stop ends the no-OBD run and it does not restart: not after the window, not on inactive → active; it re-arms after background → active, or when an adapter reaches polling")
+    @Test("User Stop ends the no-OBD run and holds the start rule: not after the window, not on inactive → active, not on a screen lock (background → inactive → active) just under 30 min; the Start control is offered meanwhile; an adapter reaching polling clears the hold")
     func userStopDoesNotRestart() async throws {
         let rig = Self.rig()
         rig.session.enableNavigate(Self.config())
         let first = try await Self.noOBDRun(rig)
+        #expect(!rig.session.canStartNoOBDNavigate, "a run: no Start control")
         rig.session.stopNoOBDNavigate()
         #expect(rig.session.navigateState == .off && rig.session.noOBDStoppedByUser)
         #expect(rig.session.noOBDStartArmedAt == nil && rig.session.noOBDNavigation == nil)
+        #expect(rig.session.canStartNoOBDNavigate)
         #expect(rig.idle.values.last == false)
         #expect(await R.ended(rig.tee.service, first))
         try await Task.sleep(for: .milliseconds(800))
         #expect(rig.session.navigateState == .off)
         rig.session.handleScenePhase(.inactive)
+        #expect(!rig.session.canStartNoOBDNavigate, "inactive: no manual start either")
         rig.session.handleScenePhase(.active)
         try await Task.sleep(for: .milliseconds(800))
         #expect(rig.session.navigateState == .off && rig.session.noOBDStoppedByUser, "inactive is not the background")
 
+        // R85.1-1: a screen lock is reported as background; unlock comes
+        // back through inactive. Just under 30 min (synthetic time): held.
+        rig.session.handleScenePhase(.inactive)
         rig.session.handleScenePhase(.background)
         #expect(rig.session.noOBDStoppedByUser && rig.session.noOBDStartArmedAt == nil)
+        rig.clock.advance(.seconds(30 * 60) - .milliseconds(10))
+        rig.session.handleScenePhase(.inactive)
         rig.session.handleScenePhase(.active)
-        #expect(!rig.session.noOBDStoppedByUser && rig.session.noOBDStartArmedAt != nil)
-        let second = try await Self.noOBDRun(rig)
-        #expect(second > first)
+        #expect(rig.session.noOBDStoppedByUser && rig.session.noOBDStartArmedAt == nil, "a lock never restarts it")
+        #expect(rig.session.canStartNoOBDNavigate)
+        try await Task.sleep(for: .milliseconds(800))
+        #expect(rig.session.navigateState == .off)
+        #expect(rig.tee.feeds.filter(\.noOBD).count == 1)
 
-        // Stop again; then an adapter polls: the OBD run, and the stop no
-        // longer holds once that run has ended.
-        rig.session.stopNoOBDNavigate()
+        // An adapter polls: the OBD run, and the hold is cleared.
         rig.link.state = .polling(protocolNumber: "A6", voltage: 12.4)
         #expect(await eventually(5) { Self.isOBDRun(rig.session.navigateState) })
-        #expect(!rig.session.noOBDStoppedByUser)
-        // Stop does nothing to an OBD run.
+        #expect(!rig.session.noOBDStoppedByUser && !rig.session.canStartNoOBDNavigate)
+        // Stop does nothing to an OBD run, and the Start control does not start one beside it.
         rig.session.stopNoOBDNavigate()
         #expect(Self.isOBDRun(rig.session.navigateState) && !rig.session.noOBDStoppedByUser)
+        #expect(!rig.session.startNoOBDNavigate() && Self.isOBDRun(rig.session.navigateState))
         rig.session.disableNavigate()
+    }
+
+    @Test("After a user Stop, 30 min or more continuously in the background (suspended; synthetic time) re-arms the start rule on the next .active, and a no-OBD run starts the window later; shorter spells don't add up")
+    func longBackgroundReleasesStop() async throws {
+        let rig = Self.rig()
+        rig.session.enableNavigate(Self.config())
+        let first = try await Self.noOBDRun(rig)
+        rig.session.stopNoOBDNavigate()
+        #expect(await R.ended(rig.tee.service, first))
+        for _ in 0..<2 {
+            rig.session.handleScenePhase(.background)
+            rig.clock.advance(.seconds(20 * 60))
+            rig.session.handleScenePhase(.inactive)
+            rig.session.handleScenePhase(.active)
+            #expect(rig.session.noOBDStoppedByUser && rig.session.noOBDStartArmedAt == nil, "20 min, twice: held")
+        }
+        rig.session.handleScenePhase(.background)
+        rig.clock.advance(.seconds(30 * 60))
+        rig.session.handleScenePhase(.inactive)
+        #expect(rig.session.noOBDStoppedByUser, "inactive: not back yet")
+        rig.session.handleScenePhase(.active)
+        let armed = ContinuousClock.now
+        #expect(!rig.session.noOBDStoppedByUser && rig.session.noOBDStartArmedAt != nil)
+        #expect(!rig.session.canStartNoOBDNavigate, "not held: the countdown, no Start control")
+        let second = try await Self.noOBDRun(rig)
+        #expect(second > first)
+        #expect(ContinuousClock.now - armed >= .milliseconds(380), "the window after .active, not at once")
+        rig.session.disableNavigate()
+        #expect(await R.ended(rig.tee.service, second))
+    }
+
+    @Test("A cold launch (a new process: a fresh session) is not held by an earlier process's Stop")
+    func coldLaunchNotHeld() async throws {
+        let rig = Self.rig()
+        rig.session.enableNavigate(Self.config())
+        let first = try await Self.noOBDRun(rig)
+        rig.session.stopNoOBDNavigate()
+        #expect(rig.session.noOBDStoppedByUser)
+        rig.session.disableNavigate()
+        #expect(await R.ended(rig.tee.service, first))
+
+        let relaunched = Self.rig()
+        #expect(!relaunched.session.noOBDStoppedByUser && !relaunched.session.canStartNoOBDNavigate)
+        relaunched.session.enableNavigate(Self.config())
+        #expect(relaunched.session.noOBDStartArmedAt != nil)
+        let generation = try await Self.noOBDRun(relaunched)
+        relaunched.session.disableNavigate()
+        #expect(await R.ended(relaunched.tee.service, generation))
+    }
+
+    @Test("The map's Start: a no-OBD run at once (no window), also before any Stop; after a Stop it clears the hold and the control goes")
+    func manualStart() async throws {
+        let rig = Self.rig()
+        rig.session.enableNavigate(Self.config(after: .seconds(600)))
+        #expect(rig.session.noOBDStartArmedAt != nil && !rig.session.canStartNoOBDNavigate, "the countdown runs: no control")
+        #expect(rig.session.startNoOBDNavigate())
+        #expect(rig.session.navigateState == .runningNoOBD && rig.session.noOBDStartArmedAt == nil, "at once")
+        let first = try #require(rig.session.navigateGeneration)
+        #expect(rig.tee.feed(first)?.noOBD == true)
+        #expect(rig.idle.values.last == true)
+        #expect(!rig.session.startNoOBDNavigate() && rig.session.navigateGeneration == first, "one run")
+
+        rig.session.stopNoOBDNavigate()
+        #expect(rig.session.noOBDStoppedByUser && rig.session.canStartNoOBDNavigate)
+        #expect(rig.session.startNoOBDNavigate())
+        let second = try #require(rig.session.navigateGeneration)
+        #expect(second > first && rig.session.navigateState == .runningNoOBD)
+        #expect(!rig.session.noOBDStoppedByUser && !rig.session.canStartNoOBDNavigate)
+        #expect(rig.tee.feed(second)?.noOBD == true && rig.tee.feed(second)?.restartCapture == nil)
+        rig.session.disableNavigate()
+        #expect(await R.ended(rig.tee.service, second))
+    }
+
+    enum ManualCondition: String, CaseIterable, Sendable {
+        case background, inactive, recording, demo, locationDenied, locationNotGranted, navigateDisabled, polling
+    }
+
+    @Test("The map's Start is refused (nothing starts, the hold stays) while any condition fails; offered again when it holds", arguments: ManualCondition.allCases)
+    func manualStartRefused(_ condition: ManualCondition) async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let denied = FakeBackgroundSource(name: "fakeLocation")
+        let grant = FakeGrantSource(name: "fakeGrant")
+        let rig = Self.rig(scratch.store, extraSources: [denied, grant])
+        rig.session.enableNavigate(Self.config(after: .seconds(600)))
+        #expect(rig.session.startNoOBDNavigate())
+        rig.session.stopNoOBDNavigate()
+        #expect(rig.session.canStartNoOBDNavigate)
+        let feeds = rig.tee.feeds.count
+
+        switch condition {
+        case .background: rig.session.handleScenePhase(.background)
+        case .inactive: rig.session.handleScenePhase(.inactive)
+        case .recording: try await rig.session.start(mount: "", vehicle: "", allowWithoutOBD: true, calibration: .zero)
+        case .demo: #expect(rig.session.holdForDemo())
+        case .locationDenied: denied.availability = SensorUnavailableReason.locationDenied.availability
+        case .locationNotGranted: grant.isLocationGranted = false
+        case .navigateDisabled: rig.session.disableNavigate()
+        case .polling:
+            rig.link.state = .polling(protocolNumber: "A6", voltage: 12.4)
+            #expect(await eventually(5) { Self.isOBDRun(rig.session.navigateState) })
+        }
+        #expect(!rig.session.canStartNoOBDNavigate)
+        #expect(!rig.session.startNoOBDNavigate())
+        #expect(rig.session.navigateState != .runningNoOBD)
+        #expect(!rig.tee.feeds.dropFirst(feeds).contains { $0.noOBD })
+        if condition == .polling {
+            #expect(!rig.session.noOBDStoppedByUser, "polling clears the hold")
+            rig.session.disableNavigate()
+            return
+        }
+        #expect(rig.session.noOBDStoppedByUser, "refused: the hold stays")
+
+        switch condition {
+        case .background, .inactive: rig.session.handleScenePhase(.active)
+        case .recording: await rig.session.stop()
+        case .demo: rig.session.releaseDemoHold()
+        case .locationDenied: denied.availability = .available
+        case .locationNotGranted: grant.isLocationGranted = true
+        case .navigateDisabled: rig.session.enableNavigate(Self.config(after: .seconds(600)))
+        case .polling: break
+        }
+        #expect(rig.session.canStartNoOBDNavigate && rig.session.noOBDStoppedByUser)
+        #expect(rig.session.startNoOBDNavigate())
+        let generation = try #require(rig.session.navigateGeneration)
+        rig.session.disableNavigate()
+        #expect(await R.ended(rig.tee.service, generation))
+    }
+
+    @Test("A link change that never reaches polling leaves a no-OBD run alone: same state and generation past a short autoStopAfter")
+    func nonPollingLinkChangeKeepsNoOBDRun() async throws {
+        let rig = Self.rig()
+        rig.session.enableNavigate(Self.config(autoStop: .milliseconds(200)))
+        let generation = try await Self.noOBDRun(rig)
+        for state in [OBDLinkState.scanning, .connecting, .discoveringServices, .initialising, .ready,
+                      .reconnecting(attempt: 1), .failed(reason: "test"), .idle] {
+            rig.link.state = state
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        try await Task.sleep(for: .milliseconds(600))
+        #expect(rig.session.navigateState == .runningNoOBD)
+        #expect(rig.session.navigateGeneration == generation)
+        #expect(rig.tee.feeds.count == 1)
+        rig.session.disableNavigate()
+        #expect(await R.ended(rig.tee.service, generation))
+    }
+
+    // MARK: Screen (R85.1-2)
+
+    /// The no-OBD status the session reads once a second, scripted.
+    @MainActor
+    final class StatusScript {
+        var status = NoOBDNavigationStatus()
+        private(set) var reads = 0
+
+        func install(_ session: RecordingSession) {
+            session.noOBDStatusProvider = { [self] _ in
+                reads += 1
+                return status
+            }
+        }
+
+        /// Waits until `n` more reads (live-timer ticks) have happened.
+        func ticks(_ n: Int) async -> Bool {
+            let target = reads + n
+            return await eventually(5) { self.reads >= target }
+        }
+    }
+
+    @Test("Motion: the estimate above 10 km/h (strictly) while the position is not uncertain; nil, NaN or infinite is none")
+    func motionSignal() {
+        func motion(_ speed: Double?, uncertain: Bool = false) -> Bool {
+            NoOBDNavigationStatus(positionUncertain: uncertain, estimatedSpeedKmh: speed).isMotion(thresholdKmh: 10)
+        }
+        #expect(motion(10.5) && motion(90))
+        #expect(!motion(10) && !motion(3) && !motion(0) && !motion(nil))
+        #expect(!motion(.nan) && !motion(.infinity))
+        #expect(!motion(60, uncertain: true), "no fix for 120 s: the decaying speed is not motion")
+    }
+
+    @Test("Screen: a no-OBD run keeps it awake within 5 min of motion (synthetic time): stopped 4 min → awake; 6 min → released to auto-lock, the run goes on; motion again → awake; the adapter polling → awake (OBD run)")
+    func screenAwakeAfterMotion() async throws {
+        let rig = Self.rig()
+        let script = StatusScript()
+        script.status.estimatedSpeedKmh = 40
+        script.install(rig.session)
+        rig.session.enableNavigate(Self.config(after: .seconds(600)))
+        #expect(rig.session.startNoOBDNavigate())
+        #expect(rig.idle.values.last == true)
+        #expect(await script.ticks(2), "motion noted")
+        script.status.estimatedSpeedKmh = 0
+        #expect(await script.ticks(2))
+        rig.clock.advance(.seconds(4 * 60))
+        #expect(await script.ticks(2))
+        #expect(rig.idle.values.last == true, "4 min since motion: awake")
+        rig.clock.advance(.seconds(2 * 60))
+        #expect(await eventually(3) { rig.idle.values.last == false }, "6 min: released")
+        #expect(rig.session.navigateState == .runningNoOBD, "the run goes on")
+        script.status.estimatedSpeedKmh = 25
+        #expect(await eventually(3) { rig.idle.values.last == true }, "motion again")
+        script.status.estimatedSpeedKmh = 0
+        rig.clock.advance(.seconds(6 * 60))
+        #expect(await eventually(3) { rig.idle.values.last == false })
+        rig.link.state = .polling(protocolNumber: "A6", voltage: 12.4)
+        #expect(await eventually(5) { Self.isOBDRun(rig.session.navigateState) })
+        #expect(rig.idle.values.last == true, "an OBD run keeps the screen awake")
+        rig.session.disableNavigate()
+        #expect(rig.idle.values.last == false)
+    }
+
+    @Test("Screen: a fresh no-OBD run counts as motion at its start (awake 4 min with no speed); a high speed while uncertain (no fixes, the garage case) is not motion, so it releases after the window")
+    func screenStartAndUncertain() async throws {
+        let rig = Self.rig()
+        let script = StatusScript()
+        script.status = NoOBDNavigationStatus(positionUncertain: true, estimatedSpeedKmh: 50)
+        script.install(rig.session)
+        rig.session.enableNavigate(Self.config())
+        _ = try await Self.noOBDRun(rig)
+        #expect(rig.idle.values.last == true)
+        rig.clock.advance(.seconds(4 * 60))
+        #expect(await script.ticks(2))
+        #expect(rig.idle.values.last == true, "the start's window")
+        rig.clock.advance(.seconds(2 * 60))
+        #expect(await eventually(3) { rig.idle.values.last == false })
+        rig.session.disableNavigate()
+    }
+
+    @Test("Screen: an OBD Navigate run and a recording keep it awake however long since motion (unchanged)")
+    func screenOBDAndRecordUnchanged() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let rig = NavigateRig(store: scratch.store)
+        rig.session.handleScenePhase(.active)
+        await rig.connect(speed: 0)
+        rig.session.enableNavigate(Self.config())
+        #expect(Self.isOBDRun(rig.session.navigateState) && rig.idle.values.last == true)
+        rig.clock.advance(.seconds(60 * 60))
+        try await Task.sleep(for: .milliseconds(1_300))
+        #expect(Self.isOBDRun(rig.session.navigateState) && rig.idle.values.last == true)
+        rig.session.disableNavigate()
+        try await rig.session.start(mount: "", vehicle: "", allowWithoutOBD: false, calibration: .zero)
+        #expect(rig.idle.values.last == true)
+        rig.clock.advance(.seconds(60 * 60))
+        try await Task.sleep(for: .milliseconds(1_300))
+        #expect(rig.idle.values.last == true)
+        await rig.session.stop()
+        #expect(rig.idle.values.last == false)
     }
 
     // MARK: Record
@@ -518,5 +778,23 @@ struct NavigateNoOBDTests {
         #expect(await eventually(3) { rig.session.noOBDNavigation?.positionUncertain == false })
         rig.session.disableNavigate()
         #expect(await R.ended(service, noOBD))
+    }
+}
+
+/// UX-7's Location check on a phone (`LocationGrantReporting`): granted
+/// only When In Use or Always, so the no-OBD start never prompts.
+@Suite("ReferenceLocationSource Location grant (UX-7)")
+@MainActor
+struct LocationGrantTests {
+    @Test("Not asked, denied or restricted → not granted; When In Use or Always → granted")
+    func grant() {
+        for (status, granted) in [(CLAuthorizationStatus.notDetermined, false), (.denied, false), (.restricted, false),
+                                  (.authorizedWhenInUse, true), (.authorizedAlways, true)] {
+            let source = ReferenceLocationSource(authorization: FakeLocationAuthorization(status),
+                                                 lastKnownLocation: FakeLastKnownLocation(nil))
+            #expect(source.isLocationGranted == granted, "\(status.rawValue)")
+            let reporting: (any LocationGrantReporting)? = (source as any SensorSource) as? any LocationGrantReporting
+            #expect(reporting?.isLocationGranted == granted)
+        }
     }
 }

@@ -457,6 +457,11 @@ final class NavigationRunEnd: Sendable {
 ///   replaces it with a fresh OBD session seeded from its latest estimate
 ///   (`restartCapture`). Like every Navigate run it is saved and restored
 ///   by the navigation service (UX-20) and handed over to Record (prompt 40).
+///   After a user Stop the start rule is held until a cold launch,
+///   `polling`, or 30 min continuously in the background; meanwhile the
+///   map's Start (`startNoOBDNavigate()`) starts one at once (R85.1-1).
+///   It keeps the screen awake only within 5 min of motion (R85.1-2); see
+///   `NavigateState`.
 @MainActor
 @Observable
 final class RecordingSession {
@@ -590,9 +595,16 @@ final class RecordingSession {
     /// while it is not armed. Display (a countdown) and tests.
     private(set) var noOBDStartArmedAt: ContinuousClock.Instant?
     /// UX-7: the user stopped a no-OBD run (`stopNoOBDNavigate()`): the
-    /// start rule stays off until the app has been in the background and is
-    /// active again, or an adapter reaches `polling`.
+    /// start rule is held until a cold launch (a fresh session), an adapter
+    /// reaching `polling`, `startNoOBDNavigate()`, or (R85.1-1) the app
+    /// having been in the background for `noOBDStopReleaseAfterBackground`
+    /// or more continuously, released on the next `.active`.
     private(set) var noOBDStoppedByUser = false
+    /// R85.1-1: the map's Start control for a no-OBD run is offered: the
+    /// user stopped one (`noOBDStoppedByUser`) and every other condition of
+    /// the start rule holds (`startNoOBDNavigate()`'s conditions). Assigned
+    /// only when it changes, wherever the start rule is re-evaluated.
+    private(set) var canStartNoOBDNavigate = false
     /// UX-7 seeded restart: the latest estimate of the Navigate run with
     /// this generation, or nil (`NavigationService.provideNoOBD(to:)`
     /// installs `NavigateHandOver.state(generation:)`). Asked once,
@@ -605,9 +617,15 @@ final class RecordingSession {
     /// `noOBDNavigation`. nil: `noOBDNavigation` keeps its default value.
     @ObservationIgnored var noOBDStatusProvider: (@MainActor (Int) async -> NoOBDNavigationStatus?)?
     @ObservationIgnored private var noOBDStartTimer: Task<Void, Never>?
-    /// The app went to the background after a user Stop (see
-    /// `noOBDStoppedByUser`).
-    @ObservationIgnored private var noOBDStopBackgrounded = false
+    /// R85.1-1: when the app last went to `.background` (on `now`), until
+    /// the next `.active`; nil while it has not been in the background
+    /// since. `.inactive` on the way back leaves it.
+    @ObservationIgnored private var backgroundedAt: ContinuousClock.Instant?
+    /// `ContinuousClock.now` in the app; tests shift it (synthetic time).
+    /// Read for the user-Stop background span (R85.1-1) and the no-OBD
+    /// screen-awake window (R85.1-2) only; every timer sleeps on the real
+    /// `ContinuousClock`.
+    @ObservationIgnored private let now: @MainActor () -> ContinuousClock.Instant
 
     @ObservationIgnored private let link: any OBDLinkServicing
     @ObservationIgnored private let sources: [any SensorSource]
@@ -680,6 +698,8 @@ final class RecordingSession {
     ///     app (`systemBackgroundTask`); injectable for tests.
     ///   - makeSessionID: every header's `sessionID`; `UUID()` in the app,
     ///     fixed in tests that compare engine output across sessions.
+    ///   - now: `ContinuousClock.now` in the app; tests shift it for the
+    ///     user-Stop background span and the no-OBD screen window.
     /// - Precondition: `stopFreeBytes < warningFreeBytes`.
     init(
         link: any OBDLinkServicing,
@@ -700,7 +720,8 @@ final class RecordingSession {
         manualFixUndoWindow: Duration = .seconds(3),
         setIdleTimerDisabled: @escaping @MainActor (Bool) -> Void = { UIApplication.shared.isIdleTimerDisabled = $0 },
         beginBackgroundTask: @escaping @MainActor (String) -> @MainActor () -> Void = RecordingSession.systemBackgroundTask,
-        makeSessionID: @escaping @MainActor () -> UUID = { UUID() }
+        makeSessionID: @escaping @MainActor () -> UUID = { UUID() },
+        now: @escaping @MainActor () -> ContinuousClock.Instant = { .now }
     ) {
         precondition(stopFreeBytes < warningFreeBytes, "stopFreeBytes must be below warningFreeBytes")
         self.link = link
@@ -722,6 +743,7 @@ final class RecordingSession {
         self.beginBackgroundTask = beginBackgroundTask
         self.manualFixUndoWindow = manualFixUndoWindow
         self.makeSessionID = makeSessionID
+        self.now = now
 
         // The one subscription, taken now so nothing the link reports after
         // launch is missed (single subscriber; see the type's doc).
@@ -1125,12 +1147,16 @@ final class RecordingSession {
         // and `.background` must (it is never background location). A run's
         // own sources are not touched: they keep running when locked (D7 revised).
         updateDisplayLocation()
-        // UX-7: a user Stop holds until the app has been in the background
-        // and is active again; the start rule runs only while active.
-        if phase == .background, noOBDStoppedByUser { noOBDStopBackgrounded = true }
-        if phase == .active, noOBDStopBackgrounded {
-            noOBDStopBackgrounded = false
-            noOBDStoppedByUser = false
+        // UX-7, R85.1-1: a user Stop holds until the app has been in the
+        // background `noOBDStopReleaseAfterBackground` (30 min) or more
+        // continuously, from `.background` to the next `.active` (iOS
+        // reports a screen lock as `.background`: a lock never releases
+        // it); the start rule runs only while active.
+        if phase == .background, backgroundedAt == nil { backgroundedAt = now() }
+        if phase == .active, let since = backgroundedAt {
+            backgroundedAt = nil
+            let release = (navigateConfiguration ?? NavigateConfiguration()).noOBDStopReleaseAfterBackground
+            if noOBDStoppedByUser, since.duration(to: now()) >= release { noOBDStoppedByUser = false }
         }
         updateNoOBDStartTimer()
         switch phase {
@@ -1719,10 +1745,12 @@ final class RecordingSession {
         displayFix = fix
     }
 
-    /// Keeps the screen awake while a recording or a Navigate session
-    /// exists. Calls `setIdleTimerDisabled` only when that changes.
+    /// Keeps the screen awake while a recording or an OBD Navigate session
+    /// exists, and while a no-OBD session has seen motion within
+    /// `noOBDScreenAwakeAfterMotion` (R85.1-2, `keepsScreenAwake`). Calls
+    /// `setIdleTimerDisabled` only when that changes.
     private func updateIdleTimer() {
-        let wanted = recording != nil || navigate != nil
+        let wanted = recording != nil || navigate.map(keepsScreenAwake) == true
         guard wanted != idleTimerDisabled else { return }
         idleTimerDisabled = wanted
         setIdleTimerDisabled(wanted)
@@ -1887,16 +1915,33 @@ final class RecordingSession {
     }
 
     /// UX-7: the no-OBD run's Stop control. Ends the running no-OBD run (its
-    /// estimate saved at its end, as at any Navigate end) and keeps the
-    /// start rule off until the app has been in the background and is
-    /// active again, or an adapter reaches `polling` (`noOBDStoppedByUser`).
-    /// Does nothing unless a no-OBD run runs: an OBD run is unaffected.
+    /// estimate saved at its end, as at any Navigate end) and holds the
+    /// start rule (`noOBDStoppedByUser`) until a cold launch, an adapter
+    /// reaching `polling`, `startNoOBDNavigate()`, or (R85.1-1) 30 min
+    /// continuously in the background. Does nothing unless a no-OBD run
+    /// runs: an OBD run is unaffected.
     func stopNoOBDNavigate() {
         guard let nav = navigate, nav.noOBD else { return }
         noOBDStoppedByUser = true
-        noOBDStopBackgrounded = false
         endNavigate(nav)
         updateIdleTimer()
+    }
+
+    /// R85.1-1: the map's Start control for a no-OBD run. Starts one at
+    /// once (no `noOBDStartAfter` wait) and clears the user-Stop hold, when
+    /// every condition of the start rule but that hold holds
+    /// (`noOBDStartConditionsHold`): Navigate enabled with a non-nil
+    /// `noOBDStartAfter`; no Navigate run; no recording starting, running
+    /// or ending; the scene `.active`; Location already granted (it never
+    /// prompts); not held for the demo; the link not `polling`. Otherwise
+    /// nothing changes. Returns whether a run started.
+    @discardableResult
+    func startNoOBDNavigate() -> Bool {
+        guard noOBDStartConditionsHold else { return false }
+        if noOBDStoppedByUser { noOBDStoppedByUser = false }
+        _ = beginNavigateRun(.runningNoOBD, restartCapture: nil)
+        updateIdleTimer()
+        return true
     }
 
     // MARK: - Demo drive hold (REL-DEMO)
@@ -1961,7 +2006,6 @@ final class RecordingSession {
             // run no longer holds the start rule. (Observed: written only
             // when it changes.)
             if noOBDStoppedByUser { noOBDStoppedByUser = false }
-            noOBDStopBackgrounded = false
             guard let nav = navigate else {
                 startNavigateIfPossible()
                 updateIdleTimer()
@@ -2081,6 +2125,8 @@ final class RecordingSession {
             // and no auto-stop; the UI state until the first read.
             nav.speedDecided = true
             noOBDNavigation = NoOBDNavigationStatus()
+            // R85.1-2: the start counts as motion (the first window stays awake).
+            nav.lastMotionAt = now()
         }
         navigateStartedAt = .now
         onNavigationFeed?(RecordingNavigationFeed(
@@ -2092,7 +2138,10 @@ final class RecordingSession {
             while !Task.isCancelled {
                 guard let self, let nav, self.navigate === nav else { return }
                 self.updateLiveReferenceFix()
-                if nav.noOBD { await self.refreshNoOBDNavigation(nav) }
+                if nav.noOBD {
+                    await self.refreshNoOBDNavigation(nav)
+                    self.updateNoOBDScreenAwake(nav)
+                }
                 try? await Task.sleep(for: .seconds(1))
             }
         }
@@ -2101,12 +2150,17 @@ final class RecordingSession {
 
     // MARK: - Navigate without OBD (UX-7)
 
-    /// Every condition of the no-OBD start rule (`NavigateState`) holds now.
-    private var noOBDStartRuleHolds: Bool {
+    /// Every condition of the no-OBD start rule (`NavigateState`) but the
+    /// user-Stop hold holds now: what `startNoOBDNavigate()` needs.
+    private var noOBDStartConditionsHold: Bool {
         guard let configuration = navigateConfiguration, configuration.noOBDStartAfter != nil else { return false }
         return navigate == nil && !isStarting && recording == nil && ending == nil
             && lastScenePhase == .active && isLocationGranted && !isHeldForDemo && !isLinkPolling
-            && !noOBDStoppedByUser
+    }
+
+    /// Every condition of the no-OBD start rule (`NavigateState`) holds now.
+    private var noOBDStartRuleHolds: Bool {
+        noOBDStartConditionsHold && !noOBDStoppedByUser
     }
 
     /// Location is granted for a no-OBD run: no source reports it denied or
@@ -2126,6 +2180,9 @@ final class RecordingSession {
     /// enable/disable, Record active, scene phase, a link state change,
     /// Location authorisation, the demo's hold).
     private func updateNoOBDStartTimer() {
+        // R85.1-1: the Start control, re-derived at the same transitions.
+        let canStart = noOBDStoppedByUser && noOBDStartConditionsHold
+        if canStart != canStartNoOBDNavigate { canStartNoOBDNavigate = canStart }
         guard noOBDStartRuleHolds, let delay = navigateConfiguration?.noOBDStartAfter else {
             noOBDStartTimer?.cancel()
             noOBDStartTimer = nil
@@ -2165,6 +2222,26 @@ final class RecordingSession {
         endNavigate(nav)
         startNavigateIfPossible(restartCapture: capture)
         updateIdleTimer()
+    }
+
+    /// R85.1-2, once a second from the no-OBD run's live timer: notes
+    /// motion (`NoOBDNavigationStatus.isMotion` of the published status)
+    /// at `now`, then re-evaluates the idle timer, which the run releases
+    /// `noOBDScreenAwakeAfterMotion` after its latest motion.
+    private func updateNoOBDScreenAwake(_ nav: NavigateRun) {
+        guard navigate === nav, nav.noOBD else { return }
+        let threshold = (navigateConfiguration ?? NavigateConfiguration()).noOBDMotionSpeedKmh
+        if noOBDNavigation?.isMotion(thresholdKmh: threshold) == true { nav.lastMotionAt = now() }
+        updateIdleTimer()
+    }
+
+    /// Whether `nav` keeps the screen awake (R85.1-2): an OBD run always; a
+    /// no-OBD run while its latest motion is less than
+    /// `noOBDScreenAwakeAfterMotion` ago.
+    private func keepsScreenAwake(_ nav: NavigateRun) -> Bool {
+        guard nav.noOBD, let lastMotion = nav.lastMotionAt else { return true }
+        let window = (navigateConfiguration ?? NavigateConfiguration()).noOBDScreenAwakeAfterMotion
+        return lastMotion.duration(to: now()) < window
     }
 
     /// `noOBDNavigation` from the service, while `nav` is still the running
