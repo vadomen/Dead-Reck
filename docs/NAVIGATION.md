@@ -3166,9 +3166,21 @@ and nothing is written by Navigate. Not verified on a device (PLAN §6
   pending. Any break cancels it; when all hold again it restarts from 0.
   After an OBD run's auto-stop (5 min without `polling`) the rule applies
   again, in the foreground only.
-- **Stop.** `stopNoOBDNavigate()` ends the run and keeps the rule off until
-  the app has been in the background and is active again, or an adapter
-  reaches `polling`. Lock/unlock does not re-arm it.
+- **Stop.** `stopNoOBDNavigate()` ends the run and holds the auto-start until
+  a cold launch, an adapter reaching `polling`, or the app having been
+  continuously in the background for
+  `NavigateConfiguration.noOBDStopReleaseAfterBackground` = 1800 s (then the
+  start rule re-arms when the scene becomes `.active`). Lock/unlock (iOS
+  reports it as background) and app switching under 30 min never restart the
+  run. Meanwhile the map shows "Navigation without OBD stopped" with a Start
+  button: `startNoOBDNavigate()` (allowed when `canStartNoOBDNavigate`) starts
+  at once, without the 30 s wait, and never prompts for Location.
+- **Screen.** A no-OBD run keeps the screen awake only within
+  `noOBDScreenAwakeAfterMotion` = 300 s of motion (engine estimated speed
+  above `noOBDMotionSpeedKmh` = 10 km/h and position not uncertain; the run's
+  start counts as motion), then normal iOS auto-lock applies. OBD Navigate and
+  Record are unchanged.
+- **Voice.** "Position uncertain" is quoted in the Settings voice footer.
 - **Record from a no-OBD run** uses the prompt-40 hand-over unchanged.
 - **Save and restore** work as for OBD runs (UX-20): the estimate is saved at
   the run's end and restored for up to 24 h. The invalidate-if-driven rule

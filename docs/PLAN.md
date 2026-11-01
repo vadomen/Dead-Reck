@@ -565,7 +565,8 @@ Items 1-7 above (demo pipeline) and the airplane-mode check (item 1) cover the d
 2. **Pin:** a double tap during a no-OBD run places and snaps a pin (prompt 46); with no engine running it is still ignored.
 3. **No fix for 2 min** (garage or tunnel): "Position uncertain" (dimmed marker, dashed ellipse, one voice line); the next fix or pin clears it.
 4. **Adapter connects mid-drive:** a seeded OBD restart without a visible jump; "Restored · not yet confirmed" until a fix decides.
-5. **Stop:** after Stop, lock/unlock does not restart the run; background → foreground does (after 30 s).
+5. **Stop:** after Stop, lock/unlock and app switching do not restart the run; the stopped card "Navigation without OBD stopped" with Start shows; Start starts at once; after ≥ 30 min in the background the next open auto-starts.
+5a. **Screen:** the screen auto-locks about 5 min after a long stop (and in a garage about 7 min after the last fix: 5 min plus the 120 s to "Position uncertain"), and stays on at traffic lights and short jams. Parked outside on network-only fixes: note how long until the screen sleeps (fix jitter may read above 10 km/h).
 6. **Relaunch:** relaunching the app restores the no-OBD estimate (within 24 h).
 7. **Battery, 1 h no-OBD Navigate** (screen on, on the mount): note charge, thermal state and memory (simulator model: ~8–22 %/h on a 16 Pro Max, same as an OBD run; also 1 h with the screen locked, not measurable in the simulator).
 8. **OBD auto-stop, then no-OBD:** an OBD run auto-stops (5 min without `polling`) with the app in the foreground on the mount; the no-OBD run starts 30 s later and runs until stopped: battery over 1 h (simulator: the switch confirmed, auto-stop at 300 s, no-OBD run 31 s later; CPU as item 7).
