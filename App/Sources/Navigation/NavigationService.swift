@@ -59,6 +59,18 @@ import os
 ///   run starts from that row's prior (`feed.navPrior`) at once, as a
 ///   replay of the file does. No initialised Navigate estimate: no row, a
 ///   fresh engine, as before. Independent of the store.
+/// - UX-7 (prompt 47), Navigate without an adapter: a feed marked `noOBD`
+///   (the session's no-OBD run) gets an engine built with
+///   `NavigationConfig.noOBDLive(seed:)` (`LiveNavigationRun(..., noOBD:
+///   true)`); every other run's engine is exactly as before. Otherwise it is
+///   a Navigate run like any other (restore, saves, roads, hand-over, pins).
+///   `noOBDStatus(generation:)` answers the UI's "position uncertain" and
+///   estimated speed. When the adapter reaches `polling`, the session
+///   replaces it with an OBD Navigate run whose feed carries the no-OBD
+///   run's latest estimate (`restartCapture`, from `handOver`): that run
+///   starts from `NavigationPrior.noOBDRestart` (not a hand-over: the normal
+///   unconfirmed-restore rule) instead of the store, and falls back to the
+///   store as any Navigate start when there is no capture.
 ///
 /// The per-run loop is Core's `LiveNavigationRun`, the same code
 /// `replay_nav --as-live --compare` runs over a recording on a Mac.
@@ -96,6 +108,18 @@ actor NavigationService {
         /// share one line (`NavSidecar.RoadsSelectionLog`).
         var selectionAttempts = 0
         var selectionLines = 0
+        /// UX-7: the run's feed was a no-OBD run's (`NavigationConfig.noOBDLive`).
+        var noOBD = false
+    }
+
+    /// UX-7: what an OBD Navigate run that replaced a no-OBD run started
+    /// from (`NavigationPrior.noOBDRestart`). Never holds a coordinate.
+    struct NoOBDRestart: Sendable, Hashable {
+        let generation: Int
+        /// Seconds from the no-OBD estimate to the OBD run's start.
+        let ageS: Double
+        let restoreClass: NavigationRestoreClass
+        let handOver: Bool
     }
 
     /// Selection state of one run's roads (N3.3 item 5).
@@ -262,6 +286,10 @@ actor NavigationService {
     /// Recordings whose run started from their `navPrior` row: a count for
     /// tests.
     private(set) var recordingsFromPrior = 0
+    /// UX-7: the latest OBD run seeded from a no-OBD run's estimate, and how
+    /// many so far (tests, diagnostics).
+    private(set) var lastNoOBDRestart: NoOBDRestart?
+    private(set) var noOBDRestarts = 0
 
     init(flushInterval: Duration = .seconds(10), library: RoadPackLibrary? = nil,
          libraryRescan: @escaping LibraryRescan = { await $0.rescan() },
@@ -291,7 +319,14 @@ actor NavigationService {
         // from its own `navPrior` row (prompt 40), at once, or fresh.
         let prior: NavigationPrior?
         if feed.output == .navigateOnly {
-            prior = restoreStore != nil ? await restorePrior(for: feed) : nil
+            // UX-7: the OBD run that replaced a no-OBD run starts from that
+            // run's estimate, in memory, at once; without one, as any
+            // Navigate start.
+            if let capture = feed.restartCapture, let restart = noOBDRestartPrior(from: capture, for: feed) {
+                prior = restart
+            } else {
+                prior = restoreStore != nil ? await restorePrior(for: feed) : nil
+            }
         } else {
             prior = feed.navPrior?.navigationPrior
             if prior != nil { recordingsFromPrior += 1 }
@@ -315,7 +350,7 @@ actor NavigationService {
 
     private func begin(_ feed: RecordingNavigationFeed, prior: NavigationPrior?) {
         let live = LiveNavigationRun(header: feed.header, appBuild: feed.header.app.build,
-                                     buildConfiguration: Self.buildConfiguration, prior: prior)
+                                     buildConfiguration: Self.buildConfiguration, prior: prior, noOBD: feed.noOBD)
         // Navigate: no writer, no file; everything below runs the same.
         var writer: NavSidecarWriter?
         var openFailure: String?
@@ -589,6 +624,43 @@ actor NavigationService {
         }
     }
 
+    /// UX-7 seeded restart: the prior for the OBD Navigate run `feed` that
+    /// replaces a no-OBD run, from that run's `capture` at this run's start
+    /// (`NavigationPrior.noOBDRestart`: not a hand-over, class
+    /// `restoreClass(engineOff: false)`). Recorded as this run's restore
+    /// attempt (`lastRestore`, `lastNoOBDRestart`). nil (an invalid capture,
+    /// or its age outside −5 s…24 h): the caller reads the store instead.
+    /// The store is not read or changed here.
+    private func noOBDRestartPrior(from capture: NavigationRestoreState,
+                                   for feed: RecordingNavigationFeed) -> NavigationPrior? {
+        let t = feed.clock.now()
+        guard let prior = NavigationPrior.noOBDRestart(from: capture, at: t, clock: feed.clock,
+                                                       bootSessionID: bootSessionID()) else { return nil }
+        let ageS = Double(t.nanoseconds - prior.savedT.nanoseconds) / 1e9
+        recordingEndSave = nil
+        lastRestoreGeneration = feed.generation
+        lastRestoreHandOver = false
+        lastRestore = .restored(ageS: ageS)
+        lastNoOBDRestart = NoOBDRestart(generation: feed.generation, ageS: ageS, restoreClass: prior.restoreClass,
+                                        handOver: prior.handOver)
+        noOBDRestarts += 1
+        return prior
+    }
+
+    /// UX-7: the no-OBD run `generation`'s state for the UI now (on its
+    /// clock): "position uncertain" (`LiveNavigationRun.positionUncertain`),
+    /// the engine's speed estimate in km/h, the latest accepted fix or pin.
+    /// nil when that run is not running or is not a no-OBD run. One
+    /// `estimate(at:)` pass.
+    func noOBDStatus(generation: Int) -> NoOBDNavigationStatus? {
+        guard let run = runs[generation], run.feed.noOBD else { return nil }
+        let t = run.feed.clock.now()
+        let speed = run.live.engine.isInitialized ? run.live.engine.estimate(at: t)?.speedMps : nil
+        return NoOBDNavigationStatus(positionUncertain: run.live.positionUncertain(at: t),
+                                     estimatedSpeedKmh: speed.map { $0 * 3.6 },
+                                     lastFixOrPinT: run.live.lastFixOrPinT)
+    }
+
     /// Returns when no run older than `generation` is left (each one's end
     /// has saved its estimate), or after `handOverTimeout`.
     private func awaitEarlierRuns(before generation: Int) async {
@@ -757,7 +829,8 @@ actor NavigationService {
             roadsExtendedAtS: run.live.attachments.count > 1 ? (roads?.t?.seconds ?? 0) : nil,
             roadsRefusal: state?.refusal,
             selectionAttempts: run.live.selectionLog.attempts,
-            selectionLines: run.live.selectionLog.lines
+            selectionLines: run.live.selectionLog.lines,
+            noOBD: run.feed.noOBD
         ))
         // The newest run still draining, if any, takes over (R77.2-3).
         if current == generation { current = runs.keys.max() }
@@ -785,9 +858,10 @@ actor NavigationService {
     }
 
     /// Where a double-tapped pin snaps on the current run's road network
-    /// (prompt 46 Part B). Read-only: the engine is not changed. Without a run
-    /// (UX-1 (d): no OBD, no engine) or without roads attached the answer is
-    /// `.noNetwork`, and the caller keeps the 300 m rule.
+    /// (prompt 46 Part B). Read-only: the engine is not changed. A no-OBD run
+    /// (UX-7) is a run like any other here. Without a run (no engine at all)
+    /// or without roads attached the answer is `.noNetwork`, and the caller
+    /// keeps the 300 m rule.
     func snapPin(
         latitude: Double, longitude: Double, mapSpanM: Double?, viewportHeightPt: Double
     ) -> PinSnap.Result {
@@ -840,6 +914,21 @@ extension NavigationService {
     }
 }
 
+// MARK: - Navigate without OBD (UX-7)
+
+extension NavigationService {
+    /// Installs the session's no-OBD hooks: `noOBDRestartCapture` (the
+    /// latest `handOver` capture of the no-OBD run the adapter's `polling`
+    /// ends, for the OBD run's seeded restart; synchronous, never waits for
+    /// the actor) and `noOBDStatusProvider` (`noOBDStatus(generation:)`).
+    @MainActor
+    func provideNoOBD(to session: RecordingSession) {
+        let handOver = handOver
+        session.noOBDRestartCapture = { generation in handOver.state(generation: generation) }
+        session.noOBDStatusProvider = { [weak self] generation in await self?.noOBDStatus(generation: generation) }
+    }
+}
+
 /// The running Navigate run's latest estimate, readable synchronously from
 /// any thread (Record's Start runs on the main actor; the service's runs
 /// publish from its actor). One slot, the newest Navigate generation's: an
@@ -866,6 +955,13 @@ final class NavigateHandOver: Sendable {
 
     /// The latest capture, any run (tests, diagnostics).
     var capture: Capture? { latest.withLock { $0 } }
+
+    /// UX-7: Navigate run `generation`'s latest estimate; nil when another
+    /// run's capture is held, or none.
+    func state(generation: Int) -> NavigationRestoreState? {
+        guard let capture, capture.generation == generation else { return nil }
+        return capture.state
+    }
 
     /// The `navPrior` row for Navigate run `generation`'s latest estimate,
     /// on `clock` (`NavPriorSample(handOver:clock:)`: `estimateT` is the

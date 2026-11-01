@@ -26,6 +26,10 @@ enum NavigateStatus: Equatable {
         switch navigate {
         case .running:
             return .hidden
+        case .runningNoOBD:
+            // UX-7: the estimate shows; the no-OBD label is the HUD's
+            // (`RecordingSession.noOBDNavigation`).
+            return .hidden
         case .calibrating:
             guard let startedAt else { return .calibrating(secondsLeft: nil) }
             return .calibrating(secondsLeft: secondsLeft(until: startedAt + timings.stillCalibration, now: now))

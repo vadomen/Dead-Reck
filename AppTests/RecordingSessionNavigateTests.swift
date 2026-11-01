@@ -118,7 +118,7 @@ final class FeedTee {
         let proxy = NavigationTap()
         let run = service.start(RecordingNavigationFeed(
             generation: feed.generation, header: feed.header, clock: feed.clock, output: feed.output, tap: proxy,
-            runEnd: feed.runEnd, navPrior: feed.navPrior))
+            runEnd: feed.runEnd, navPrior: feed.navPrior, noOBD: feed.noOBD, restartCapture: feed.restartCapture))
         let generation = feed.generation
         inputs[generation] = []
         Task { @MainActor in

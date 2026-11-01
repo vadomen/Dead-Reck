@@ -7,17 +7,46 @@ import Foundation
 /// `RecordingSession.navigateState`; Record has its own `state`, and while a
 /// recording starts, runs or stops this is `.off`.
 ///
+/// Two kinds of run (UX-7, prompt 47): an **OBD run** (`calibrating`,
+/// `running`, `waitingForOBD`), started when the link reaches `polling`, and
+/// a **no-OBD run** (`runningNoOBD`), started by the no-OBD start rule below
+/// when no adapter reaches `polling`. Both are a `NavigateRun` with the same
+/// sources, clock, rates, tap-only sink and background location; the no-OBD
+/// run's engine is built with `NavigationConfig.noOBDLive(seed:)`
+/// (`RecordingNavigationFeed.noOBD`).
+///
+/// **No-OBD start rule.** A timer of `NavigateConfiguration.noOBDStartAfter`
+/// (30 s) on `ContinuousClock` runs while **all** of these hold: Navigate
+/// enabled with a non-nil `noOBDStartAfter`; no Navigate run (`off`); no
+/// recording starting, running or ending; the scene `.active` (the app is
+/// open in the foreground); Location granted (When In Use or Always: no
+/// source reports it denied, restricted or not yet asked); not held for the
+/// demo drive; the link not `polling`; and no user Stop pending (below).
+/// Any of them breaking cancels it; when all hold again it starts again from
+/// 0. It fires only if all still hold. `polling` first means the normal OBD
+/// start and no no-OBD run.
+///
+/// **User Stop** (`RecordingSession.stopNoOBDNavigate()`, the no-OBD run's
+/// Stop control): ends the run and keeps the start rule off until the app
+/// has been in the background and is `.active` again, or until an adapter
+/// reaches `polling` (which starts an OBD run as always). Nothing else stops
+/// a no-OBD run but the app closing: no time or parking auto-stop.
+///
 /// | From | Event | To |
 /// |---|---|---|
-/// | `off` | link reaches `polling` (Navigate enabled; no recording starting, running or ending) | `calibrating`, or `running` when the speed at connect is > 0 |
+/// | `off` | link reaches `polling` (Navigate enabled; no recording starting, running or ending; not held for the demo) | `calibrating`, or `running` when the speed at connect is > 0 |
 /// | `off` | a recording ends (stop or write failure, or a Start that threw) with the link `polling` | as above: a fresh session |
+/// | `off` | the no-OBD start rule's timer fires (all its conditions still hold) | `runningNoOBD`: a fresh session, no calibration phase |
 /// | `calibrating` | speed at connect arrives and is > 0 | `running` |
 /// | `calibrating` | `stillCalibration` (5 s) since the session started | `running` |
 /// | `calibrating`, `running` | link leaves `polling` | `waitingForOBD(since: now)` |
 /// | `waitingForOBD` | link back to `polling` | `running`: the same session, clock and feed, no second calibration or start-up replay |
-/// | `waitingForOBD` | `autoStopAfter` (5 min) continuously without `polling`, on `ContinuousClock` (counts while suspended) | `off`: session ended |
+/// | `waitingForOBD` | `autoStopAfter` (5 min) continuously without `polling`, on `ContinuousClock` (counts while suspended) | `off`: session ended, its estimate saved as engine off; the no-OBD start rule applies again |
+/// | `runningNoOBD` | link reaches `polling` | `calibrating` or `running` (as from `off`): the no-OBD session ended and a fresh OBD session started in the same main-actor step, its engine seeded from the no-OBD engine's latest estimate (`RecordingNavigationFeed.restartCapture`, `NavigationPrior.noOBDRestart`) |
+/// | `runningNoOBD` | link changes without reaching `polling` | `runningNoOBD` (nothing happens) |
+/// | `runningNoOBD` | `stopNoOBDNavigate()` (the user's Stop) | `off`; the start rule stays off until background → active, or `polling` |
 /// | any but `off` | Record starts | `off`: session ended before Record's clock exists |
-/// | any but `off` | `willTerminate`, `disableNavigate()` | `off` |
+/// | any but `off` | `willTerminate`, `disableNavigate()`, the demo's hold | `off` |
 ///
 /// **Speed at connect** (calibration rule (a)): the latest primary-ECU
 /// (`7E8`) vehicle-speed reading the session had when Navigate started, or,
@@ -36,9 +65,16 @@ enum NavigateState: Hashable, Sendable {
     case running
     /// The link left `polling` at `since`; sources and engine keep running.
     case waitingForOBD(since: ContinuousClock.Instant)
+    /// UX-7: a no-OBD run (network/GNSS fixes, roads and the IMU; no
+    /// adapter). No calibration phase, no auto-stop; see the type's doc.
+    /// Its UI state is `RecordingSession.noOBDNavigation`.
+    case runningNoOBD
 
     /// A session exists: every state but `off`.
     var isActive: Bool { self != .off }
+
+    /// A no-OBD run (UX-7): `runningNoOBD`.
+    var isNoOBD: Bool { self == .runningNoOBD }
 }
 
 /// Navigate's timings. The defaults are the decided ones (UX-1 (a), (c));
@@ -48,6 +84,29 @@ struct NavigateConfiguration: Hashable, Sendable {
     var stillCalibration: Duration = .seconds(5)
     /// Navigate stops after this long continuously without `polling`.
     var autoStopAfter: Duration = .seconds(300)
+    /// UX-7 no-OBD start rule (see `NavigateState`): a no-OBD run starts
+    /// after this long with every condition holding. nil: never (the demo
+    /// drive's session).
+    var noOBDStartAfter: Duration? = .seconds(30)
+}
+
+/// UX-7: what the UI shows about the running no-OBD run
+/// (`RecordingSession.noOBDNavigation`), read from the navigation service
+/// once a second (`NavigationService.noOBDStatus(generation:)`). Display
+/// only: nothing here reaches a sink or an engine.
+struct NoOBDNavigationStatus: Hashable, Sendable {
+    /// "Position uncertain": `LiveNavigationRun.positionUncertainAfterS`
+    /// (120 s) or more without an accepted fix or pin
+    /// (`LiveNavigationRun.positionUncertain(at:)`); false again from the
+    /// next accepted fix or applied pin.
+    var positionUncertain = false
+    /// The engine's speed estimate, km/h: **estimated** (never an OBD or a
+    /// GPS reading); nil while the engine has no estimate.
+    var estimatedSpeedKmh: Double?
+    /// The latest accepted fix or pin on the run's clock
+    /// (`LiveNavigationRun.lastFixOrPinT`; the run's first input until one);
+    /// nil before the first input.
+    var lastFixOrPinT: MonotonicTimestamp?
 }
 
 /// What Record and Navigate share about a running session, so the code that
@@ -121,10 +180,16 @@ final class NavigateRun: SessionRun {
     var autoStopTimer: Task<Void, Never>?
     var liveTimer: Task<Void, Never>?
 
-    init(generation: Int, clock: SessionClock, navigationTap: NavigationTap) {
+    /// UX-7: a no-OBD run (`NavigateState.runningNoOBD`): its feed says
+    /// so (`RecordingNavigationFeed.noOBD`), it has no calibration phase and
+    /// no auto-stop.
+    let noOBD: Bool
+
+    init(generation: Int, clock: SessionClock, navigationTap: NavigationTap, noOBD: Bool = false) {
         self.generation = generation
         self.clock = clock
         self.navigationTap = navigationTap
+        self.noOBD = noOBD
         sink = .tapOnly(navigationTap.tap)
     }
 
