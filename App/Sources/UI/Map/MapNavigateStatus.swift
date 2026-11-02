@@ -15,17 +15,32 @@ enum NavigateStatus: Equatable {
     case waitingForOBD(secondsLeft: Int)
     /// Navigate is off with no OBD (decision (d)): plain GPS only.
     case needsOBD
+    /// UX-7: Navigate is off, no adapter, and the 30 s no-OBD start timer is
+    /// armed. `secondsLeft` counts down (rounded up) to the run's start.
+    case startingNoOBD(secondsLeft: Int)
+    /// UX-7: a no-OBD run. The label is persistent; `uncertain` adds
+    /// "Position uncertain" (120 s without an accepted fix or pin).
+    case noOBD(uncertain: Bool)
+    /// R85.1-1: the user stopped the no-OBD run and the start rule is held;
+    /// the card offers Start (`RecordingSession.canStartNoOBDNavigate`).
+    case noOBDStopped
 
     /// `recording` is `RecordingSession.state`: Navigate is `.off` while a
     /// recording runs, and that must not read as "no OBD".
     static func make(
         navigate: NavigateState, recording: RecordingState,
         startedAt: ContinuousClock.Instant?, timings: NavigateConfiguration,
-        now: ContinuousClock.Instant
+        now: ContinuousClock.Instant,
+        noOBD: NoOBDNavigationStatus? = nil, noOBDStartArmedAt: ContinuousClock.Instant? = nil,
+        canStartNoOBD: Bool = false
     ) -> NavigateStatus {
         switch navigate {
         case .running:
             return .hidden
+        case .runningNoOBD:
+            // UX-7: the estimate shows, under a persistent honest label
+            // (`RecordingSession.noOBDNavigation` says whether it is uncertain).
+            return .noOBD(uncertain: noOBD?.positionUncertain ?? false)
         case .calibrating:
             guard let startedAt else { return .calibrating(secondsLeft: nil) }
             return .calibrating(secondsLeft: secondsLeft(until: startedAt + timings.stillCalibration, now: now))
@@ -33,7 +48,14 @@ enum NavigateStatus: Equatable {
             return .waitingForOBD(secondsLeft: secondsLeft(until: since + timings.autoStopAfter, now: now))
         case .off:
             switch recording {
-            case .idle, .failed: return .needsOBD
+            case .idle, .failed:
+                // Stopped by the user and eligible: the manual Start (never in a run or recording).
+                if canStartNoOBD { return .noOBDStopped }
+                // The start timer is armed (no adapter for a while): say what comes next.
+                if let armed = noOBDStartArmedAt, let after = timings.noOBDStartAfter {
+                    return .startingNoOBD(secondsLeft: secondsLeft(until: armed + after, now: now))
+                }
+                return .needsOBD
             case .calibrating, .recording, .stopping: return .hidden
             }
         }
@@ -48,7 +70,27 @@ enum NavigateStatus: Equatable {
 
     /// Whether the dead-reckoning dot and ellipse may be drawn: not without
     /// OBD (decision (d)), where only the plain GPS position shows.
-    var showsEstimate: Bool { self != .needsOBD }
+    var showsEstimate: Bool {
+        switch self {
+        case .needsOBD, .startingNoOBD, .noOBDStopped: false
+        default: true
+        }
+    }
+
+    /// A no-OBD run shows the Stop control (`RecordingSession.stopNoOBDNavigate`).
+    var hasStop: Bool {
+        if case .noOBD = self { return true }
+        return false
+    }
+
+    /// The stopped card shows the Start control (`RecordingSession.startNoOBDNavigate`).
+    var hasStart: Bool { self == .noOBDStopped }
+
+    /// The second line of the no-OBD card, under the label.
+    var secondLine: String? {
+        if case .noOBD(uncertain: true) = self { return String(localized: "Position uncertain") }
+        return nil
+    }
 
     var text: String? {
         switch self {
@@ -60,6 +102,12 @@ enum NavigateStatus: Equatable {
             String(localized: "OBD lost — reconnecting")
         case .needsOBD:
             String(localized: "Connect OBD for navigation without GPS")
+        case .startingNoOBD:
+            String(localized: "Starting without OBD…")
+        case .noOBD:
+            String(localized: "No OBD — lower accuracy")
+        case .noOBDStopped:
+            String(localized: "Navigation without OBD stopped")
         }
     }
 
@@ -68,9 +116,11 @@ enum NavigateStatus: Equatable {
         switch self {
         case .calibrating(let left?):
             String(left)
+        case .startingNoOBD(let left):
+            String(left)
         case .waitingForOBD(let left):
             String(localized: "Stops in \(DisplayFormat.elapsed(TimeInterval(left)))")
-        case .hidden, .calibrating(nil), .needsOBD:
+        case .hidden, .calibrating(nil), .needsOBD, .noOBD, .noOBDStopped:
             nil
         }
     }
@@ -81,13 +131,16 @@ enum NavigateStatus: Equatable {
         case .calibrating: .caution
         case .waitingForOBD: .bad
         case .needsOBD: .caution
+        case .startingNoOBD, .noOBDStopped: .caution
+        case .noOBD(let uncertain): uncertain ? .bad : .caution
         }
     }
 
     var systemImage: String {
         switch self {
         case .hidden, .calibrating: "hand.raised.fill"
-        case .waitingForOBD, .needsOBD: "cable.connector.slash"
+        case .waitingForOBD, .needsOBD, .startingNoOBD, .noOBDStopped: "cable.connector.slash"
+        case .noOBD(let uncertain): uncertain ? "exclamationmark.triangle.fill" : "cable.connector.slash"
         }
     }
 }
@@ -97,13 +150,20 @@ enum NavigateStatus: Equatable {
 /// per-second `Date()`.
 struct MapNavigateStatusLine: View {
     let session: RecordingSession
+    /// `session.canStartNoOBDNavigate`, already gated by the caller (not in the demo).
+    var canStartNoOBD = false
 
     var body: some View {
         let timings = session.navigateTimings ?? NavigateConfiguration()
         TimelineView(.periodic(from: .now, by: 1)) { _ in
-            NavigateStatusLabel(status: NavigateStatus.make(
-                navigate: session.navigateState, recording: session.state,
-                startedAt: session.navigateStartedAt, timings: timings, now: .now))
+            NavigateStatusLabel(
+                status: NavigateStatus.make(
+                    navigate: session.navigateState, recording: session.state,
+                    startedAt: session.navigateStartedAt, timings: timings, now: .now,
+                    noOBD: session.noOBDNavigation, noOBDStartArmedAt: session.noOBDStartArmedAt,
+                    canStartNoOBD: canStartNoOBD),
+                onStop: { [session] in session.stopNoOBDNavigate() },
+                onStart: { [session] in session.startNoOBDNavigate() })
         }
     }
 }
@@ -111,9 +171,16 @@ struct MapNavigateStatusLine: View {
 /// Plain-values presentation, for previews.
 struct NavigateStatusLabel: View {
     let status: NavigateStatus
+    /// The no-OBD run's Stop (UX-7); asked to confirm first. Unused by other states.
+    var onStop: () -> Void = {}
+    /// The stopped card's Start (R85.1-1); no confirmation.
+    var onStart: () -> Void = {}
+    @State private var confirmsStop = false
 
     var body: some View {
-        if let text = status.text {
+        if status.hasStop || status.hasStart {
+            noOBDCard
+        } else if let text = status.text {
             // One line at the default Dynamic Type; when it no longer fits
             // (large sizes), the countdown drops under the text instead of
             // squeezing it.
@@ -146,6 +213,83 @@ struct NavigateStatusLabel: View {
 
     private var icon: some View { Image(systemName: status.systemImage) }
 
+    // MARK: No-OBD run (UX-7)
+
+    /// The persistent honest label, "Position uncertain" under it when it
+    /// applies, and the Stop control (48 pt). When the label does not fit on one
+    /// line it wraps beside the Stop button.
+    private var noOBDCard: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) {
+                icon
+                noOBDLabels.fixedSize(horizontal: true, vertical: false)
+                Spacer(minLength: 0)
+                trailingButton
+            }
+            HStack(spacing: 10) {
+                icon
+                noOBDLabels.fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                trailingButton
+            }
+            .padding(.vertical, 8)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 4)
+        .frame(minHeight: 56)
+        .hudSurface(RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(status.tone.color, lineWidth: 2))
+        .dynamicTypeSize(...DynamicTypeSize.accessibility2)
+        .accessibilityElement(children: .contain)
+        .confirmationDialog("Stop navigation?", isPresented: $confirmsStop, titleVisibility: .visible) {
+            Button("Stop navigation", role: .destructive, action: onStop)
+            Button("Keep navigating", role: .cancel) {}
+        } message: {
+            Text("It stays off until you tap Start, the adapter connects, or the app is reopened later.")
+        }
+    }
+
+    private var noOBDLabels: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(status.text ?? "").font(.headline)
+            if let second = status.secondLine {
+                Text(second).font(.subheadline.weight(.bold)).foregroundStyle(HUDColors.warn)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder private var trailingButton: some View {
+        if status.hasStart { startButton } else { stopButton }
+    }
+
+    /// Same 48 pt round button with the play glyph; VoiceOver says "Start navigation without OBD".
+    private var startButton: some View {
+        Button(action: onStart) {
+            Image(systemName: "play.fill")
+                .font(.system(size: 20, weight: .bold))
+                .frame(width: 48, height: 48)
+                .background(HUDColors.button, in: Circle())
+                .overlay(Circle().strokeBorder(HUDColors.muted, lineWidth: 1.5))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Start navigation without OBD")
+    }
+
+    /// A 48 pt round button with the stop glyph: a big target that reads the
+    /// same in both languages; VoiceOver says "Stop navigation".
+    private var stopButton: some View {
+        Button { confirmsStop = true } label: {
+            Image(systemName: "stop.fill")
+                .font(.system(size: 20, weight: .bold))
+                .frame(width: 48, height: 48)
+                .background(HUDColors.button, in: Circle())
+                .overlay(Circle().strokeBorder(HUDColors.muted, lineWidth: 1.5))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Stop navigation")
+    }
+
     @ViewBuilder
     private func detailView(font: Font) -> some View {
         if let detail = status.detail {
@@ -170,4 +314,28 @@ struct NavigateStatusLabel: View {
     NavigateStatusLabel(status: .waitingForOBD(secondsLeft: 272))
         .padding()
         .dynamicTypeSize(.accessibility2)
+}
+
+#Preview("No OBD run") {
+    NavigateStatusLabel(status: .noOBD(uncertain: false)).padding()
+}
+
+#Preview("No OBD run, position uncertain") {
+    NavigateStatusLabel(status: .noOBD(uncertain: true)).padding()
+}
+
+#Preview("No OBD run, large type") {
+    NavigateStatusLabel(status: .noOBD(uncertain: true)).padding().dynamicTypeSize(.accessibility2)
+}
+
+#Preview("No OBD stopped, Start offered") {
+    NavigateStatusLabel(status: .noOBDStopped).padding()
+}
+
+#Preview("No OBD stopped, large type") {
+    NavigateStatusLabel(status: .noOBDStopped).padding().dynamicTypeSize(.accessibility2)
+}
+
+#Preview("Starting without OBD") {
+    NavigateStatusLabel(status: .startingNoOBD(secondsLeft: 21)).padding()
 }

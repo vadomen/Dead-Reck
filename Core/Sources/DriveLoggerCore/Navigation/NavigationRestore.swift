@@ -540,6 +540,30 @@ public struct OBDOdometer: Hashable, Sendable {
     }
 }
 
+extension NavigationPrior {
+    /// UX-7 seeded restart (prompt 47): the prior for the OBD Navigate run
+    /// that replaces a running no-OBD run when the adapter reaches
+    /// `polling`. `capture` is the no-OBD run's in-memory estimate at its
+    /// engine's last step, captured as the Navigate → Record hand-over does
+    /// (`LiveNavigationRun.restoreState(clock:bootSessionID:engineOff:)`
+    /// with `engineOff` false, on the no-OBD run's clock; the app's
+    /// `NavigateHandOver` capture is exactly that). Its class is
+    /// `NavigationEngine.restoreClass(at:engineOff: false)`: `.moving` when
+    /// the run never had an OBD reply, unless the run was itself seeded from
+    /// a parked or standing-stop prior whose hold the IMU has not cleared
+    /// (then that class, as any run from such a prior saves). `t` and
+    /// `clock` are the new run's start on its own clock. Not a hand-over
+    /// (`handOver` false): the normal unconfirmed-restore rule, so a fix or
+    /// pin may reject it. The engine grows it for the gap
+    /// (`seed(gapS:movingAtStart:)`) like any restore. nil when the state is
+    /// invalid or its age is outside −5 s…24 h
+    /// (`NavigationRestoreState.prior(at:clock:bootSessionID:handOver:)`).
+    public static func noOBDRestart(from capture: NavigationRestoreState, at t: MonotonicTimestamp,
+                                    clock: SessionClock, bootSessionID: String?) -> NavigationPrior? {
+        capture.prior(at: t, clock: clock, bootSessionID: bootSessionID, handOver: false)
+    }
+}
+
 extension NavigationRestoreState {
     /// The same state with its position moved `east`/`north` metres
     /// (`replay_nav --prior-offset`: a car moved while the app was not

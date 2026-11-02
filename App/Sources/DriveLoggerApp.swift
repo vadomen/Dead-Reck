@@ -13,6 +13,8 @@ struct DriveLoggerApp: App {
         _services = State(initialValue: services)
         #if DEBUG
         DebugAutoRecord.startIfRequested(services)
+        #endif
+        #if DEBUG || targetEnvironment(simulator)
         DebugNavigate.startIfRequested(services)
         #endif
     }

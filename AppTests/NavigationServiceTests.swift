@@ -95,6 +95,7 @@ struct NavigationServiceTests {
             #expect(contents.header.seed == NavigationSeed.derive(header: feed.header))
             #expect(contents.header.sessionID == feed.header.sessionID)
             #expect(contents.header.configHash == NavigationConfig(seed: contents.header.seed).hashHex)
+            #expect(finished[index].configHash == contents.header.configHash, "the engine's config is the header's")
             #expect(contents.header.appBuild == feed.header.app.build)
             #expect(contents.header.buildConfiguration == Self.expectedBuildConfiguration)
             #expect(contents.estimates.count >= 1, "recording \(index)")

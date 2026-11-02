@@ -118,7 +118,7 @@ final class FeedTee {
         let proxy = NavigationTap()
         let run = service.start(RecordingNavigationFeed(
             generation: feed.generation, header: feed.header, clock: feed.clock, output: feed.output, tap: proxy,
-            runEnd: feed.runEnd, navPrior: feed.navPrior))
+            runEnd: feed.runEnd, navPrior: feed.navPrior, noOBD: feed.noOBD, restartCapture: feed.restartCapture))
         let generation = feed.generation
         inputs[generation] = []
         Task { @MainActor in
@@ -154,6 +154,8 @@ final class NavigateRig {
     let source = ScriptedSource()
     let uptime = FakeUptime(NavigateRig.base)
     let idle = IdleTimerSpy()
+    /// The session's `now` (R85.1-1/-2), shifted by the test.
+    let clock = ShiftedClock()
     let tee: FeedTee
     let session: RecordingSession
     /// Navigation inputs the script produced after the session started
@@ -172,6 +174,7 @@ final class NavigateRig {
         tee = FeedTee(service: service)
         var counter = 0
         let idle = idle
+        let clock = clock
         session = RecordingSession(
             link: link,
             sources: [source] + extraSources,
@@ -192,7 +195,8 @@ final class NavigateRig {
             makeSessionID: {
                 counter += 1
                 return Self.sessionID(idNamespace, counter)
-            }
+            },
+            now: { clock.now() }
         )
         let tee = tee
         session.onNavigationFeed = { tee.handle($0) }

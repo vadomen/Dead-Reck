@@ -296,15 +296,17 @@ struct SpokenPhraseTests {
                 #expect(footer.contains("\(open)\(phrase.spoken(language: language))\(close)"),
                         "\(language): the footer does not quote «\(phrase.spoken(language: language))»: \(footer)")
             }
-            // Three quoted phrases and no other quoted text.
+            let uncertain = GPSPhrase.uncertainSpoken(language: language)
+            #expect(footer.contains("\(open)\(uncertain)\(close)"), "\(language): the footer does not quote «\(uncertain)»: \(footer)")
+            // Three quoted phrases plus "Position uncertain", and no other quoted text.
             let marks = footer.components(separatedBy: open).count - 1
             let quoted = open == close ? marks / 2 : marks
-            #expect(quoted == GPSPhrase.allCases.count, "\(language): \(footer)")
+            #expect(quoted == GPSPhrase.allCases.count + 1, "\(language): \(footer)")
         }
         #expect(SettingsRows.speakGPSFootnote(language: "uk")
-            == "Під час навігації або запису озвучує «GPS втрачено», «GPS відновлено» чи «GPS вимкнено» — не частіше ніж раз на 5 хвилин кожне.")
+            == "Під час навігації або запису озвучує «GPS втрачено», «GPS відновлено» чи «GPS вимкнено» — не частіше ніж раз на 5 хвилин кожне. Без OBD також озвучує «Позиція невизначена», коли позиція стає невизначеною.")
         #expect(SettingsRows.speakGPSFootnote(language: "en")
-            == "While navigating or recording, says \"GPS lost\", \"GPS back\" or \"GPS off\", at most once every 5 minutes each.")
+            == "While navigating or recording, says \"GPS lost\", \"GPS back\" or \"GPS off\", at most once every 5 minutes each. Without OBD, also says \"Position uncertain\" when the position becomes uncertain.")
     }
 
     @Test("The announcer says the app-language text, not the identity")

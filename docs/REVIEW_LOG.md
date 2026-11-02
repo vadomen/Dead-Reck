@@ -1277,3 +1277,42 @@ Round 3 outcome: R84.3-1..2 fixed (tests), flag checks moved to Core; `swift tes
 One fresh opus reviewer, whole range f063768..1b6935d. Round-3 fixes verified. 545a1ce behaviour-identical in replay_nav (19 flag combinations, de856e0 vs HEAD release binaries: same output and exit codes; same-drive `--snap-pins` replay GeoJSON byte-identical). Mutations: 2 new, both killed (`NavSidecar.swift:141-142` pin from latitude/longitude; `PinSnap.swift:282` any shared node). No findings.
 
 Run 84 closed: 4 rounds; 8 MAJOR confirmed and fixed (R84.1-1..4, R84.2-1..2, R84.3-1..2: one docs fix, the rest regression tests; no code bug), 0 rejected, 5 MINOR deferred (R84.1-5..9); Core 1288 tests in 153 suites passed (36 known issues); App 850 passed at 5ed8883 (no App change since).
+
+## Run 85: Prompt 47 UX-7 Navigate without OBD (no-OBD run, auto-start 30 s, position uncertain 120 s, seeded restart, Stop/Start, screen rule; docs) (nav-noobd..nav-noobd-47: 5468cd9..c86de54), started 2026-11-01
+
+### Round 1
+
+Reviewers: three parallel opus reviewers on disjoint sets: A (Core no-OBD run, NavigationService, golden tests), B (state machine: RecordingSession, NavigateMode, AppServices, DebugNavigate, demo, location grant), C (map UI, voice, strings, docs, project).
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R85.1-1 | MAJOR | (B+C) A user Stop was re-armed by any background → active; iOS lock is `.background`, so lock/unlock restarted the run; docs/PLAN said otherwise. | CONFIRMED | Fixed per user decision in b6523a1 (Stop held until cold launch / polling / ≥ 30 min in the background; tests `userStopDoesNotRestart`, `longBackgroundReleasesStop`, `coldLaunchNotHeld`, `manualStart`, `manualStartRefused`) and b1224f9 (Start control, Stop dialog copy; test `NoOBDMapTests/stoppedCard`); docs this round. |
+| R85.1-2 | MAJOR | (B) A no-OBD run disabled auto-lock with no end. | CONFIRMED | Fixed per user decision in b6523a1 (screen awake only within 5 min of motion; tests `motionSignal`, `screenAwakeAfterMotion`, `screenStartAndUncertain`, `screenOBDAndRecordUnchanged`). |
+| R85.1-3 | MAJOR | (A, narrowed) `NavigationService` `LiveNavigationRun(noOBD: feed.noOBD)`: no test fails if a no-OBD feed gets the OBD config (the Record direction is partly covered by `NavigationServiceTests:97`). | CONFIRMED | Fixed de96410 (`Finished.configHash` from the engine; tests in NavigateNoOBDTests, NavigateOBDGoldenAppTests, NavigationServiceTests; mutations `noOBD: false` and `true` both fail). |
+| R85.1-4 | MINOR | (B) `ReferenceLocationSource.isLocationGranted` untested. | CONFIRMED | Fixed b6523a1 (`LocationGrantTests/grant`), since trivial. |
+| R85.1-5 | MINOR | (C) The Settings voice footer did not quote "Position uncertain". | CONFIRMED | Fixed b1224f9 (`LocalizationTests.footerQuotesEqualSpoken`). |
+| R85.1-6 | MINOR | (B) No test for a non-polling link change during `runningNoOBD`. | CONFIRMED | Fixed b6523a1 (`nonPollingLinkChangeKeepsNoOBDRun`). |
+| R85.1-7 | MINOR | (A) `Core/Sources/DriveLoggerCore/Navigation/NavigationRestore.swift:561` (`NavigationPrior.noOBDRestart`) `noOBDRestart` re-bases savedT to the capture time, so after a seeded restart the "Restored · … · not yet confirmed" line shows "<1 min ago" even when the no-OBD run itself held an unconfirmed restore many hours old. | DEFERRED | See BACKLOG R85.1-7. |
+
+### Round 2
+
+Reviewers: two parallel opus reviewers on disjoint sets: A (Core no-OBD run, NavigationService, state machine, round-1 fixes b6523a1/de96410), B (map UI, voice, strings, docs, project; round-1 fixes b1224f9/2279ee3).
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R85.2-1 | MAJOR | (A) `RecordingSession.updateIdleTimer` kept the screen awake only for a recording or a run, so iOS auto-lock (30 s, forced by Low Power Mode) could lock the phone during the 30 s no-OBD start countdown and cancel it; every unlock re-armed the same race. | CONFIRMED | Fixed 2ceb5f1 (screen awake while the countdown is armed; re-checked when it arms or cancels; tests `screenCountdownAtLaunch`, `screenCountdownAfterAutoStop`, `screenCountdownAfterBackgroundRelease`, `screenCountdownCancelled`; all four fail with the fix reverted). |
+| R85.2-2 | MINOR | (B) The user-Stop hold lives in memory only; if iOS ends the suspended app within the 30 min, the next open is a cold launch and the auto-start re-arms, so docs saying lock/unlock "never" restarts overstate it. | DEFERRED | Docs wording fixed this round (NAVIGATION, PLAN §6, BACKLOG_UX UX-7); persisting the hold with the background time: BACKLOG R85.2-2 (user decision / next UX-7 pass). |
+| R85.2-3 | MINOR | (B) BACKLOG/REVIEW_LOG R85.1-7 cite `App/Sources/Recording/NavigationRestore.swift:562`; the function is `NavigationPrior.noOBDRestart` at `Core/Sources/DriveLoggerCore/Navigation/NavigationRestore.swift:561`. | CONFIRMED | Fixed this round (path corrected in both). |
+
+Note on R84.1-8 (deferred): prompt 47 makes the PLAN.md parked-phone no-OBD check runnable on device (a no-OBD run uses `noOBDFixSpeedMean` = 1); BACKLOG row updated, still DEFERRED for the wording parts.
+
+### Round 3
+
+Reviewers: two parallel opus reviewers on disjoint sets: A (Core no-OBD run, NavigationService, state machine, round-2 fix 2ceb5f1; own bit-identical re-run of the clean acceptance drive: GeoJSON `cmp`-identical), B (map UI, voice, strings, docs, project).
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R85.3-1 | MINOR | (B) `docs/PLAN.md` §6 prompt-47 item 9, second case ("Repeat after an unlock that ends a ≥ 30 min background") omits the Stop first; without a Stop the run continues through the lock and no countdown re-arms, so the release path is never exercised. | DEFERRED | BACKLOG R85.3-1 (reword: "after Stop, a ≥ 30 min lock, then unlock"). |
+| R85.3-2 | MINOR | (B) `App/Resources/Localizable.xcstrings`: uk of "No OBD — lower accuracy" is «Без OBD — нижча точність», the glossary row says «менша точність» ("check against catalog"); "estimated", "about %lld km/h, estimated", "Keep navigating", "Starting without OBD…", "Stop navigation?" have no glossary row (glossary term for "estimated" is «розрахунковий/-а»). | DEFERRED | BACKLOG R85.3-2 (user picks the wording; catalog and glossary to match). |
+
+Run 85 closed: 3 rounds; 4 MAJOR confirmed and fixed (R85.1-1..3, R85.2-1; R85.1-1/2 per user decisions 2026-11-01: Stop hold + manual Start, no-OBD screen awake only within 5 min of motion), 0 rejected; MINOR: 4 fixed (R85.1-4..6, R85.2-3), 4 deferred (R85.1-7, R85.2-2, R85.3-1, R85.3-2); Core 1295 tests in 155 suites passed (36 known issues); App 895 tests in 133 suites passed at ce5c126.

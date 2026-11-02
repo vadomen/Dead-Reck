@@ -68,7 +68,7 @@ import Foundation
 /// avoids road snapping (docs/PLAN.md §6).
 @MainActor
 final class ReferenceLocationSource: SensorSource, LiveReferenceFixReporting, BackgroundExecutionProviding,
-    LocationAuthorizationReporting, CachedLocationProviding, BackgroundLocationConfigurable {
+    LocationAuthorizationReporting, CachedLocationProviding, BackgroundLocationConfigurable, LocationGrantReporting {
     let name = "referenceLocation"
 
     /// Read by `start`: true (the default; Record and Navigate, D7 revised)
@@ -145,6 +145,13 @@ final class ReferenceLocationSource: SensorSource, LiveReferenceFixReporting, Ba
         @unknown default:
             .available
         }
+    }
+
+    /// UX-7: When In Use or Always is granted now (not denied, restricted
+    /// or not yet asked), so `start` will not ask.
+    var isLocationGranted: Bool {
+        authorization.authorizationStatus == .authorizedWhenInUse
+            || authorization.authorizationStatus == .authorizedAlways
     }
 
     /// Asks for When-In-Use authorisation if it was never asked; fixes start
@@ -285,6 +292,16 @@ protocol BackgroundActivitySessionHandle: AnyObject {
 }
 
 extension CLBackgroundActivitySession: BackgroundActivitySessionHandle {}
+
+/// A source that knows whether Location is granted (UX-7): the no-OBD
+/// Navigate start rule needs When In Use or Always, so that starting a run
+/// on its own never shows the permission prompt. Changes are reported as
+/// availability changes (`BackgroundExecutionProviding`). On a phone,
+/// `ReferenceLocationSource`.
+@MainActor
+protocol LocationGrantReporting: SensorSource {
+    var isLocationGranted: Bool { get }
+}
 
 /// A source that reports location authorisation for the `lifecycle`
 /// `locationAuthorization` row `RecordingSession` writes at start (M4).

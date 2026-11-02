@@ -389,6 +389,16 @@
         }
       }
     },
+    "about %lld km/h, estimated" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "приблизно %lld км/год, за оцінкою"
+          }
+        }
+      }
+    },
     "Adapter failed" : {
       "localizations" : {
         "uk" : {
@@ -1539,6 +1549,16 @@
         }
       }
     },
+    "estimated" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "оцінка"
+          }
+        }
+      }
+    },
     "Export" : {
       "localizations" : {
         "uk" : {
@@ -1910,6 +1930,16 @@
         }
       }
     },
+    "Keep navigating" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Продовжити навігацію"
+          }
+        }
+      }
+    },
     "Keep recording" : {
       "localizations" : {
         "uk" : {
@@ -2276,6 +2306,36 @@
         }
       }
     },
+    "It stays off until you tap Start, the adapter connects, or the app is reopened later." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вона лишається вимкненою, доки ви не натиснете «Старт», не підключиться адаптер або ви не відкриєте застосунок пізніше."
+          }
+        }
+      }
+    },
+    "Navigation without OBD stopped" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Навігацію без OBD зупинено"
+          }
+        }
+      }
+    },
+    "Start navigation without OBD" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запустити навігацію без OBD"
+          }
+        }
+      }
+    },
     "Nearby" : {
       "localizations" : {
         "uk" : {
@@ -2422,6 +2482,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Без OBD"
+          }
+        }
+      }
+    },
+    "No OBD — lower accuracy" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Без OBD — нижча точність"
           }
         }
       }
@@ -3165,6 +3235,16 @@
         }
       }
     },
+    "Position uncertain" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Позиція невизначена"
+          }
+        }
+      }
+    },
     "Privacy policy" : {
       "localizations" : {
         "uk" : {
@@ -3718,6 +3798,16 @@
         }
       }
     },
+    "Starting without OBD…" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запускаємо без OBD…"
+          }
+        }
+      }
+    },
     "Still searching. Yours may have another name: check the list." : {
       "localizations" : {
         "uk" : {
@@ -3764,6 +3854,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Зупинити демо"
+          }
+        }
+      }
+    },
+    "Stop navigation" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Зупинити навігацію"
+          }
+        }
+      }
+    },
+    "Stop navigation?" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Зупинити навігацію?"
           }
         }
       }
@@ -4363,12 +4473,12 @@
         }
       }
     },
-    "While navigating or recording, says \"%@\", \"%@\" or \"%@\", at most once every 5 minutes each." : {
+    "While navigating or recording, says \"%@\", \"%@\" or \"%@\", at most once every 5 minutes each. Without OBD, also says \"%@\" when the position becomes uncertain." : {
       "localizations" : {
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Під час навігації або запису озвучує «%1$@», «%2$@» чи «%3$@» — не частіше ніж раз на 5 хвилин кожне."
+            "value" : "Під час навігації або запису озвучує «%1$@», «%2$@» чи «%3$@» — не частіше ніж раз на 5 хвилин кожне. Без OBD також озвучує «%4$@», коли позиція стає невизначеною."
           }
         }
       }

@@ -276,6 +276,17 @@ final class IdleTimerSpy {
     func set(_ value: Bool) { values.append(value) }
 }
 
+/// `RecordingSession`'s `now` on synthetic time: the real
+/// `ContinuousClock.now` shifted by what the test advanced (R85.1-1/-2:
+/// minutes in the background, minutes without motion). Timers still sleep
+/// on the real clock.
+@MainActor
+final class ShiftedClock {
+    private(set) var offset: Duration = .zero
+    func now() -> ContinuousClock.Instant { .now + offset }
+    func advance(_ duration: Duration) { offset += duration }
+}
+
 extension RecordingNavigationFeed {
     /// A recording feed's file; a Navigate feed fails the test (not a crash).
     var requiredRecordingURL: URL {

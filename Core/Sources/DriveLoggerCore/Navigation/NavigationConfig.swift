@@ -478,6 +478,21 @@ public struct NavigationConfig: Hashable, Sendable, Codable {
         self.init()
         self.seed = seed
     }
+
+    /// The no-OBD Navigate run's config (UX-7, prompt 47; the only place
+    /// it is built): the default config with `seed`, the fix-speed mean on
+    /// (`noOBDFixSpeedMean` = 1, its sub-keys at their defaults: prompt 46's
+    /// rule (iv), τ 500 s) and the robust network-fix likelihood off
+    /// (`noOBDRobustNetworkFix` = 0). Both act only until the first OBD
+    /// reply (`NavigationEngine.obdEverIngested`). The defaults are not
+    /// touched: an OBD run's config, and so its sidecar header, is
+    /// `NavigationConfig(seed:)` as before.
+    public static func noOBDLive(seed: UInt64) -> NavigationConfig {
+        var config = NavigationConfig(seed: seed)
+        config.noOBDFixSpeedMean = 1
+        config.noOBDRobustNetworkFix = 0
+        return config
+    }
 }
 
 extension NavigationConfig {

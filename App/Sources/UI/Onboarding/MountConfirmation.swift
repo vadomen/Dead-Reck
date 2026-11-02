@@ -27,7 +27,8 @@ enum MountCardRule {
         switch navigate {
         case .running:
             return StationaryRule.isStopped(kmh: obdKmh, replyUptime: replyUptime, now: now)
-        case .off, .calibrating, .waitingForOBD:
+        case .off, .calibrating, .waitingForOBD, .runningNoOBD:
+            // `.runningNoOBD` (UX-7): no OBD speed, so no fresh 0.
             return false
         }
     }

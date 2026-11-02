@@ -171,7 +171,11 @@ final class DemoDriveController {
         guard appSession.holdForDemo() else { throw .recordActive }
         (appLink as? any OBDLinkHolding)?.holdForDemo()
         pipeline.timeline.reset()
-        pipeline.session.enableNavigate(options.navigate ?? appSession.navigateTimings ?? NavigateConfiguration())
+        var timings = options.navigate ?? appSession.navigateTimings ?? NavigateConfiguration()
+        // UX-7: the demo car always has its adapter; its session never
+        // starts a no-OBD run.
+        timings.noOBDStartAfter = nil
+        pipeline.session.enableNavigate(timings)
         pipeline.link.connect(to: SimulatedBLECentral.adapterID)
         isRunning = true
         startedAt = .now

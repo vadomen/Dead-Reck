@@ -127,12 +127,40 @@ final class AppServices {
         // Prompt 40: Record's Start takes over the running Navigate
         // estimate (the `navPrior` row); none: a fresh start.
         navigation.provideHandOver(to: session)
+        // UX-7: the no-OBD run's seeded restart and its UI state.
+        navigation.provideNoOBD(to: session)
         // The sidecar is flushed with the log on background (R14.1-4).
         session.onFlush = { await navigation.flush() }
-        // UX-1: Navigate runs whenever the link polls and Record doesn't.
+        // UX-1: Navigate runs whenever the link polls and Record doesn't
+        // (UX-7: and without an adapter after 30 s in the foreground).
         // After the feed hook is set, so the first session's feed is seen.
-        session.enableNavigate()
+        session.enableNavigate(Self.navigateConfiguration())
         demo = DemoDriveController(session: session, link: link, packURL: DemoRoadPack.url(in: .main))
+    }
+
+    /// Navigate's timings for the app: the decided defaults. UX-7: in a
+    /// DEBUG build hosting XCTest (the app tests' host app, which runs this
+    /// very `AppServices` beside the tests) the no-OBD start is off
+    /// (`noOBDStartAfter` nil): the simulator host has no adapter and
+    /// always-granted simulated location, so it would start a no-OBD run 30 s
+    /// into a test run and save its estimate into Application Support every
+    /// 5 s while suites check that container's footprint, and compete with
+    /// timing tests for the CPU. The tests drive their own sessions.
+    static func navigateConfiguration(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> NavigateConfiguration {
+        var configuration = NavigateConfiguration()
+        #if DEBUG
+        if isTestHost(environment: environment) { configuration.noOBDStartAfter = nil }
+        #endif
+        return configuration
+    }
+
+    /// The process hosts an XCTest bundle (Swift Testing runs through it
+    /// too): the runner sets these variables in the host app's environment.
+    nonisolated static func isTestHost(environment: [String: String]) -> Bool {
+        ["XCTestConfigurationFilePath", "XCTestBundlePath", "XCTestSessionIdentifier"]
+            .contains { environment[$0] != nil }
     }
 
     /// The path monitor's relay to the downloader (R66.1-8).
