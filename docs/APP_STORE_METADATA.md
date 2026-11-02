@@ -49,12 +49,12 @@ dead reckoning,OBD-II,ELM327,offline maps,car,speed,BLE,no GPS,tunnel,OBD2,drivi
 ```
 FuGPS shows where your car is when GPS is absent or distorted.
 
-It works out the position from the car's own speed, read through an OBD-II Bluetooth LE adapter (ELM327-compatible), and from the motion sensors of your iPhone. When road maps are installed, the position is matched to the roads. A blue ellipse shows how sure the app is, and when GPS is reliable again the position is corrected.
+It works out the position from the car's own speed, read through an OBD-II Bluetooth LE adapter (ELM327-compatible), and from the motion sensors of your iPhone. Without an adapter it still works, with lower accuracy. When road maps are installed, the position is matched to the roads. A blue ellipse shows how sure the app is, and when GPS is reliable again the position is corrected.
 
 WHAT YOU NEED
 • iPhone with iOS 17 or later.
-• An OBD-II adapter with Bluetooth LE (ELM327-compatible) plugged into the car. Classic Bluetooth and Wi-Fi ELM327 adapters do not work with iPhone.
-• A car that reports its speed over OBD-II. Most petrol cars since 2001 and diesel cars since 2004 do; electric cars often do not.
+• Recommended: an OBD-II adapter with Bluetooth LE (ELM327-compatible) plugged into the car. With it the accuracy is best. Without it the app navigates on network and GNSS fixes and the phone's sensors, with lower accuracy. Classic Bluetooth and Wi-Fi ELM327 adapters do not work with iPhone.
+• For the adapter: a car that reports its speed over OBD-II. Most petrol cars since 2001 and diesel cars since 2004 do; electric cars often do not.
 • A rigid phone mount: the phone must stay in one position during the drive.
 
 WHAT IT DOES AND DOES NOT DO
@@ -95,12 +95,12 @@ Road data © OpenStreetMap contributors, ODbL.
 ```
 FuGPS показує, де ваше авто, коли GPS зникає або дає неправильну позицію.
 
-Позиція рахується зі швидкості самого авто, яку зчитує OBD-II адаптер з Bluetooth LE (сумісний з ELM327), і з датчиків руху iPhone. Коли встановлено карти доріг, позиція привʼязується до доріг. Синій еліпс показує, наскільки застосунок упевнений, а коли GPS знову надійний, позиція уточнюється.
+Позиція рахується зі швидкості самого авто, яку зчитує OBD-II адаптер з Bluetooth LE (сумісний з ELM327), і з датчиків руху iPhone. Без адаптера застосунок теж працює, але з меншою точністю. Коли встановлено карти доріг, позиція привʼязується до доріг. Синій еліпс показує, наскільки застосунок упевнений, а коли GPS знову надійний, позиція уточнюється.
 
 ЩО ПОТРІБНО
 • iPhone з iOS 17 або новішою.
-• OBD-II адаптер з Bluetooth LE (сумісний з ELM327), вставлений в авто. Звичайні Bluetooth- і Wi-Fi-адаптери ELM327 з iPhone не працюють.
-• Авто, яке передає швидкість через OBD-II. Більшість бензинових авто з 2001 року й дизельних з 2004 року передають; електромобілі часто ні.
+• Бажано: OBD-II адаптер з Bluetooth LE (сумісний з ELM327), вставлений в авто. З ним точність найкраща. Без нього застосунок навігує за мережевими й GNSS-координатами та датчиками телефона, з меншою точністю. Звичайні Bluetooth- і Wi-Fi-адаптери ELM327 з iPhone не працюють.
+• Для адаптера: авто, яке передає швидкість через OBD-II. Більшість бензинових авто з 2001 року й дизельних з 2004 року передають; електромобілі часто ні.
 • Жорсткий тримач: телефон має стояти нерухомо всю поїздку.
 
 ЩО ВМІЄ І ЧОГО НЕ РОБИТЬ
@@ -123,7 +123,7 @@ English (App Review reads English). Fill in the video link before submitting.
 ```
 FuGPS estimates the car's position when GPS is absent or distorted. It uses the car's speed, read over OBD-II, and the phone's motion sensors, and can match the position to offline road maps.
 
-Normal use needs an OBD-II Bluetooth LE adapter (ELM327-compatible) in the car, so you can test without a car using the built-in demo:
+An OBD-II Bluetooth LE adapter (ELM327-compatible) in the car is recommended, not required: it gives the best accuracy. Without an adapter, a "No OBD — lower accuracy" navigation run starts by itself about 30 s after opening the app (Location must be allowed). To see the full experience without a car or an adapter, use the built-in demo drive:
 1. Open Settings (the gear on the map) -> Developer -> Demo drive (simulated car).
 2. The map shows a simulated drive, marked with a DEMO badge.
 3. After about a minute the simulated GPS is lost, and the position keeps moving along the roads.
@@ -138,7 +138,7 @@ Ukrainian translation, for reference only (App Review reads the English text abo
 ```
 FuGPS розраховує позицію авто, коли GPS зникає або спотворений. Він використовує швидкість авто, яку зчитує через OBD-II, і датчики руху телефона, а позицію може привʼязувати до карт доріг без інтернету.
 
-Для звичайного користування потрібен OBD-II адаптер з Bluetooth LE (сумісний з ELM327) в авто, тож без авто перевірити можна на вбудованій демо-поїздці:
+OBD-II адаптер з Bluetooth LE (сумісний з ELM327) в авто бажаний, але не обовʼязковий: з ним точність найкраща. Без адаптера навігація «Без OBD — менша точність» починається сама приблизно через 30 с після відкриття застосунку (потрібен дозвіл на геолокацію). Щоб побачити повний досвід без авто й адаптера, скористайтеся вбудованою демо-поїздкою:
 1. Відкрийте «Налаштування» (шестерня на карті) -> «Розробник» -> «Демо-поїздка (імітація авто)».
 2. На карті зʼявляється імітована поїздка з позначкою DEMO.
 3. Приблизно за хвилину імітований GPS зникає, а позиція далі рухається дорогами.

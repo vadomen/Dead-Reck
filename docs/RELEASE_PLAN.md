@@ -30,6 +30,7 @@ Done / in code / open, per item. "In code (prompt N)" = merged work that has not
 | Record starts from Navigate's estimate | done in code (prompt 40); device checks open (PLAN §6) | |
 | Release QA: OSM credit layout, Language row, simulator QA, store screenshots | in progress (prompt 42) | |
 | Pre-release fixes: GPS-off rail button icon-only while GPS is in use, map line for denied Location, altimeter only in Record, R80 minors, store screenshots re-shot | done in code (prompt 43, branch `prerelease-fixes`, review run 81 closed); device checks open (PLAN §6) | R-QA42-1 (Location line only), R-QA42-3, R-QA42-4, R-QA42-5 (implemented, checks pending), R80.1-2, R80.1-3, R80.2-1, R80.2-2, R81.1-1 (done); R-QA43-3 opened; R81.1-2 deferred; R-QA42-2 stays open |
+| UX-7 release copy: "What you need" and Review Notes in `docs/APP_STORE_METADATA.md`, site FAQ and "What you need" (adapter recommended, not required) | updated on branch `nav-noobd` (prompt 47b, 2026-11-02) for the UX-7 release. Deploy the site and update App Store Connect only when the UX-7 release ships, not before: main and the deployed site stay on the adapter-required copy until then | UX-7 |
 | Phases 4-7 (quality, TestFlight, App Store page, submission) | open | |
 
 Starting decisions (from the user, 2026-10-16):

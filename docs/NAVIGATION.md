@@ -3167,13 +3167,14 @@ and nothing is written by Navigate. Not verified on a device (PLAN §6
   After an OBD run's auto-stop (5 min without `polling`) the rule applies
   again, in the foreground only.
 - **Stop.** `stopNoOBDNavigate()` ends the run and holds the auto-start until
-  a cold launch, an adapter reaching `polling`, or the app having been
-  continuously in the background for
-  `NavigateConfiguration.noOBDStopReleaseAfterBackground` = 1800 s (then the
-  start rule re-arms when the scene becomes `.active`). Lock/unlock (iOS
-  reports it as background) and app switching under 30 min never restart the
-  run (unless iOS ended the app in the background: the next open is then a
-  cold launch). Meanwhile the map shows "Navigation without OBD stopped" with a Start
+  an adapter reaches `polling`, or 30 min have passed since the app went to
+  the background (wall clock;
+  `NavigateConfiguration.noOBDStopReleaseAfterBackground` = 1800 s; then the
+  start rule re-arms when the scene becomes `.active`). The Stop hold is
+  persisted: it survives any launch, cold or warm (also when iOS ended the
+  app in the background or the user killed it), so a reopen within 30 min
+  stays held. Lock/unlock (iOS reports it as background) and app switching
+  under 30 min never restart the run. Meanwhile the map shows "Navigation without OBD stopped" with a Start
   button: `startNoOBDNavigate()` (allowed when `canStartNoOBDNavigate`) starts
   at once, without the 30 s wait, and never prompts for Location.
 - **Screen.** A no-OBD run keeps the screen awake only within
