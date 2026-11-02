@@ -38,10 +38,13 @@ struct NavigateNoOBDTests {
     /// not yet enabled.
     static func rig(_ store: LogStore = RecordingSessionNavigateTests.absentStore(),
                     service: NavigationService = NavigationService(),
-                    extraSources: [any SensorSource] = []) -> NavigateRig {
-        let rig = NavigateRig(store: store, service: service, extraSources: extraSources)
+                    extraSources: [any SensorSource] = [],
+                    clock: ShiftedClock = ShiftedClock(),
+                    stopHold: any NoOBDStopHoldStoring = NoOBDStopHoldMemory(),
+                    active: Bool = true) -> NavigateRig {
+        let rig = NavigateRig(store: store, service: service, extraSources: extraSources, clock: clock, stopHold: stopHold)
         rig.link.state = .ready
-        rig.session.handleScenePhase(.active)
+        if active { rig.session.handleScenePhase(.active) }
         service.provideNoOBD(to: rig.session)
         return rig
     }
@@ -415,23 +418,224 @@ struct NavigateNoOBDTests {
         #expect(await R.ended(rig.tee.service, second))
     }
 
-    @Test("A cold launch (a new process: a fresh session) is not held by an earlier process's Stop")
-    func coldLaunchNotHeld() async throws {
-        let rig = Self.rig()
+    // MARK: Stop hold persisted (47b, R85.2-2)
+
+    /// A rig with a running no-OBD run, then the user's Stop (held,
+    /// persisted at the Stop's wall time); its run has ended.
+    static func stopped(clock: ShiftedClock, stopHold: any NoOBDStopHoldStoring) async throws -> NavigateRig {
+        let rig = Self.rig(clock: clock, stopHold: stopHold)
         rig.session.enableNavigate(Self.config())
         let first = try await Self.noOBDRun(rig)
         rig.session.stopNoOBDNavigate()
-        #expect(rig.session.noOBDStoppedByUser)
-        rig.session.disableNavigate()
+        #expect(rig.session.noOBDStoppedByUser && stopHold.heldSince == clock.wallNow(), "persisted at the Stop")
         #expect(await R.ended(rig.tee.service, first))
+        return rig
+    }
 
-        let relaunched = Self.rig()
-        #expect(!relaunched.session.noOBDStoppedByUser && !relaunched.session.canStartNoOBDNavigate)
+    /// The old process is gone (a kill: no `willTerminate`, nothing else
+    /// runs); its session is only switched off so its timers can't act.
+    static func kill(_ rig: NavigateRig) {
+        rig.session.disableNavigate()
+    }
+
+    /// The relaunched process: a fresh session on the same store and wall
+    /// clock, Navigate enabled as `AppServices` does, the scene not yet
+    /// reported. Asserts it is held exactly as `held` says right at launch,
+    /// and that `.active` then keeps it (Start offered, no countdown, no
+    /// run) or re-arms (countdown on `.active`, a no-OBD run the window
+    /// later). Ends with Navigate disabled.
+    static func relaunch(clock: ShiftedClock, stopHold: any NoOBDStopHoldStoring, held: Bool,
+                         _ comment: String) async throws {
+        let relaunched = Self.rig(clock: clock, stopHold: stopHold, active: false)
+        #expect(relaunched.session.noOBDStoppedByUser == held, "at launch: \(comment)")
+        #expect((stopHold.heldSince != nil) == held, "the record: \(comment)")
         relaunched.session.enableNavigate(Self.config())
-        #expect(relaunched.session.noOBDStartArmedAt != nil)
-        let generation = try await Self.noOBDRun(relaunched)
-        relaunched.session.disableNavigate()
-        #expect(await R.ended(relaunched.tee.service, generation))
+        #expect(relaunched.session.noOBDStartArmedAt == nil, "not active yet")
+        relaunched.session.handleScenePhase(.active)
+        #expect(relaunched.session.noOBDStoppedByUser == held, "on .active: \(comment)")
+        if held {
+            #expect(relaunched.session.canStartNoOBDNavigate && relaunched.session.noOBDStartArmedAt == nil)
+            try await Task.sleep(for: .milliseconds(800))
+            #expect(relaunched.session.navigateState == .off && relaunched.tee.feeds.isEmpty, "held: \(comment)")
+            relaunched.session.disableNavigate()
+        } else {
+            let armed = ContinuousClock.now
+            #expect(relaunched.session.noOBDStartArmedAt != nil && !relaunched.session.canStartNoOBDNavigate,
+                    "re-armed on .active: \(comment)")
+            let generation = try await Self.noOBDRun(relaunched)
+            #expect(ContinuousClock.now - armed >= .milliseconds(380), "the window after .active, not at once")
+            relaunched.session.disableNavigate()
+            #expect(await R.ended(relaunched.tee.service, generation))
+        }
+    }
+
+    @Test("Kill in the background after a Stop (iOS ending the suspended app, a swipe-kill) and relaunch: 10 min after it went to the background → held, Start offered; 31 min → re-armed (countdown on .active, the run the window later)", arguments: [10, 31])
+    func relaunchAfterBackgroundKill(_ minutes: Int) async throws {
+        let clock = ShiftedClock()
+        let stopHold = NoOBDStopHoldMemory()
+        let rig = try await Self.stopped(clock: clock, stopHold: stopHold)
+        clock.advance(.seconds(5 * 60))
+        rig.session.handleScenePhase(.inactive)
+        rig.session.handleScenePhase(.background)
+        #expect(stopHold.heldSince == clock.wallNow(), "the time it went to the background")
+        Self.kill(rig)
+        clock.advance(.seconds(minutes * 60))
+        try await Self.relaunch(clock: clock, stopHold: stopHold, held: minutes < 30, "\(minutes) min after background")
+    }
+
+    @Test("Kill in the foreground right after a Stop (crash or jetsam, no .background): held at relaunch, from the Stop's time (10 min held, 31 min re-armed)", arguments: [0, 10, 31])
+    func relaunchAfterForegroundKill(_ minutes: Int) async throws {
+        let clock = ShiftedClock()
+        let stopHold = NoOBDStopHoldMemory()
+        let rig = try await Self.stopped(clock: clock, stopHold: stopHold)
+        Self.kill(rig)
+        clock.advance(.seconds(minutes * 60))
+        try await Self.relaunch(clock: clock, stopHold: stopHold, held: minutes < 30, "\(minutes) min after the Stop")
+    }
+
+    @Test("Warm return (the same process): .background → .active after 10 min → held; after 31 min → released and re-armed")
+    func warmReturn() async throws {
+        let clock = ShiftedClock()
+        let stopHold = NoOBDStopHoldMemory()
+        let rig = try await Self.stopped(clock: clock, stopHold: stopHold)
+        rig.session.handleScenePhase(.background)
+        clock.advance(.seconds(10 * 60))
+        rig.session.handleScenePhase(.inactive)
+        rig.session.handleScenePhase(.active)
+        #expect(rig.session.noOBDStoppedByUser && rig.session.canStartNoOBDNavigate && stopHold.heldSince != nil)
+        rig.session.handleScenePhase(.background)
+        clock.advance(.seconds(31 * 60))
+        rig.session.handleScenePhase(.active)
+        #expect(!rig.session.noOBDStoppedByUser && stopHold.heldSince == nil, "released: record cleared")
+        #expect(rig.session.noOBDStartArmedAt != nil)
+        let generation = try await Self.noOBDRun(rig)
+        rig.session.disableNavigate()
+        #expect(await R.ended(rig.tee.service, generation))
+    }
+
+    @Test("Back at 10 min and away again restarts the 30 min: relaunch 25 min after the second .background (35 after the first) → held; 31 min after it → re-armed", arguments: [25, 31])
+    func returnThenLeaveRestarts(_ minutes: Int) async throws {
+        let clock = ShiftedClock()
+        let stopHold = NoOBDStopHoldMemory()
+        let rig = try await Self.stopped(clock: clock, stopHold: stopHold)
+        rig.session.handleScenePhase(.background)
+        let first = clock.wallNow()
+        clock.advance(.seconds(10 * 60))
+        rig.session.handleScenePhase(.active)
+        #expect(rig.session.noOBDStoppedByUser)
+        clock.advance(.seconds(60))
+        rig.session.handleScenePhase(.inactive)
+        rig.session.handleScenePhase(.background)
+        #expect(stopHold.heldSince == first.addingTimeInterval(11 * 60), "rewritten at the second .background")
+        // .inactive while still away neither ends nor restarts the span.
+        clock.advance(.seconds(60))
+        rig.session.handleScenePhase(.inactive)
+        rig.session.handleScenePhase(.background)
+        #expect(stopHold.heldSince == first.addingTimeInterval(11 * 60), "inactive → background: the same span")
+        Self.kill(rig)
+        clock.advance(.seconds((minutes - 1) * 60))
+        try await Self.relaunch(clock: clock, stopHold: stopHold, held: minutes < 30, "\(minutes) min after the second .background")
+    }
+
+    @Test("A background relaunch (Bluetooth or location) with a hold does not rewrite it: the process continues the span from heldSince")
+    func backgroundRelaunchKeepsSpan() async throws {
+        let clock = ShiftedClock()
+        let stopHold = NoOBDStopHoldMemory()
+        let rig = try await Self.stopped(clock: clock, stopHold: stopHold)
+        rig.session.handleScenePhase(.background)
+        let since = try #require(stopHold.heldSince)
+        Self.kill(rig)
+        clock.advance(.seconds(20 * 60))
+        let woken = Self.rig(clock: clock, stopHold: stopHold, active: false)
+        woken.session.enableNavigate(Self.config())
+        woken.session.handleScenePhase(.background)
+        #expect(stopHold.heldSince == since && woken.session.noOBDStoppedByUser)
+        woken.session.disableNavigate()
+        clock.advance(.seconds(11 * 60))
+        try await Self.relaunch(clock: clock, stopHold: stopHold, held: false, "31 min after the first .background")
+    }
+
+    @Test("An adapter reaching polling clears the stored hold: the relaunch is not held")
+    func pollingClearsStoredHold() async throws {
+        let clock = ShiftedClock()
+        let stopHold = NoOBDStopHoldMemory()
+        let rig = try await Self.stopped(clock: clock, stopHold: stopHold)
+        rig.link.state = .polling(protocolNumber: "A6", voltage: 12.4)
+        #expect(await eventually(5) { Self.isOBDRun(rig.session.navigateState) })
+        #expect(!rig.session.noOBDStoppedByUser && stopHold.heldSince == nil)
+        rig.link.state = .ready
+        rig.session.handleScenePhase(.background)
+        #expect(stopHold.heldSince == nil, "no hold: nothing written at .background")
+        Self.kill(rig)
+        clock.advance(.seconds(60))
+        try await Self.relaunch(clock: clock, stopHold: stopHold, held: false, "polling cleared it")
+    }
+
+    @Test("The map's Start clears the stored hold: the relaunch is not held")
+    func manualStartClearsStoredHold() async throws {
+        let clock = ShiftedClock()
+        let stopHold = NoOBDStopHoldMemory()
+        let rig = try await Self.stopped(clock: clock, stopHold: stopHold)
+        #expect(rig.session.startNoOBDNavigate())
+        #expect(!rig.session.noOBDStoppedByUser && stopHold.heldSince == nil)
+        let generation = try #require(rig.session.navigateGeneration)
+        rig.session.disableNavigate()
+        #expect(await R.ended(rig.tee.service, generation))
+        Self.kill(rig)
+        clock.advance(.seconds(60))
+        try await Self.relaunch(clock: clock, stopHold: stopHold, held: false, "Start cleared it")
+    }
+
+    @Test("Clock set back (now before heldSince): held, heldSince re-based to now, so at most another 30 min (at a relaunch and on a warm .active)", arguments: [false, true])
+    func clockSetBack(_ warm: Bool) async throws {
+        let clock = ShiftedClock()
+        let stopHold = NoOBDStopHoldMemory()
+        let rig = try await Self.stopped(clock: clock, stopHold: stopHold)
+        rig.session.handleScenePhase(.background)
+        clock.advance(.seconds(60))
+        clock.setWallBack(24 * 3_600)
+        let rebased = clock.wallNow()
+        if warm {
+            rig.session.handleScenePhase(.active)
+            #expect(rig.session.noOBDStoppedByUser && stopHold.heldSince == rebased, "re-based on .active")
+            rig.session.disableNavigate()
+        } else {
+            Self.kill(rig)
+            let relaunched = Self.rig(clock: clock, stopHold: stopHold, active: false)
+            #expect(relaunched.session.noOBDStoppedByUser && stopHold.heldSince == rebased, "re-based at launch")
+            relaunched.session.disableNavigate()
+        }
+        clock.advance(.seconds(29 * 60))
+        try await Self.relaunch(clock: clock, stopHold: stopHold, held: true, "29 min after the re-base")
+        clock.advance(.seconds(2 * 60))
+        try await Self.relaunch(clock: clock, stopHold: stopHold, held: false, "31 min after the re-base: bounded")
+    }
+
+    @Test("The rule: held while 0 ≤ now − since < release; released at release or later; re-based when now < since")
+    func holdVerdict() {
+        let since = ShiftedClock.wallBase
+        let release = Duration.seconds(1_800)
+        #expect(NoOBDStopHold.verdict(since: since, now: since, releaseAfter: release) == .held)
+        #expect(NoOBDStopHold.verdict(since: since, now: since + 1_799.99, releaseAfter: release) == .held)
+        #expect(NoOBDStopHold.verdict(since: since, now: since + 1_800, releaseAfter: release) == .released)
+        #expect(NoOBDStopHold.verdict(since: since, now: since + 86_400, releaseAfter: release) == .released)
+        #expect(NoOBDStopHold.verdict(since: since, now: since - 0.001, releaseAfter: release) == .rebased)
+        #expect(NoOBDStopHold.verdict(since: since, now: since + 1, releaseAfter: .milliseconds(1_500)) == .held)
+    }
+
+    @Test("The app's store keeps heldSince across instances (a relaunch) in its UserDefaults and removes it on nil; a scratch suite, removed after")
+    func defaultsStore() throws {
+        let suite = "drivelogger-test-stophold-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let first = NoOBDStopHoldDefaults(defaults)
+        #expect(first.heldSince == nil)
+        let since = ShiftedClock.wallBase.addingTimeInterval(12.5)
+        first.heldSince = since
+        #expect(NoOBDStopHoldDefaults(defaults).heldSince == since)
+        #expect(defaults.object(forKey: NoOBDStopHoldDefaults.key) as? Date == since)
+        first.heldSince = nil
+        #expect(NoOBDStopHoldDefaults(defaults).heldSince == nil && defaults.object(forKey: NoOBDStopHoldDefaults.key) == nil)
     }
 
     @Test("The map's Start: a no-OBD run at once (no window), also before any Stop; after a Stop it clears the hold and the control goes")

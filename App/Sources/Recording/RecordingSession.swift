@@ -457,9 +457,10 @@ final class NavigationRunEnd: Sendable {
 ///   replaces it with a fresh OBD session seeded from its latest estimate
 ///   (`restartCapture`). Like every Navigate run it is saved and restored
 ///   by the navigation service (UX-20) and handed over to Record (prompt 40).
-///   After a user Stop the start rule is held until a cold launch,
-///   `polling`, or 30 min continuously in the background; meanwhile the
-///   map's Start (`startNoOBDNavigate()`) starts one at once (R85.1-1).
+///   After a user Stop the start rule is held until `polling`, the map's
+///   Start (`startNoOBDNavigate()`, which starts one at once; R85.1-1), or
+///   30 min of wall-clock time since the app last went to the background;
+///   the hold is persisted, so it holds across any launch (47b).
 ///   It keeps the screen awake only within 5 min of motion (R85.1-2); see
 ///   `NavigateState`.
 @MainActor
@@ -595,10 +596,12 @@ final class RecordingSession {
     /// while it is not armed. Display (a countdown) and tests.
     private(set) var noOBDStartArmedAt: ContinuousClock.Instant?
     /// UX-7: the user stopped a no-OBD run (`stopNoOBDNavigate()`): the
-    /// start rule is held until a cold launch (a fresh session), an adapter
-    /// reaching `polling`, `startNoOBDNavigate()`, or (R85.1-1) the app
-    /// having been in the background for `noOBDStopReleaseAfterBackground`
-    /// or more continuously, released on the next `.active`.
+    /// start rule is held until an adapter reaches `polling`,
+    /// `startNoOBDNavigate()`, or `noOBDStopReleaseAfterBackground` of wall
+    /// time since the app last went to the background (R85.1-1), checked at
+    /// launch and on `.active` after the background. Mirrors
+    /// `stopHold.heldSince != nil` (47b: persisted, so a relaunch is held
+    /// too; `NavigateState`, "User Stop").
     private(set) var noOBDStoppedByUser = false
     /// R85.1-1: the map's Start control for a no-OBD run is offered: the
     /// user stopped one (`noOBDStoppedByUser`) and every other condition of
@@ -617,15 +620,23 @@ final class RecordingSession {
     /// `noOBDNavigation`. nil: `noOBDNavigation` keeps its default value.
     @ObservationIgnored var noOBDStatusProvider: (@MainActor (Int) async -> NoOBDNavigationStatus?)?
     @ObservationIgnored private var noOBDStartTimer: Task<Void, Never>?
-    /// R85.1-1: when the app last went to `.background` (on `now`), until
-    /// the next `.active`; nil while it has not been in the background
-    /// since. `.inactive` on the way back leaves it.
-    @ObservationIgnored private var backgroundedAt: ContinuousClock.Instant?
+    /// R85.1-1, 47b: the app has been in the background since the last
+    /// `.active` (set at `.background`, cleared at `.active`; `.inactive`
+    /// leaves it), or this process launched with a persisted hold (a launch
+    /// continues the background span that began at `heldSince`). The user
+    /// Stop's release is checked on the `.active` that clears it, and
+    /// `heldSince` is rewritten on the `.background` that sets it.
+    @ObservationIgnored private var inBackgroundSpan = false
+    /// 47b: where the user-Stop hold persists (`NoOBDStopHoldStoring`).
+    @ObservationIgnored private let stopHold: any NoOBDStopHoldStoring
     /// `ContinuousClock.now` in the app; tests shift it (synthetic time).
-    /// Read for the user-Stop background span (R85.1-1) and the no-OBD
-    /// screen-awake window (R85.1-2) only; every timer sleeps on the real
-    /// `ContinuousClock`.
+    /// Read for the no-OBD screen-awake window (R85.1-2) only; every timer
+    /// sleeps on the real `ContinuousClock`.
     @ObservationIgnored private let now: @MainActor () -> ContinuousClock.Instant
+    /// `Date()` in the app; tests use synthetic time. Read for the user-Stop
+    /// hold only (47b), never for anything recorded: wall time survives a
+    /// relaunch, and the hold is UI state (`NavigateState`, "User Stop").
+    @ObservationIgnored private let wallNow: @MainActor () -> Date
 
     @ObservationIgnored private let link: any OBDLinkServicing
     @ObservationIgnored private let sources: [any SensorSource]
@@ -699,7 +710,11 @@ final class RecordingSession {
     ///   - makeSessionID: every header's `sessionID`; `UUID()` in the app,
     ///     fixed in tests that compare engine output across sessions.
     ///   - now: `ContinuousClock.now` in the app; tests shift it for the
-    ///     user-Stop background span and the no-OBD screen window.
+    ///     no-OBD screen window.
+    ///   - stopHold: where the no-OBD user-Stop hold persists;
+    ///     `NoOBDStopHoldDefaults()` in the app (`AppServices`). The default
+    ///     keeps it in memory (the demo drive's session, tests).
+    ///   - wallNow: `Date()` in the app; tests pass synthetic wall time.
     /// - Precondition: `stopFreeBytes < warningFreeBytes`.
     init(
         link: any OBDLinkServicing,
@@ -721,7 +736,9 @@ final class RecordingSession {
         setIdleTimerDisabled: @escaping @MainActor (Bool) -> Void = { UIApplication.shared.isIdleTimerDisabled = $0 },
         beginBackgroundTask: @escaping @MainActor (String) -> @MainActor () -> Void = RecordingSession.systemBackgroundTask,
         makeSessionID: @escaping @MainActor () -> UUID = { UUID() },
-        now: @escaping @MainActor () -> ContinuousClock.Instant = { .now }
+        now: @escaping @MainActor () -> ContinuousClock.Instant = { .now },
+        stopHold: any NoOBDStopHoldStoring = NoOBDStopHoldMemory(),
+        wallNow: @escaping @MainActor () -> Date = { Date() }
     ) {
         precondition(stopFreeBytes < warningFreeBytes, "stopFreeBytes must be below warningFreeBytes")
         self.link = link
@@ -744,6 +761,14 @@ final class RecordingSession {
         self.manualFixUndoWindow = manualFixUndoWindow
         self.makeSessionID = makeSessionID
         self.now = now
+        self.stopHold = stopHold
+        self.wallNow = wallNow
+        // 47b: a persisted user-Stop hold, checked at launch. The launch
+        // continues the background span that began at `heldSince`.
+        if stopHold.heldSince != nil {
+            inBackgroundSpan = true
+            checkNoOBDStopHold()
+        }
 
         // The one subscription, taken now so nothing the link reports after
         // launch is missed (single subscriber; see the type's doc).
@@ -1147,16 +1172,18 @@ final class RecordingSession {
         // and `.background` must (it is never background location). A run's
         // own sources are not touched: they keep running when locked (D7 revised).
         updateDisplayLocation()
-        // UX-7, R85.1-1: a user Stop holds until the app has been in the
-        // background `noOBDStopReleaseAfterBackground` (30 min) or more
-        // continuously, from `.background` to the next `.active` (iOS
-        // reports a screen lock as `.background`: a lock never releases
-        // it); the start rule runs only while active.
-        if phase == .background, backgroundedAt == nil { backgroundedAt = now() }
-        if phase == .active, let since = backgroundedAt {
-            backgroundedAt = nil
-            let release = (navigateConfiguration ?? NavigateConfiguration()).noOBDStopReleaseAfterBackground
-            if noOBDStoppedByUser, since.duration(to: now()) >= release { noOBDStoppedByUser = false }
+        // UX-7, R85.1-1, 47b: a user Stop holds until
+        // `noOBDStopReleaseAfterBackground` (30 min) of wall time since the
+        // app last went to the background (iOS reports a screen lock as
+        // `.background`: a short lock never releases it), persisted in
+        // `stopHold`; the start rule runs only while active.
+        if phase == .background, !inBackgroundSpan {
+            inBackgroundSpan = true
+            if noOBDStoppedByUser { stopHold.heldSince = wallNow() }
+        }
+        if phase == .active, inBackgroundSpan {
+            inBackgroundSpan = false
+            checkNoOBDStopHold()
         }
         updateNoOBDStartTimer()
         switch phase {
@@ -1919,15 +1946,43 @@ final class RecordingSession {
 
     /// UX-7: the no-OBD run's Stop control. Ends the running no-OBD run (its
     /// estimate saved at its end, as at any Navigate end) and holds the
-    /// start rule (`noOBDStoppedByUser`) until a cold launch, an adapter
-    /// reaching `polling`, `startNoOBDNavigate()`, or (R85.1-1) 30 min
-    /// continuously in the background. Does nothing unless a no-OBD run
-    /// runs: an OBD run is unaffected.
+    /// start rule (`noOBDStoppedByUser`), persisted with the Stop's wall
+    /// time (47b: a kill in the foreground is held 30 min from the Stop),
+    /// until an adapter reaches `polling`, `startNoOBDNavigate()`, or
+    /// (R85.1-1) 30 min since the app last went to the background. Does
+    /// nothing unless a no-OBD run runs: an OBD run is unaffected.
     func stopNoOBDNavigate() {
         guard let nav = navigate, nav.noOBD else { return }
-        noOBDStoppedByUser = true
+        setNoOBDStopHold(since: wallNow())
         endNavigate(nav)
         updateIdleTimer()
+    }
+
+    /// 47b: the user-Stop hold, in memory (`noOBDStoppedByUser`, observed:
+    /// written only when it changes) and persisted (`stopHold`).
+    private func setNoOBDStopHold(since: Date?) {
+        if stopHold.heldSince != since { stopHold.heldSince = since }
+        let held = since != nil
+        if held != noOBDStoppedByUser { noOBDStoppedByUser = held }
+    }
+
+    /// 47b: the release check of the persisted user-Stop hold, at launch
+    /// and on `.active` after the background (`NavigateState`, "User
+    /// Stop"): held while 0 ≤ now − `heldSince` < 30 min; released (record
+    /// cleared) at 30 min or more; re-based to now when the clock was set
+    /// back. No record: not held.
+    private func checkNoOBDStopHold() {
+        guard let since = stopHold.heldSince else {
+            if noOBDStoppedByUser { noOBDStoppedByUser = false }
+            return
+        }
+        let wall = wallNow()
+        let release = (navigateConfiguration ?? NavigateConfiguration()).noOBDStopReleaseAfterBackground
+        switch NoOBDStopHold.verdict(since: since, now: wall, releaseAfter: release) {
+        case .held: setNoOBDStopHold(since: since)
+        case .rebased: setNoOBDStopHold(since: wall)
+        case .released: setNoOBDStopHold(since: nil)
+        }
     }
 
     /// R85.1-1: the map's Start control for a no-OBD run. Starts one at
@@ -1941,7 +1996,7 @@ final class RecordingSession {
     @discardableResult
     func startNoOBDNavigate() -> Bool {
         guard noOBDStartConditionsHold else { return false }
-        if noOBDStoppedByUser { noOBDStoppedByUser = false }
+        setNoOBDStopHold(since: nil)
         _ = beginNavigateRun(.runningNoOBD, restartCapture: nil)
         updateIdleTimer()
         return true
@@ -2006,9 +2061,9 @@ final class RecordingSession {
         guard let configuration = navigateConfiguration else { return }
         if isLinkPolling {
             // UX-7: an adapter reached `polling`: a user Stop of the no-OBD
-            // run no longer holds the start rule. (Observed: written only
-            // when it changes.)
-            if noOBDStoppedByUser { noOBDStoppedByUser = false }
+            // run no longer holds the start rule, in this process or the
+            // next (47b: the record is cleared).
+            setNoOBDStopHold(since: nil)
             guard let nav = navigate else {
                 startNavigateIfPossible()
                 updateIdleTimer()

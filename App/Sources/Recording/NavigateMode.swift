@@ -27,18 +27,42 @@ import Foundation
 /// start and no no-OBD run.
 ///
 /// **User Stop** (`RecordingSession.stopNoOBDNavigate()`, the no-OBD run's
-/// Stop control; R85.1-1): ends the run and holds the start rule
-/// (`RecordingSession.noOBDStoppedByUser`) until **any** of: a cold launch
-/// (a new process, so a fresh `RecordingSession`); an adapter reaching
-/// `polling` (which starts an OBD run as always); or the app having been in
-/// the background for `noOBDStopReleaseAfterBackground` (30 min) or more
-/// continuously, measured on `ContinuousClock` (counts while suspended)
-/// from the `.background` transition to the next `.active`, where the rule
-/// re-arms (so the next day's drive starts by itself even if iOS kept the
-/// app suspended). A screen lock is reported as `.background`: lock/unlock
-/// or app switching shorter than that never restarts the run. `.inactive`
-/// on the way back neither ends nor restarts the span. While held and
-/// otherwise eligible, the map offers a Start control
+/// Stop control; R85.1-1, persisted in 47b for R85.2-2): ends the run and
+/// holds the start rule (`RecordingSession.noOBDStoppedByUser`) until
+/// **any** of: an adapter reaching `polling` (which starts an OBD run as
+/// always); the map's Start (below); or `noOBDStopReleaseAfterBackground`
+/// (30 min) of wall-clock time since the app last went to the background
+/// after the Stop. The hold survives the process: it is one persisted
+/// wall-clock time, `heldSince` (`NoOBDStopHoldStoring`; in the app
+/// `UserDefaults.standard`, `NoOBDStopHoldDefaults.key`), so a launch of
+/// any kind (iOS ending the suspended app, a swipe-kill, a crash, a
+/// Bluetooth or location relaunch) is held like a return from the
+/// background. The rule:
+/// - **Written** at the Stop (the Stop's own time, so a kill while still in
+///   the foreground, with no `.background`, is held 30 min from the Stop),
+///   and again at each `.background` while held: the first `.background`
+///   since the last `.active` (`.inactive` on the way back neither ends nor
+///   restarts the span). Coming back at 10 min and leaving again restarts
+///   the 30 min: continuous-background semantics, as before 47b.
+/// - **Checked** at launch (`RecordingSession.init` reads it; a launch with
+///   a record counts as in the background since `heldSince`, so a
+///   background relaunch's `.background` does not rewrite it) and on the
+///   first `.active` after a `.background` or a launch: held while
+///   0 ≤ now − `heldSince` < 30 min; at 30 min or more the record is
+///   cleared and the start rule re-arms (a no-OBD run 30 s later). An
+///   `.inactive` → `.active` in the foreground (Control Centre, a call
+///   banner) checks nothing: the Stop's time says nothing about the
+///   background. A screen lock is reported as `.background`: lock/unlock
+///   or app switching shorter than 30 min never restarts the run.
+/// - **Clock set back** (now < `heldSince`: the user changed the date, or
+///   an NTP correction): `heldSince` is re-based to now, so the hold lasts
+///   at most another 30 min instead of until the old time comes round.
+/// - **Cleared** on release, `polling` and the map's Start.
+/// The wall clock (`RecordingSession`'s injectable `wallNow`, `Date()` in
+/// the app) is deliberate: the span must survive a relaunch. CLAUDE.md's
+/// "one monotonic clock, never `Date()` per sample" governs what is
+/// recorded; this hold is UI state and reaches no log, sidecar or engine.
+/// While held and otherwise eligible, the map offers a Start control
 /// (`RecordingSession.canStartNoOBDNavigate`,
 /// `RecordingSession.startNoOBDNavigate()`): a no-OBD run at once, no 30 s
 /// wait, hold cleared. Nothing else stops a no-OBD run but the app
@@ -88,9 +112,11 @@ import Foundation
 /// | `waitingForOBD` | `autoStopAfter` (5 min) continuously without `polling`, on `ContinuousClock` (counts while suspended) | `off`: session ended, its estimate saved as engine off; the no-OBD start rule applies again |
 /// | `runningNoOBD` | link reaches `polling` | `calibrating` or `running` (as from `off`): the no-OBD session ended and a fresh OBD session started in the same main-actor step, its engine seeded from the no-OBD engine's latest estimate (`RecordingNavigationFeed.restartCapture`, `NavigationPrior.noOBDRestart`) |
 /// | `runningNoOBD` | link changes without reaching `polling` | `runningNoOBD` (nothing happens) |
-/// | `runningNoOBD` | `stopNoOBDNavigate()` (the user's Stop) | `off`; the start rule held until a cold launch, `polling`, or ≥ `noOBDStopReleaseAfterBackground` (30 min) continuously in the background then `.active`; the Start control offered meanwhile |
-/// | `off` (held by a user Stop) | `.background` → `.active` after less than `noOBDStopReleaseAfterBackground` (a screen lock, app switching) | `off`, still held: no restart |
-/// | `off` (held by a user Stop) | `.background` → `.active` after `noOBDStopReleaseAfterBackground` or more | `off`, hold cleared: the start rule re-arms (a no-OBD run 30 s later) |
+/// | `runningNoOBD` | `stopNoOBDNavigate()` (the user's Stop) | `off`; the start rule held, persisted with `heldSince` = now, until `polling`, the map's Start, or ≥ `noOBDStopReleaseAfterBackground` (30 min) since the app last went to the background (checked at launch and on `.active`); the Start control offered meanwhile |
+/// | `off` (held by a user Stop) | `.background` (the first since the last `.active`) | `off`, still held; `heldSince` = now (the 30 min restart) |
+/// | `off` (held by a user Stop) | `.active` after `.background`, or any launch (cold, after iOS ended the app, a swipe-kill, a crash), with 0 ≤ now − `heldSince` < 30 min (a screen lock, app switching) | `off`, still held: no restart |
+/// | `off` (held by a user Stop) | `.active` after `.background`, or any launch, with now − `heldSince` ≥ 30 min | `off`, hold and record cleared: the start rule re-arms (a no-OBD run 30 s after `.active`) |
+/// | `off` (held by a user Stop) | `.active` after `.background`, or any launch, with now < `heldSince` (clock set back) | `off`, still held; `heldSince` re-based to now (at most another 30 min) |
 /// | any but `off` | Record starts | `off`: session ended before Record's clock exists |
 /// | any but `off` | `willTerminate`, `disableNavigate()`, the demo's hold | `off` |
 ///
@@ -134,11 +160,11 @@ struct NavigateConfiguration: Hashable, Sendable {
     /// after this long with every condition holding. nil: never (the demo
     /// drive's session).
     var noOBDStartAfter: Duration? = .seconds(30)
-    /// R85.1-1: after a user Stop of a no-OBD run, the start rule re-arms
-    /// on the next `.active` once the app has been in the background at
-    /// least this long continuously (`ContinuousClock`, counts while
-    /// suspended). Shorter spells (a screen lock, app switching) keep it
-    /// held.
+    /// R85.1-1, 47b: after a user Stop of a no-OBD run, the start rule
+    /// re-arms at launch or on the next `.active` once this much wall-clock
+    /// time has passed since the app last went to the background
+    /// (`NoOBDStopHold`, persisted across launches). Shorter spells (a
+    /// screen lock, app switching, a relaunch soon after) keep it held.
     var noOBDStopReleaseAfterBackground: Duration = .seconds(1_800)
     /// R85.1-2: a no-OBD run keeps the screen awake only while it has seen
     /// motion (`NoOBDNavigationStatus.isMotion`) within this long; the
@@ -178,6 +204,63 @@ struct NoOBDNavigationStatus: Hashable, Sendable {
     func isMotion(thresholdKmh: Double) -> Bool {
         guard !positionUncertain, let speed = estimatedSpeedKmh, speed.isFinite else { return false }
         return speed > thresholdKmh
+    }
+}
+
+/// 47b (R85.2-2): the persisted user-Stop hold of a no-OBD run: one
+/// wall-clock time, `heldSince` (see `NavigateState`, "User Stop"). nil:
+/// no hold. Read once at `RecordingSession.init`, written at the Stop, at
+/// `.background` while held and at a clock-back re-base, cleared on release,
+/// `polling` and the map's Start. UI state only: never in a log.
+@MainActor
+protocol NoOBDStopHoldStoring: AnyObject {
+    var heldSince: Date? { get set }
+}
+
+/// The app's store: `UserDefaults` (a `Date` under `key`). `cfprefsd` keeps
+/// a value set before a crash or jetsam. Tests pass a scratch suite.
+@MainActor
+final class NoOBDStopHoldDefaults: NoOBDStopHoldStoring {
+    static let key = "navigate.noOBDStopHeldSince"
+    private let defaults: UserDefaults
+
+    init(_ defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    var heldSince: Date? {
+        get { defaults.object(forKey: Self.key) as? Date }
+        set {
+            if let newValue { defaults.set(newValue, forKey: Self.key) } else { defaults.removeObject(forKey: Self.key) }
+        }
+    }
+}
+
+/// In memory only: `RecordingSession`'s default (the demo drive's session,
+/// tests), so nothing but the app's session touches `UserDefaults`.
+@MainActor
+final class NoOBDStopHoldMemory: NoOBDStopHoldStoring {
+    var heldSince: Date?
+    init(heldSince: Date? = nil) { self.heldSince = heldSince }
+}
+
+/// 47b: the release rule of a persisted user-Stop hold.
+enum NoOBDStopHold {
+    enum Verdict: Equatable, Sendable {
+        /// 0 ≤ now − since < releaseAfter.
+        case held
+        /// now − since ≥ releaseAfter: clear the record, re-arm the rule.
+        case released
+        /// now < since (the clock was set back): held, `since` re-based to
+        /// now, so at most another `releaseAfter`.
+        case rebased
+    }
+
+    static func verdict(since: Date, now: Date, releaseAfter: Duration) -> Verdict {
+        let elapsed = now.timeIntervalSince(since)
+        if elapsed < 0 { return .rebased }
+        let (seconds, attoseconds) = releaseAfter.components
+        return elapsed >= Double(seconds) + Double(attoseconds) * 1e-18 ? .released : .held
     }
 }
 

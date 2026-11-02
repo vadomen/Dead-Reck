@@ -394,7 +394,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "приблизно %lld км/год, за оцінкою"
+            "value" : "близько %lld км/год, розрахункова"
           }
         }
       }
@@ -1554,7 +1554,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "оцінка"
+            "value" : "розрахункова"
           }
         }
       }
@@ -2491,7 +2491,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Без OBD — нижча точність"
+            "value" : "Без OBD — менша точність"
           }
         }
       }

@@ -154,8 +154,11 @@ final class NavigateRig {
     let source = ScriptedSource()
     let uptime = FakeUptime(NavigateRig.base)
     let idle = IdleTimerSpy()
-    /// The session's `now` (R85.1-1/-2), shifted by the test.
-    let clock = ShiftedClock()
+    /// The session's `now` and `wallNow` (R85.1-1/-2, 47b), shifted by the test.
+    let clock: ShiftedClock
+    /// Where the session's user-Stop hold persists (47b); share it with a
+    /// second rig to simulate a relaunch.
+    let stopHold: any NoOBDStopHoldStoring
     let tee: FeedTee
     let session: RecordingSession
     /// Navigation inputs the script produced after the session started
@@ -170,7 +173,10 @@ final class NavigateRig {
     init(store: LogStore, service: NavigationService = NavigationService(), extraSources: [any SensorSource] = [],
          displayLocation: (any DisplayLocationProviding)? = nil,
          disk: FakeDisk = FakeDisk(RecordingFixtures.roomy), undoWindow: Duration = .milliseconds(150),
-         idNamespace: UInt32 = .random(in: 1...UInt32.max)) {
+         idNamespace: UInt32 = .random(in: 1...UInt32.max),
+         clock: ShiftedClock = ShiftedClock(), stopHold: any NoOBDStopHoldStoring = NoOBDStopHoldMemory()) {
+        self.clock = clock
+        self.stopHold = stopHold
         tee = FeedTee(service: service)
         var counter = 0
         let idle = idle
@@ -196,7 +202,9 @@ final class NavigateRig {
                 counter += 1
                 return Self.sessionID(idNamespace, counter)
             },
-            now: { clock.now() }
+            now: { clock.now() },
+            stopHold: stopHold,
+            wallNow: { clock.wallNow() }
         )
         let tee = tee
         session.onNavigationFeed = { tee.handle($0) }

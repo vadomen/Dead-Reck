@@ -276,15 +276,26 @@ final class IdleTimerSpy {
     func set(_ value: Bool) { values.append(value) }
 }
 
-/// `RecordingSession`'s `now` on synthetic time: the real
-/// `ContinuousClock.now` shifted by what the test advanced (R85.1-1/-2:
-/// minutes in the background, minutes without motion). Timers still sleep
-/// on the real clock.
+/// `RecordingSession`'s `now` and `wallNow` on synthetic time (R85.1-1/-2,
+/// 47b: minutes in the background, minutes without motion). `now` is the
+/// real `ContinuousClock.now` shifted by what the test advanced; `wallNow`
+/// is a fixed date shifted the same way, plus `setWallBack`'s jumps, so
+/// wall spans are exact. Timers still sleep on the real clock. Share one
+/// between a rig and its "relaunch" to keep the wall time going.
 @MainActor
 final class ShiftedClock {
+    static let wallBase = Date(timeIntervalSinceReferenceDate: 815_000_000)
     private(set) var offset: Duration = .zero
+    private var wallJump: TimeInterval = 0
     func now() -> ContinuousClock.Instant { .now + offset }
+    func wallNow() -> Date {
+        let (seconds, attoseconds) = offset.components
+        return Self.wallBase.addingTimeInterval(Double(seconds) + Double(attoseconds) * 1e-18 + wallJump)
+    }
     func advance(_ duration: Duration) { offset += duration }
+    /// The wall clock set back by `seconds` (the user changed the date):
+    /// `now` is unaffected.
+    func setWallBack(_ seconds: TimeInterval) { wallJump -= seconds }
 }
 
 extension RecordingNavigationFeed {
