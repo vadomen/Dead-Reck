@@ -69,7 +69,9 @@ final class AppServices {
             displayLocation: sensors.displayLocation,
             store: store,
             sensorConfiguration: sensors.configuration,
-            notes: notes.compactMap { $0 }.joined(separator: " ").nilIfEmpty
+            notes: notes.compactMap { $0 }.joined(separator: " ").nilIfEmpty,
+            // 47b: the no-OBD user-Stop hold survives a relaunch.
+            stopHold: NoOBDStopHoldDefaults()
         )
         let roadPacks = RoadPackLibrary.makeDefault()
         self.roadPacks = roadPacks
