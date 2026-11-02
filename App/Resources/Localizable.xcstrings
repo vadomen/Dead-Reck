@@ -2306,12 +2306,12 @@
         }
       }
     },
-    "It stays off until you tap Start, the adapter connects, or the app is reopened later." : {
+    "It stays off until you tap Start or the adapter connects. After 30 minutes away from the app, it starts by itself again." : {
       "localizations" : {
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Вона лишається вимкненою, доки ви не натиснете «Старт», не підключиться адаптер або ви не відкриєте застосунок пізніше."
+            "value" : "Вона лишається вимкненою, доки ви не натиснете «Старт» або не підключиться адаптер. Якщо 30 хвилин не відкривати застосунок, вона знову запуститься сама."
           }
         }
       }

@@ -245,7 +245,7 @@ struct NavigateStatusLabel: View {
             Button("Stop navigation", role: .destructive, action: onStop)
             Button("Keep navigating", role: .cancel) {}
         } message: {
-            Text("It stays off until you tap Start, the adapter connects, or the app is reopened later.")
+            Text("It stays off until you tap Start or the adapter connects. After 30 minutes away from the app, it starts by itself again.")
         }
     }
 

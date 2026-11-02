@@ -358,11 +358,15 @@ struct NavigateNoOBDTests {
         #expect(await R.ended(rig.tee.service, first))
         try await Task.sleep(for: .milliseconds(800))
         #expect(rig.session.navigateState == .off)
+        // R86.1-1: still in the foreground (on the mount) over 30 min after
+        // the Stop, a call banner or Control Centre (inactive → active)
+        // checks nothing: only time in the background counts.
+        rig.clock.advance(.seconds(31 * 60))
         rig.session.handleScenePhase(.inactive)
         #expect(!rig.session.canStartNoOBDNavigate, "inactive: no manual start either")
         rig.session.handleScenePhase(.active)
         try await Task.sleep(for: .milliseconds(800))
-        #expect(rig.session.navigateState == .off && rig.session.noOBDStoppedByUser, "inactive is not the background")
+        #expect(rig.session.navigateState == .off && rig.session.noOBDStoppedByUser, "inactive is not the background, even 31 min after the Stop")
 
         // R85.1-1: a screen lock is reported as background; unlock comes
         // back through inactive. Just under 30 min (synthetic time): held.
