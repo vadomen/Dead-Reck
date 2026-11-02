@@ -1305,3 +1305,14 @@ Reviewers: two parallel opus reviewers on disjoint sets: A (Core no-OBD run, Nav
 | R85.2-3 | MINOR | (B) BACKLOG/REVIEW_LOG R85.1-7 cite `App/Sources/Recording/NavigationRestore.swift:562`; the function is `NavigationPrior.noOBDRestart` at `Core/Sources/DriveLoggerCore/Navigation/NavigationRestore.swift:561`. | CONFIRMED | Fixed this round (path corrected in both). |
 
 Note on R84.1-8 (deferred): prompt 47 makes the PLAN.md parked-phone no-OBD check runnable on device (a no-OBD run uses `noOBDFixSpeedMean` = 1); BACKLOG row updated, still DEFERRED for the wording parts.
+
+### Round 3
+
+Reviewers: two parallel opus reviewers on disjoint sets: A (Core no-OBD run, NavigationService, state machine, round-2 fix 2ceb5f1; own bit-identical re-run of the clean acceptance drive: GeoJSON `cmp`-identical), B (map UI, voice, strings, docs, project).
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R85.3-1 | MINOR | (B) `docs/PLAN.md` §6 prompt-47 item 9, second case ("Repeat after an unlock that ends a ≥ 30 min background") omits the Stop first; without a Stop the run continues through the lock and no countdown re-arms, so the release path is never exercised. | DEFERRED | BACKLOG R85.3-1 (reword: "after Stop, a ≥ 30 min lock, then unlock"). |
+| R85.3-2 | MINOR | (B) `App/Resources/Localizable.xcstrings`: uk of "No OBD — lower accuracy" is «Без OBD — нижча точність», the glossary row says «менша точність» ("check against catalog"); "estimated", "about %lld km/h, estimated", "Keep navigating", "Starting without OBD…", "Stop navigation?" have no glossary row (glossary term for "estimated" is «розрахунковий/-а»). | DEFERRED | BACKLOG R85.3-2 (user picks the wording; catalog and glossary to match). |
+
+Run 85 closed: 3 rounds; 4 MAJOR confirmed and fixed (R85.1-1..3, R85.2-1; R85.1-1/2 per user decisions 2026-11-01: Stop hold + manual Start, no-OBD screen awake only within 5 min of motion), 0 rejected; MINOR: 4 fixed (R85.1-4..6, R85.2-3), 4 deferred (R85.1-7, R85.2-2, R85.3-1, R85.3-2); Core 1295 tests in 155 suites passed (36 known issues); App 895 tests in 133 suites passed at ce5c126.
