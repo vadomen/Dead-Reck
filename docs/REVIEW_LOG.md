@@ -1316,3 +1316,16 @@ Reviewers: two parallel opus reviewers on disjoint sets: A (Core no-OBD run, Nav
 | R85.3-2 | MINOR | (B) `App/Resources/Localizable.xcstrings`: uk of "No OBD — lower accuracy" is «Без OBD — нижча точність», the glossary row says «менша точність» ("check against catalog"); "estimated", "about %lld km/h, estimated", "Keep navigating", "Starting without OBD…", "Stop navigation?" have no glossary row (glossary term for "estimated" is «розрахунковий/-а»). | DEFERRED | BACKLOG R85.3-2 (user picks the wording; catalog and glossary to match). |
 
 Run 85 closed: 3 rounds; 4 MAJOR confirmed and fixed (R85.1-1..3, R85.2-1; R85.1-1/2 per user decisions 2026-11-01: Stop hold + manual Start, no-OBD screen awake only within 5 min of motion), 0 rejected; MINOR: 4 fixed (R85.1-4..6, R85.2-3), 4 deferred (R85.1-7, R85.2-2, R85.3-1, R85.3-2); Core 1295 tests in 155 suites passed (36 known issues); App 895 tests in 133 suites passed at ce5c126.
+
+## Run 86: Prompt 47b UX-7 follow-up (persisted no-OBD Stop hold, uk wording, App Store metadata and site copy, not deployed) (nav-noobd..nav-noobd-47b: 2c3d08c..85926c5), started 2026-11-02
+
+### Round 1
+
+Reviewer: one opus reviewer (App hold logic, AppTests, uk strings, docs and site copy, privacy). No Core change; OBD path unchanged by reading (polling now also clears the stored hold), no replay re-run.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R86.1-1 | MINOR | `AppTests/NavigateNoOBDTests.swift:361-365`: no test fails if a foreground `.inactive` → `.active` re-checks the hold (`RecordingSession.swift:1184`); the only such transition after a Stop has no clock advance. | DEFERRED | BACKLOG R86.1-1. |
+| R86.1-2 | MINOR | R85.3-2 closed, but the five glossary rows are only in `logs/UK_GLOSSARY.agent-draft.md` (by user decision, for review), not in `logs/UK_GLOSSARY.md`. | DEFERRED | BACKLOG R86.1-2 (user review). |
+
+Run 86 closed: 1 round; no BLOCKER or MAJOR; MINOR: 2 deferred (R86.1-1, R86.1-2); app 904 tests / 133 suites passed, Core 1295 / 155 passed (36 known issues, KI-1).
