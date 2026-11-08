@@ -38,7 +38,7 @@ enum OnboardingText {
     static let driverAttention = String(localized: "Don't use the phone while driving. Set it up before you set off.")
 
     static let adapterTitle = String(localized: "Connect your adapter")
-    static let adapterWorksWith = String(localized: "FuGPS works with ELM327 Bluetooth LE adapters.")
+    static let adapterWorksWith = String(localized: "FuGPS works with OBD-II adapters with Bluetooth LE.")
     static let vehiclesLink = String(localized: "See which cars and adapters work")
     /// The site's vehicles page, on the same host as About's links.
     static let vehiclesURL = URL(string: AboutContent.siteRoot + "/vehicles.html")!

@@ -86,7 +86,7 @@ targets:
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         MARKETING_VERSION: "1.0.0"
         # Integer build number, bumped once per upload by scripts/bump_build.sh.
-        CURRENT_PROJECT_VERSION: "1"
+        CURRENT_PROJECT_VERSION: "2"
         SWIFT_EMIT_LOC_STRINGS: YES
         # iPhone only. Must be set per-target: XcodeGen writes a default of
         # "1,2" onto every iOS target, which would override a project-level

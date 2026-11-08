@@ -1164,3 +1164,22 @@ Tests at round 2: Core 1201 tests in 147 suites passed (36 known issues); App 84
 ### Run 81 summary
 
 2 rounds; 1 fixed (R81.1-1); 0 rejected; 1 deferred (R81.1-2). Final tests: Core 1201 tests in 147 suites passed (36 known issues); App 847 tests in 128 suites passed.
+
+## Run 87: Prompt 48 hotfix 1.0 (2), guideline 5.2.1: "ELM327" removed from app strings (en/uk), metadata, Review Notes and site; build 2 (main..release-1.0.2: e900c39..e7df033), started 2026-11-08
+
+Note: runs 82-86 exist on the nav-noobd branch; this run is numbered 87 to avoid a clash.
+
+### Round 1
+
+Reviewers: one fresh sonnet reviewer. Result: 0 BLOCKER, 0 MAJOR, 2 MINOR (1 FIXED, 1 DEFERRED).
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R87.1-1 | MINOR | `docs/RELEASE_PLAN.md:173`: the ready-to-paste Review Notes copy still said "(ELM327-compatible)". | FIXED | Fixed in the ledger commit: one-line wording, same reason as the hotfix. |
+| R87.1-2 | MINOR | `Core/Sources/DriveLoggerCore/ELM327/ELMSession.swift:698,1613,1636`: "init failed: \(error)" / "re-init failed: \(error)" interpolate ELMSessionError; for `.transport(...)` the Swift type name ("DriveLoggerCore.ELMTransportError.writeFailed(...)") reaches `OBDLinkState.failed(reason:)` and `LinkReasonText.display` shows it as written on the "Adapter failed" line. Rare (BLE write fails during init before the transport closes); pre-existing, outside the hotfix's no-code-change rule. | DEFERRED | BACKLOG. Fix idea: map transport errors to a plain string before display (App), or give ELMSessionError a description. |
+
+Tests at HEAD: Core 1201 tests in 147 suites passed (36 known issues); App 848 tests in 129 suites passed, 0 failed.
+
+### Run 87 summary
+
+1 round; 1 fixed (R87.1-1); 0 rejected; 1 deferred (R87.1-2). Final tests: Core 1201 tests in 147 suites passed (36 known issues); App 848 tests in 129 suites passed. Outcome: closed, ready to merge.
