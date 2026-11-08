@@ -31,6 +31,7 @@ Done / in code / open, per item. "In code (prompt N)" = merged work that has not
 | Release QA: OSM credit layout, Language row, simulator QA, store screenshots | in progress (prompt 42) | |
 | Pre-release fixes: GPS-off rail button icon-only while GPS is in use, map line for denied Location, altimeter only in Record, R80 minors, store screenshots re-shot | done in code (prompt 43, branch `prerelease-fixes`, review run 81 closed); device checks open (PLAN §6) | R-QA42-1 (Location line only), R-QA42-3, R-QA42-4, R-QA42-5 (implemented, checks pending), R80.1-2, R80.1-3, R80.2-1, R80.2-2, R81.1-1 (done); R-QA43-3 opened; R81.1-2 deferred; R-QA42-2 stays open |
 | UX-7 release copy: "What you need" and Review Notes in `docs/APP_STORE_METADATA.md`, site FAQ and "What you need" (adapter recommended, not required) | updated on branch `nav-noobd` (prompt 47b, 2026-11-02) for the UX-7 release. Deploy the site and update App Store Connect only when the UX-7 release ships, not before: main and the deployed site stay on the adapter-required copy until then | UX-7 |
+| App Review 5.2.1 rejection of 1.0 (1) (2026-11-02) | rejected for "OBD-II" and "ELM327" in the app, metadata and site. OBD-II kept (public standard); "ELM327" removed from app strings, metadata, Review Notes and the site. Build 1.0.0 (2) replaces build 1 (prompt 48, branch `release-1.0.2`); resubmission open | |
 | Phases 4-7 (quality, TestFlight, App Store page, submission) | open | |
 
 Starting decisions (from the user, 2026-10-16):
@@ -170,7 +171,7 @@ Plain English, ready to paste into App Store Connect. Fill in the video link bef
 ```
 FuGPS estimates the car's position when GPS is absent or distorted. It uses the car's speed, read over OBD-II, and the phone's motion sensors, and can match the position to offline road maps.
 
-Normal use needs an OBD-II Bluetooth LE adapter (ELM327-compatible) in the car, so you can test without a car using the built-in demo:
+Normal use needs an OBD-II Bluetooth LE adapter in the car, so you can test without a car using the built-in demo:
 1. Open Settings (the gear on the map) -> Developer -> Demo drive (simulated car).
 2. The map shows a simulated drive, marked with a DEMO badge.
 3. After about a minute the simulated GPS is lost, and the position keeps moving along the roads.

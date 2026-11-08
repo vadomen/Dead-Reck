@@ -459,6 +459,17 @@
         }
       }
     },
+    "Adapter session failed" : {
+      "comment" : "Adapter failed: the adapter session failed without a reason",
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Збій сесії адаптера"
+          }
+        }
+      }
+    },
     "Add marker" : {
       "localizations" : {
         "uk" : {
@@ -1538,17 +1549,6 @@
         }
       }
     },
-    "ELM session failed" : {
-      "comment" : "Adapter failed: the ELM327 session failed without a reason",
-      "localizations" : {
-        "uk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "збій сеансу ELM"
-          }
-        }
-      }
-    },
     "estimated" : {
       "localizations" : {
         "uk" : {
@@ -1710,12 +1710,12 @@
         }
       }
     },
-    "FuGPS works with ELM327 Bluetooth LE adapters." : {
+    "FuGPS works with OBD-II adapters with Bluetooth LE." : {
       "localizations" : {
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "FuGPS працює з адаптерами ELM327 Bluetooth LE."
+            "value" : "FuGPS працює з OBD-II адаптерами з Bluetooth LE."
           }
         }
       }

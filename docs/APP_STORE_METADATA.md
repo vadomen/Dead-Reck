@@ -38,10 +38,10 @@ Navigation when GPS fails
 Keep your car on the map when GPS drops out or jumps. FuGPS uses your car's speed from an OBD-II adapter and your iPhone's sensors. Free, no accounts, no ads.
 ```
 
-**Keywords** (91 of 100 bytes; ASCII, so bytes = characters)
+**Keywords** (92 of 100 bytes; ASCII, so bytes = characters)
 
 ```
-dead reckoning,OBD-II,ELM327,offline maps,car,speed,BLE,no GPS,tunnel,OBD2,driving,position
+dead reckoning,OBD-II,adapter,offline maps,car,speed,BLE,no GPS,tunnel,OBD2,driving,position
 ```
 
 **Description**
@@ -49,11 +49,11 @@ dead reckoning,OBD-II,ELM327,offline maps,car,speed,BLE,no GPS,tunnel,OBD2,drivi
 ```
 FuGPS shows where your car is when GPS is absent or distorted.
 
-It works out the position from the car's own speed, read through an OBD-II Bluetooth LE adapter (ELM327-compatible), and from the motion sensors of your iPhone. Without an adapter it still works, with lower accuracy. When road maps are installed, the position is matched to the roads. A blue ellipse shows how sure the app is, and when GPS is reliable again the position is corrected.
+It works out the position from the car's own speed, read through an OBD-II Bluetooth LE adapter, and from the motion sensors of your iPhone. Without an adapter it still works, with lower accuracy. When road maps are installed, the position is matched to the roads. A blue ellipse shows how sure the app is, and when GPS is reliable again the position is corrected.
 
 WHAT YOU NEED
 • iPhone with iOS 17 or later.
-• Recommended: an OBD-II adapter with Bluetooth LE (ELM327-compatible) plugged into the car. With it the accuracy is best. Without it the app navigates on network and GNSS fixes and the phone's sensors, with lower accuracy. Classic Bluetooth and Wi-Fi ELM327 adapters do not work with iPhone.
+• Recommended: an OBD-II adapter with Bluetooth LE plugged into the car. With it the accuracy is best. Without it the app navigates on network and GNSS fixes and the phone's sensors, with lower accuracy. Classic Bluetooth and Wi-Fi OBD-II adapters do not work with iPhone.
 • For the adapter: a car that reports its speed over OBD-II. Most petrol cars since 2001 and diesel cars since 2004 do; electric cars often do not.
 • A rigid phone mount: the phone must stay in one position during the drive.
 
@@ -84,10 +84,10 @@ Road data © OpenStreetMap contributors, ODbL.
 Тримайте авто на карті, коли GPS зникає чи стрибає. FuGPS бере швидкість з авто через OBD-II адаптер і датчики iPhone. Безкоштовно, без облікових записів і реклами.
 ```
 
-**Ключові слова** (95 зі 100 байтів UTF-8)
+**Ключові слова** (90 зі 100 байтів UTF-8)
 
 ```
-навігація,OBD2,ELM327,без GPS,швидкість,авто,тунель,дороги
+навігація,OBD2,адаптер,без GPS,швидкість,авто,тунель
 ```
 
 **Опис**
@@ -95,11 +95,11 @@ Road data © OpenStreetMap contributors, ODbL.
 ```
 FuGPS показує, де ваше авто, коли GPS зникає або дає неправильну позицію.
 
-Позиція рахується зі швидкості самого авто, яку зчитує OBD-II адаптер з Bluetooth LE (сумісний з ELM327), і з датчиків руху iPhone. Без адаптера застосунок теж працює, але з меншою точністю. Коли встановлено карти доріг, позиція привʼязується до доріг. Синій еліпс показує, наскільки застосунок упевнений, а коли GPS знову надійний, позиція уточнюється.
+Позиція рахується зі швидкості самого авто, яку зчитує OBD-II адаптер з Bluetooth LE, і з датчиків руху iPhone. Без адаптера застосунок теж працює, але з меншою точністю. Коли встановлено карти доріг, позиція привʼязується до доріг. Синій еліпс показує, наскільки застосунок упевнений, а коли GPS знову надійний, позиція уточнюється.
 
 ЩО ПОТРІБНО
 • iPhone з iOS 17 або новішою.
-• Бажано: OBD-II адаптер з Bluetooth LE (сумісний з ELM327), вставлений в авто. З ним точність найкраща. Без нього застосунок навігує за мережевими й GNSS-координатами та датчиками телефона, з меншою точністю. Звичайні Bluetooth- і Wi-Fi-адаптери ELM327 з iPhone не працюють.
+• Бажано: OBD-II адаптер з Bluetooth LE, вставлений в авто. З ним точність найкраща. Без нього застосунок навігує за мережевими й GNSS-координатами та датчиками телефона, з меншою точністю. Звичайні Bluetooth- і Wi-Fi-адаптери OBD-II з iPhone не працюють.
 • Для адаптера: авто, яке передає швидкість через OBD-II. Більшість бензинових авто з 2001 року й дизельних з 2004 року передають; електромобілі часто ні.
 • Жорсткий тримач: телефон має стояти нерухомо всю поїздку.
 
@@ -123,7 +123,7 @@ English (App Review reads English). Fill in the video link before submitting.
 ```
 FuGPS estimates the car's position when GPS is absent or distorted. It uses the car's speed, read over OBD-II, and the phone's motion sensors, and can match the position to offline road maps.
 
-An OBD-II Bluetooth LE adapter (ELM327-compatible) in the car is recommended, not required: it gives the best accuracy. Without an adapter, a "No OBD — lower accuracy" navigation run starts by itself about 30 s after opening the app (Location must be allowed). To see the full experience without a car or an adapter, use the built-in demo drive:
+An OBD-II Bluetooth LE adapter in the car is recommended, not required: it gives the best accuracy. Without an adapter, a "No OBD — lower accuracy" navigation run starts by itself about 30 s after opening the app (Location must be allowed). To see the full experience without a car or an adapter, use the built-in demo drive:
 1. Open Settings (the gear on the map) -> Developer -> Demo drive (simulated car).
 2. The map shows a simulated drive, marked with a DEMO badge.
 3. After about a minute the simulated GPS is lost, and the position keeps moving along the roads.
@@ -138,7 +138,7 @@ Ukrainian translation, for reference only (App Review reads the English text abo
 ```
 FuGPS розраховує позицію авто, коли GPS зникає або спотворений. Він використовує швидкість авто, яку зчитує через OBD-II, і датчики руху телефона, а позицію може привʼязувати до карт доріг без інтернету.
 
-OBD-II адаптер з Bluetooth LE (сумісний з ELM327) в авто бажаний, але не обовʼязковий: з ним точність найкраща. Без адаптера навігація «Без OBD — менша точність» починається сама приблизно через 30 с після відкриття застосунку (потрібен дозвіл на геолокацію). Щоб побачити повний досвід без авто й адаптера, скористайтеся вбудованою демо-поїздкою:
+OBD-II адаптер з Bluetooth LE в авто бажаний, але не обовʼязковий: з ним точність найкраща. Без адаптера навігація «Без OBD — менша точність» починається сама приблизно через 30 с після відкриття застосунку (потрібен дозвіл на геолокацію). Щоб побачити повний досвід без авто й адаптера, скористайтеся вбудованою демо-поїздкою:
 1. Відкрийте «Налаштування» (шестерня на карті) -> «Розробник» -> «Демо-поїздка (імітація авто)».
 2. На карті зʼявляється імітована поїздка з позначкою DEMO.
 3. Приблизно за хвилину імітований GPS зникає, а позиція далі рухається дорогами.
@@ -170,7 +170,8 @@ Open: on #1 and #2 the demo shows the greyed, disabled rail button "GPS off" / �
 4. Site wording differs from this draft: the site says GPS is "jammed or spoofed" (en) and «глушать», «підміненим сигналом» (uk); this draft follows RELEASE_PLAN 2.4 ("absent or distorted").
 5. Apostrophe: resolved; the UK text here and the UK site pages use ʼ (U+02BC).
 6. App Privacy label: Data Not Collected. No analytics on the site, no server logs kept; the user checks that Cloudflare Web Analytics is off for the site.
-7. Counts checked by script: subtitle 25/26 characters, promotional text 158/164 characters, keywords 91 bytes (EN) and 95 bytes (UK). Recount in App Store Connect when pasting.
+7. Counts checked by script: subtitle 25/26 characters, promotional text 158/164 characters, keywords 91 bytes (EN) and 95 bytes (UK). Recount in App Store Connect when pasting. Recounted after the 5.2.1 change (below): keywords 92 bytes (EN) and 90 bytes (UK).
 8. Name availability (D1), legal copyright holder, video link and the optional App Preview are not in this file. Screenshots: see "Screenshots (6.9", 1320×2868)" above (prompt 42).
 9. UK keyword «розрахунок»: resolved, replaced by «навігація».
+10. 5.2.1 (2026-11-02): App Review rejected 1.0 (1) under guideline 5.2.1 for "OBD-II" and "ELM327". OBD-II is kept as a public standard (SAE J1962/J1979, ISO 15031). "ELM327" is removed from app strings, metadata, Review Notes and the site. Build 1.0.0 (2) replaces build 1. Keyword `ELM327` became `adapter` (en) / `адаптер` (uk); the UK field would be 103 bytes with it, so «дороги» was dropped (90 bytes).
 
