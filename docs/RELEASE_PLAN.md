@@ -170,7 +170,7 @@ Plain English, ready to paste into App Store Connect. Fill in the video link bef
 ```
 FuGPS estimates the car's position when GPS is absent or distorted. It uses the car's speed, read over OBD-II, and the phone's motion sensors, and can match the position to offline road maps.
 
-Normal use needs an OBD-II Bluetooth LE adapter (ELM327-compatible) in the car, so you can test without a car using the built-in demo:
+Normal use needs an OBD-II Bluetooth LE adapter in the car, so you can test without a car using the built-in demo:
 1. Open Settings (the gear on the map) -> Developer -> Demo drive (simulated car).
 2. The map shows a simulated drive, marked with a DEMO badge.
 3. After about a minute the simulated GPS is lost, and the position keeps moving along the roads.
