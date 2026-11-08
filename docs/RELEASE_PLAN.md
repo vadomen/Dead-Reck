@@ -30,6 +30,7 @@ Done / in code / open, per item. "In code (prompt N)" = merged work that has not
 | Record starts from Navigate's estimate | done in code (prompt 40); device checks open (PLAN §6) | |
 | Release QA: OSM credit layout, Language row, simulator QA, store screenshots | in progress (prompt 42) | |
 | Pre-release fixes: GPS-off rail button icon-only while GPS is in use, map line for denied Location, altimeter only in Record, R80 minors, store screenshots re-shot | done in code (prompt 43, branch `prerelease-fixes`, review run 81 closed); device checks open (PLAN §6) | R-QA42-1 (Location line only), R-QA42-3, R-QA42-4, R-QA42-5 (implemented, checks pending), R80.1-2, R80.1-3, R80.2-1, R80.2-2, R81.1-1 (done); R-QA43-3 opened; R81.1-2 deferred; R-QA42-2 stays open |
+| App Review 5.2.1 rejection of 1.0 (1) (2026-11-02) | rejected for "OBD-II" and "ELM327" in the app, metadata and site. OBD-II kept (public standard); "ELM327" removed from app strings, metadata, Review Notes and the site. Build 1.0.0 (2) replaces build 1 (prompt 48, branch `release-1.0.2`); resubmission open | |
 | Phases 4-7 (quality, TestFlight, App Store page, submission) | open | |
 
 Starting decisions (from the user, 2026-10-16):

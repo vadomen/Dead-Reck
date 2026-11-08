@@ -64,7 +64,7 @@ struct LinkReasonTests {
         #expect(LinkReason.noServices.display == "no GATT services")
         #expect(LinkReason.notificationsRefused(characteristic: "FFE1", error: "denied").display == "notifications on FFE1 refused: denied")
         #expect(LinkReason.notificationsRefused(characteristic: "FFE1", error: nil).display == "notifications on FFE1 refused: not notifying")
-        #expect(LinkReason.sessionFailed.display == "ELM session failed")
+        #expect(LinkReason.sessionFailed.display == "Adapter session failed")
         #expect(LinkReason.bluetoothState(9).display == "Bluetooth state 9")
         for reason in everyReason {
             #expect(LinkReasonText.display(reason.text) == reason.display, "\(reason.text)")
@@ -101,7 +101,7 @@ struct LinkReasonTests {
             "no GATT services": "адаптер не має служб GATT",
             "not notifying": "сповіщення не ввімкнено",
             "notifications on %@ refused: %@": "адаптер відхилив сповіщення на %1$@: %2$@",
-            "ELM session failed": "збій сеансу ELM",
+            "Adapter session failed": "Збій сесії адаптера",
             "Bluetooth state %lld": "Стан Bluetooth %lld",
         ]
         for (key, uk) in expected {

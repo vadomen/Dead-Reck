@@ -565,3 +565,38 @@ struct AppLanguageNameTests {
             .hasPrefix("Щоб перемкнути, додайте другу мову в Параметри iOS"))
     }
 }
+
+// MARK: - Guideline 5.2.1: no chip-maker name in user-visible text
+
+@Suite("Localisation: no ELM chip name in shipped strings")
+struct NoChipNameTests {
+    /// Catalog keys allowed to mention the chip, with a reason each. Empty: the
+    /// Console and Debug text that names it is runtime adapter data, not catalog text.
+    static let allowedKeys: Set<String> = []
+
+    /// A word starting with "elm", any case ("ELM", "ELM327", "Elm"). Anchored at a word
+    /// start so "helm" and "overwhelm" do not match.
+    static let chipName = #"(?i)\belm"#
+
+    static func names(_ text: String) -> Bool { text.range(of: chipName, options: .regularExpression) != nil }
+
+    @Test("No key, en value or uk value in Localizable / InfoPlist, nor Info.plist, names the chip")
+    func noChipName() throws {
+        var hits: [String] = []
+        for path in ["App/Resources/Localizable.xcstrings", "App/Resources/InfoPlist.xcstrings"] {
+            let catalog = try StringCatalog(path: path)
+            #expect(catalog.entries.count > 0, "\(path) is empty")
+            for (key, entry) in catalog.entries where !Self.allowedKeys.contains(key) {
+                var texts = [key]
+                for language in ["en", "uk"] {
+                    if let value = entry.value(language) { texts.append(value) }
+                    texts += entry.plural(language)?.values.map { $0 } ?? []
+                }
+                if texts.contains(where: Self.names) { hits.append("\(path): \(key)") }
+            }
+        }
+        let plist = try LocalizationRepo.text("App/Resources/Info.plist")
+        if Self.names(plist) { hits.append("App/Resources/Info.plist") }
+        #expect(hits.isEmpty, "Guideline 5.2.1: say \"OBD-II adapter\", not the chip name:\n\(hits.joined(separator: "\n"))")
+    }
+}

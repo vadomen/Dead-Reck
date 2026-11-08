@@ -81,7 +81,7 @@ enum LinkReason: Hashable, Sendable {
         case .notificationsRefused(let uuid, let error):
             notificationsRefused(uuid, error ?? String(localized: "not notifying", comment: "Adapter failed: notifications did not turn on, no error given"))
         case .sessionFailed:
-            String(localized: "ELM session failed", comment: "Adapter failed: the ELM327 session failed without a reason")
+            String(localized: "Adapter session failed", comment: "Adapter failed: the adapter session failed without a reason")
         case .bluetoothState(let raw):
             String(localized: "Bluetooth state \(raw)", comment: "Bluetooth unavailable: a Bluetooth state this build does not know; %lld is its number")
         }
