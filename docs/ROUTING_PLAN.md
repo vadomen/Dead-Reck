@@ -1,6 +1,6 @@
 # Routing plan: navigation along a route
 
-**Status:** approved 2026-11-14 (D1–D5). Prompt 49 done (merged into `main` 2026-11-14, review run 88).
+**Status:** approved 2026-11-14 (D1–D6). Prompt 49 done (commit 579a796 on branch `routing`, 2026-11-14, review run 88; not in `main`).
 Context: `logs/HANDOFF_2026-11-13_ROUTING.md`, `logs/DEBRIEF_2026-11-02.md`.
 Engine model and adoption rule: `docs/NAVIGATION.md`.
 
@@ -18,20 +18,21 @@ Once routing is done, branch `nav-noobd` comes back, this time with the route as
 
 | ID | Question | Decided | Why |
 |---|---|---|---|
-| D1 | Which branch to start from | From `main`, on branch `routing`. Route UI lives in new files under `App/Sources/UI/Route/`. `MapView.swift` only gets hook points. | Keeps the unverified no-OBD code out. Later conflicts with `nav-noobd` stay limited to `MapView`, the log format and PLAN/BACKLOG. |
-| D2 | Log format version | First port **only the v6 format** from `nav-noobd` to `main`: `manualFix.tapLatitude/tapLongitude`, the `.v6` case and a v6 fixture. That diff is about 60 lines in `Log/`. The route events then go in **v7**. | There can never be two different v6 formats, and `main` can read recordings made by the `nav-noobd` build. |
-| D3 | Debrief prerequisites to take into `main` | Take #3 (rejecting fixes that jump), #6 (BLE goes silent after reconnect) and #8 (legend for the fix dot). #2 (losing the road on loops) is covered by R3. #1 and #5 stay with no-OBD. | #3, #6 and #8 hurt the OBD mode and every field test. |
+| D1 | Which branch to start from | On branch `routing` (cut from the 1.0 release). Route UI lives in new files under `App/Sources/UI/Route/`. `MapView.swift` only gets hook points. | Keeps the unverified no-OBD code out. Later conflicts with `nav-noobd` stay limited to `MapView`, the log format and PLAN/BACKLOG. |
+| D2 | Log format version | First port **only the v6 format** from `nav-noobd` to `routing`: `manualFix.tapLatitude/tapLongitude`, the `.v6` case and a v6 fixture. That diff is about 60 lines in `Log/`. The route events then go in **v7**. | There can never be two different v6 formats, and `routing` can read recordings made by the `nav-noobd` build. |
+| D3 | Debrief prerequisites to take into `routing` | Take #3 (rejecting fixes that jump), #6 (BLE goes silent after reconnect) and #8 (legend for the fix dot). #2 (losing the road on loops) is covered by R3. #1 and #5 stay with no-OBD. | #3, #6 and #8 hurt the OBD mode and every field test. |
 | D4 | Routing source | **A: MapKit online.** That means `MKLocalSearch` and `MKDirections`. Option B (offline routing on the road packs) is deferred. | A takes about 5 prompts. B takes 8–12 and needs pack v2 (turn restrictions, maxspeed, names) plus an address index. |
 | D5 | Saved destinations | Keep up to 10 recent destinations plus pinned ones ("Home", "Work"). Stored on the device only, with no sync. Settings gets a "Clear" button. | They are convenient. They are personal data, but they never reach logs, commits or tests. |
+| D6 | Where routing work lands (user, 2026-11-14) | All routing work, prerequisites included, lives on branch `routing`. Prompt branches are cut from `routing` and merged back into it. `main` stays at release 1.0 until the user merges `routing` after real drives. | A release branch must not carry unverified routing code. Prompt 49 is 579a796 on `routing`, not in `main`. |
 
 ## Prompt sequence
 
 The next free prompt number is 49. Every prompt gets its own branch or worktree, then `/review-loop`, then a merge.
 The user does the push.
 
-### 49: Prerequisites (on `main`)
+### 49: Prerequisites (on `routing`)
 
-Done (merged into `main` 2026-11-14; review run 88).
+Done (commit 579a796 on `routing`, 2026-11-14; review run 88; not in `main`).
 
 1. **Port log v6.**
    - Port the format change only: the case, the two optional fields, `RecordingAnalysis` and the CSV.
