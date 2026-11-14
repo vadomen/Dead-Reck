@@ -52,12 +52,12 @@ struct GPSLegendTests {
         let good = try #require(AccuracyBand.good.upperBoundM)
         let fair = try #require(AccuracyBand.fair.upperBoundM)
         let poor = try #require(AccuracyBand.poor.upperBoundM)
-        #expect(GPSLegendContent.text(for: .band(.good)).contains("\(Int(good)) m"))
-        #expect(GPSLegendContent.text(for: .band(.fair)).contains("\(Int(fair)) m"))
-        #expect(GPSLegendContent.text(for: .band(.poor)).contains("\(Int(poor).formatted()) m"))
-        #expect(GPSLegendContent.text(for: .band(.bad)).contains("\(Int(poor).formatted()) m"))
+        #expect(GPSLegendContent.text(for: .band(.good)).contains("\(Int(good)) m"))
+        #expect(GPSLegendContent.text(for: .band(.fair)).contains("\(Int(fair)) m"))
+        #expect(GPSLegendContent.text(for: .band(.poor)).contains("\(Int(poor).formatted()) m"))
+        #expect(GPSLegendContent.text(for: .band(.bad)).contains("\(Int(poor).formatted()) m"))
         #expect(GPSLegendContent.staleSeconds == 5)
-        #expect(GPSLegendContent.text(for: .stale).contains("\(GPSLegendContent.staleSeconds) s"))
+        #expect(GPSLegendContent.text(for: .stale).contains("\(GPSLegendContent.staleSeconds) s"))
     }
 
     @Test("Stale is grey whatever the band")

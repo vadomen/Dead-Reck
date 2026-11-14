@@ -48,12 +48,12 @@ enum GPSLegendContent {
     static func text(for kind: GPSLegendRow.Kind) -> String {
         switch kind {
         case .estimate: String(localized: "FuGPS — position estimate")
-        case .band(.good): String(localized: "Good — within \(Int(AccuracyBand.good.upperBoundM ?? 0)) m")
-        case .band(.fair): String(localized: "Fair — within \(Int(AccuracyBand.fair.upperBoundM ?? 0)) m")
-        case .band(.poor): String(localized: "Poor — within \(Int(AccuracyBand.poor.upperBoundM ?? 0)) m")
+        case .band(.good): String(localized: "Good — within \(Int(AccuracyBand.good.upperBoundM ?? 0)) m")
+        case .band(.fair): String(localized: "Fair — within \(Int(AccuracyBand.fair.upperBoundM ?? 0)) m")
+        case .band(.poor): String(localized: "Poor — within \(Int(AccuracyBand.poor.upperBoundM ?? 0)) m")
         // `.bad` has no bound of its own: it starts where `.poor` ends.
-        case .band(.bad): String(localized: "Bad — worse than \(Int(AccuracyBand.poor.upperBoundM ?? 0)) m")
-        case .stale: String(localized: "Stale — no new fix for \(staleSeconds) s")
+        case .band(.bad): String(localized: "Bad — worse than \(Int(AccuracyBand.poor.upperBoundM ?? 0)) m")
+        case .stale: String(localized: "Stale — no new fix for \(staleSeconds) s")
         }
     }
 

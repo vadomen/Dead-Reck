@@ -541,12 +541,12 @@
         }
       }
     },
-    "Bad — worse than %lld m" : {
+    "Bad — worse than %lld m" : {
       "localizations" : {
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Дуже погано — гірше ніж %lld м"
+            "value" : "Дуже погано — гірше ніж %lld м"
           }
         }
       }
@@ -1579,12 +1579,12 @@
         }
       }
     },
-    "Fair — within %lld m" : {
+    "Fair — within %lld m" : {
       "localizations" : {
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Задовільно — до %lld м"
+            "value" : "Задовільно — до %lld м"
           }
         }
       }
@@ -1760,12 +1760,12 @@
         }
       }
     },
-    "Good — within %lld m" : {
+    "Good — within %lld m" : {
       "localizations" : {
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Добре — до %lld м"
+            "value" : "Добре — до %lld м"
           }
         }
       }
@@ -3225,12 +3225,12 @@
         }
       }
     },
-    "Poor — within %lld m" : {
+    "Poor — within %lld m" : {
       "localizations" : {
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Погано — до %lld м"
+            "value" : "Погано — до %lld м"
           }
         }
       }
@@ -3778,12 +3778,12 @@
         }
       }
     },
-    "Stale — no new fix for %lld s" : {
+    "Stale — no new fix for %lld s" : {
       "localizations" : {
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Застаріла — GPS не оновлювався %lld с"
+            "value" : "Застаріла — GPS не оновлювався %lld с"
           }
         }
       }
