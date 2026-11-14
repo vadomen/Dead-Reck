@@ -553,3 +553,8 @@ Items 1-7 above (demo pipeline) and the airplane-mode check (item 1) cover the d
 1. **Process list shape:** with the phone connected and unlocked and the app open, save `xcrun devicectl device info processes --device <id> --json-output -` and check that `result.runningProcesses[].executable` holds a `file:///…/DriveLogger.app/DriveLogger` URL (the parser's shape was inferred from devicectl's strings, never seen in real output). If the shape differs, the guard refuses ("cannot tell whether the app is running"); fix the parser rather than using `--force` by habit.
 2. **Suspended app:** leave the app in the app switcher (not swiped away) and run `scripts/push_packs.sh --dry-run`: Guard 1 reports it would refuse. Swipe it away: Guard 1 is clear.
 3. **Locked phone:** run `--dry-run` with the phone locked: note whether devicectl errors or returns an empty list; both must refuse.
+
+### Added by prompt 49, BLE reconnect and the dot legend (branch `routing-prereqs`) — not verified on a device
+1. **Adapter pulled while recording (foreground):** mid-drive, pull the adapter for 2 min, then plug it back. The Console and the recording show repeated reconnect attempts at the backoff (about every 11–40 s), and the link recovers on its own (BLE-RECONNECT).
+2. **Same in the background:** the same pull and replug with the app in the background during Navigate and the screen locked: attempts continue, and the link recovers after the replug (BLE-RECONNECT).
+3. **Dot legend:** open "What the map dot means" from the GPS indicator in the map HUD card, and from Settings → About. The text matches the dot colours on the map (UX-43).
