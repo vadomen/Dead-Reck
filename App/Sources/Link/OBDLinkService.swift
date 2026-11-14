@@ -69,18 +69,23 @@ struct ReconnectBackoff: Hashable, Sendable {
 ///   `reconnecting → connecting` (`reconnect attempt <n>`) and its connect
 ///   watchdog started — earlier if the pending connect answers first.
 /// - Spaced cycles: when the connection being dropped never had a
-///   successful poll (its initialisation failed, or the session asked for
-///   a reconnect before any poll answered), the connect is still issued at
-///   once, but a connection it makes before the backoff ends is held:
+///   successful poll — it was lost during discovery or initialisation (a
+///   module that resets on `ATZ`, a brown-out, the edge of range), its
+///   initialisation failed, the session asked for a reconnect before any
+///   poll answered, or its GATT discovery stalled — the connect is still
+///   issued at once, but a connection it makes before the backoff ends is
+///   held:
 ///   recorded as a note (`reconnect attempt <n>: connected, held until the
 ///   backoff ends`), its discovery result kept, and only when the backoff
 ///   ends does it go `reconnecting → connecting → discovering` and start
 ///   a session. A broken adapter that is present therefore initialises at
 ///   most once per backoff delay (1 s, 2 s, … 30 s), while the link is
 ///   never without a pending connect or a held connection. A held
-///   connection that drops is connected again at once. A link loss after
-///   a successful poll is not spaced: the next session starts as soon as
-///   the adapter answers.
+///   connection that drops is connected again at once. Only a link loss
+///   after a successful poll on that connection is not spaced: the next
+///   session starts as soon as the adapter answers. (A connect CoreBluetooth
+///   never answers is re-issued by the connect watchdog every backoff +
+///   10 s; a stalled discovery cycles every 10 s + backoff.)
 /// - Connect watchdog: a `connecting` that CoreBluetooth hasn't answered
 ///   within `connectTimeout` (10 s) ends as `connecting → disconnected`
 ///   (`<attempt>: no answer in <t>, cancelled and re-issued`): the connect
@@ -215,6 +220,8 @@ class OBDLinkService: OBDLinkServicing, OBDLinkHolding {
     /// discovery is done; resumed when the backoff ends.
     @ObservationIgnored private var heldConnection: (connectedAt: Double, ready: (link: BLELinkReady, at: Double)?)?
     /// The current connection's session has answered a poll with a value.
+    /// Cleared when a connection comes up (`.connected`) and when its
+    /// session starts.
     @ObservationIgnored private var linkPolled = false
     @ObservationIgnored private var centralTask: Task<Void, Never>?
     @ObservationIgnored private var subscriber: AsyncStream<LinkEvent>.Continuation?
@@ -481,6 +488,9 @@ class OBDLinkService: OBDLinkServicing, OBDLinkHolding {
                 return
             }
             connectPending = false
+            // A new connection: it hasn't answered a poll, whatever the one
+            // before it did.
+            linkPolled = false
             if bleState == .reconnecting, spacedCycle {
                 // A spaced cycle: the next session waits for the backoff.
                 heldConnection = (at, nil)
@@ -565,9 +575,14 @@ class OBDLinkService: OBDLinkServicing, OBDLinkHolding {
                 return
             }
             connectPending = false
+            // A connection that never answered a poll (dropped during
+            // discovery or init: a module that resets on ATZ, a brown-out,
+            // the edge of range) spaces the next full cycle; one that
+            // polled reconnects at once.
+            let spaced = !linkPolled
             transition(to: .disconnected, reason: reason ?? "link lost", uptime: at)
             dropLink()
-            scheduleReconnect()
+            scheduleReconnect(spaced: spaced)
         case .cancelled(_, _, let at):
             // The disconnect this service asked for. It may land after the
             // reconnect has started; it is not that connection's loss (R3.1-3),
@@ -624,9 +639,10 @@ class OBDLinkService: OBDLinkServicing, OBDLinkHolding {
             // Not `unusable`: a missed callback says nothing about the
             // adapter's layout, so this is retried like a link loss.
             self.transition(to: .disconnected, reason: "GATT discovery timed out after \(timeout)")
+            let spaced = !self.linkPolled
             self.dropLink()
             self.cancelAttempt(id)
-            self.scheduleReconnect()
+            self.scheduleReconnect(spaced: spaced)
         }
     }
 

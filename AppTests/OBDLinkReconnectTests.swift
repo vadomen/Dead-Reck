@@ -123,6 +123,32 @@ final class ManualLinkClock: Clock, UptimeSource, LinkVirtualTimer {
 
 }
 
+/// A transport whose BLE link drops on the first write (`ATZ`), as a
+/// clone whose BLE module resets on a reset command, or a brown-out on the
+/// OBD port: `onFirstSend` reports the loss, the write fails.
+actor DroppingTransport: ELMTransport {
+    nonisolated let incoming: AsyncStream<ELMChunk>
+    private let continuation: AsyncStream<ELMChunk>.Continuation
+    private let onFirstSend: @Sendable () -> Void
+    private var dropped = false
+
+    init(onFirstSend: @escaping @Sendable () -> Void) {
+        self.onFirstSend = onFirstSend
+        (incoming, continuation) = AsyncStream.makeStream(of: ELMChunk.self)
+    }
+
+    func send(_ command: ValidatedELMCommand) async throws -> Double {
+        if !dropped {
+            dropped = true
+            continuation.finish()
+            onFirstSend()
+        }
+        throw ELMTransportError.disconnected("link lost")
+    }
+
+    var isClosed: Bool { dropped }
+}
+
 /// A `BLECentralClient` that never answers on its own. It records every
 /// `connect` and `cancelConnection` with the virtual time, tracks whether a
 /// CoreBluetooth connect is pending (issued, not cancelled, not answered),
@@ -154,6 +180,7 @@ final class ScriptedBLECentral: BLECentralClient {
     private nonisolated(unsafe) var uncoveredSince: Double?
     private nonisolated(unsafe) var uncovered = 0.0
     private nonisolated(unsafe) var rejection: String?
+    private nonisolated(unsafe) var connectOnly = false
     private nonisolated(unsafe) var readyMaker: (@Sendable () -> any ELMTransport)?
 
     /// Every connect from now on is rejected at once with this reason
@@ -161,6 +188,13 @@ final class ScriptedBLECentral: BLECentralClient {
     var rejectEveryConnect: String? {
         get { lock.withLock { rejection } }
         set { lock.withLock { rejection = newValue } }
+    }
+
+    /// Every connect from now on connects at once, and its GATT discovery
+    /// never finishes (no `.ready`).
+    var connectOnlyEveryConnect: Bool {
+        get { lock.withLock { connectOnly } }
+        set { lock.withLock { connectOnly = newValue } }
     }
 
     /// Every connect from now on connects at once and becomes ready with a
@@ -209,6 +243,8 @@ final class ScriptedBLECentral: BLECentralClient {
         }
         if let reason = rejectEveryConnect {
             failConnect(reason)
+        } else if connectOnlyEveryConnect {
+            answerConnect()
         } else if let make = answerEveryConnect {
             answerConnect()
             ready(make())
@@ -540,7 +576,10 @@ struct OBDLinkReconnectTests {
         await rig.clock.advance(by: .milliseconds(200))
         rig.central.failConnect("Peer removed pairing information.")
         await rig.clock.settle()
-        #expect(rig.log.ble.suffix(2).map(\.reason) == ["Peer removed pairing information.", "attempt 2 in 2.0 seconds"])
+        // `connectAndLose` drops a connection that never polled: a spaced cycle.
+        #expect(rig.log.ble.suffix(2).map(\.reason) == [
+            "Peer removed pairing information.", "attempt 2 in 2.0 seconds, next session after the backoff",
+        ])
         #expect(rig.central.pending == nil)
         let before = rig.central.connectCount
         await rig.clock.advance(by: .milliseconds(1900))
@@ -563,7 +602,9 @@ struct OBDLinkReconnectTests {
         await rig.clock.settle()
         #expect(rig.central.connectTimes.last.map { $0 - loss } == 5)
         #expect(rig.central.pending != nil)
-        #expect(rig.log.ble.suffix(2).map(\.reason) == ["Connection failed to be established.", "attempt 2 in 2.0 seconds, connect pending"])
+        #expect(rig.log.ble.suffix(2).map(\.reason) == [
+            "Connection failed to be established.", "attempt 2 in 2.0 seconds, connect pending, next session after the backoff",
+        ])
         #expect(rig.central.uncoveredSeconds(now: rig.now) == 0)
         rig.link.disconnect()
     }
@@ -662,6 +703,91 @@ struct OBDLinkReconnectTests {
         #expect(reconnected.last == loss, "connected again without waiting for the 1 s backoff")
         #expect(!rig.log.ble.contains { $0.reason?.contains("held") == true })
         #expect(rig.log.ble.filter { $0.to == .reconnecting }.compactMap(\.reason) == ["attempt 1 in 1.0 seconds, connect pending"])
+        rig.link.disconnect()
+    }
+
+    /// Uptimes of the `ble` transitions into `to`.
+    static func times(_ events: [LinkEvent], to target: LinkSample.BLEState) -> [Double] {
+        events.compactMap { event -> Double? in
+            if case .ble(let from, let to, _, let at) = event, from != to, to == target { at } else { nil }
+        }
+    }
+
+    // R88.1-1: a link that drops before any successful poll (a clone whose
+    // BLE module resets on ATZ, a brown-out, the edge of range) used to be
+    // reconnected and re-initialised at once, about once a second all drive.
+    @Test("The adapter answers every connect, the link drops when ATZ is sent: for 5 min full cycles are spaced 1, 2, 4 … 30 s, the connect still issued at every loss")
+    func initDropCyclesSpaced() async throws {
+        let rig = ReconnectRig()
+        let central = rig.central
+        central.answerEveryConnect = { DroppingTransport { central.loseLink() } }
+        rig.link.connect(to: ScriptedBLECentral.adapterID)
+        for _ in 0..<1_500 { await rig.clock.advance(by: .milliseconds(200)) }
+
+        let connected = Self.times(rig.log.events, to: .connected)
+        let gaps = zip(connected, connected.dropFirst()).map { $1 - $0 }
+        let backoff = ReconnectBackoff.default
+        // Cycles at 0, 1, 3, 7, 15, 31, 61, then every 30 s to 271 s: 13 gaps
+        // (each gap within backoff … backoff + 1 s, so no 14th fits in 300 s).
+        #expect(gaps.count == 13, "cycles in 5 min: \(gaps.count)")
+        for (index, gap) in gaps.enumerated() {
+            let delay = Double(backoff.delay(forAttempt: index + 1).components.seconds)
+            #expect(gap >= delay && gap < delay + 1, "cycle \(index + 1): \(gap) s vs backoff \(delay) s")
+        }
+        let losses = Self.times(rig.log.events, to: .disconnected)
+        let connects = Set(central.connectTimes)
+        #expect(!losses.isEmpty && losses.allSatisfy { connects.contains($0) }, "a connect is issued at every loss")
+        #expect(central.doubleConnects == 0)
+        rig.link.disconnect()
+    }
+
+    @Test("A drop during discovery, after an earlier connection that polled, is spaced: the polled flag belongs to the connection that made it")
+    func discoveryDropAfterPolledConnectionIsSpaced() async throws {
+        let rig = ReconnectRig()
+        let clock = rig.clock
+        rig.central.answerEveryConnect = { MockELMAdapter(rules: LinkTestSupport.touareg(), uptime: clock, clock: clock) }
+        rig.link.connect(to: ScriptedBLECentral.adapterID)
+        #expect(await rig.advance(until: { rig.link.state.isPolling && rig.log.readings.count >= 2 }, step: .milliseconds(10)))
+
+        // Connection 1 polled; it drops, connection 2 comes up at once but
+        // drops during discovery, before any session.
+        rig.central.answerEveryConnect = nil
+        rig.central.loseLink()
+        await rig.clock.settle()
+        rig.central.answerConnect()
+        await rig.clock.settle()
+        #expect(rig.link.bleState == .discovering, "a polled link's loss reconnects at once")
+        let second = rig.now
+        rig.central.loseLink()
+        await rig.clock.settle()
+        #expect(rig.central.connectTimes.last == second, "the connect is still issued at once")
+        #expect(rig.log.ble.last?.reason == "attempt 2 in 2.0 seconds, connect pending, next session after the backoff")
+
+        rig.central.answerConnect()
+        await rig.clock.settle()
+        #expect(rig.link.bleState == .reconnecting, "held until the backoff ends")
+        #expect(rig.log.ble.last?.reason == "reconnect attempt 2: connected, held until the backoff ends")
+        await rig.clock.advance(by: .milliseconds(1_900))
+        #expect(rig.link.bleState == .reconnecting)
+        await rig.clock.advance(by: .milliseconds(100))
+        #expect(rig.link.bleState == .discovering)
+        rig.link.disconnect()
+    }
+
+    @Test("GATT discovery that never finishes: each cycle is the 10 s discovery timeout plus the backoff (11, 12, 14, 18, 26, 40 s …), not every 10 s")
+    func stalledDiscoveryIsSpaced() async throws {
+        let rig = ReconnectRig()
+        rig.central.connectOnlyEveryConnect = true
+        rig.link.connect(to: ScriptedBLECentral.adapterID)
+        await rig.clock.advance(by: .seconds(300))
+
+        let discovering = Self.times(rig.log.events, to: .discovering)
+        let gaps = zip(discovering, discovering.dropFirst()).map { $1 - $0 }
+        #expect(Array(gaps.prefix(9)) == [11, 12, 14, 18, 26, 40, 40, 40, 40])
+        let timeouts = rig.log.ble.filter { $0.reason == "GATT discovery timed out after 10.0 seconds" }.count
+        #expect(timeouts == discovering.count, "every discovery timed out; the last one's retry is still in its backoff")
+        #expect(rig.central.doubleConnects == 0)
+        #expect(rig.central.uncoveredSeconds(now: rig.now) == 0, "a connect or a connection at every moment")
         rig.link.disconnect()
     }
 }
