@@ -184,6 +184,11 @@ public struct NavigationEngine: Sendable {
     /// Kept outside `counters` so a run without a switch codes exactly as
     /// before.
     public private(set) var fixesWithheldByGPSSwitch = 0
+    /// Prompt 50, observe-only: the M² of every fix the engine considers
+    /// (`FixJumpObservation`). nil, the default, measures nothing; set it
+    /// to start measuring. Never read by the filter: estimates are the
+    /// same either way. Outside `counters`, like the GPS switch's count.
+    public var fixJumps: FixJumpObservation?
     /// Arrival of the latest fix with a valid speed the filter used (it
     /// initialised the engine or updated it), ns; nil if none
     /// (`gnssInUse(at:)`).
@@ -1382,6 +1387,7 @@ public struct NavigationEngine: Sendable {
             restore.fixesOlderThanSave += 1
             return
         }
+        let movingFixesBefore = zeroFix.movingFixes
         noteZeroFixEvidence(sample, fixNs: fixNs)
         let age = max(0, Double(arrivalNs - fixNs) / 1e9)
         if age > config.maxFixAgeS && !isStopped(at: arrivalNs) {
@@ -1410,6 +1416,12 @@ public struct NavigationEngine: Sendable {
         let sigma = max(accuracy * config.fixSigmaPerAccuracy, config.fixSigmaFloorM)
             * (network ? config.networkFixInflation : 1)
             + Self.staleGrowth(fixNs: fixNs, age: age, config: config, sample: sample)
+        // Prompt 50, observe-only: measured here, past every filter and
+        // before any path acts; its path is filled in when this returns.
+        let jump = fixJumps == nil ? nil
+            : observeFixJump(sample, fixNs: fixNs, arrivalNs: arrivalNs, sigma: sigma, network: network,
+                             zeroGateEvidence: zeroFix.movingFixes > movingFixesBefore)
+        defer { if let jump { resolveFixJump(jump) } }
         if restore.status == .unconfirmed {
             // May reject the prior: the engine is then uninitialised and
             // this fix initialises it below, as a fresh engine's first fix.
@@ -1556,6 +1568,84 @@ public struct NavigationEngine: Sendable {
         }
         normalizeWeights()
         resampleIfNeeded()
+    }
+
+    // MARK: Fix jumps, observe-only (prompt 50)
+
+    /// What `resolveFixJump` needs to name the path of a measured fix.
+    struct PendingFixJump {
+        var isMax: Bool
+        var listed: Bool
+        var judged: Bool
+        var rejectedOffRoad: Int
+        var reseeds: Int
+        var reseedsBlocked: Int
+        var downweighted: Int
+    }
+
+    /// Measures `sample` against the estimate (`FixJumpObservation`: P the
+    /// cloud's mixture covariance, R the ordinary update's for this fix)
+    /// and records it. nil without an estimate. Reads the state only.
+    private mutating func observeFixJump(_ sample: LocationSample, fixNs: Int64, arrivalNs: Int64, sigma: Double,
+                                         network: Bool, zeroGateEvidence: Bool) -> PendingFixJump? {
+        guard fixJumps != nil, let plane = tangentPlane, !east.isEmpty else { return nil }
+        let fix = plane.enu(latitude: sample.latitude, longitude: sample.longitude)
+        let since = shiftSince(fixNs)
+        let m = cloudMoments()
+        let de = fix.east + since.east - m.east, dn = fix.north + since.north - m.north
+        // R as the update below would form it, from the state before it.
+        var positionSigma = sigma
+        var temper = 1.0
+        if network {
+            temper = Self.networkTemper(sinceLastS: lastNetworkFixNs.map { Double(fixNs - $0) / 1e9 },
+                                        correlationS: config.networkFixCorrelationS)
+        } else if !fixPin.isEmpty {
+            let k = FixPinSource.Kind(accessory: sample.accessory).rawValue
+            if let offset = fixPin[k].offset {
+                positionSigma = max(sigma, (offset.east * offset.east + offset.north * offset.north).squareRoot())
+                    * config.fixPinInflation
+                temper = Self.networkTemper(sinceLastS: fixPin[k].lastPositionNs.map { Double(fixNs - $0) / 1e9 },
+                                            correlationS: config.networkFixCorrelationS)
+            }
+        }
+        let variance = temper > 0 ? positionSigma * positionSigma / temper : .infinity
+        let m2 = variance.isFinite ? Self.chi2(de, dn, ee: m.ee + variance, en: m.en, nn: m.nn + variance) : 0
+        let s2 = sigma * sigma
+        let hit = FixJumpObservation.Hit(
+            t: Double(arrivalNs) / 1e9, fixT: Double(fixNs) / 1e9, mahalanobis2: m2,
+            mahalanobis2Untempered: Self.chi2(de, dn, ee: m.ee + s2, en: m.en, nn: m.nn + s2),
+            innovationM: (de * de + dn * dn).squareRoot(), accuracyM: sample.horizontalAccuracy,
+            sigmaM: positionSigma, temper: temper, network: network, path: .update, restore: nil,
+            zeroGateEvidence: zeroGateEvidence)
+        guard let recorded = fixJumps?.record(hit) else { return nil }
+        return PendingFixJump(
+            isMax: recorded.isMax, listed: recorded.listed, judged: restore.status == .unconfirmed,
+            rejectedOffRoad: counters.fixesRejectedOffRoad, reseeds: counters.reseeds,
+            reseedsBlocked: counters.fixPinReseedsBlocked,
+            downweighted: counters.fixPinDownweightedFixesAccessory + counters.fixPinDownweightedFixesPhone)
+    }
+
+    /// Names the path a measured fix took, from what changed since
+    /// `observeFixJump`.
+    private mutating func resolveFixJump(_ jump: PendingFixJump) {
+        guard jump.isMax || jump.listed else { return }
+        let path: FixJumpObservation.Path
+        if jump.judged && restore.status == .rejected {
+            path = .restoreRejected
+        } else if counters.fixesRejectedOffRoad != jump.rejectedOffRoad {
+            path = .rejectedOffRoad
+        } else if counters.fixPinReseedsBlocked != jump.reseedsBlocked {
+            path = .reseedBlocked
+        } else if counters.reseeds != jump.reseeds {
+            path = .reseed
+        } else if counters.fixPinDownweightedFixesAccessory + counters.fixPinDownweightedFixesPhone
+                    != jump.downweighted {
+            path = .updateDownweighted
+        } else {
+            path = .update
+        }
+        fixJumps?.resolve(isMax: jump.isMax, listed: jump.listed, path: path,
+                          restore: jump.judged ? restore.status : nil)
     }
 
     // MARK: Held stale fix (N4B-1)

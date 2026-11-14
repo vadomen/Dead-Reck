@@ -77,6 +77,9 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
     /// UX-20 (replay only, `--prior`): the restore's outcome. nil (absent)
     /// without a prior, and in files written before it.
     public var restore: NavigationRestore?
+    /// Prompt 50, observe-only: fixes far from the estimate
+    /// (`FixJumpObservation`). nil (absent) in files written before it.
+    public var fixJumps: FixJumpObservation?
 
     public init(_ result: ReplayResult) {
         logName = result.logName
@@ -119,6 +122,7 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
         maxErrorByKind = result.maxErrorByKind.isEmpty ? nil : result.maxErrorByKind
         gpsSwitch = result.gpsSwitch
         restore = result.restore
+        fixJumps = result.fixJumps
     }
 
     /// `metrics.json` key: one row per log and mode.
@@ -141,6 +145,7 @@ extension ReplayMetrics {
         case maxErrorByKind
         case gpsSwitch
         case restore
+        case fixJumps
     }
 
     /// Keys every `metrics.json` row has had since the first one (N2). A row
@@ -157,7 +162,7 @@ extension ReplayMetrics {
     ///   `motionStartT`, `consistency`, `consistencyWithTruthSigma`, `pins`,
     ///   `pinScoring`, `roads`, `roadSetHash`, `roadMetrics`, `scoreUntilT`,
     ///   `checkpointsAfterScoreUntil`, `roadsAttachedAfterInputs`,
-    ///   `attachedRoadSetHash`, `roadsExtendedAfterInputs`, `fixesExcludedByTruth`, `fixPinDecisions`, `maxErrorByKind`, `gpsSwitch`, `restore` (and any key a
+    ///   `attachedRoadSetHash`, `roadsExtendedAfterInputs`, `fixesExcludedByTruth`, `fixPinDecisions`, `maxErrorByKind`, `gpsSwitch`, `restore`, `fixJumps` (and any key a
     ///   later build adds, which must be optional or take a default here).
     /// - `config` and `counters` decode tolerantly themselves: a config key
     ///   or counter added later takes its default (0 for a counter).
@@ -204,6 +209,7 @@ extension ReplayMetrics {
         maxErrorByKind = try c.decodeIfPresent([String: KindMaxError].self, forKey: .maxErrorByKind)
         gpsSwitch = try c.decodeIfPresent(ReplayResult.GPSSwitchReport.self, forKey: .gpsSwitch)
         restore = try c.decodeIfPresent(NavigationRestore.self, forKey: .restore)
+        fixJumps = try c.decodeIfPresent(FixJumpObservation.self, forKey: .fixJumps)
     }
 }
 
@@ -374,6 +380,7 @@ public enum ReplayReport {
         if let restore = result.restore {
             lines.append("Restore       " + restoreText(restore))
         }
+        if let jumps = result.fixJumps { lines.append(contentsOf: fixJumpLines(jumps)) }
         lines.append("Consistency   " + consistencyText(result.consistency) + " (engine ellipse)")
         lines.append("  + truth σ   " + consistencyText(result.consistencyWithTruthSigma) + " (engine covariance + truth σ²; gated)")
         lines.append("Max error     \(m(result.maxErrorM)) m (\(pct(result.maxErrorPercent)))")
@@ -388,6 +395,35 @@ public enum ReplayReport {
             lines.append(contentsOf: roadLines(result.roadMetrics, counters: result.counters))
         }
         return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// Most hits `fixJumpLines` lists; the rest are in `metrics.json`.
+    static let fixJumpTextHits = 20
+
+    /// Prompt 50, observe-only: "Fix jumps     M² > 25: 1 of 812 measured
+    /// fixes; max M² 509.2 at t 95.1 s (…)", then one line per listed hit
+    /// (at most `fixJumpTextHits`).
+    public static func fixJumpLines(_ jumps: FixJumpObservation) -> [String] {
+        var lines = [String(format: "Fix jumps     M² > %g: %d of %d measured fixes", jumps.chi2Threshold, jumps.hits,
+                            jumps.fixesMeasured)
+            + (jumps.max.map { String(format: "; max M² %.1f at t %.1f s (", $0.mahalanobis2, $0.t) + fixJumpText($0) + ")" }
+               ?? "")]
+        for hit in jumps.list.prefix(fixJumpTextHits) {
+            lines.append(String(format: "              t %.1f s: M² %.1f, ", hit.t, hit.mahalanobis2) + fixJumpText(hit))
+        }
+        let more = jumps.hits - min(jumps.list.count, fixJumpTextHits)
+        if more > 0 { lines.append("              \(more) more hit\(more == 1 ? "" : "s") (metrics.json lists \(jumps.list.count))") }
+        return lines
+    }
+
+    /// "network, acc 15 m, 473 m off, σ 30 m × temper 1.00, untempered M²
+    /// 509.2, restoreRejected (judge: rejected)".
+    static func fixJumpText(_ hit: FixJumpObservation.Hit) -> String {
+        (hit.network ? "network" : "GNSS")
+            + String(format: ", acc %.0f m, %.0f m off, σ %.0f m × temper %.2f, untempered M² %.1f, ", hit.accuracyM,
+                     hit.innovationM, hit.sigmaM, hit.temper, hit.mahalanobis2Untempered)
+            + hit.path.rawValue + (hit.restore.map { " (judge: \($0.rawValue))" } ?? "")
+            + (hit.zeroGateEvidence ? ", zero-gate evidence" : "")
     }
 
     /// "cleanFix 266: 218 m (t 2144.0 s), 1.10 % (t 2144.0 s); manualFix
