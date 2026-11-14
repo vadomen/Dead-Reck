@@ -11,7 +11,7 @@ import Testing
 
 /// A `Clock` and `UptimeSource` that only moves when told. Sleepers wake in
 /// deadline order; `settle()` lets woken main-actor tasks run (yields only).
-final class ManualLinkClock: Clock, UptimeSource {
+final class ManualLinkClock: Clock, UptimeSource, LinkDeadlineReserving {
     struct Instant: InstantProtocol {
         var offset: Duration
         func advanced(by duration: Duration) -> Instant { Instant(offset: offset + duration) }
@@ -32,6 +32,8 @@ final class ManualLinkClock: Clock, UptimeSource {
     private nonisolated(unsafe) var sleepers: [Sleeper] = []
     private nonisolated(unsafe) var nextID: UInt64 = 0
     private nonisolated(unsafe) var cancelledBeforeRegistration: Set<UInt64> = []
+    /// Deadlines announced by `linkSleeper` whose sleep hasn't started yet.
+    private nonisolated(unsafe) var reserved: [Instant] = []
 
     init(baseUptime: Double = 600) {
         self.baseUptime = baseUptime
@@ -45,6 +47,9 @@ final class ManualLinkClock: Clock, UptimeSource {
     }
 
     func sleep(until deadline: Instant, tolerance: Duration?) async throws {
+        lock.withLock {
+            if let index = reserved.firstIndex(of: deadline) { reserved.remove(at: index) }
+        }
         try Task.checkCancellation()
         let id = lock.withLock {
             nextID += 1
@@ -83,6 +88,7 @@ final class ManualLinkClock: Clock, UptimeSource {
         let target = now.advanced(by: duration)
         while true {
             await settle()
+            await awaitReservations(upTo: target)
             let due: [Sleeper]? = lock.withLock {
                 guard let earliest = sleepers.map(\.deadline).min(), earliest <= target else { return nil }
                 if current < earliest { current = earliest }
@@ -100,6 +106,23 @@ final class ManualLinkClock: Clock, UptimeSource {
     /// Lets woken tasks and stream consumers run. Yields only.
     func settle() async {
         for _ in 0..<200 { await Task.yield() }
+    }
+
+    /// A timer decided on the main actor registers its sleep from the
+    /// cooperative pool; under load that lags behind main-actor yields.
+    /// Until every reserved deadline up to `limit` has registered, time
+    /// doesn't move (yields only, bounded).
+    private func awaitReservations(upTo limit: Instant) async {
+        for _ in 0..<1_000_000 {
+            let waiting = lock.withLock { reserved.contains { $0 <= limit } }
+            guard waiting else { return }
+            await Task.yield()
+        }
+    }
+
+    func reserve(_ deadline: any InstantProtocol) {
+        guard let deadline = deadline as? Instant else { return }
+        lock.withLock { reserved.append(deadline) }
     }
 }
 
@@ -133,6 +156,22 @@ final class ScriptedBLECentral: BLECentralClient {
     /// Uncovered virtual time: no connect pending and no connection, summed.
     private nonisolated(unsafe) var uncoveredSince: Double?
     private nonisolated(unsafe) var uncovered = 0.0
+    private nonisolated(unsafe) var rejection: String?
+    private nonisolated(unsafe) var readyMaker: (@Sendable () -> any ELMTransport)?
+
+    /// Every connect from now on is rejected at once with this reason
+    /// (`didFailToConnect`), as for removed pairing information.
+    var rejectEveryConnect: String? {
+        get { lock.withLock { rejection } }
+        set { lock.withLock { rejection = newValue } }
+    }
+
+    /// Every connect from now on connects at once and becomes ready with a
+    /// new transport from this closure: the adapter is present.
+    var answerEveryConnect: (@Sendable () -> any ELMTransport)? {
+        get { lock.withLock { readyMaker } }
+        set { lock.withLock { readyMaker = newValue } }
+    }
 
     init(clock: ManualLinkClock, poweredOn: Bool = true) {
         self.clock = clock
@@ -170,6 +209,12 @@ final class ScriptedBLECentral: BLECentralClient {
             pendingGeneration = generation
             log.append(Entry(call: .connect(generation: generation), uptime: now))
             closeGap(now)
+        }
+        if let reason = rejectEveryConnect {
+            failConnect(reason)
+        } else if let make = answerEveryConnect {
+            answerConnect()
+            ready(make())
         }
     }
 
@@ -479,7 +524,9 @@ struct OBDLinkReconnectTests {
         #expect(rig.link.bleState == .connecting)
         #expect(rig.central.calls.count == calls, "the pending connect is the attempt; nothing else was issued")
         #expect(rig.central.doubleConnects == 0)
-        #expect(rig.log.ble.filter { $0.to == .reconnecting }.compactMap(\.reason) == ["attempt 1 in 1.0 seconds, connect pending"])
+        #expect(rig.log.ble.filter { $0.to == .reconnecting }.compactMap(\.reason) == [
+            "attempt 1 in 1.0 seconds, connect pending, next session after the backoff",
+        ])
 
         rig.central.answerConnect()
         await rig.clock.settle()
@@ -521,6 +568,101 @@ struct OBDLinkReconnectTests {
         #expect(rig.central.pending != nil)
         #expect(rig.log.ble.suffix(2).map(\.reason) == ["Connection failed to be established.", "attempt 2 in 2.0 seconds, connect pending"])
         #expect(rig.central.uncoveredSeconds(now: rig.now) == 0)
+        rig.link.disconnect()
+    }
+
+    /// Connect times after a loss at 0 when CoreBluetooth rejects every
+    /// connect at once: attempt 1 at the loss, then one per backoff delay.
+    static func rejectionSchedule(until end: Double, backoff: ReconnectBackoff = .default) -> [Double] {
+        var times = [0.0]
+        var next = 2
+        var at = 0.0
+        while true {
+            let delay = backoff.delay(forAttempt: next).components
+            at += Double(delay.seconds)
+            guard at <= end else { return times }
+            times.append(at)
+            next += 1
+        }
+    }
+
+    // Follow-up 1(a): a rejection that repeats at once writes one attempt's
+    // rows per backoff delay, never more.
+    @Test("CoreBluetooth rejects every connect at once for 5 min: one attempt per backoff delay, three link rows and one rejection Console line per attempt, no more")
+    func instantRejectionRowsFollowBackoff() async throws {
+        let rig = ReconnectRig()
+        let reason = "Peer removed pairing information."
+        rig.link.connect(to: ScriptedBLECentral.adapterID)
+        await rig.clock.settle()
+        rig.central.answerConnect()
+        await rig.clock.settle()
+        let rowsBefore = rig.log.ble.count
+        rig.central.rejectEveryConnect = reason
+        let loss = rig.now
+        rig.central.loseLink()
+        await rig.clock.settle()
+        await rig.clock.advance(by: .seconds(300))
+
+        let expected = Self.rejectionSchedule(until: 300)
+        #expect(expected == [0, 2, 6, 14, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300])
+        let reconnects = rig.central.connectTimes.dropFirst().map { $0 - loss }
+        #expect(reconnects == expected, "no connect between backoff delays")
+        let after = rig.log.ble.dropFirst(rowsBefore + 1)   // after the loss row
+        #expect(after.filter { $0.reason == reason }.count == expected.count, "one rejection row per attempt")
+        #expect(after.count == 3 * expected.count, "→ disconnected, → reconnecting, → connecting per attempt (the first one has no → connecting)")
+        #expect(rig.console.filter { $0.contains(reason) }.count == expected.count)
+        rig.link.disconnect()
+    }
+
+    // Follow-up 2: a present adapter whose ELM handshake always fails used to
+    // be paced by the backoff; with the connect re-issued at once it must
+    // still be, by holding the connection until the backoff ends.
+    @Test("Adapter present, its ELM initialisation fails every time: for 5 min full cycles are spaced 1, 2, 4, 8, 16, 30, 30 … s, each connection held until its backoff ends")
+    func brokenAdapterCyclesSpaced() async throws {
+        let rig = ReconnectRig()
+        let clock = rig.clock
+        rig.central.answerEveryConnect = {
+            WriteFailingTransport(MockELMAdapter(rules: LinkTestSupport.touareg(), uptime: clock, clock: clock), failing: "ATZ")
+        }
+        rig.link.connect(to: ScriptedBLECentral.adapterID)
+        for _ in 0..<3_000 { await rig.clock.advance(by: .milliseconds(100)) }
+
+        let connected = rig.log.events.compactMap { event -> Double? in
+            if case .ble(_, .connected, _, let at) = event { at } else { nil }
+        }
+        let gaps = zip(connected, connected.dropFirst()).map { $1 - $0 }
+        let backoff = ReconnectBackoff.default
+        let expected = gaps.indices.map { Double(backoff.delay(forAttempt: $0 + 1).components.seconds) }
+        #expect(gaps.count >= 9, "about ten cycles in 5 min")
+        for (gap, delay) in zip(gaps, expected) {
+            #expect(gap >= delay && gap < delay + 0.25, "a cycle every backoff delay: \(gap) s vs \(delay) s")
+        }
+        #expect(Array(expected.prefix(7)) == [1, 2, 4, 8, 16, 30, 30])
+        #expect(rig.log.ble.filter { $0.from == $0.to && $0.reason?.hasSuffix("connected, held until the backoff ends") == true }.count >= gaps.count)
+        #expect(rig.central.doubleConnects == 0)
+        #expect(rig.central.connectCount == connected.count + 1, "one connect per cycle, the next one held")
+        rig.link.disconnect()
+    }
+
+    @Test("A link that polled and then drops reconnects at once: the next session starts as soon as the adapter answers, nothing held")
+    func polledLinkLossReconnectsAtOnce() async throws {
+        let rig = ReconnectRig()
+        let clock = rig.clock
+        rig.central.answerEveryConnect = { MockELMAdapter(rules: LinkTestSupport.touareg(), uptime: clock, clock: clock) }
+        rig.link.connect(to: ScriptedBLECentral.adapterID)
+        #expect(await rig.advance(until: { rig.link.state.isPolling && rig.log.readings.count >= 2 }, step: .milliseconds(10)))
+
+        let loss = rig.now
+        rig.central.loseLink()
+        await rig.clock.settle()
+        #expect(rig.central.connectTimes.last == loss, "the connect is issued at the loss")
+        let reconnected = rig.log.events.compactMap { event -> Double? in
+            if case .ble(_, .connected, _, let at) = event { at } else { nil }
+        }
+        #expect(reconnected.count == 2)
+        #expect(reconnected.last == loss, "connected again without waiting for the 1 s backoff")
+        #expect(!rig.log.ble.contains { $0.reason?.contains("held") == true })
+        #expect(rig.log.ble.filter { $0.to == .reconnecting }.compactMap(\.reason) == ["attempt 1 in 1.0 seconds, connect pending"])
         rig.link.disconnect()
     }
 }

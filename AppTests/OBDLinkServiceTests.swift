@@ -50,7 +50,7 @@ actor WriteFailingTransport: ELMTransport {
 /// adapter isn't back yet: the service issues a reconnect's connect at
 /// once, so a test that needs the link down for a while delays it here;
 /// a cancel or a newer connect drops it. Every other connect after the
-/// first answers after `reconnectLatency` (30 ms), as a real connect takes
+/// first answers after `reconnectLatency` (50 ms), as a real connect takes
 /// at least a connection interval: the dropped session's last events land
 /// before the new connection, as on a device (they used to wait for the
 /// test backoff).
@@ -85,7 +85,7 @@ final class FakeBLECentral: BLECentralClient {
         stalledDiscoveries: Set<Int> = [],
         cancelLatency: Duration = .zero,
         connectDelays: [Int: Duration] = [:],
-        reconnectLatency: Duration = .milliseconds(30),
+        reconnectLatency: Duration = .milliseconds(50),
         poweredOn: Bool = true
     ) {
         self.scripts = scripts
@@ -461,7 +461,9 @@ struct OBDLinkServiceTests {
         link.connect(to: FakeBLECentral.adapterID)
 
         #expect(await eventually { central.adapters.count == 4 && link.state.isPolling && !log.readings.isEmpty })
-        let attempts = log.ble.filter { $0.to == .reconnecting }.map { $0.reason?.components(separatedBy: " in ").first }
+        // Transitions only: a held connection's note is `reconnecting → reconnecting`.
+        let attempts = log.ble.filter { $0.to == .reconnecting && $0.from != .reconnecting }
+            .map { $0.reason?.components(separatedBy: " in ").first }
         #expect(attempts == ["attempt 1", "attempt 2", "attempt 1"])
         #expect(log.events.filter { if case .session(.needsReconnect) = $0 { true } else { false } }.count == 3)
         link.disconnect()
