@@ -217,6 +217,173 @@ struct NavigationFixJumpObserveTests {
         #expect(jumps.list.contains { $0.path == .update })
     }
 
+    // MARK: Every path, FIXPIN R, latency (R89.1-1, R89.1-2)
+
+    @Test func roadGateRejectionIsNamedRejectedOffRoad() throws {
+        typealias R = NavigationRoadTests
+        // `NavigationRoadTests.fixGate`'s shape: the car on road x = 0, a
+        // parallel road x = 300, a clean fix at 40 s 200 m east of the car
+        // (100 m from either road) while on-road at 54 km/h.
+        let net = try R.network([R.street(1, from: (0, -3000), to: (0, 3000)),
+                                 R.street(2, from: (300, -3000), to: (300, 3000))])
+        let clean = S.cleanFix()
+        let inputs = R.shifted(R.northDrive(seconds: 60, speed: 15), by: (0, -500), fix: { t, s, r in
+            if t < 10 { return clean(t, s, &r) }
+            guard S.at(t, 40), var f = clean(t, s, &r) else { return nil }
+            f.east += 200
+            return f
+        })
+        var engine = NavigationEngine(config: R.config(particles: 400), roads: net)
+        engine.fixJumps = Self.observation()
+        for input in inputs { engine.ingest(input) }
+        #expect(engine.counters.fixesRejectedOffRoad == 1)
+        let jumps = try #require(engine.fixJumps)
+        let hit = try #require(jumps.list.first { abs($0.fixT - 40) < 1e-6 })
+        #expect(hit.path == .rejectedOffRoad && !hit.network && hit.temper == 1 && hit.restore == nil)
+        #expect(hit.innovationM > 150 && hit.mahalanobis2 > 25 && jumps.max == hit)
+        #expect(jumps.list.filter { $0.path == .rejectedOffRoad } == [hit])
+    }
+
+    @Test func downweightedSourceNamesReseedBlockedAndUpdateDownweightedWithItsR() throws {
+        typealias P = NavigationFixPinTests
+        // `NavigationFixPinTests.twoPinsWithTurn`: accessory fixes 288 m
+        // off; the two-pin verdict at the second pin (80 s) down-weights the
+        // source. The fix at 90 s claims a course 90° off the car's: no
+        // particle supports it, so that clean fix would reseed, and
+        // down-weighted the reseed is blocked.
+        let drive = P.lDrive(eastS: 60)
+        let pinT = 80.03, blockedT = 90.0
+        let inputs = P.inputs(drive, pins: [(30.03, 0, 0), (pinT, 0, 0)]).map { input -> NavigationInput in
+            guard case .location(var sample, let t) = input, abs(t.seconds - blockedT) < 1e-6 else { return input }
+            sample.course = (sample.course + 90).truncatingRemainder(dividingBy: 360)
+            return .location(sample, at: t)
+        }
+        let inflation = 1.5
+        let config = P.config(twoPin: 1) { $0.fixPinInflation = inflation }
+        var engine = NavigationEngine(config: config)
+        engine.fixJumps = Self.observation(threshold: -1, cap: 1000)
+        for input in inputs { engine.ingest(input) }
+        let c = engine.counters
+        let source = engine.fixPin[0]
+        let offset = try #require(source.offset, "down-weighted at the second pin")
+        let offsetM = (offset.east * offset.east + offset.north * offset.north).squareRoot()
+        #expect(abs(offsetM - P.offsetM) < 15, "offset \(offsetM) m")
+
+        let jumps = try #require(engine.fixJumps)
+        #expect(jumps.list.count == jumps.fixesMeasured, "every measured fix listed")
+        // By arrival: the fix taken at 80 s arrives after the pin.
+        let after = jumps.list.filter { $0.t > pinT }
+        let before = jumps.list.filter { $0.t < pinT }
+        #expect(after.count >= 20 && before.count >= 70)
+        #expect(before.allSatisfy { $0.path != .reseedBlocked && $0.path != .updateDownweighted && $0.temper == 1 })
+        let blocked = try #require(after.first { abs($0.fixT - blockedT) < 1e-6 })
+        #expect(blocked.path == .reseedBlocked)
+        #expect(c.fixPinReseedsBlocked >= 1)
+        #expect(after.filter { $0.path == .reseedBlocked }.count == c.fixPinReseedsBlocked)
+        #expect(after.allSatisfy { $0.path == .reseedBlocked || $0.path == .updateDownweighted })
+        #expect(after.count == c.fixPinDownweightedFixesAccessory && c.fixPinDownweightedFixesPhone == 0)
+        #expect(after.filter { $0.path == .updateDownweighted }.count >= 20)
+
+        // R of a down-weighted fix: σ = max(claimed σ, |offset|) × inflation,
+        // tempered by the time since the source's previous fix.
+        let d = NavigationConfig()
+        let claimed = max(10 * d.fixSigmaPerAccuracy, d.fixSigmaFloorM)
+        let sigma = max(claimed, offsetM) * inflation
+        #expect(sigma > 10 * claimed)
+        for (previous, hit) in zip(jumps.list.dropLast(), jumps.list.dropFirst()) where hit.t > pinT {
+            #expect(!hit.network && hit.accuracyM == 10)
+            #expect(abs(hit.sigmaM - sigma) <= 1e-9 * sigma, "\(hit.fixT): σ \(hit.sigmaM) vs \(sigma)")
+            let temper = min(1, (hit.fixT - previous.fixT) / d.networkFixCorrelationS)
+            #expect(abs(temper - 1 / 60) < 1e-6)
+            #expect(abs(hit.temper - temper) < 1e-12, "\(hit.fixT): temper \(hit.temper) vs \(temper)")
+            #expect(hit.mahalanobis2 < hit.mahalanobis2Untempered)
+        }
+    }
+
+    @Test func movingFixDuringAnOBDZeroRunCarriesZeroGateEvidence() throws {
+        // OBD answers 0 from 30 s while the car drives on at 12 m/s; clean
+        // fixes (Doppler 12 m/s) keep coming, and the fix at 40 s is a
+        // network fix (no speed: no evidence either way).
+        let zeroFrom = 30.0
+        let clean = S.cleanFix(accuracy: 5, positionNoise: 1)
+        let events = Self.drive.events(gyroNoise: 0.001, obdSpeed: { t, state in
+            t >= zeroFrom ? 0 : (state.speed * 3.6).rounded(.down)
+        }, fix: { t, state, rng in
+            if S.at(t, Self.jumpT) {
+                return S.Fix(east: state.east, north: state.north, accuracy: 15, latency: 0)
+            }
+            return clean(t, state, &rng)
+        })
+        let jumps = try #require(Self.run(events, observe: Self.observation(threshold: -1, cap: 1000)).engine.fixJumps)
+        #expect(jumps.list.count == jumps.fixesMeasured)
+        // The run of zeros begins at the first 0 reply, 30.05 s; fixes taken
+        // after it with a Doppler speed ≥ `zuptFixGateMinSpeedMps` extend it.
+        let firstZero = zeroFrom + 0.05
+        for hit in jumps.list {
+            #expect(hit.zeroGateEvidence == (hit.fixT > firstZero && !hit.network), "fix \(hit.fixT)")
+        }
+        #expect(jumps.list.filter(\.zeroGateEvidence).count >= 30)
+        #expect(jumps.list.contains { $0.network && $0.fixT == Self.jumpT && !$0.zeroGateEvidence })
+    }
+
+    @Test func latencyShiftsTheFixByTheCloudsMotionSinceItsTime() throws {
+        // The far network fix of `farFixWithSmallSigma…`, arriving 0.75 s
+        // after its own time: the engine compares it with the cloud moved on
+        // by the motion since the fix (~12 m/s × 0.7 s, steps 40.1…40.7).
+        let latency = 0.75
+        let clean = S.cleanFix(accuracy: 5, positionNoise: 1)
+        let events = Self.drive.events(gyroNoise: 0.001, fix: { t, state, rng in
+            if S.at(t, Self.jumpT) {
+                return S.Fix(east: state.east + Self.offEast, north: state.north, accuracy: 15, latency: latency)
+            }
+            return clean(t, state, &rng)
+        })
+        let jumps = try #require(Self.run(events, observe: Self.observation()).engine.fixJumps)
+        let hit = try #require(jumps.list.first { abs($0.fixT - Self.jumpT) < 1e-9 })
+        #expect(abs(hit.t - (Self.jumpT + latency)) < 1e-9 && hit.network && hit.temper == 1 && hit.path == .update)
+
+        // The cloud at the fix's own time (its 10 Hz step the newest) and
+        // just before the fix arrives (the 40.7 s step the newest). Only
+        // motion and OBD in between: no fix moves the cloud or its weights.
+        let fixNs = S.ms(Self.jumpT).nanoseconds, arrivalNs = S.ms(Self.jumpT + latency).nanoseconds
+        var engine = NavigationEngine(config: S.config(particles: 300, seed: 3))
+        var atFix: NavigationEngine?
+        var beforeFix: NavigationEngine?
+        for input in S.inputs(events) {
+            if atFix == nil, input.arrival.nanoseconds > fixNs { atFix = engine }
+            if case .location = input, input.arrival.nanoseconds == arrivalNs {
+                beforeFix = engine
+                break
+            }
+            engine.ingest(input)
+        }
+        let a = try #require(atFix), b = try #require(beforeFix)
+        #expect(a.motionHistoryEntry(atOrBefore: .max)?.t == fixNs)
+        #expect(b.motionHistoryEntry(atOrBefore: .max)?.t == S.ms(Self.jumpT + 0.7).nanoseconds)
+        let ma = Self.moments(a), mb = Self.moments(b)
+        let shift = (east: mb.east - ma.east, north: mb.north - ma.north)
+        let shiftM = (shift.east * shift.east + shift.north * shift.north).squareRoot()
+        #expect(abs(shiftM - 12 * 0.7) < 0.5, "shift \(shiftM) m")
+        #expect(abs(atan2(shift.east, shift.north) * 180 / .pi - 30) < 3, "along the 30° heading")
+
+        let config = NavigationConfig()
+        let sigma = max(15 * config.fixSigmaPerAccuracy, config.fixSigmaFloorM) * config.networkFixInflation
+        #expect(hit.sigmaM == sigma)
+        let truth = Self.drive.truth(at: Self.jumpT)
+        let fix = S.plane.geodetic(east: truth.east + Self.offEast, north: truth.north)
+        let p = try #require(b.tangentPlane).enu(latitude: fix.latitude, longitude: fix.longitude)
+        let de = p.east + shift.east - mb.east, dn = p.north + shift.north - mb.north
+        let s2 = sigma * sigma
+        let expected = NavigationEngine.chi2(de, dn, ee: mb.ee + s2, en: mb.en, nn: mb.nn + s2)
+        #expect(abs(hit.mahalanobis2 - expected) <= 1e-9 * expected, "\(hit.mahalanobis2) vs \(expected)")
+        #expect(hit.mahalanobis2Untempered == hit.mahalanobis2)
+        let innovation = (de * de + dn * dn).squareRoot()
+        #expect(abs(hit.innovationM - innovation) < 1e-6, "\(hit.innovationM) vs \(innovation)")
+        // Without the shift both would be off by metres: the test sees it.
+        let unshifted = ((de - shift.east) * (de - shift.east) + (dn - shift.north) * (dn - shift.north)).squareRoot()
+        #expect(abs(unshifted - innovation) > 2)
+    }
+
     // MARK: Observe-only
 
     @Test func estimatesAreBitIdenticalWithAndWithoutTheObservation() throws {
