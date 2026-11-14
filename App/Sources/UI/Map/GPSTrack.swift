@@ -12,15 +12,22 @@ enum AccuracyBand: Int, Hashable, Sendable, CaseIterable {
     /// Worse than 1000 m.
     case bad
 
+    /// The band's inclusive upper bound in metres: the single source for
+    /// `init?(accuracy:)` and the map legend's text. nil for `.bad` (no bound).
+    var upperBoundM: Double? {
+        switch self {
+        case .good: 15
+        case .fair: 100
+        case .poor: 1000
+        case .bad: nil
+        }
+    }
+
     /// nil for negative or non-finite accuracy (the fix is invalid).
     init?(accuracy: Double) {
         guard accuracy.isFinite, accuracy >= 0 else { return nil }
-        switch accuracy {
-        case ...15: self = .good
-        case ...100: self = .fair
-        case ...1000: self = .poor
-        default: self = .bad
-        }
+        // allCases is in declaration order: the first band whose bound holds the value.
+        self = Self.allCases.first { band in band.upperBoundM.map { accuracy <= $0 } ?? true } ?? .bad
     }
 
     var label: String {

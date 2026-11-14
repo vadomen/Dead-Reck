@@ -31,6 +31,7 @@ struct AboutScreen: View {
     let info: AppInfo
     var versionNote: String?
     var onVersionTap: () -> Void = {}
+    @State private var showsLegend = false
 
     var body: some View {
         List {
@@ -47,6 +48,10 @@ struct AboutScreen: View {
             Section {
                 linkRow("Privacy policy", systemImage: "hand.raised", url: AboutContent.privacyURL)
                 linkRow("Support", systemImage: "questionmark.circle", url: AboutContent.supportURL)
+                Button { showsLegend = true } label: {
+                    Label("What the map dot means", systemImage: "location.circle")
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                }
             }
             Section("Data and services") {
                 VStack(alignment: .leading, spacing: 6) {
@@ -78,6 +83,7 @@ struct AboutScreen: View {
         }
         .navigationTitle("About")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showsLegend) { GPSLegendSheet() }
     }
 
     private func linkRow(_ title: LocalizedStringKey, systemImage: String, url: URL) -> some View {

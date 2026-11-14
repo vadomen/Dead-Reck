@@ -415,6 +415,13 @@ struct GPSMapView: View {
     /// Visible north-south extent, metres, from the camera.
     @State private var visibleSpanM: Double?
     @State private var isStale = false
+    @State private var showsGPSLegend: Bool = {
+        #if DEBUG
+        UserDefaults.standard.bool(forKey: "uiLegend")  // `-uiLegend 1`: open the GPS legend at launch (screenshots)
+        #else
+        false
+        #endif
+    }()
     @State private var toast: MapToast?
     @State private var toastSerial = 0
     /// Counts recorded fixes: the success haptic fires on each.
@@ -690,6 +697,8 @@ struct GPSMapView: View {
         }
         // Top-left card (UX-32): the only thing at the top.
         .overlay(alignment: .topLeading) { hudCard }
+        // What the raw-fix dot means (prompt 49): a sheet over the map; nothing running is touched.
+        .sheet(isPresented: $showsGPSLegend) { GPSLegendSheet() }
         .onChange(of: gpsHUD, initial: true) { _, state in onGPSState(state, gpsVoiceRun) }
         // R76.2-1: the voice takes a run's baseline only once the state is that run's own.
         .onChange(of: gpsVoiceRun) { _, _ in onGPSState(gpsHUD, gpsVoiceRun) }
@@ -763,6 +772,7 @@ struct GPSMapView: View {
             state: hudState,
             hasRecording: hasActiveRecording,
             onSpeedLongPress: { showNavStats.toggle() },
+            onGPSTap: { showsGPSLegend = true },
             extra: {
                 if let estimate { NavCalibratingIcon(feed: estimate) }
             },
@@ -869,7 +879,8 @@ struct GPSMapView: View {
         return .standard(pointsOfInterest: .excludingAll)
     }
 
-    private func color(_ band: AccuracyBand, stale: Bool) -> Color {
+    /// The colour of the raw-fix dot; the GPS legend uses this same function.
+    static func color(_ band: AccuracyBand, stale: Bool) -> Color {
         stale ? .gray : band.color
     }
 
@@ -894,7 +905,7 @@ struct GPSMapView: View {
                         dark: scheme == .dark)
                 }
                 if let latest, let band = AccuracyBand(accuracy: latest.horizontalAccuracy) {
-                    let c = color(band, stale: stale)
+                    let c = Self.color(band, stale: stale)
                     MapCircle(center: latest.coordinate, radius: latest.horizontalAccuracy)
                         .foregroundStyle(c.opacity(0.2))
                         .stroke(c, lineWidth: 1)
@@ -1267,10 +1278,7 @@ struct GPSMapView: View {
                 .shadow(color: .white, radius: 1)
                 .rotationEffect(.degrees(bearing - cameraHeading))
         } else {
-            Circle()
-                .fill(color)
-                .frame(width: 18, height: 18)
-                .overlay(Circle().stroke(.white, lineWidth: 3))
+            RawFixDot(color: color)
         }
     }
 

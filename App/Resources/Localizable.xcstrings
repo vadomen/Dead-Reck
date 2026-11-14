@@ -541,6 +541,16 @@
         }
       }
     },
+    "Bad — worse than %lld m" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Дуже погано — гірше ніж %lld м"
+          }
+        }
+      }
+    },
     "Barometer" : {
       "localizations" : {
         "uk" : {
@@ -1569,6 +1579,16 @@
         }
       }
     },
+    "Fair — within %lld m" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Задовільно — до %lld м"
+          }
+        }
+      }
+    },
     "File" : {
       "localizations" : {
         "uk" : {
@@ -1720,6 +1740,16 @@
         }
       }
     },
+    "Good — within %lld m" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Добре — до %lld м"
+          }
+        }
+      }
+    },
     "GPS" : {
       "localizations" : {
         "uk" : {
@@ -1773,6 +1803,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "GPS вимк."
+          }
+        }
+      }
+    },
+    "GPS: what the dot means" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GPS: що означає крапка"
           }
         }
       }
@@ -3165,6 +3205,16 @@
         }
       }
     },
+    "Poor — within %lld m" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Погано — до %lld м"
+          }
+        }
+      }
+    },
     "Privacy policy" : {
       "localizations" : {
         "uk" : {
@@ -3708,6 +3758,16 @@
         }
       }
     },
+    "Stale — no new fix for %lld s" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Застаріла — немає нового визначення %lld с"
+          }
+        }
+      }
+    },
     "START" : {
       "localizations" : {
         "uk" : {
@@ -3955,6 +4015,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Стрілка зʼявляється, щойно FuGPS дізнається ваш напрямок. Карти доріг і повороти допомагають визначити його під час руху. Пасажир може це пришвидшити: на прямій ділянці двічі торкнутися карти там, де зараз авто. Мітка, поставлена на стоянці, уточнює лише позицію, а не напрямок."
+          }
+        }
+      }
+    },
+    "The arrow is FuGPS's estimate. The coloured dot and circle are what the phone's GPS reports; when GPS is jammed it can be far off." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Стрілка — це розрахункова позиція FuGPS. Кольорова крапка з колом — те, що повідомляє GPS телефона; коли GPS глушать, вона може бути дуже далеко від справжньої позиції."
           }
         }
       }
@@ -4359,6 +4429,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Очікуємо Wi-Fi"
+          }
+        }
+      }
+    },
+    "What the map dot means" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Що означає крапка на карті"
           }
         }
       }
