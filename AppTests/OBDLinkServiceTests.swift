@@ -45,7 +45,15 @@ actor WriteFailingTransport: ELMTransport {
 /// Connections in `stalledDiscoveries` report `.connected` and then nothing,
 /// like a GATT callback that never comes. `cancelConnection` reports
 /// `.cancelled` after `cancelLatency`, as `BLECentral` does when
-/// CoreBluetooth's disconnect callback for it arrives.
+/// CoreBluetooth's disconnect callback for it arrives. `connectDelays[k]`
+/// keeps the `k`-th connect call (0-based) pending that long, as when the
+/// adapter isn't back yet: the service issues a reconnect's connect at
+/// once, so a test that needs the link down for a while delays it here;
+/// a cancel or a newer connect drops it. Every other connect after the
+/// first answers after `reconnectLatency` (30 ms), as a real connect takes
+/// at least a connection interval: the dropped session's last events land
+/// before the new connection, as on a device (they used to wait for the
+/// test backoff).
 final class FakeBLECentral: BLECentralClient {
     static let adapterID = UUID(uuidString: "0BD0B0D0-1111-4222-8333-944455556666")!
 
@@ -55,6 +63,8 @@ final class FakeBLECentral: BLECentralClient {
     private let writeFailures: [Int: String]
     private let stalledDiscoveries: Set<Int>
     private let cancelLatency: Duration
+    private let connectDelays: [Int: Duration]
+    private let reconnectLatency: Duration
     private let lock = NSLock()
     // Guarded by `lock`.
     private nonisolated(unsafe) var log: [String] = []
@@ -62,18 +72,28 @@ final class FakeBLECentral: BLECentralClient {
     private nonisolated(unsafe) var made: [MockELMAdapter] = []
     // Guarded by `lock`.
     private nonisolated(unsafe) var current: MockELMAdapter?
+    // Guarded by `lock`. The service's generation of the latest connect.
+    private nonisolated(unsafe) var latestGeneration = 0
+    // Guarded by `lock`.
+    private nonisolated(unsafe) var connectCalls = 0
+    // Guarded by `lock`. A delayed connect still pending.
+    private nonisolated(unsafe) var delayed: (generation: Int, task: Task<Void, Never>)?
 
     init(
         scripts: [[MockELMAdapter.Rule]],
         writeFailures: [Int: String] = [:],
         stalledDiscoveries: Set<Int> = [],
         cancelLatency: Duration = .zero,
+        connectDelays: [Int: Duration] = [:],
+        reconnectLatency: Duration = .milliseconds(30),
         poweredOn: Bool = true
     ) {
         self.scripts = scripts
         self.writeFailures = writeFailures
         self.stalledDiscoveries = stalledDiscoveries
         self.cancelLatency = cancelLatency
+        self.connectDelays = connectDelays
+        self.reconnectLatency = reconnectLatency
         (events, continuation) = AsyncStream.makeStream(of: BLECentralEvent.self)
         if poweredOn { send(.availability(.poweredOn, uptime: Self.now)) }
     }
@@ -81,6 +101,8 @@ final class FakeBLECentral: BLECentralClient {
     static var now: Double { ProcessInfo.processInfo.systemUptime }
 
     var calls: [String] { lock.withLock { log } }
+    /// The generation of the latest connect, for events a test sends itself.
+    var generation: Int { lock.withLock { latestGeneration } }
     var adapters: [MockELMAdapter] { lock.withLock { made } }
 
     func send(_ event: BLECentralEvent) {
@@ -96,9 +118,34 @@ final class FakeBLECentral: BLECentralClient {
         lock.withLock { log.append("stopScan") }
     }
 
-    func connect(_ id: UUID) {
-        let (transport, stalled) = lock.withLock { () -> (any ELMTransport, Bool) in
+    func connect(_ id: UUID, generation: Int) {
+        let delay = lock.withLock { () -> Duration? in
             log.append("connect")
+            latestGeneration = generation
+            connectCalls += 1
+            delayed?.task.cancel()
+            delayed = nil
+            let index = connectCalls - 1
+            return connectDelays[index] ?? (index > 0 && reconnectLatency > .zero ? reconnectLatency : nil)
+        }
+        guard let delay else {
+            answer(id, generation: generation)
+            return
+        }
+        let task = Task {
+            try? await Task.sleep(for: delay)
+            let still = lock.withLock { () -> Bool in
+                guard !Task.isCancelled, delayed?.generation == generation else { return false }
+                delayed = nil
+                return true
+            }
+            if still { answer(id, generation: generation) }
+        }
+        lock.withLock { delayed = (generation, task) }
+    }
+
+    private func answer(_ id: UUID, generation: Int) {
+        let (transport, stalled) = lock.withLock { () -> (any ELMTransport, Bool) in
             let script = scripts[min(made.count, scripts.count - 1)]
             let adapter = MockELMAdapter(rules: script)
             let failing = writeFailures[made.count]
@@ -107,25 +154,30 @@ final class FakeBLECentral: BLECentralClient {
             current = adapter
             return (failing.map { WriteFailingTransport(adapter, failing: $0) } ?? adapter, stalled)
         }
-        send(.connected(id, uptime: Self.now))
+        send(.connected(id, generation: generation, uptime: Self.now))
         guard !stalled else { return }
         send(.ready(
-            BLELinkReady(id: id, name: "IOS-Vlink", transport: transport, selection: SimulatedBLECentral.selection, table: SimulatedBLECentral.table),
+            BLELinkReady(
+                id: id, generation: generation, name: "IOS-Vlink", transport: transport,
+                selection: SimulatedBLECentral.selection, table: SimulatedBLECentral.table
+            ),
             uptime: Self.now
         ))
     }
 
     func cancelConnection(_ id: UUID) {
-        let adapter = lock.withLock { () -> MockELMAdapter? in
+        let (adapter, generation) = lock.withLock { () -> (MockELMAdapter?, Int) in
             log.append("cancel")
+            delayed?.task.cancel()
+            delayed = nil
             defer { current = nil }
-            return current
+            return (current, latestGeneration)
         }
         let latency = cancelLatency
         Task {
             await adapter?.disconnect()
             if latency > .zero { try? await Task.sleep(for: latency) }
-            send(.cancelled(id, uptime: Self.now))
+            send(.cancelled(id, generation: generation, uptime: Self.now))
         }
     }
 
@@ -136,7 +188,9 @@ final class FakeBLECentral: BLECentralClient {
             return current
         }
         await adapter?.disconnect()
-        send(.disconnected(Self.adapterID, reason: "The connection has timed out unexpectedly.", uptime: Self.now))
+        send(.disconnected(
+            Self.adapterID, generation: generation, reason: "The connection has timed out unexpectedly.", uptime: Self.now
+        ))
     }
 }
 
@@ -703,7 +757,7 @@ struct OBDLinkServiceTests {
         // Simulate a later connection to a peripheral with nothing usable.
         link.disconnect()
         link.connect(to: FakeBLECentral.adapterID)
-        central.send(.unusable(FakeBLECentral.adapterID, table: [], reason: "no notify + write characteristic pair in 0 service(s)", uptime: FakeBLECentral.now))
+        central.send(.unusable(FakeBLECentral.adapterID, generation: central.generation, table: [], reason: "no notify + write characteristic pair in 0 service(s)", uptime: FakeBLECentral.now))
         #expect(await eventually { if case .failed = link.state { true } else { false } })
         #expect(link.bleState == .idle)
     }

@@ -32,6 +32,7 @@
 		25DB6730376216ACCED36E70 /* PackTransfer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22A2CA69CDA2A571F37D1F1F /* PackTransfer.swift */; };
 		280FFA7B9D83AB2E555CAE7C /* FirstLaunchAndTestDriveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BB1485F07DF5CC618778091 /* FirstLaunchAndTestDriveTests.swift */; };
 		2A9BF7106741830C942C8E9E /* FirstLaunchMapsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC98513BB0C9D09F650C0359 /* FirstLaunchMapsTests.swift */; };
+		2CC607AFD0212E09426C3360 /* OBDLinkReconnectTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95094E070F523CA5034ECED4 /* OBDLinkReconnectTests.swift */; };
 		2DA624986D362ED391D8BBB0 /* AdapterSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F461AEE1B1F6AB37A3ED7CC /* AdapterSettingsView.swift */; };
 		2DE96A9E5297A44676FC33D5 /* OnboardingCards.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1F30FEC163FDF64EDFCCB48 /* OnboardingCards.swift */; };
 		2F1269035331B798C267E34E /* SensorSourceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DCCAAFA3667C0100BDF5237 /* SensorSourceTests.swift */; };
@@ -276,6 +277,7 @@
 		90AC7FA4AD498307B3C7D5C3 /* AppInfoTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppInfoTests.swift; sourceTree = "<group>"; };
 		91D3719D9A3A53C5D01BA7E8 /* CachedLocation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CachedLocation.swift; sourceTree = "<group>"; };
 		93DE5F24930CC6CE64909294 /* AdapterSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdapterSettings.swift; sourceTree = "<group>"; };
+		95094E070F523CA5034ECED4 /* OBDLinkReconnectTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OBDLinkReconnectTests.swift; sourceTree = "<group>"; };
 		967CFE9DD8079ED28B5AFDF5 /* NavigationHandOverAppTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NavigationHandOverAppTests.swift; sourceTree = "<group>"; };
 		982E965A8FFF8D4E784FD5CE /* ReferenceLocationSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReferenceLocationSource.swift; sourceTree = "<group>"; };
 		9AD177F87E3035993E62C165 /* RoadPackLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoadPackLibrary.swift; sourceTree = "<group>"; };
@@ -419,6 +421,7 @@
 				B39D06A2ABBC27C741D74CCB /* NavigationServiceNavigateTests.swift */,
 				637DF8CB01E9F26F79D3563B /* NavigationServiceRoadsTests.swift */,
 				C06C7BF25C0632C6C10B1222 /* NavigationServiceTests.swift */,
+				95094E070F523CA5034ECED4 /* OBDLinkReconnectTests.swift */,
 				4757331FF2FA81D7AC0192A2 /* OBDLinkServiceTests.swift */,
 				3E18C97A324691B8EDBF6431 /* OnboardingStoreTests.swift */,
 				7A7D538948AB7548114E94F4 /* PackDownloadTests.swift */,
@@ -844,6 +847,7 @@
 				89EB1F3B0F2B6E6020F824D1 /* NavigationServiceNavigateTests.swift in Sources */,
 				665B29E7FECB248FAA85AE34 /* NavigationServiceRoadsTests.swift in Sources */,
 				E3A034DD4E4F285512F443AD /* NavigationServiceTests.swift in Sources */,
+				2CC607AFD0212E09426C3360 /* OBDLinkReconnectTests.swift in Sources */,
 				9D68BF8B1CC07439C59B8590 /* OBDLinkServiceTests.swift in Sources */,
 				DDA1993BB17D78D575CDC8DA /* OnboardingStoreTests.swift in Sources */,
 				012C43EAFAB317D22914203E /* PackDownloadTests.swift in Sources */,

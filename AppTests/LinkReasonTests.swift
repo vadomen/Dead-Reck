@@ -85,7 +85,7 @@ struct LinkReasonTests {
         link.disconnect()
         link.connect(to: FakeBLECentral.adapterID)
         let text = LinkReason.noUARTPair(services: 2).text
-        central.send(.unusable(FakeBLECentral.adapterID, table: [], reason: text, uptime: FakeBLECentral.now))
+        central.send(.unusable(FakeBLECentral.adapterID, generation: central.generation, table: [], reason: text, uptime: FakeBLECentral.now))
         #expect(await eventually { link.state == .failed(reason: "no notify + write characteristic pair in 2 service(s)") })
         #expect(RecordingSession.describe(link.state) == "failed (no notify + write characteristic pair in 2 service(s))")
         #expect(AdapterStatus(link.state).detail == "no notify + write characteristic pair (services: 2)")

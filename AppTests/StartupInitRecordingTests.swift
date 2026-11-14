@@ -288,8 +288,12 @@ struct StartupInitRecordingTests {
 
     // MARK: M6.1-1 with the real link service (FakeBLECentral + MockELMAdapter)
 
-    static func realLink(backoff: Duration = .milliseconds(20)) -> (OBDLinkService, FakeBLECentral) {
-        let central = FakeBLECentral(scripts: [LinkTestSupport.touareg()])
+    /// `reconnectDelay`: how long the first reconnect's connect stays
+    /// pending (the adapter isn't back yet); it is issued at once.
+    static func realLink(
+        backoff: Duration = .milliseconds(20), reconnectDelay: Duration? = nil
+    ) -> (OBDLinkService, FakeBLECentral) {
+        let central = FakeBLECentral(scripts: [LinkTestSupport.touareg()], connectDelays: reconnectDelay.map { [1: $0] } ?? [:])
         let link = OBDLinkService(
             central: central, defaults: LinkTestSupport.defaults(),
             sessionConfiguration: LinkTestSupport.configuration,
@@ -338,7 +342,7 @@ struct StartupInitRecordingTests {
     func realLinkStartAfterDrop() async throws {
         let scratch = try ScratchStore()
         defer { scratch.remove() }
-        let (link, central) = Self.realLink(backoff: .milliseconds(500))
+        let (link, central) = Self.realLink(backoff: .milliseconds(500), reconnectDelay: .milliseconds(400))
         let session = RecordingFixtures.session(link: link, store: scratch.store)
         link.connect(to: FakeBLECentral.adapterID)
         #expect(await eventually { link.state.isPolling && session.consumedLinkEvents > 40 })
