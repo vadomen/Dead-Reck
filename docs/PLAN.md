@@ -557,4 +557,5 @@ Items 1-7 above (demo pipeline) and the airplane-mode check (item 1) cover the d
 ### Added by prompt 49, BLE reconnect and the dot legend (branch `routing-prereqs`) — not verified on a device
 1. **Adapter pulled while recording (foreground):** mid-drive, pull the adapter for 2 min, then plug it back. The Console and the recording show repeated reconnect attempts at the backoff (about every 11–40 s), and the link recovers on its own (BLE-RECONNECT).
 2. **Same in the background:** the same pull and replug with the app in the background during Navigate and the screen locked: attempts continue, and the link recovers after the replug (BLE-RECONNECT).
-3. **Dot legend:** open "What the map dot means" from the GPS indicator in the map HUD card, and from Settings → About. The text matches the dot colours on the map (UX-43).
+3. **Link drops during init:** with an adapter whose BLE link drops during init (or at the edge of range), the recording shows `attempt n in d, connect pending, next session after the backoff` and a "held until the backoff ends" note, and sessions start no faster than 1, 2, 4 … 30 s apart (BLE-RECONNECT, R88.1-1).
+4. **Dot legend:** open "What the map dot means" from the GPS indicator in the map HUD card, and from Settings → About. The text matches the dot colours on the map (UX-43).
