@@ -1200,3 +1200,15 @@ Reviewers: two fresh opus reviewers in parallel (A: link layer; B: log v6, legen
 | R88.1-4 | MINOR | `App/Sources/UI/Map/MapHUDViews.swift:75-82`: the comment claims a 44 pt hit area for the GPS indicator button; with the 12 pt label and ±6 pt padding it is about 26 pt high. | DEFERRED | BACKLOG. Fix idea: a real 44 pt minimum (frame inside, equal negative padding outside) or correct the comment. |
 
 Tests at HEAD ffe10ce: Core 1216 tests in 148 suites passed (36 known issues; Core unchanged since efe4be8); App 870 tests in 131 suites passed, 0 failed. Replay 73/73 identical to ee17b73 (wall-time fields only).
+
+### Round 2
+
+Reviewers: two fresh opus reviewers in parallel (A: link layer; B: log v6, legend, docs, site). Result: 0 BLOCKER, 1 MAJOR, 2 MINOR.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R88.2-1 | MAJOR | `App/Sources/Link/OBDLinkService.swift:564-571`: the branch for a held connection that drops (re-issue the connect at once) had no test; a regression there (e.g. a guard reorder) would ignore the drop, replay the stale `.ready` after the backoff, start a session on a closed transport and leave nothing pending — the debrief silence again. | FIXED | e04dbeb (test only). `OBDLinkReconnectTests/heldConnectionLossReissues`; App mutation deleting lines 564-571 fails it (no connect pending afterwards) and survives the other 124 link tests. |
+| R88.2-2 | MINOR | `docs/LOG_FORMAT.md:447`: the link reason text documented only the watchdog reason; the held/held-lost notes and the `connect pending` / `next session after the backoff` suffixes were missing, and a resumed held connection's rows are stamped at the end of the backoff. | FIXED | Fixed in the ledger commit (wording in a section this range added). |
+| R88.2-3 | MINOR | `docs/BACKLOG_UX.md:76` UX-43 row still said "The blue arrow is FuGPS's estimate", the wording R88.1-2 removed; a device tester could take it as the spec. | FIXED | Fixed in the ledger commit (one-line wording in a row this range added). |
+
+Tests at HEAD e04dbeb: Core 1216 tests in 148 suites passed (36 known issues; Core unchanged since efe4be8); App 871 tests in 131 suites passed, 0 failed; OBDLinkReconnectTests x5 passed.
