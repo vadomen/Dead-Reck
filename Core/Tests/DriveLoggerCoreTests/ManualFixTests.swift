@@ -386,4 +386,37 @@ struct ManualFixSampleTests {
         #expect(line == #"{"data":{"latitude":0.0126,"longitude":-0.0249,"mapSpanM":1500,"pressedT":8000000000,"speedSource":"unknown","tapLatitude":0.0125,"tapLongitude":-0.025},"kind":"manualFix","t":8000000000}"# + "\n")
         #expect(try codec.event(from: Data(line.utf8)) == event)
     }
+
+    @Test("A pin from the gate without tap arguments encodes byte for byte as the frozen pre-v6 rows: no tap keys")
+    func untappedGateRowIsBytesStable() throws {
+        // The gate called as a recorder without pin snapping calls it (no
+        // tap arguments), for the three manualFix rows of the frozen v3
+        // fixture: OBD speed + reference + note, reference only, nothing.
+        let ms = F.ms
+        let fix = { (speed: Double, receivedMs: Int64) in F.fix(speed: speed, receivedMs: receivedMs) }
+        let rows: [(t: MonotonicTimestamp, sample: ManualFixSample?)] = [
+            (ms(2_500), ManualFixGate.sample(
+                now: ms(2_500), latitude: 0.0125, longitude: -0.025, pressedT: ms(1_800), mapSpanM: 250,
+                obdSpeedKmh: 5, obdSpeedT: ms(1_000), referenceFix: fix(1.5, 2_500), note: "tunnel exit, north gate")),
+            (ms(7_500), ManualFixGate.sample(
+                now: ms(7_500), latitude: -0.0375, longitude: 0.05, pressedT: ms(6_000), mapSpanM: 1_200.5,
+                obdSpeedKmh: nil, obdSpeedT: nil, referenceFix: fix(1, 7_500))),
+            (ms(9_000), ManualFixGate.sample(
+                now: ms(9_000), latitude: 0, longitude: 0, pressedT: ms(8_000), mapSpanM: nil,
+                obdSpeedKmh: nil, obdSpeedT: nil, referenceFix: nil)),
+        ]
+        let frozen = LogFormatCompatibilityV3Tests.version3Recording
+            .split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { $0.contains(#""kind":"manualFix""#) }
+        #expect(frozen.count == rows.count)
+
+        let codec = LogCodec()
+        for (row, expected) in zip(rows, frozen) {
+            let sample = try #require(row.sample)
+            #expect(!sample.isSnapped)
+            let line = String(decoding: try codec.line(for: LogEvent(timestamp: row.t, payload: .manualFix(sample))), as: UTF8.self)
+            #expect(line == expected + "\n")
+            #expect(!line.contains("tapLatitude") && !line.contains("tapLongitude"))
+        }
+    }
 }
