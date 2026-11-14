@@ -1,6 +1,6 @@
 # Routing plan: navigation along a route
 
-**Status:** approved 2026-11-14 (D1–D5). Prompt 49 in progress (branch `routing-prereqs`).
+**Status:** approved 2026-11-14 (D1–D5). Prompt 49 done (merged into `main` 2026-11-14, review run 88).
 Context: `logs/HANDOFF_2026-11-13_ROUTING.md`, `logs/DEBRIEF_2026-11-02.md`.
 Engine model and adoption rule: `docs/NAVIGATION.md`.
 
@@ -31,7 +31,7 @@ The user does the push.
 
 ### 49: Prerequisites (on `main`)
 
-In progress.
+Done (merged into `main` 2026-11-14; review run 88).
 
 1. **Port log v6.**
    - Port the format change only: the case, the two optional fields, `RecordingAnalysis` and the CSV.

@@ -1212,3 +1212,11 @@ Reviewers: two fresh opus reviewers in parallel (A: link layer; B: log v6, legen
 | R88.2-3 | MINOR | `docs/BACKLOG_UX.md:76` UX-43 row still said "The blue arrow is FuGPS's estimate", the wording R88.1-2 removed; a device tester could take it as the spec. | FIXED | Fixed in the ledger commit (one-line wording in a row this range added). |
 
 Tests at HEAD e04dbeb: Core 1216 tests in 148 suites passed (36 known issues; Core unchanged since efe4be8); App 871 tests in 131 suites passed, 0 failed; OBDLinkReconnectTests x5 passed.
+
+### Round 3
+
+Reviewers: one fresh opus reviewer (link layer and the docs changed since round 2; the rest of the range unchanged since round 2's clean review). Result: 0 BLOCKER, 0 MAJOR, 0 MINOR. Mutation: `OBDLinkService.swift` Bluetooth-unavailable branch without `connectPending = false` → `OBDLinkServiceTests/bluetoothOff` failed (caught). Every new reconnect branch mapped to a test; the untested ones are redundant resets or stale `.ready`/`.unusable` guards already covered by state guards.
+
+### Run 88 summary
+
+3 rounds; 5 fixed (R88.1-1, R88.1-2, R88.2-1, R88.2-2, R88.2-3); 0 rejected; 2 deferred (R88.1-3, R88.1-4). Final tests: Core 1216 tests in 148 suites passed (36 known issues); App 871 tests in 131 suites passed; replay acceptance matrix 73/73 identical to ee17b73 (wall-time fields only). Outcome: closed, ready to merge.
