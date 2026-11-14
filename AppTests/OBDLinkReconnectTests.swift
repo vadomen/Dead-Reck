@@ -790,4 +790,66 @@ struct OBDLinkReconnectTests {
         #expect(rig.central.uncoveredSeconds(now: rig.now) == 0, "a connect or a connection at every moment")
         rig.link.disconnect()
     }
+
+    // R88.2-1: a connection held during a spaced backoff that drops must be
+    // connected again at once and forgotten. If its loss were ignored, the
+    // stale `.ready` would be replayed when the backoff ends, the session
+    // would start on a closed transport, and nothing would be pending.
+    @Test("A held connection that drops: connect re-issued at once, no gap; the next session starts after the backoff on the new connection, never the stale one")
+    func heldConnectionLossReissues() async throws {
+        let rig = ReconnectRig()
+        let clock = rig.clock
+        rig.central.answerEveryConnect = { MockELMAdapter(rules: LinkTestSupport.touareg(), uptime: clock, clock: clock) }
+        rig.link.connect(to: ScriptedBLECentral.adapterID)
+        #expect(await rig.advance(until: { rig.link.state.isPolling && rig.log.readings.count >= 2 }, step: .milliseconds(10)))
+
+        // Connection 1 polled and drops; connection 2 drops during discovery:
+        // a spaced cycle, attempt 2, 2 s backoff.
+        rig.central.answerEveryConnect = nil
+        rig.central.loseLink()
+        await rig.clock.settle()
+        rig.central.answerConnect()
+        await rig.clock.settle()
+        rig.central.loseLink()
+        await rig.clock.settle()
+        let spacedFrom = rig.now
+        #expect(rig.log.ble.last?.reason == "attempt 2 in 2.0 seconds, connect pending, next session after the backoff")
+
+        // Connection 3 comes up and is held, discovery done; then it drops.
+        rig.central.answerConnect()
+        let stale = MockELMAdapter(rules: LinkTestSupport.touareg(), uptime: clock, clock: clock)
+        rig.central.ready(stale)
+        await rig.clock.settle()
+        #expect(rig.log.ble.last?.reason == "reconnect attempt 2: connected, held until the backoff ends")
+        let connects = rig.central.connectCount
+        rig.central.loseLink()
+        await rig.clock.settle()
+        #expect(rig.log.ble.last.map { [$0.from, $0.to] } == [.reconnecting, .reconnecting])
+        #expect(rig.log.ble.last?.reason == "held connection lost (The connection has timed out unexpectedly.); connect re-issued")
+        #expect(rig.central.connectCount == connects + 1)
+        #expect(rig.central.connectTimes.last == spacedFrom, "re-issued at the loss")
+        let reissued = try #require(rig.central.pending)
+        #expect(rig.central.uncoveredSeconds(now: rig.now) == 0)
+        #expect(rig.central.doubleConnects == 0)
+        #expect(rig.link.bleState == .reconnecting)
+
+        // Connection 4 answers within the backoff: held again, then used.
+        rig.central.answerConnect()
+        let fresh = MockELMAdapter(rules: LinkTestSupport.touareg(), uptime: clock, clock: clock)
+        rig.central.ready(fresh)
+        await rig.clock.settle()
+        #expect(rig.central.connected == reissued)
+        #expect(rig.log.ble.last?.reason == "reconnect attempt 2: connected, held until the backoff ends")
+        await rig.clock.advance(by: .milliseconds(1_900))
+        #expect(rig.link.bleState == .reconnecting, "the session waits for the backoff")
+        #expect(await fresh.sentCommands.isEmpty)
+        await rig.clock.advance(by: .milliseconds(100))
+        #expect(await rig.advance(until: { rig.link.bleState == .connected }, step: .milliseconds(10), limit: .seconds(1)))
+        #expect(Self.times(rig.log.events, to: .connected).last == spacedFrom + 2, "connected when the backoff ends")
+        #expect(await rig.advance(until: { rig.link.state.isPolling }, step: .milliseconds(10)))
+        #expect(await fresh.sentCommands.first == "ATZ", "the session runs on the new connection")
+        #expect(await stale.sentCommands.isEmpty, "the dropped connection's transport is never used")
+        #expect(rig.central.doubleConnects == 0)
+        rig.link.disconnect()
+    }
 }
