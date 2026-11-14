@@ -11,7 +11,7 @@ import Testing
 
 /// A `Clock` and `UptimeSource` that only moves when told. Sleepers wake in
 /// deadline order; `settle()` lets woken main-actor tasks run (yields only).
-final class ManualLinkClock: Clock, UptimeSource, LinkDeadlineReserving {
+final class ManualLinkClock: Clock, UptimeSource, LinkVirtualTimer {
     struct Instant: InstantProtocol {
         var offset: Duration
         func advanced(by duration: Duration) -> Instant { Instant(offset: offset + duration) }
@@ -32,8 +32,6 @@ final class ManualLinkClock: Clock, UptimeSource, LinkDeadlineReserving {
     private nonisolated(unsafe) var sleepers: [Sleeper] = []
     private nonisolated(unsafe) var nextID: UInt64 = 0
     private nonisolated(unsafe) var cancelledBeforeRegistration: Set<UInt64> = []
-    /// Deadlines announced by `linkSleeper` whose sleep hasn't started yet.
-    private nonisolated(unsafe) var reserved: [Instant] = []
 
     init(baseUptime: Double = 600) {
         self.baseUptime = baseUptime
@@ -47,9 +45,20 @@ final class ManualLinkClock: Clock, UptimeSource, LinkDeadlineReserving {
     }
 
     func sleep(until deadline: Instant, tolerance: Duration?) async throws {
-        lock.withLock {
-            if let index = reserved.firstIndex(of: deadline) { reserved.remove(at: index) }
-        }
+        try await register(deadline)
+    }
+
+    /// `LinkVirtualTimer`: the link service's timers. Registered and woken
+    /// on the main actor, so the wake and what the service does after it run
+    /// in main-actor order within `settle()`, never after time has moved on.
+    @MainActor
+    func wait(until deadline: any InstantProtocol) async throws {
+        guard let deadline = deadline as? Instant else { return }
+        try await register(deadline)
+    }
+
+    /// Registers a sleeper on the caller's executor (no hop) and waits.
+    private func register(_ deadline: Instant, isolation: isolated (any Actor)? = #isolation) async throws {
         try Task.checkCancellation()
         let id = lock.withLock {
             nextID += 1
@@ -83,12 +92,13 @@ final class ManualLinkClock: Clock, UptimeSource, LinkDeadlineReserving {
     }
 
     /// Moves time forward by `duration`, waking sleepers in deadline order
-    /// and letting each one's work run before the next.
-    func advance(by duration: Duration) async {
+    /// and letting each one's work run before the next. Runs on the
+    /// caller's actor (the main actor in the tests), so its yields
+    /// interleave with the main-actor work they wait for.
+    func advance(by duration: Duration, isolation: isolated (any Actor)? = #isolation) async {
         let target = now.advanced(by: duration)
         while true {
             await settle()
-            await awaitReservations(upTo: target)
             let due: [Sleeper]? = lock.withLock {
                 guard let earliest = sleepers.map(\.deadline).min(), earliest <= target else { return nil }
                 if current < earliest { current = earliest }
@@ -103,27 +113,14 @@ final class ManualLinkClock: Clock, UptimeSource, LinkDeadlineReserving {
         await settle()
     }
 
-    /// Lets woken tasks and stream consumers run. Yields only.
-    func settle() async {
-        for _ in 0..<200 { await Task.yield() }
+    /// Lets woken tasks and stream consumers run: yields on the caller's
+    /// actor, so every main-actor job queued before it runs first. The
+    /// link service's timers, BLE events and log consumers are all main
+    /// actor, so a chain of fewer than 50 hops is fully drained.
+    func settle(isolation: isolated (any Actor)? = #isolation) async {
+        for _ in 0..<50 { await Task.yield() }
     }
 
-    /// A timer decided on the main actor registers its sleep from the
-    /// cooperative pool; under load that lags behind main-actor yields.
-    /// Until every reserved deadline up to `limit` has registered, time
-    /// doesn't move (yields only, bounded).
-    private func awaitReservations(upTo limit: Instant) async {
-        for _ in 0..<1_000_000 {
-            let waiting = lock.withLock { reserved.contains { $0 <= limit } }
-            guard waiting else { return }
-            await Task.yield()
-        }
-    }
-
-    func reserve(_ deadline: any InstantProtocol) {
-        guard let deadline = deadline as? Instant else { return }
-        lock.withLock { reserved.append(deadline) }
-    }
 }
 
 /// A `BLECentralClient` that never answers on its own. It records every
@@ -625,7 +622,9 @@ struct OBDLinkReconnectTests {
             WriteFailingTransport(MockELMAdapter(rules: LinkTestSupport.touareg(), uptime: clock, clock: clock), failing: "ATZ")
         }
         rig.link.connect(to: ScriptedBLECentral.adapterID)
-        for _ in 0..<3_000 { await rig.clock.advance(by: .milliseconds(100)) }
+        // The failing session runs on its own actor: its failure lands within
+        // a step or two; the cycle's lower bound (the backoff) is exact.
+        for _ in 0..<1_500 { await rig.clock.advance(by: .milliseconds(200)) }
 
         let connected = rig.log.events.compactMap { event -> Double? in
             if case .ble(_, .connected, _, let at) = event { at } else { nil }
@@ -635,7 +634,7 @@ struct OBDLinkReconnectTests {
         let expected = gaps.indices.map { Double(backoff.delay(forAttempt: $0 + 1).components.seconds) }
         #expect(gaps.count >= 9, "about ten cycles in 5 min")
         for (gap, delay) in zip(gaps, expected) {
-            #expect(gap >= delay && gap < delay + 0.25, "a cycle every backoff delay: \(gap) s vs \(delay) s")
+            #expect(gap >= delay && gap < delay + 1, "a cycle every backoff delay, never sooner: \(gap) s vs \(delay) s")
         }
         #expect(Array(expected.prefix(7)) == [1, 2, 4, 8, 16, 30, 30])
         #expect(rig.log.ble.filter { $0.from == $0.to && $0.reason?.hasSuffix("connected, held until the backoff ends") == true }.count >= gaps.count)

@@ -1043,21 +1043,26 @@ class OBDLinkService: OBDLinkServicing, OBDLinkHolding {
 extension Clock where Duration == Swift.Duration {
     /// Fixes a deadline `duration` from now and returns a closure that
     /// sleeps until it, so a timer started in a new `Task` is measured from
-    /// the moment it was decided (and is deterministic under a test clock).
-    /// A protocol-extension member so it can be called on `any Clock<Duration>`.
-    func linkSleeper(after duration: Swift.Duration) -> @Sendable () async throws -> Void {
+    /// the moment it was decided. A protocol-extension member so it can be
+    /// called on `any Clock<Duration>`. On a `LinkVirtualTimer` (a test
+    /// clock) the wait stays on the main actor: the timer's wake and the
+    /// service's follow-up then run in main-actor order, with no hop
+    /// through the cooperative pool that virtual time could overtake.
+    func linkSleeper(after duration: Swift.Duration) -> @MainActor @Sendable () async throws -> Void {
         let deadline = now.advanced(by: duration)
-        (self as? any LinkDeadlineReserving)?.reserve(deadline)
+        if let virtual = self as? any LinkVirtualTimer {
+            return { try await virtual.wait(until: deadline) }
+        }
         return { try await self.sleep(until: deadline, tolerance: nil) }
     }
 }
 
-/// A virtual test clock that wants to know a timer's deadline the moment
-/// it is decided: the timer registers its sleep later, from the cooperative
-/// pool, and the clock must not move time past it meanwhile. `linkSleeper`
-/// calls it synchronously; `ContinuousClock` doesn't conform.
-protocol LinkDeadlineReserving: AnyObject, Sendable {
-    func reserve(_ deadline: any InstantProtocol)
+/// A virtual test clock that runs the link service's timers on the main
+/// actor (`linkSleeper`). `ContinuousClock` doesn't conform. Only the
+/// requirement is main-actor isolated, so a conforming clock stays
+/// nonisolated.
+protocol LinkVirtualTimer: AnyObject, Sendable {
+    @MainActor func wait(until deadline: any InstantProtocol) async throws
 }
 
 /// The events behind `lastInitEvents`: the current connection's BLE
