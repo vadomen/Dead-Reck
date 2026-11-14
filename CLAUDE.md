@@ -47,7 +47,7 @@ first and `Read` the section with offset/limit, not the whole file.
 
 - Log format: `docs/LOG_FORMAT.md`. Sidecar: `docs/NAV_SIDECAR.md`. Road packs: `docs/ROAD_PACK.md`.
 - Navigation model, config, `replay_nav`, adoption rule, acceptance drives and
-  current results: `docs/NAVIGATION.md`. Open plans: `docs/N3_PLAN.md`, `docs/N4_PLAN.md`.
+  current results: `docs/NAVIGATION.md`. Open plans: `docs/N3_PLAN.md`, `docs/N4_PLAN.md`, `docs/ROUTING_PLAN.md`.
 - Milestones, decisions, device checklist (§6): `docs/PLAN.md`. Open items:
   `docs/BACKLOG.md` (grep by ID or milestone), `docs/BACKLOG_UX.md`.
 - Review ledger: `docs/REVIEW_LOG.md` (current runs only; pass the range's rows, never the file).
