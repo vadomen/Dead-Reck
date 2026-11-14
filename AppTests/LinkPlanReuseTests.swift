@@ -170,7 +170,11 @@ extension LinkPlanReuseTests {
             ),
             MockELMAdapter.Rule(command: "010D0C1", reply: "CAN ERROR\r\r>", delay: .milliseconds(3), requestHeader: "7E0"),
         ] + LinkTestSupport.benchCar()
-        let central = FakeBLECentral(scripts: [LinkTestSupport.benchCar(), failing, LinkTestSupport.benchCar()])
+        // The reconnect after connection 2's needsReconnect (connect call 2)
+        // stays pending a moment, so connection 2's events are the latest.
+        let central = FakeBLECentral(
+            scripts: [LinkTestSupport.benchCar(), failing, LinkTestSupport.benchCar()], connectDelays: [2: .milliseconds(400)]
+        )
         let link = LinkTestSupport.service(central, configuration: LinkTestSupport.probing)
         let log = LinkEventLog(link.linkEvents())
         link.connect(to: FakeBLECentral.adapterID)

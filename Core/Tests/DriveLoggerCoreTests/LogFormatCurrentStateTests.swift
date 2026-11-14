@@ -9,7 +9,7 @@ import Testing
 /// the reminder to add a frozen fixture and pin the new strings there.
 @Suite("Log format current state")
 struct LogFormatCurrentStateTests {
-    @Test("New recordings are written in the current version, v5")
+    @Test("New recordings are written in the current version, v6")
     func writesCurrentVersion() throws {
         let header = LogHeader(
             sessionID: LogFixtures.sessionID,
@@ -17,24 +17,41 @@ struct LogFormatCurrentStateTests {
             app: LogFixtures.app,
             device: LogFixtures.device
         )
-        #expect(LogFormatVersion.current == .v5)
+        #expect(LogFormatVersion.current == .v6)
         #expect(header.formatVersion == .current)
 
         let line = String(decoding: try LogCodec().line(for: header), as: UTF8.self)
-        #expect(line.contains("\"formatVersion\":5"))
+        #expect(line.contains("\"formatVersion\":6"))
     }
 
     @Test("Every declared format version has a frozen fixture")
     func allVersionsHaveFixtures() {
         // A version added to the enum without a reader and a fixture is the
         // failure mode the compatibility invariant exists to prevent.
-        #expect(LogFormatVersion.allCases == [.v1, .v2, .v3, .v4, .v5])
+        #expect(LogFormatVersion.allCases == [.v1, .v2, .v3, .v4, .v5, .v6])
         #expect(LogFormatVersion.current == LogFormatVersion.allCases.max())
         #expect(!LogFormatCompatibilityTests.version1Recording.isEmpty)
         #expect(!LogFormatCompatibilityV2Tests.version2Recording.isEmpty)
         #expect(!LogFormatCompatibilityV3Tests.version3Recording.isEmpty)
         #expect(!LogFormatCompatibilityV4Tests.version4Recording.isEmpty)
         #expect(!LogFormatCompatibilityV5Tests.version5Recording.isEmpty)
+        #expect(!LogFormatCompatibilityV6Tests.version6Recording.isEmpty)
+    }
+
+    @Test("The version after current is not declared, and a header with it is refused")
+    func refusesNextVersion() throws {
+        // Lives here, not in a frozen suite: "the next version" moves with
+        // every bump. The newest fixture relabelled one version up must be
+        // refused, not read with the current rules.
+        let next = LogFormatVersion.current.rawValue + 1
+        #expect(LogFormatVersion(rawValue: next) == nil)
+        let newest = LogFormatCompatibilityV6Tests.version6Recording
+        #expect(newest.contains("\"formatVersion\":\(LogFormatVersion.current.rawValue)"))
+        let relabelled = newest.replacingOccurrences(
+            of: "\"formatVersion\":\(LogFormatVersion.current.rawValue)", with: "\"formatVersion\":\(next)")
+        #expect(throws: LogDecodingError.unsupportedFormatVersion(next)) {
+            try LogCodec().document(from: Data(relabelled.utf8))
+        }
     }
 
     @Test("Every kind and vocabulary value is pinned in a frozen suite")

@@ -244,8 +244,9 @@ struct LinkInitReplayTests {
     @Test("A connection whose init fails: nothing once it has dropped, also while reconnecting")
     func failedInitDropsIt() async throws {
         let mute = LinkTestSupport.touareg(overrides: [MockELMAdapter.Rule(command: "ATZ", reply: nil)])
-        let central = FakeBLECentral(scripts: [mute])
-        // No reconnect within the test: the next `connecting` would reset it.
+        // No reconnect within the test: the next `connecting` would reset
+        // it. The reconnect's connect is issued at once, so it stays pending.
+        let central = FakeBLECentral(scripts: [mute], connectDelays: [1: .seconds(60)])
         let link = OBDLinkService(
             central: central, defaults: LinkTestSupport.defaults(),
             sessionConfiguration: LinkTestSupport.configuration,
@@ -357,7 +358,9 @@ struct LinkInitReplayTests {
 
     @Test("The link dropped before Start (reconnecting): nothing is replayed, and the first written event is the live reconnecting → connecting")
     func startAfterDrop() async throws {
-        let central = FakeBLECentral(scripts: [LinkTestSupport.touareg()])
+        // The adapter is back 400 ms after the loss: the link stays down
+        // (reconnecting, its connect pending) until then.
+        let central = FakeBLECentral(scripts: [LinkTestSupport.touareg()], connectDelays: [1: .milliseconds(400)])
         let link = Self.slowReconnecting(central)
         let recorder = ContractRecorder()
         recorder.consume(link.linkEvents())

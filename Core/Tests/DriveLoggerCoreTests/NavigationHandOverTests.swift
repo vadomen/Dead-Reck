@@ -394,7 +394,7 @@ struct NavigationHandOverTests {
         #expect(restore.status == .confirmed && restore.reason == .handOver && restore.inputsOlderThanSave == 1)
 
         let read = try WriterFixtures.read(summary.url, recovery: .strict)
-        #expect(read.header.formatVersion == .v5)
+        #expect(read.header.formatVersion == LogFormatVersion.current)
         let recorded = try #require(NavigationReplay.recordedPrior(in: read.events))
         #expect(recorded == row)
         let choice = ReplayRecordedPrior.choose(row: recorded, explicitPrior: false, noPrior: false)

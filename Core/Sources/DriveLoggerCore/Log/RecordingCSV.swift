@@ -48,7 +48,7 @@ public enum RecordingCSV {
              "gapsMotion", "gapsAccel", "gapsGyro", "maxGapMsMotion", "maxGapMsAccel", "maxGapMsGyro", "counts"]
         case .manualFix:
             ["t", "latitude", "longitude", "pressedT", "mapSpanM", "obdSpeedKmh", "obdSpeedT",
-             "gpsSpeedKmh", "speedSource", "gateSpeedKmh", "note"]
+             "gpsSpeedKmh", "speedSource", "gateSpeedKmh", "note", "tapLatitude", "tapLongitude"]
         case .gpsSwitch:
             ["t", "on", "source"]
         case .navPrior:
@@ -103,7 +103,7 @@ public enum RecordingCSV {
                     json(JSONValue.object(s.counts.mapValues { .int(Int64($0)) }))]
         case .manualFix(let f):
             return [t, d(f.latitude), d(f.longitude), ts(f.pressedT), d(f.mapSpanM), d(f.obdSpeedKmh), ts(f.obdSpeedT),
-                    d(f.gpsSpeedKmh), f.speedSource, d(f.gateSpeedKmh), f.note ?? ""]
+                    d(f.gpsSpeedKmh), f.speedSource, d(f.gateSpeedKmh), f.note ?? "", d(f.tapLatitude), d(f.tapLongitude)]
         case .gpsSwitch(let g):
             return [t, b(g.on), g.source]
         case .navPrior(let p):

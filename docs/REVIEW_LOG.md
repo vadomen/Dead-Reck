@@ -1183,3 +1183,40 @@ Tests at HEAD: Core 1201 tests in 147 suites passed (36 known issues); App 848 t
 ### Run 87 summary
 
 1 round; 1 fixed (R87.1-1); 0 rejected; 1 deferred (R87.1-2). Final tests: Core 1201 tests in 147 suites passed (36 known issues); App 848 tests in 129 suites passed. Outcome: closed, ready to merge.
+
+## Run 88: Prompt 49 routing prerequisites (log format v6 on main, BLE reconnect watchdog and generations, raw-fix dot legend, routing plan docs, site support text) (main..routing-prereqs: ee17b73..b046290), started 2026-11-14
+
+Note: Runs 82–86 are on the nav-noobd branch.
+
+### Round 1
+
+Reviewers: two fresh opus reviewers in parallel (A: link layer; B: log v6, legend, docs, site). Result: 0 BLOCKER, 2 MAJOR, 2 MINOR.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R88.1-1 | MAJOR | `App/Sources/Link/OBDLinkService.swift:570`: the `.disconnected` handler rescheduled unspaced whether or not the dropped connection had polled; `linkPolled` was reset only at session start; the discovery-watchdog path did the same. A BLE link that drops before any successful poll (module reset on ATZ, port brown-out, edge of range) reconnected about once per second for the whole drive (regression from the base, which spaced at 1, 2, 4 … 30 s). | FIXED | 3553be2. Never-polled loss and discovery stall are now spaced cycles; `linkPolled` cleared on every new connection; the connect is still issued at once. Tests `OBDLinkReconnectTests/initDropCyclesSpaced` (before: 19629 cycles in 5 min), `discoveryDropAfterPolledConnectionIsSpaced`, `stalledDiscoveryIsSpaced`, all failing on b046290. |
+| R88.1-2 | MAJOR | `App/Sources/UI/Map/GPSLegend.swift:30` and the site support pages (en, uk): the legend said "the arrow is FuGPS's estimate"; in the default north-up mode the estimate is a blue dot with a blue area (`NavMarker`), and in heading-up with no estimate the raw fix is drawn as a coloured arrow (`carMarker`). The legend named an arrow not on screen and "coloured dot and circle" fitted both markers — the confusion of debrief problem 8. | FIXED | ffe10ce. Intro names both markers in both map modes; a first legend row "FuGPS — position estimate" drawn by the shared `EstimateDot` that `NavMarker` now uses; drift test extended (`GPSLegendTests.rowsMatchMap`); site pages (en, uk) match. |
+| R88.1-3 | MINOR | `docs/LOG_FORMAT.md:617-623`: the "Pin truth" paragraph says score/truth use `truthLatitude`/`truthLongitude`; main's `Core/Sources/DriveLoggerCore/Navigation/Replay/NavigationReplay.swift:1448` still scores manualFix checkpoints on `latitude`/`longitude` (nav-noobd uses `truth*`). Bites only once a nav-noobd recording with snapped pins is replayed with main's replay_nav (none in the set today). | DEFERRED | BACKLOG. Fix idea: port the one-line truth-side scoring change (engine input unchanged), or note in LOG_FORMAT that main still scores on latitude/longitude. |
+| R88.1-4 | MINOR | `App/Sources/UI/Map/MapHUDViews.swift:75-82`: the comment claims a 44 pt hit area for the GPS indicator button; with the 12 pt label and ±6 pt padding it is about 26 pt high. | DEFERRED | BACKLOG. Fix idea: a real 44 pt minimum (frame inside, equal negative padding outside) or correct the comment. |
+
+Tests at HEAD ffe10ce: Core 1216 tests in 148 suites passed (36 known issues; Core unchanged since efe4be8); App 870 tests in 131 suites passed, 0 failed. Replay 73/73 identical to ee17b73 (wall-time fields only).
+
+### Round 2
+
+Reviewers: two fresh opus reviewers in parallel (A: link layer; B: log v6, legend, docs, site). Result: 0 BLOCKER, 1 MAJOR, 2 MINOR.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R88.2-1 | MAJOR | `App/Sources/Link/OBDLinkService.swift:564-571`: the branch for a held connection that drops (re-issue the connect at once) had no test; a regression there (e.g. a guard reorder) would ignore the drop, replay the stale `.ready` after the backoff, start a session on a closed transport and leave nothing pending — the debrief silence again. | FIXED | e04dbeb (test only). `OBDLinkReconnectTests/heldConnectionLossReissues`; App mutation deleting lines 564-571 fails it (no connect pending afterwards) and survives the other 124 link tests. |
+| R88.2-2 | MINOR | `docs/LOG_FORMAT.md:447`: the link reason text documented only the watchdog reason; the held/held-lost notes and the `connect pending` / `next session after the backoff` suffixes were missing, and a resumed held connection's rows are stamped at the end of the backoff. | FIXED | Fixed in the ledger commit (wording in a section this range added). |
+| R88.2-3 | MINOR | `docs/BACKLOG_UX.md:76` UX-43 row still said "The blue arrow is FuGPS's estimate", the wording R88.1-2 removed; a device tester could take it as the spec. | FIXED | Fixed in the ledger commit (one-line wording in a row this range added). |
+
+Tests at HEAD e04dbeb: Core 1216 tests in 148 suites passed (36 known issues; Core unchanged since efe4be8); App 871 tests in 131 suites passed, 0 failed; OBDLinkReconnectTests x5 passed.
+
+### Round 3
+
+Reviewers: one fresh opus reviewer (link layer and the docs changed since round 2; the rest of the range unchanged since round 2's clean review). Result: 0 BLOCKER, 0 MAJOR, 0 MINOR. Mutation: `OBDLinkService.swift` Bluetooth-unavailable branch without `connectPending = false` → `OBDLinkServiceTests/bluetoothOff` failed (caught). Every new reconnect branch mapped to a test; the untested ones are redundant resets or stale `.ready`/`.unusable` guards already covered by state guards.
+
+### Run 88 summary
+
+3 rounds; 5 fixed (R88.1-1, R88.1-2, R88.2-1, R88.2-2, R88.2-3); 0 rejected; 2 deferred (R88.1-3, R88.1-4). Final tests: Core 1216 tests in 148 suites passed (36 known issues); App 871 tests in 131 suites passed; replay acceptance matrix 73/73 identical to ee17b73 (wall-time fields only). Outcome: closed, ready to merge.

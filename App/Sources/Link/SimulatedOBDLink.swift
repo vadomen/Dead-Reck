@@ -89,6 +89,8 @@ final class SimulatedBLECentral: BLECentralClient {
     private nonisolated(unsafe) var adapter: MockELMAdapter?
     // Guarded by `lock`. Bumped by every connect and cancel, so a connect
     // still sleeping when it was cancelled does nothing.
+    private nonisolated(unsafe) var epoch = 0
+    // Guarded by `lock`. The service's generation of the latest connect.
     private nonisolated(unsafe) var generation = 0
 
     init(
@@ -113,59 +115,63 @@ final class SimulatedBLECentral: BLECentralClient {
 
     func stopScan() {}
 
-    func connect(_ id: UUID) {
+    func connect(_ id: UUID, generation: Int) {
         let now = uptime.uptimeSeconds
         guard id == Self.adapterID else {
-            continuation.yield(.connectFailed(id, reason: "no such simulated adapter", uptime: now))
+            continuation.yield(.connectFailed(id, generation: generation, reason: "no such simulated adapter", uptime: now))
             return
         }
         let mine = lock.withLock { () -> Int in
-            generation += 1
-            return generation
+            epoch += 1
+            self.generation = generation
+            return epoch
         }
         let latency = latency
         Task {
             try? await Task.sleep(for: latency)
-            guard lock.withLock({ generation == mine }) else { return }
-            continuation.yield(.connected(id, uptime: uptime.uptimeSeconds))
+            guard lock.withLock({ epoch == mine }) else { return }
+            continuation.yield(.connected(id, generation: generation, uptime: uptime.uptimeSeconds))
             try? await Task.sleep(for: latency)
             let adapter = MockELMAdapter(rules: rules, uptime: uptime, replyTransform: replyTransform)
             let current = lock.withLock { () -> Bool in
-                guard generation == mine else { return false }
+                guard epoch == mine else { return false }
                 self.adapter = adapter
                 return true
             }
             guard current else { return }
             let link = BLELinkReady(
-                id: id, name: Self.adapterName, transport: adapter, selection: Self.selection, table: Self.table
+                id: id, generation: generation, name: Self.adapterName, transport: adapter, selection: Self.selection,
+                table: Self.table
             )
             continuation.yield(.ready(link, uptime: uptime.uptimeSeconds))
         }
     }
 
     func cancelConnection(_ id: UUID) {
-        let adapter = lock.withLock { () -> MockELMAdapter? in
-            generation += 1
+        let (adapter, generation) = lock.withLock { () -> (MockELMAdapter?, Int) in
+            epoch += 1
             defer { self.adapter = nil }
-            return self.adapter
+            return (self.adapter, self.generation)
         }
         guard let adapter else { return }
         Task {
             await adapter.disconnect()
-            continuation.yield(.cancelled(id, uptime: uptime.uptimeSeconds))
+            continuation.yield(.cancelled(id, generation: generation, uptime: uptime.uptimeSeconds))
         }
     }
 
     /// Drops the current connection as an unplugged adapter would: the
     /// transport finishes and `.disconnected` follows with a reason.
     func simulateLinkLoss() async {
-        let adapter = lock.withLock { () -> MockELMAdapter? in
+        let (adapter, generation) = lock.withLock { () -> (MockELMAdapter?, Int) in
             defer { self.adapter = nil }
-            return self.adapter
+            return (self.adapter, self.generation)
         }
         guard let adapter else { return }
         await adapter.disconnect()
-        continuation.yield(.disconnected(Self.adapterID, reason: "simulated link loss", uptime: uptime.uptimeSeconds))
+        continuation.yield(.disconnected(
+            Self.adapterID, generation: generation, reason: "simulated link loss", uptime: uptime.uptimeSeconds
+        ))
     }
 }
 

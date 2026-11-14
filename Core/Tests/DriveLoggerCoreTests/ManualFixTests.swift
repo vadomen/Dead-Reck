@@ -311,4 +311,112 @@ struct ManualFixSampleTests {
         #expect(line == #"{"data":{"latitude":0,"longitude":0,"pressedT":8000000000,"speedSource":"unknown"},"kind":"manualFix","t":9000000000}"# + "\n")
         #expect(try codec.event(from: Data(line.utf8)) == minimal)
     }
+
+    // MARK: Snapped pins (format v6)
+
+    static func snapped(tapLatitude: Double?, tapLongitude: Double?) -> ManualFixSample? {
+        ManualFixGate.sample(
+            now: F.now, latitude: 0.0126, longitude: -0.0249, pressedT: F.ms(8_000), mapSpanM: 1_500,
+            obdSpeedKmh: nil, obdSpeedT: nil, referenceFix: nil,
+            tapLatitude: tapLatitude, tapLongitude: tapLongitude
+        )
+    }
+
+    @Test("A snapped pin: latitude/longitude are the snapped point, the tap is kept beside it, truth is the tap")
+    func snappedPin() throws {
+        let sample = try #require(Self.snapped(tapLatitude: 0.0125, tapLongitude: -0.025))
+        #expect(sample.latitude == 0.0126 && sample.longitude == -0.0249)
+        #expect(sample.tapLatitude == 0.0125 && sample.tapLongitude == -0.025)
+        #expect(sample.isSnapped)
+        #expect(sample.truthLatitude == 0.0125)
+        #expect(sample.truthLongitude == -0.025)
+        #expect(sample.mapSpanM == 1_500, "the gate does not cap the span: the 300/1500 m rule is the app's")
+    }
+
+    @Test("An unsnapped pin has no tap fields and its truth is latitude/longitude")
+    func unsnappedPin() throws {
+        let sample = try #require(Self.sample(latitude: 0.0125, longitude: -0.025, mapSpanM: 250))
+        #expect(sample.tapLatitude == nil && sample.tapLongitude == nil)
+        #expect(!sample.isSnapped)
+        #expect(sample.truthLatitude == 0.0125)
+        #expect(sample.truthLongitude == -0.025)
+    }
+
+    @Test("The tap is kept only as a finite WGS 84 pair; otherwise both are dropped and the row is still written")
+    func tapIsAPair() throws {
+        let invalid: [(Double?, Double?)] = [
+            (0.0125, nil), (nil, -0.025),
+            (.nan, -0.025), (0.0125, .infinity), (-.infinity, 0),
+            (90.5, 0), (-90.5, 0), (0, 180.5), (0, -180.5),
+        ]
+        for (lat, lon) in invalid {
+            let sample = try #require(Self.snapped(tapLatitude: lat, tapLongitude: lon), "the pin itself is valid")
+            #expect(sample.tapLatitude == nil && sample.tapLongitude == nil, "tap \(String(describing: lat)), \(String(describing: lon))")
+            #expect(!sample.isSnapped)
+            #expect(sample.truthLatitude == 0.0126 && sample.truthLongitude == -0.0249)
+        }
+        // The WGS 84 bounds themselves are positions.
+        for (lat, lon) in [(90.0, 180.0), (-90.0, -180.0)] {
+            let sample = try #require(Self.snapped(tapLatitude: lat, tapLongitude: lon))
+            #expect(sample.tapLatitude == lat && sample.tapLongitude == lon)
+        }
+        // An invalid pin is refused whatever the tap.
+        #expect(ManualFixGate.sample(
+            now: F.now, latitude: .nan, longitude: 0, pressedT: F.ms(8_000), mapSpanM: nil,
+            obdSpeedKmh: nil, obdSpeedT: nil, referenceFix: nil, tapLatitude: 0, tapLongitude: 0
+        ) == nil)
+    }
+
+    @Test("Truth falls back to latitude/longitude when a row carries only one tap field (never written)")
+    func halfTapIsNotSnapped() {
+        let onlyLat = ManualFixSample(latitude: 1, longitude: 2, pressedT: F.ms(1), speedSource: "unknown", tapLatitude: 3)
+        #expect(!onlyLat.isSnapped)
+        #expect(onlyLat.truthLatitude == 1 && onlyLat.truthLongitude == 2)
+        let onlyLon = ManualFixSample(latitude: 1, longitude: 2, pressedT: F.ms(1), speedSource: "unknown", tapLongitude: 4)
+        #expect(!onlyLon.isSnapped)
+        #expect(onlyLon.truthLatitude == 1 && onlyLon.truthLongitude == 2)
+    }
+
+    @Test("A snapped row round-trips through the codec with its tap")
+    func snappedRoundTrip() throws {
+        let codec = LogCodec()
+        let event = LogEvent(timestamp: F.ms(8_000), payload: .manualFix(try #require(
+            Self.snapped(tapLatitude: 0.0125, tapLongitude: -0.025))))
+        let line = String(decoding: try codec.line(for: event), as: UTF8.self)
+        #expect(line == #"{"data":{"latitude":0.0126,"longitude":-0.0249,"mapSpanM":1500,"pressedT":8000000000,"speedSource":"unknown","tapLatitude":0.0125,"tapLongitude":-0.025},"kind":"manualFix","t":8000000000}"# + "\n")
+        #expect(try codec.event(from: Data(line.utf8)) == event)
+    }
+
+    @Test("A pin from the gate without tap arguments encodes byte for byte as the frozen pre-v6 rows: no tap keys")
+    func untappedGateRowIsBytesStable() throws {
+        // The gate called as a recorder without pin snapping calls it (no
+        // tap arguments), for the three manualFix rows of the frozen v3
+        // fixture: OBD speed + reference + note, reference only, nothing.
+        let ms = F.ms
+        let fix = { (speed: Double, receivedMs: Int64) in F.fix(speed: speed, receivedMs: receivedMs) }
+        let rows: [(t: MonotonicTimestamp, sample: ManualFixSample?)] = [
+            (ms(2_500), ManualFixGate.sample(
+                now: ms(2_500), latitude: 0.0125, longitude: -0.025, pressedT: ms(1_800), mapSpanM: 250,
+                obdSpeedKmh: 5, obdSpeedT: ms(1_000), referenceFix: fix(1.5, 2_500), note: "tunnel exit, north gate")),
+            (ms(7_500), ManualFixGate.sample(
+                now: ms(7_500), latitude: -0.0375, longitude: 0.05, pressedT: ms(6_000), mapSpanM: 1_200.5,
+                obdSpeedKmh: nil, obdSpeedT: nil, referenceFix: fix(1, 7_500))),
+            (ms(9_000), ManualFixGate.sample(
+                now: ms(9_000), latitude: 0, longitude: 0, pressedT: ms(8_000), mapSpanM: nil,
+                obdSpeedKmh: nil, obdSpeedT: nil, referenceFix: nil)),
+        ]
+        let frozen = LogFormatCompatibilityV3Tests.version3Recording
+            .split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { $0.contains(#""kind":"manualFix""#) }
+        #expect(frozen.count == rows.count)
+
+        let codec = LogCodec()
+        for (row, expected) in zip(rows, frozen) {
+            let sample = try #require(row.sample)
+            #expect(!sample.isSnapped)
+            let line = String(decoding: try codec.line(for: LogEvent(timestamp: row.t, payload: .manualFix(sample))), as: UTF8.self)
+            #expect(line == expected + "\n")
+            #expect(!line.contains("tapLatitude") && !line.contains("tapLongitude"))
+        }
+    }
 }

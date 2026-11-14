@@ -47,6 +47,8 @@ struct MapHUDCard<Extra: View, Recording: View>: View {
     /// The recording row is shown: it is 44 pt tall and ends the card (no bottom padding).
     var hasRecording = false
     var onSpeedLongPress: () -> Void = {}
+    /// The GPS indicator was tapped: open the dot legend. Same look as before.
+    var onGPSTap: () -> Void = {}
     /// Next to "km/h": the calibrating-heading icon.
     @ViewBuilder var extra: () -> Extra
     /// The recording row (a button that asks to stop); empty while idle.
@@ -70,12 +72,20 @@ struct MapHUDCard<Extra: View, Recording: View>: View {
                     }
                 }
                 VStack(alignment: .leading, spacing: 4) {
-                    HUDIndicatorLabel(indicator: state.gps, symbol: "location.fill", slashedSymbol: "location.slash.fill")
+                    Button(action: onGPSTap) {
+                        HUDIndicatorLabel(indicator: state.gps, symbol: "location.fill", slashedSymbol: "location.slash.fill")
+                            // A 44 pt-high hit area without moving anything: padding in, equal negative padding out.
+                            .padding(.vertical, 6)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.vertical, -6)
                     HUDIndicatorLabel(indicator: state.obd, symbol: "cable.connector", slashedSymbol: "cable.connector.slash")
                 }
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(state.accessibilitySummary)
+            .accessibilityAction(named: Text("GPS: what the dot means"), onGPSTap)
             if let thermal = state.thermal {
                 Label(thermal, systemImage: "thermometer.high")
                     .font(.system(size: 12, weight: .semibold))

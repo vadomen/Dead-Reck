@@ -15,17 +15,27 @@ import Foundation
 ///
 /// The speed fields describe the conditions of the fix. There is no speed
 /// limit: a fix while driving is recorded with its speed.
+///
+/// Since format v6 a pin can snap to the nearest road: `latitude`/`longitude`
+/// are then the snapped point (what the navigator ingests) and
+/// `tapLatitude`/`tapLongitude` the raw point under the finger. As ground
+/// truth, use `truthLatitude`/`truthLongitude` (the tap when present), not
+/// `latitude`/`longitude`.
 public struct ManualFixSample: Hashable, Sendable, Codable {
-    /// Degrees, WGS 84, of the confirmed pin.
+    /// Degrees, WGS 84, of the pin: the navigator's input. The snapped
+    /// point on the road when the pin snapped (v6, `isSnapped`), otherwise
+    /// the point under the finger (older: the confirmed pin).
     public var latitude: Double
-    /// Degrees, WGS 84, of the confirmed pin.
+    /// Degrees, WGS 84, of the pin; see `latitude`.
     public var longitude: Double
     /// When the pin was placed, on the session clock: the tap time. Equal to
     /// the event's `t` (older recordings: the start of the long-press, and
     /// `t − pressedT` is the confirm delay).
     public var pressedT: MonotonicTimestamp
     /// Visible map span at the tap, in metres: how precisely the pin could
-    /// be placed. Absent when the UI did not report one.
+    /// be placed. Absent when the UI did not report one. A new row carries at
+    /// most 300 m, or at most 1500 m when the pin snapped (an app rule, not
+    /// enforced here: older rows exist outside it).
     public var mapSpanM: Double?
     /// Last vehicle speed from the primary ECU (`7E8`) at the tap, km/h.
     /// Absent when the link had none (not connected, or no reply yet).
@@ -52,6 +62,12 @@ public struct ManualFixSample: Hashable, Sendable, Codable {
     /// absent when empty. The double-tap flow writes none; older recordings
     /// may carry one.
     public var note: String?
+    /// Degrees, WGS 84, of the raw tap (the point under the finger) when the
+    /// pin snapped to a road (v6). Absent when it did not snap, and in every
+    /// row older than v6. Written together with `tapLongitude`, never alone.
+    public var tapLatitude: Double?
+    /// Degrees, WGS 84, of the raw tap; see `tapLatitude`.
+    public var tapLongitude: Double?
 
     public init(
         latitude: Double,
@@ -63,7 +79,9 @@ public struct ManualFixSample: Hashable, Sendable, Codable {
         gpsSpeedKmh: Double? = nil,
         speedSource: String,
         gateSpeedKmh: Double? = nil,
-        note: String? = nil
+        note: String? = nil,
+        tapLatitude: Double? = nil,
+        tapLongitude: Double? = nil
     ) {
         self.latitude = latitude
         self.longitude = longitude
@@ -75,6 +93,28 @@ public struct ManualFixSample: Hashable, Sendable, Codable {
         self.speedSource = speedSource
         self.gateSpeedKmh = gateSpeedKmh
         self.note = note
+        self.tapLatitude = tapLatitude
+        self.tapLongitude = tapLongitude
+    }
+
+    /// The pin snapped to a road: the row carries the raw tap
+    /// (`tapLatitude` and `tapLongitude` both present). A row with only one
+    /// of them (never written) counts as not snapped.
+    public var isSnapped: Bool { tapLatitude != nil && tapLongitude != nil }
+
+    /// Ground-truth latitude, degrees WGS 84: where the driver marked the
+    /// car. The raw tap when the pin snapped (`isSnapped`), else `latitude`.
+    /// Replay scoring and truth use this; the navigator's input stays
+    /// `latitude`/`longitude`.
+    public var truthLatitude: Double {
+        if let tapLatitude, tapLongitude != nil { return tapLatitude }
+        return latitude
+    }
+
+    /// Ground-truth longitude, degrees WGS 84; see `truthLatitude`.
+    public var truthLongitude: Double {
+        if let tapLongitude, tapLatitude != nil { return tapLongitude }
+        return longitude
     }
 
     /// `speedSource` vocabulary. Raw values are on-disk strings: never

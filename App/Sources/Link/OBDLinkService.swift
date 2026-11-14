@@ -36,9 +36,12 @@ struct ReconnectBackoff: Hashable, Sendable {
 /// idle|scanning|restoring → connecting       (connect, remembered adapter at launch)
 /// connecting → discovering → connected       (didConnect, UART pair + notifications)
 /// connected|discovering|connecting → disconnected
-///     (link lost, connect failed, the ELM session asked for a reconnect, or
-///     discovery and notify-enable didn't finish within `discoveryTimeout`)
-/// disconnected → reconnecting → connecting   (after the backoff delay)
+///     (link lost, connect failed, the ELM session asked for a reconnect,
+///     discovery and notify-enable didn't finish within `discoveryTimeout`,
+///     or CoreBluetooth didn't answer a connect within `connectTimeout`)
+/// disconnected → reconnecting → connecting   (after the backoff delay, or
+///     at once when the connect already pending for the attempt answers)
+/// reconnecting → disconnected                (that pending connect failed)
 /// idle → restoring                           (relaunched by the system with our adapter)
 /// any → idle                                 (disconnect / forget, or an unusable GATT layout)
 /// ```
@@ -47,6 +50,55 @@ struct ReconnectBackoff: Hashable, Sendable {
 /// <error>` when CoreBluetooth rejects an acknowledged write (R3.1-6).
 /// A disconnect this service asked for (`.cancelled`) is never a link loss:
 /// it only reaches the console (R3.1-3).
+///
+/// ## Connect attempts
+///
+/// While an adapter is wanted (`target`) and Bluetooth is on, a
+/// CoreBluetooth connect is pending at every moment the link isn't up: a
+/// pending connect survives the app being suspended in the background and
+/// wakes it when the adapter answers; a Swift timer may not fire there.
+/// The one window with no pending connect follows an immediate rejection
+/// by CoreBluetooth (below); never a link loss or a watchdog timeout.
+/// - Each `central.connect` is one attempt with its own `generation`; BLE
+///   events of any other generation (a late `.cancelled`, `.disconnected`,
+///   `.connectFailed`, `.connected` or `.ready` of an attempt this service
+///   cancelled) never end, start or pass for the current one: console only.
+/// - A link loss, a failed initialisation, the session's `needsReconnect`
+///   and a discovery timeout re-issue the connect at once; the backoff
+///   (`ReconnectBackoff`) only decides when the attempt is reported as
+///   `reconnecting → connecting` (`reconnect attempt <n>`) and its connect
+///   watchdog started — earlier if the pending connect answers first.
+/// - Spaced cycles: when the connection being dropped never had a
+///   successful poll — it was lost during discovery or initialisation (a
+///   module that resets on `ATZ`, a brown-out, the edge of range), its
+///   initialisation failed, the session asked for a reconnect before any
+///   poll answered, or its GATT discovery stalled — the connect is still
+///   issued at once, but a connection it makes before the backoff ends is
+///   held:
+///   recorded as a note (`reconnect attempt <n>: connected, held until the
+///   backoff ends`), its discovery result kept, and only when the backoff
+///   ends does it go `reconnecting → connecting → discovering` and start
+///   a session. A broken adapter that is present therefore initialises at
+///   most once per backoff delay (1 s, 2 s, … 30 s), while the link is
+///   never without a pending connect or a held connection. A held
+///   connection that drops is connected again at once. Only a link loss
+///   after a successful poll on that connection is not spaced: the next
+///   session starts as soon as the adapter answers. (A connect CoreBluetooth
+///   never answers is re-issued by the connect watchdog every backoff +
+///   10 s; a stalled discovery cycles every 10 s + backoff.)
+/// - Connect watchdog: a `connecting` that CoreBluetooth hasn't answered
+///   within `connectTimeout` (10 s) ends as `connecting → disconnected`
+///   (`<attempt>: no answer in <t>, cancelled and re-issued`): the connect
+///   is cancelled and a new one issued in the same step, then the next
+///   attempt's `→ reconnecting` row. One cycle is backoff + `connectTimeout`
+///   (11 s, 12 s, 14 s, 18 s, 26 s, then 40 s). Every `connecting` has it:
+///   reconnects, a pick, the remembered adapter at launch, restoration.
+/// - A failed connect (`didFailToConnect`) is an answer, not silence, and
+///   may repeat at once (pairing removed, an unknown peripheral): it is
+///   re-issued at once only if it had been pending at least the next
+///   backoff delay, else when that delay ends, so it can never spin. That
+///   wait is the only time no connect is pending; repeated rejections write
+///   one attempt's rows per backoff delay, no more.
 ///
 /// ## Sessions and reconnects
 ///
@@ -64,15 +116,17 @@ struct ReconnectBackoff: Hashable, Sendable {
 ///   clears it, and so does `forget()`; `disconnect()` keeps it. A session
 ///   whose polling failed (`needsReconnect`) hands over nil, so the
 ///   reconnect selects again (M7.1-2). In memory only, for this app session.
-/// - Reconnect with backoff (`ReconnectBackoff`, 1 s doubling to 30 s) on a
-///   link loss, a failed connect, a failed initialisation (a write error
-///   during the handshake included: BLE stays up then), and on the
+/// - Reconnect on a link loss, a failed connect, a failed initialisation (a
+///   write error during the handshake included: BLE stays up then), the
 ///   session's `needsReconnect`, and when GATT discovery stalls (R3.1-7:
 ///   `discoveryTimeout`, 10 s, from `→ discovering` to `.ready`). The
-///   attempt counter resets on the connection's first successful poll
-///   (R3.1-5), so a link that initialises but never polls still backs off.
-///   The connect itself never times out: iOS keeps it pending until the
-///   adapter is back (unplugged and replugged), in the background too.
+///   CoreBluetooth connect is pending at once (only an immediate rejection
+///   by CoreBluetooth leaves a gap, see "Connect attempts"); the backoff
+///   (`ReconnectBackoff`, 1 s doubling to 30 s) spaces the reported
+///   attempts, the connect watchdog, and full cycles after a connection
+///   that never polled. The attempt counter resets on the connection's
+///   first successful poll (R3.1-5), so a link that initialises but never
+///   polls still backs off.
 /// - Every session event and BLE transition goes to the `linkEvents()`
 ///   subscriber, in the order this service handles them, and to the console.
 /// - The current connection's `→ connected` and its latest initialisation
@@ -90,6 +144,10 @@ class OBDLinkService: OBDLinkServicing, OBDLinkHolding {
     static let defaultInitEventLimit = 1_000
     /// Default `discoveryTimeout`.
     static let defaultDiscoveryTimeout: Duration = .seconds(10)
+    /// Default `connectTimeout`: a connect to an advertising adapter
+    /// normally completes within 1–2 s; 10 s leaves room for a slow
+    /// advertising interval without leaving a dead connect pending for long.
+    static let defaultConnectTimeout: Duration = .seconds(10)
 
     private(set) var state: OBDLinkState = .idle
     private(set) var discovered: [DiscoveredAdapter] = []
@@ -136,9 +194,35 @@ class OBDLinkService: OBDLinkServicing, OBDLinkHolding {
     @ObservationIgnored private let sessionConfiguration: ELMSessionConfiguration
     @ObservationIgnored private let backoff: ReconnectBackoff
     @ObservationIgnored private let discoveryTimeout: Duration
+    @ObservationIgnored private let connectTimeout: Duration
+    /// Drives the service's timers (backoff, watchdogs) and its sessions'
+    /// timeouts; never timestamps (those come from `uptime`).
+    @ObservationIgnored private let clock: any Clock<Duration>
     /// Ends a `discovering` that never reaches `.ready` (R3.1-7). Cancelled
     /// when BLE leaves `discovering`.
     @ObservationIgnored private var discoveryWatchdog: Task<Void, Never>?
+    /// Replaces a connect CoreBluetooth hasn't answered within
+    /// `connectTimeout`. Cancelled when BLE leaves `connecting`.
+    @ObservationIgnored private var connectWatchdog: Task<Void, Never>?
+    /// The current connect attempt: bumped by every `central.connect` and
+    /// every `central.cancelConnection` of the target, so BLE events of an
+    /// earlier attempt never match (`BLECentralEvent`).
+    @ObservationIgnored private var generation = 0
+    /// A connect issued in `generation` that hasn't been answered or
+    /// cancelled yet.
+    @ObservationIgnored private var connectPending = false
+    /// When the latest connect was issued (uptime seconds).
+    @ObservationIgnored private var connectIssuedAt = 0.0
+    /// The reconnect under way spaces full cycles: a connection made before
+    /// its backoff ends is held ("Connect attempts", spaced cycles).
+    @ObservationIgnored private var spacedCycle = false
+    /// A connection made during a spaced backoff, with its `.ready` once
+    /// discovery is done; resumed when the backoff ends.
+    @ObservationIgnored private var heldConnection: (connectedAt: Double, ready: (link: BLELinkReady, at: Double)?)?
+    /// The current connection's session has answered a poll with a value.
+    /// Cleared when a connection comes up (`.connected`) and when its
+    /// session starts.
+    @ObservationIgnored private var linkPolled = false
     @ObservationIgnored private var centralTask: Task<Void, Never>?
     @ObservationIgnored private var subscriber: AsyncStream<LinkEvent>.Continuation?
     /// The adapter the user wants connected; nil after `disconnect()`.
@@ -185,6 +269,11 @@ class OBDLinkService: OBDLinkServicing, OBDLinkHolding {
     ///   - discoveryTimeout: longest time from `→ discovering` (connected)
     ///     to the UART pair being ready; after it the connection is
     ///     cancelled and retried with backoff (R3.1-7).
+    ///   - connectTimeout: longest time a `connecting` waits for
+    ///     CoreBluetooth to answer before the connect is cancelled and
+    ///     re-issued ("Connect attempts").
+    ///   - clock: drives the backoff, the watchdogs and the sessions'
+    ///     timeouts; a test clock runs them without real waits.
     init(
         central: (any BLECentralClient)? = nil,
         defaults: UserDefaults = .standard,
@@ -192,7 +281,9 @@ class OBDLinkService: OBDLinkServicing, OBDLinkHolding {
         sessionConfiguration: ELMSessionConfiguration = .default,
         backoff: ReconnectBackoff = .default,
         initEventLimit: Int = OBDLinkService.defaultInitEventLimit,
-        discoveryTimeout: Duration = OBDLinkService.defaultDiscoveryTimeout
+        discoveryTimeout: Duration = OBDLinkService.defaultDiscoveryTimeout,
+        connectTimeout: Duration = OBDLinkService.defaultConnectTimeout,
+        clock: any Clock<Duration> = ContinuousClock()
     ) {
         self.central = central ?? BLECentral(restoreIdentifier: Self.restoreIdentifier, uptime: uptime)
         self.defaults = defaults
@@ -200,6 +291,8 @@ class OBDLinkService: OBDLinkServicing, OBDLinkHolding {
         self.sessionConfiguration = sessionConfiguration
         self.backoff = backoff
         self.discoveryTimeout = discoveryTimeout
+        self.connectTimeout = connectTimeout
+        self.clock = clock
         initCapture = InitCapture(limit: initEventLimit)
         rememberedAdapterID = defaults.string(forKey: Self.rememberedAdapterKey).flatMap(UUID.init(uuidString:))
         // A name is only meaningful next to its id.
@@ -263,11 +356,15 @@ class OBDLinkService: OBDLinkServicing, OBDLinkHolding {
         demoHeldTarget = nil
         reconnectTask?.cancel()
         reconnectTask = nil
+        connectWatchdog?.cancel()
+        connectWatchdog = nil
+        heldConnection = nil
+        spacedCycle = false
         attempt = 0
         let id = target
         target = nil
         dropLink()
-        if let id { central.cancelConnection(id) }
+        if let id { cancelAttempt(id) }
         if bleState != .unavailable {
             transition(to: .idle, reason: "disconnected by the user")
             state = .idle
@@ -287,10 +384,14 @@ class OBDLinkService: OBDLinkServicing, OBDLinkHolding {
         demoHeldTarget = target
         reconnectTask?.cancel()
         reconnectTask = nil
+        connectWatchdog?.cancel()
+        connectWatchdog = nil
+        heldConnection = nil
+        spacedCycle = false
         attempt = 0
         target = nil
         dropLink()
-        if let id = demoHeldTarget { central.cancelConnection(id) }
+        if let id = demoHeldTarget { cancelAttempt(id) }
         if ![.idle, .scanning, .unavailable].contains(bleState) {
             transition(to: .idle, reason: "held for the demo drive")
             state = .idle
@@ -380,18 +481,58 @@ class OBDLinkService: OBDLinkServicing, OBDLinkHolding {
             discovered.removeAll { $0.id == found.id }
             discovered.append(found)
             discovered.sort(by: Self.listOrder)
-        case .connected(let id, let at):
-            guard id == target, [.connecting, .restoring].contains(bleState) else { return }
+        case .connected(let id, let generation, let at):
+            guard id == target, [.connecting, .reconnecting, .restoring].contains(bleState) else { return }
+            guard generation == self.generation else {
+                staleAttempt("connected", generation: generation, at: at)
+                return
+            }
+            connectPending = false
+            // A new connection: it hasn't answered a poll, whatever the one
+            // before it did.
+            linkPolled = false
+            if bleState == .reconnecting, spacedCycle {
+                // A spaced cycle: the next session waits for the backoff.
+                heldConnection = (at, nil)
+                note("reconnect attempt \(attempt): connected, held until the backoff ends", uptime: at)
+                return
+            }
+            if bleState == .reconnecting {
+                // The connect pending for this attempt answered before its
+                // backoff ended.
+                reconnectTask?.cancel()
+                reconnectTask = nil
+                transition(to: .connecting, reason: "reconnect attempt \(attempt)", uptime: at)
+            }
             transition(to: .discovering, reason: nil, uptime: at)
             state = .discoveringServices
             startDiscoveryWatchdog(for: id)
-        case .connectFailed(let id, let reason, let at):
-            guard id == target, bleState == .connecting else { return }
+        case .connectFailed(let id, let generation, let reason, let at):
+            guard id == target, [.connecting, .reconnecting].contains(bleState) else { return }
+            guard generation == self.generation else {
+                staleAttempt("connect failed", generation: generation, at: at)
+                return
+            }
+            connectPending = false
+            // Re-issued at once only after a failure that took at least the
+            // next backoff delay; a quick one waits for it, so it can't spin.
+            let pendingFor = at - connectIssuedAt
+            let nextDelay = backoff.delay(forAttempt: attempt + 1)
             transition(to: .disconnected, reason: reason ?? "connect failed", uptime: at)
-            scheduleReconnect()
+            scheduleReconnect(connectNow: pendingFor >= Self.seconds(nextDelay), spaced: spacedCycle)
         case .ready(let link, let at):
-            guard link.id == target, [.connecting, .discovering, .restoring].contains(bleState) else {
-                central.cancelConnection(link.id)
+            if bleState == .reconnecting, heldConnection != nil, link.id == target, link.generation == generation {
+                heldConnection?.ready = (link, at)
+                return
+            }
+            guard link.id == target, link.generation == generation,
+                  [.connecting, .discovering, .restoring].contains(bleState) else {
+                if link.id == target {
+                    // A connection this service has cancelled already.
+                    staleAttempt("ready", generation: link.generation, at: at)
+                } else {
+                    central.cancelConnection(link.id)
+                }
                 return
             }
             let gatt = link.selection
@@ -405,24 +546,47 @@ class OBDLinkService: OBDLinkServicing, OBDLinkHolding {
             )
             if link.id == rememberedAdapterID, !link.name.isEmpty { setRememberedName(link.name) }
             startSession(on: link.transport, adapterID: link.id)
-        case .unusable(let id, _, let reason, let at):
+        case .unusable(let id, let generation, _, let reason, let at):
             guard id == target else { return }
+            guard generation == self.generation else {
+                staleAttempt("unusable", generation: generation, at: at)
+                return
+            }
             // Not retried: the adapter's GATT layout doesn't change between
             // attempts. The table is in the console line.
             transition(to: .disconnected, reason: reason, uptime: at)
             target = nil
             dropLink()
-            central.cancelConnection(id)
+            cancelAttempt(id)
             transition(to: .idle, reason: "no usable UART characteristics; pick another adapter")
             state = .failed(reason: reason)
-        case .disconnected(let id, let reason, let at):
+        case .disconnected(let id, let generation, let reason, let at):
+            if bleState == .reconnecting, heldConnection != nil, id == target, generation == self.generation {
+                // The held connection dropped: connect again at once; the
+                // backoff still spaces the next session.
+                heldConnection = nil
+                note("held connection lost (\(reason ?? "link lost")); connect re-issued", uptime: at)
+                issueConnect(id)
+                return
+            }
             guard id == target, [.connecting, .discovering, .connected, .restoring].contains(bleState) else { return }
+            guard generation == self.generation else {
+                staleAttempt("disconnected (\(reason ?? "link lost"))", generation: generation, at: at)
+                return
+            }
+            connectPending = false
+            // A connection that never answered a poll (dropped during
+            // discovery or init: a module that resets on ATZ, a brown-out,
+            // the edge of range) spaces the next full cycle; one that
+            // polled reconnects at once.
+            let spaced = !linkPolled
             transition(to: .disconnected, reason: reason ?? "link lost", uptime: at)
             dropLink()
-            scheduleReconnect()
-        case .cancelled(_, let at):
+            scheduleReconnect(spaced: spaced)
+        case .cancelled(_, _, let at):
             // The disconnect this service asked for. It may land after the
-            // reconnect has started; it is not that connection's loss (R3.1-3).
+            // reconnect has started; it is not that connection's loss (R3.1-3),
+            // and its generation is never the current one.
             appendConsole(.status, "ble: requested disconnect completed", at)
         case .writeFailed(let id, let reason, let at):
             guard id == target else {
@@ -453,6 +617,12 @@ class OBDLinkService: OBDLinkServicing, OBDLinkHolding {
             available = false
             reconnectTask?.cancel()
             reconnectTask = nil
+            connectWatchdog?.cancel()
+            connectWatchdog = nil
+            // Every connection and pending connect is gone with it.
+            connectPending = false
+            heldConnection = nil
+            generation += 1
             dropLink()
             transition(to: .unavailable, reason: reason, uptime: at)
             state = .unavailable(reason: reason)
@@ -462,25 +632,71 @@ class OBDLinkService: OBDLinkServicing, OBDLinkHolding {
     private func startDiscoveryWatchdog(for id: UUID) {
         discoveryWatchdog?.cancel()
         let timeout = discoveryTimeout
+        let wait = clock.linkSleeper(after: timeout)
         discoveryWatchdog = Task { [weak self] in
-            try? await Task.sleep(for: timeout)
+            try? await wait()
             guard !Task.isCancelled, let self, self.target == id, self.bleState == .discovering else { return }
             // Not `unusable`: a missed callback says nothing about the
             // adapter's layout, so this is retried like a link loss.
             self.transition(to: .disconnected, reason: "GATT discovery timed out after \(timeout)")
+            let spaced = !self.linkPolled
             self.dropLink()
-            self.central.cancelConnection(id)
+            self.cancelAttempt(id)
+            self.scheduleReconnect(spaced: spaced)
+        }
+    }
+
+    /// `connecting` with a bounded wait: the connect pending for this
+    /// attempt (a reconnect's, issued with its `→ reconnecting`), or a new
+    /// one.
+    private func connectNow(_ id: UUID, reason: String?) {
+        transition(to: .connecting, reason: reason)
+        state = attempt > 0 ? .reconnecting(attempt: attempt) : .connecting
+        if !connectPending { issueConnect(id) }
+        startConnectWatchdog(for: id)
+    }
+
+    private func issueConnect(_ id: UUID) {
+        generation += 1
+        connectPending = true
+        connectIssuedAt = uptime.uptimeSeconds
+        central.connect(id, generation: generation)
+    }
+
+    /// Ends the current attempt: its pending connect or connection is
+    /// cancelled, and its late events no longer match.
+    private func cancelAttempt(_ id: UUID) {
+        generation += 1
+        connectPending = false
+        central.cancelConnection(id)
+    }
+
+    /// No answer from CoreBluetooth within `connectTimeout`: cancel the
+    /// connect and issue the next attempt's in the same step, so a connect
+    /// stays pending even if this app is suspended before the backoff ends.
+    private func startConnectWatchdog(for id: UUID) {
+        connectWatchdog?.cancel()
+        let timeout = connectTimeout
+        let watched = generation
+        let label = attempt > 0 ? "reconnect attempt \(attempt)" : "connect"
+        let wait = clock.linkSleeper(after: timeout)
+        connectWatchdog = Task { [weak self] in
+            try? await wait()
+            guard !Task.isCancelled, let self, self.target == id, self.bleState == .connecting,
+                  self.generation == watched, self.available else { return }
+            self.transition(to: .disconnected, reason: "\(label): no answer in \(timeout), cancelled and re-issued")
+            self.cancelAttempt(id)
             self.scheduleReconnect()
         }
     }
 
-    private func connectNow(_ id: UUID, reason: String?) {
-        transition(to: .connecting, reason: reason)
-        state = attempt > 0 ? .reconnecting(attempt: attempt) : .connecting
-        central.connect(id)
-    }
-
-    private func scheduleReconnect() {
+    /// The next attempt: its connect is issued now (unless `connectNow` is
+    /// false, after a quick connect failure), and it is reported as
+    /// `reconnecting → connecting` after the backoff delay, or as soon as
+    /// that connect answers.
+    private func scheduleReconnect(connectNow issue: Bool = true, spaced: Bool = false) {
+        heldConnection = nil
+        spacedCycle = spaced
         guard let target else {
             transition(to: .idle, reason: nil)
             state = .idle
@@ -489,26 +705,65 @@ class OBDLinkService: OBDLinkServicing, OBDLinkHolding {
         attempt += 1
         let attempt = attempt
         let delay = backoff.delay(forAttempt: attempt)
-        transition(to: .reconnecting, reason: "attempt \(attempt) in \(delay)")
+        let issuing = issue && available && !connectPending
+        transition(
+            to: .reconnecting,
+            reason: "attempt \(attempt) in \(delay)" + (issuing || connectPending ? ", connect pending" : "")
+                + (spaced ? ", next session after the backoff" : "")
+        )
         state = .reconnecting(attempt: attempt)
+        if issuing { issueConnect(target) }
         reconnectTask?.cancel()
+        let wait = clock.linkSleeper(after: delay)
         reconnectTask = Task { [weak self] in
-            try? await Task.sleep(for: delay)
+            try? await wait()
             guard !Task.isCancelled, let self, self.target == target, self.bleState == .reconnecting, self.available else {
                 return
             }
-            self.connectNow(target, reason: "reconnect attempt \(attempt)")
+            if let held = self.heldConnection {
+                self.resumeHeld(held, id: target)
+            } else {
+                self.connectNow(target, reason: "reconnect attempt \(attempt)")
+            }
         }
+    }
+
+    /// The spaced backoff ended with a connection held: report it and go on
+    /// as if it had just connected (and, if discovery is done, become ready).
+    private func resumeHeld(_ held: (connectedAt: Double, ready: (link: BLELinkReady, at: Double)?), id: UUID) {
+        heldConnection = nil
+        spacedCycle = false
+        transition(to: .connecting, reason: "reconnect attempt \(attempt)")
+        transition(to: .discovering, reason: nil)
+        state = .discoveringServices
+        startDiscoveryWatchdog(for: id)
+        if let ready = held.ready { handle(.ready(ready.link, uptime: uptime.uptimeSeconds)) }
     }
 
     /// The ELM side asked for a fresh connection (`needsReconnect`, or
     /// initialisation failed): drop the BLE link and reconnect with backoff.
+    /// Only from `connected`, so a second request while a reconnect is
+    /// under way adds no attempt.
     private func requestReconnect(reason: String) {
         guard let target, bleState == .connected else { return }
+        // A connection that never answered a poll: space the next full
+        // cycle, so a broken adapter can't re-initialise in a fast loop.
+        let spaced = !linkPolled
         transition(to: .disconnected, reason: reason)
         dropLink()
-        central.cancelConnection(target)
-        scheduleReconnect()
+        cancelAttempt(target)
+        scheduleReconnect(spaced: spaced)
+    }
+
+    /// A BLE event of an attempt this service has already cancelled or
+    /// replaced: console only; it neither ends nor starts the current one.
+    private func staleAttempt(_ what: String, generation: Int, at: Double) {
+        appendConsole(.status, "ble: \(what) of an earlier attempt ignored (generation \(generation), current \(self.generation))", at)
+    }
+
+    private nonisolated static func seconds(_ duration: Duration) -> Double {
+        let components = duration.components
+        return Double(components.seconds) + Double(components.attoseconds) * 1e-18
     }
 
     // MARK: ELM sessions
@@ -516,6 +771,7 @@ class OBDLinkService: OBDLinkServicing, OBDLinkHolding {
     private func startSession(on transport: any ELMTransport, adapterID: UUID) {
         linkToken += 1
         let token = linkToken
+        linkPolled = false
         initCapture.sessionStarted(token: token)
         state = .initialising
         Task {
@@ -529,6 +785,7 @@ class OBDLinkService: OBDLinkServicing, OBDLinkHolding {
                 transport: transport,
                 configuration: sessionConfiguration,
                 uptime: uptime,
+                clock: clock,
                 firstSeq: nextSeq,
                 rememberedPlan: rememberedPollPlan?.plan
             )
@@ -658,6 +915,7 @@ class OBDLinkService: OBDLinkServicing, OBDLinkHolding {
                 // phase too, but prove nothing): the link works end to end,
                 // so the next loss starts the backoff from 1 s again (R3.1-5).
                 attempt = 0
+                linkPolled = true
             default:
                 break
             }
@@ -700,6 +958,10 @@ class OBDLinkService: OBDLinkServicing, OBDLinkHolding {
         if old == .discovering {
             discoveryWatchdog?.cancel()
             discoveryWatchdog = nil
+        }
+        if old == .connecting {
+            connectWatchdog?.cancel()
+            connectWatchdog = nil
         }
         let stamp = at ?? uptime.uptimeSeconds
         let event = LinkEvent.ble(from: old, to: new, reason: reason, uptime: stamp)
@@ -792,6 +1054,31 @@ class OBDLinkService: OBDLinkServicing, OBDLinkHolding {
         if lhs.rssi != rhs.rssi { return lhs.rssi > rhs.rssi }
         return lhs.name < rhs.name
     }
+}
+
+extension Clock where Duration == Swift.Duration {
+    /// Fixes a deadline `duration` from now and returns a closure that
+    /// sleeps until it, so a timer started in a new `Task` is measured from
+    /// the moment it was decided. A protocol-extension member so it can be
+    /// called on `any Clock<Duration>`. On a `LinkVirtualTimer` (a test
+    /// clock) the wait stays on the main actor: the timer's wake and the
+    /// service's follow-up then run in main-actor order, with no hop
+    /// through the cooperative pool that virtual time could overtake.
+    func linkSleeper(after duration: Swift.Duration) -> @MainActor @Sendable () async throws -> Void {
+        let deadline = now.advanced(by: duration)
+        if let virtual = self as? any LinkVirtualTimer {
+            return { try await virtual.wait(until: deadline) }
+        }
+        return { try await self.sleep(until: deadline, tolerance: nil) }
+    }
+}
+
+/// A virtual test clock that runs the link service's timers on the main
+/// actor (`linkSleeper`). `ContinuousClock` doesn't conform. Only the
+/// requirement is main-actor isolated, so a conforming clock stays
+/// nonisolated.
+protocol LinkVirtualTimer: AnyObject, Sendable {
+    @MainActor func wait(until deadline: any InstantProtocol) async throws
 }
 
 /// The events behind `lastInitEvents`: the current connection's BLE
