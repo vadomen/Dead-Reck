@@ -35,9 +35,10 @@ struct GPSLegendTests {
     @Test("Rows are the bands in order, then stale; swatches use the map's colour function")
     func rowsMatchMap() {
         let rows = GPSLegendContent.rows
-        #expect(rows.map(\.kind) == AccuracyBand.allCases.map { GPSLegendRow.Kind.band($0) } + [.stale])
+        #expect(rows.map(\.kind) == [.estimate] + AccuracyBand.allCases.map { GPSLegendRow.Kind.band($0) } + [.stale])
         for row in rows {
             switch row.kind {
+            case .estimate: #expect(row.color == EstimateDot.color)
             case .band(let band): #expect(row.color == GPSMapView.color(band, stale: false))
             case .stale: #expect(row.color == GPSMapView.color(.good, stale: true))
             }

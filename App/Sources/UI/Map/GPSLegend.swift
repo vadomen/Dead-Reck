@@ -13,10 +13,24 @@ struct RawFixDot: View {
     }
 }
 
+/// FuGPS's own position as the map draws it (north-up, or heading-up before the
+/// heading converged): a blue disc with a white ring. Shared by `NavMarker`
+/// and the legend's first row.
+struct EstimateDot: View {
+    static let color: Color = .blue
+
+    var body: some View {
+        Circle()
+            .fill(Self.color)
+            .frame(width: 24, height: 24)
+            .overlay(Circle().stroke(.white, lineWidth: 3))
+    }
+}
+
 /// One legend row: a kind of dot and its words. The words carry the meaning;
 /// the colour only repeats it.
 struct GPSLegendRow: Identifiable {
-    enum Kind: Hashable { case band(AccuracyBand), stale }
+    enum Kind: Hashable { case estimate, band(AccuracyBand), stale }
     var kind: Kind
     var text: String
     var color: Color
@@ -27,12 +41,13 @@ struct GPSLegendRow: Identifiable {
 /// bounds (`AccuracyBand`), the colour function (`GPSMapView.color`) and the
 /// stale rule (`GPSMapView.staleAfter`).
 enum GPSLegendContent {
-    static let intro = String(localized: "The arrow is FuGPS's estimate. The coloured dot and circle are what the phone's GPS reports; when GPS is jammed it can be far off.")
+    static let intro = String(localized: "FuGPS's position is the blue dot with its blue area. The phone's GPS is the green, yellow, orange, red or grey dot with its circle; when GPS is jammed it can be far off. When the map turns with the car (\"Heading up\"), a dot can become an arrow.")
 
     static var staleSeconds: Int { Int(GPSMapView.staleAfter.components.seconds) }
 
     static func text(for kind: GPSLegendRow.Kind) -> String {
         switch kind {
+        case .estimate: String(localized: "FuGPS — position estimate")
         case .band(.good): String(localized: "Good — within \(Int(AccuracyBand.good.upperBoundM ?? 0)) m")
         case .band(.fair): String(localized: "Fair — within \(Int(AccuracyBand.fair.upperBoundM ?? 0)) m")
         case .band(.poor): String(localized: "Poor — within \(Int(AccuracyBand.poor.upperBoundM ?? 0)) m")
@@ -43,7 +58,8 @@ enum GPSLegendContent {
     }
 
     static var rows: [GPSLegendRow] {
-        AccuracyBand.allCases.map { band in
+        [GPSLegendRow(kind: .estimate, text: text(for: .estimate), color: EstimateDot.color)]
+        + AccuracyBand.allCases.map { band in
             GPSLegendRow(kind: .band(band), text: text(for: .band(band)), color: GPSMapView.color(band, stale: false))
         } + [
             GPSLegendRow(kind: .stale, text: text(for: .stale), color: GPSMapView.color(.good, stale: true))
@@ -56,6 +72,10 @@ enum GPSLegendContent {
 struct GPSLegendSheet: View {
     @Environment(\.dismiss) private var dismiss
 
+    @ViewBuilder private func swatchDot(_ row: GPSLegendRow) -> some View {
+        if row.kind == .estimate { EstimateDot() } else { RawFixDot(color: row.color) }
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -65,7 +85,7 @@ struct GPSLegendSheet: View {
                         .fixedSize(horizontal: false, vertical: true)
                     ForEach(GPSLegendContent.rows) { row in
                         HStack(spacing: 16) {
-                            RawFixDot(color: row.color)
+                            swatchDot(row)
                                 .background(Circle().fill(row.color.opacity(0.2)).frame(width: 44, height: 44))
                                 .overlay(Circle().stroke(row.color, lineWidth: 1).frame(width: 44, height: 44))
                                 .frame(width: 48, height: 48)

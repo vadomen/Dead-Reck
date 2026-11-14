@@ -1720,6 +1720,26 @@
         }
       }
     },
+    "FuGPS — position estimate" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FuGPS — розрахункова позиція"
+          }
+        }
+      }
+    },
+    "FuGPS's position is the blue dot with its blue area. The phone's GPS is the green, yellow, orange, red or grey dot with its circle; when GPS is jammed it can be far off. When the map turns with the car (\"Heading up\"), a dot can become an arrow." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Позиція FuGPS — синя крапка з синьою областю. GPS телефона — зелена, жовта, помаранчева, червона або сіра крапка з колом; коли GPS глушать, вона може бути дуже далеко. Коли карта повертається за курсом авто («За курсом»), крапка може стати стрілкою."
+          }
+        }
+      }
+    },
     "Get the road data" : {
       "localizations" : {
         "uk" : {
@@ -4015,16 +4035,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Стрілка зʼявляється, щойно FuGPS дізнається ваш напрямок. Карти доріг і повороти допомагають визначити його під час руху. Пасажир може це пришвидшити: на прямій ділянці двічі торкнутися карти там, де зараз авто. Мітка, поставлена на стоянці, уточнює лише позицію, а не напрямок."
-          }
-        }
-      }
-    },
-    "The arrow is FuGPS's estimate. The coloured dot and circle are what the phone's GPS reports; when GPS is jammed it can be far off." : {
-      "localizations" : {
-        "uk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Стрілка — це розрахункова позиція FuGPS. Кольорова крапка з колом — те, що повідомляє GPS телефона; коли GPS глушать, вона може бути дуже далеко від справжньої позиції."
           }
         }
       }

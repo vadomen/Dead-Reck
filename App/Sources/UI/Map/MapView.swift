@@ -1366,15 +1366,12 @@ private struct NavMarker: View {
         if headingUp, nav.converged, let heading = nav.headingDeg {
             Image(systemName: "location.north.fill")
                 .font(.system(size: 32))
-                .foregroundStyle(.blue)
+                .foregroundStyle(EstimateDot.color)
                 .shadow(color: .white, radius: 1)
                 .shadow(color: .white, radius: 1)
                 .rotationEffect(.degrees(heading - cameraHeading))
         } else {
-            Circle()
-                .fill(.blue)
-                .frame(width: 24, height: 24)
-                .overlay(Circle().stroke(.white, lineWidth: 3))
+            EstimateDot()
         }
     }
 }
