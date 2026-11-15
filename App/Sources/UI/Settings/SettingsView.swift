@@ -151,6 +151,8 @@ struct SettingsContent<Recording: View, Console: View, Maps: View, Sessions: Vie
     @Environment(\.openURL) private var openURL
     @Environment(\.dynamicTypeSize) private var typeSize
     @AppStorage(GPSVoiceSetting.key) private var speaksGPSChanges = false
+    @Environment(\.savedDestinations) private var savedDestinations
+    @Environment(\.routeFlow) private var routeFlow
 
     private var roadsSection: some View {
         Section("Roads") {
@@ -270,6 +272,7 @@ struct SettingsContent<Recording: View, Console: View, Maps: View, Sessions: Vie
                 } footer: {
                     Text(SettingsRows.languageFootnote)
                 }
+                if let savedDestinations { SavedDestinationsSection(store: savedDestinations) }
                 Section {
                     NavigationLink(value: SettingsRoute.about) {
                         Label(SettingsRoute.about.title, systemImage: SettingsRoute.about.systemImage)
@@ -296,6 +299,7 @@ struct SettingsContent<Recording: View, Console: View, Maps: View, Sessions: Vie
                     }
                 }
                 if showsDeveloper { roadsSection }
+                if showsDeveloper, let routeFlow { RouteDiagnosticsSection(flow: routeFlow) }
                 if showsDeveloper, !network.isEmpty { networkSection }
                 #if DEBUG
                 Color.clear.frame(height: 1).id("settingsEnd").listRowBackground(Color.clear)

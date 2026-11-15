@@ -31,11 +31,12 @@ enum MapBottomLayout {
     /// credit is pinned to the bottom of the container. A tall stack can leave
     /// the top of the container, never reach down into the credit.
     static func frames(
-        container: CGSize, items: [(item: MapBottomItem, size: CGSize)], railSize: CGSize, creditWidth: Double?
+        container: CGSize, items: [(item: MapBottomItem, size: CGSize)], railSize: CGSize, creditWidth: Double?,
+        slot: Double = MapLayout.bottomSlotHeight
     ) -> Frames {
         let width = Double(container.width)
         let height = Double(container.height)
-        let stackBottom = height - MapLayout.bottomInset()
+        let stackBottom = height - MapLayout.bottomInset(slot: slot)
         let stackWidth = max(0, width - MapLayout.edgeInset - MapLayout.railReserved)
         var y = stackBottom
         var placed: [(item: MapBottomItem, frame: CGRect)] = []

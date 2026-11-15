@@ -273,7 +273,9 @@ enum CarPlacement {
     /// The offer card's frame in the bottom-left zone for a card `height` high:
     /// left of the rail, above the bottom inset.
     static func offerCardFrame(size: CGSize, safeBottom: Double = 0, height: Double) -> CGRect {
-        let bottom = size.height - safeBottom - MapLayout.bottomInset()
+        // The idle destination bar steps aside while the offer is up (the card takes
+        // its place), so the card sits where it did before the bar existed.
+        let bottom = size.height - safeBottom - MapLayout.bottomInset(slot: 0)
         return CGRect(
             x: MapLayout.edgeInset, y: bottom - height,
             width: size.width - MapLayout.edgeInset - MapLayout.railReserved, height: height)
