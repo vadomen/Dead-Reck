@@ -8,7 +8,8 @@ import Foundation
 /// round-trip representation; absent optional fields are empty cells (never
 /// 0); strings are verbatim, quoted RFC 4180-style when they contain a comma,
 /// quote, CR or LF (ELM replies contain CRs). Nested values that have no
-/// fixed columns (`stats.counts`, unknown kinds' `data`) are compact JSON.
+/// fixed columns (`stats.counts`, a `route` row's `Route`, unknown kinds'
+/// `data`) are compact JSON with sorted keys.
 public enum RecordingCSV {
     /// Column names for `kind`. Unknown kinds get `t,data`.
     public static func columns(for kind: String) -> [String] {
@@ -54,6 +55,14 @@ public enum RecordingCSV {
         case .navPrior:
             ["t", "estimateT", "latitude", "longitude", "covEE", "covEN", "covNN", "headingDeg", "headingStdDeg",
              "converged", "speedMps", "obdSpeedKmh", "restoreClass", "source"]
+        case .route:
+            // One row per `route` row: the route's scalars, its size, the
+            // request origin, then the whole `Route` as its on-disk JSON
+            // (polyline included), so the file stays lossless.
+            ["t", "reason", "routeID", "source", "label", "distanceM", "expectedTravelTimeS", "points", "steps",
+             "originLatitude", "originLongitude", "route"]
+        case .routeCleared:
+            ["t", "reason", "routeID"]
         case nil:
             ["t", "data"]
         }
@@ -110,6 +119,13 @@ public enum RecordingCSV {
             return [t, ts(p.estimateT), d(p.latitude), d(p.longitude), d(p.covEE), d(p.covEN), d(p.covNN),
                     d(p.headingDeg), d(p.headingStdDeg), b(p.converged), d(p.speedMps), d(p.obdSpeedKmh),
                     p.restoreClass, p.source]
+        case .route(let r):
+            return [t, r.reason.rawValue, r.route.id, r.route.source.rawValue, r.route.label ?? "",
+                    d(r.route.distanceM), d(r.route.expectedTravelTimeS),
+                    String(r.route.polyline.count), String(r.route.steps.count),
+                    d(r.origin?.latitude), d(r.origin?.longitude), json(r.route)]
+        case .routeCleared(let c):
+            return [t, c.reason.rawValue, c.routeID]
         case .unrecognized(_, let data):
             return [t, data.map(json) ?? ""]
         }
@@ -142,7 +158,7 @@ public enum RecordingCSV {
     private static func ts(_ value: MonotonicTimestamp?) -> String { value.map { String($0.nanoseconds) } ?? "" }
     private static func v(_ vector: Vector3) -> [String] { [d(vector.x), d(vector.y), d(vector.z)] }
 
-    private static func json(_ value: JSONValue) -> String {
+    private static func json(_ value: some Encodable) -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         return (try? encoder.encode(value)).map { String(decoding: $0, as: UTF8.self) } ?? ""

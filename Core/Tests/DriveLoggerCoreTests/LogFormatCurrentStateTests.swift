@@ -9,7 +9,7 @@ import Testing
 /// the reminder to add a frozen fixture and pin the new strings there.
 @Suite("Log format current state")
 struct LogFormatCurrentStateTests {
-    @Test("New recordings are written in the current version, v6")
+    @Test("New recordings are written in the current version, v7")
     func writesCurrentVersion() throws {
         let header = LogHeader(
             sessionID: LogFixtures.sessionID,
@@ -17,18 +17,18 @@ struct LogFormatCurrentStateTests {
             app: LogFixtures.app,
             device: LogFixtures.device
         )
-        #expect(LogFormatVersion.current == .v6)
+        #expect(LogFormatVersion.current == .v7)
         #expect(header.formatVersion == .current)
 
         let line = String(decoding: try LogCodec().line(for: header), as: UTF8.self)
-        #expect(line.contains("\"formatVersion\":6"))
+        #expect(line.contains("\"formatVersion\":7"))
     }
 
     @Test("Every declared format version has a frozen fixture")
     func allVersionsHaveFixtures() {
         // A version added to the enum without a reader and a fixture is the
         // failure mode the compatibility invariant exists to prevent.
-        #expect(LogFormatVersion.allCases == [.v1, .v2, .v3, .v4, .v5, .v6])
+        #expect(LogFormatVersion.allCases == [.v1, .v2, .v3, .v4, .v5, .v6, .v7])
         #expect(LogFormatVersion.current == LogFormatVersion.allCases.max())
         #expect(!LogFormatCompatibilityTests.version1Recording.isEmpty)
         #expect(!LogFormatCompatibilityV2Tests.version2Recording.isEmpty)
@@ -36,6 +36,7 @@ struct LogFormatCurrentStateTests {
         #expect(!LogFormatCompatibilityV4Tests.version4Recording.isEmpty)
         #expect(!LogFormatCompatibilityV5Tests.version5Recording.isEmpty)
         #expect(!LogFormatCompatibilityV6Tests.version6Recording.isEmpty)
+        #expect(!LogFormatCompatibilityV7Tests.version7Recording.isEmpty)
     }
 
     @Test("The version after current is not declared, and a header with it is refused")
@@ -45,7 +46,7 @@ struct LogFormatCurrentStateTests {
         // refused, not read with the current rules.
         let next = LogFormatVersion.current.rawValue + 1
         #expect(LogFormatVersion(rawValue: next) == nil)
-        let newest = LogFormatCompatibilityV6Tests.version6Recording
+        let newest = LogFormatCompatibilityV7Tests.version7Recording
         #expect(newest.contains("\"formatVersion\":\(LogFormatVersion.current.rawValue)"))
         let relabelled = newest.replacingOccurrences(
             of: "\"formatVersion\":\(LogFormatVersion.current.rawValue)", with: "\"formatVersion\":\(next)")
@@ -58,7 +59,7 @@ struct LogFormatCurrentStateTests {
     func everythingIsPinned() {
         // Raise these only after adding the new strings to the frozen suite of
         // the version that introduces them.
-        #expect(LogEventKind.allCases.count == 16)
+        #expect(LogEventKind.allCases.count == 18)
         #expect(LifecycleSample.Event.allCases.count == 15)
         // `stop` details; pinned with the low-disk prefixes in
         // `LifecycleDetailTests` (R3-4).
@@ -75,5 +76,8 @@ struct LogFormatCurrentStateTests {
         // Pinned in `LogFormatCompatibilityV5Tests`.
         #expect(NavPriorSample.Source.allCases.count == 1)
         #expect(NavigationRestoreClass.allCases.count == 3)
+        // Pinned in `LogFormatCompatibilityV7Tests`.
+        #expect(RouteSample.Reason.known.count == 4)
+        #expect(RouteClearedSample.Reason.known.count == 3)
     }
 }

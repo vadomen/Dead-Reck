@@ -870,3 +870,179 @@ struct LogFormatCompatibilityV6Tests {
         #expect(String(decoding: plainLine, as: UTF8.self) == #"{"data":{"latitude":-0.0375,"longitude":0.05,"mapSpanM":250,"pressedT":6000000000,"speedSource":"unknown"},"kind":"manualFix","t":6000000000}"# + "\n")
     }
 }
+
+/// Format v7 counterpart. Same rule: frozen when v7 was introduced (prompt
+/// 51 item D, route rows) and never edited to fit a later change. v7 = v6 +
+/// the kinds `route` (a route set or replaced: `reason`, the embedded
+/// `Route`, optional `origin`) and `routeCleared` (`reason`, `routeID`). The
+/// fixture is a recording without OBD: a reference fix, then a route the
+/// driver chose (with label, a non-ASCII instruction and a slash), an
+/// off-route rebuild, an alternative, a failed clear, a restored route with
+/// a roundabout exit number, a cancel, a route whose reason, source and
+/// maneuver this build does not know, an arrival, a route with no steps
+/// and a clear whose reason this build does not know, plus a row of a kind
+/// this build does not know. Every clear names the route the latest `route`
+/// row set. Coordinates are invented, in open ocean in the South Pacific:
+/// no real place.
+@Suite("Log format compatibility v7")
+struct LogFormatCompatibilityV7Tests {
+    let codec = LogCodec()
+
+    static let version7Recording = #"""
+        {"app":{"build":"70","name":"DriveLogger","version":"0.7.0"},"device":{"model":"iPhone16,1","systemName":"iOS","systemVersion":"18.6"},"formatVersion":7,"mount":"windscreen, portrait","referenceUptimeSeconds":3600.25,"sessionID":"7D9EBF30-4B5C-4D6E-AF80-91A2B3C4D5E6","startedAt":"2026-11-01T00:00:00Z","timeZone":"UTC","vehicle":"test vehicle"}
+        {"data":{"event":"start"},"kind":"lifecycle","t":0}
+        {"data":{"ageS":0.25,"altitude":5,"course":90,"courseAccuracy":5,"horizontalAccuracy":6,"latitude":-45.00012,"longitude":-120.00003,"receivedT":1250000000,"speed":12.5,"speedAccuracy":0.5,"verticalAccuracy":4},"kind":"location","t":1000000000}
+        {"data":{"origin":{"latitude":-45.00012,"longitude":-120.00003},"reason":"user","route":{"distanceM":512.5,"expectedTravelTimeS":61,"id":"r1","label":"Harbour","polylineE7":[-450001200,-1200000300,0,4500,-3000,0,-1500,1200],"source":"appleMaps","steps":[{"distanceM":0,"from":0,"instruction":"","maneuver":"depart","to":0},{"distanceM":35.4,"from":0,"instruction":"Tournez à droite / Rue 2","maneuver":"right","to":1},{"distanceM":477.1,"from":1,"instruction":"Arrive","maneuver":"arrive","to":3}]}},"kind":"route","t":1500000000}
+        {"data":{"origin":{"latitude":-45.0002,"longitude":-119.99995},"reason":"offRoute","route":{"distanceM":240,"expectedTravelTimeS":30,"id":"r2","label":"Harbour","polylineE7":[-450002000,-1199999500,-2000,0,0,2500],"source":"appleMaps","steps":[{"distanceM":0,"from":0,"instruction":"","maneuver":"depart","to":0},{"distanceM":22.2,"from":0,"instruction":"Turn left","maneuver":"left","to":1},{"distanceM":217.8,"from":1,"instruction":"Arrive","maneuver":"arrive","to":2}]}},"kind":"route","t":4000000000}
+        {"data":{"origin":{"latitude":-45.00022,"longitude":-119.99995},"reason":"alternative","route":{"distanceM":260.5,"expectedTravelTimeS":34,"id":"r3","polylineE7":[-450002200,-1199999500,0,3000,-1800,0],"source":"appleMaps","steps":[{"distanceM":0,"from":0,"instruction":"","maneuver":"depart","to":0},{"distanceM":23.6,"from":0,"instruction":"Turn right","maneuver":"right","to":1},{"distanceM":236.9,"from":1,"instruction":"","maneuver":"arrive","to":2}]}},"kind":"route","t":5000000000}
+        {"data":{"reason":"failed","routeID":"r3"},"kind":"routeCleared","t":6000000000}
+        {"data":{"reason":"restored","route":{"distanceM":180,"expectedTravelTimeS":25,"id":"r4","polylineE7":[-450004000,-1199999000,1000,1000,1000,-1000],"source":"appleMaps","steps":[{"distanceM":0,"from":0,"instruction":"","maneuver":"depart","to":0},{"distanceM":15.6,"exitNumber":2,"from":0,"instruction":"At the roundabout, take the 2nd exit","maneuver":"roundaboutExit","to":1},{"distanceM":164.4,"from":1,"instruction":"Arrive","maneuver":"arrive","to":2}]}},"kind":"route","t":6500000000}
+        {"data":{"reason":"cancelled","routeID":"r4"},"kind":"routeCleared","t":7000000000}
+        {"data":{"reason":"detour","route":{"distanceM":95,"expectedTravelTimeS":12,"id":"r5","polylineE7":[-450003000,-1199998000,800,0],"source":"osrm","steps":[{"distanceM":95,"from":0,"instruction":"Keep left","maneuver":"keepLeft","to":1}]}},"kind":"route","t":7500000000}
+        {"data":{"reason":"arrived","routeID":"r5"},"kind":"routeCleared","t":8000000000}
+        {"data":{"origin":{"latitude":-45.00022,"longitude":-119.9998},"reason":"user","route":{"distanceM":50,"expectedTravelTimeS":6,"id":"r6","polylineE7":[-450002200,-1199998000,4500,0],"source":"synthetic","steps":[]}},"kind":"route","t":8200000000}
+        {"data":{"distanceAlongM":12.5,"routeID":"r6"},"kind":"routeProgress","t":8300000000}
+        {"data":{"reason":"superseded","routeID":"r6"},"kind":"routeCleared","t":8500000000}
+        {"data":{"bytesWritten":4096,"counts":{"lifecycle":1,"location":1,"route":6,"routeCleared":4,"routeProgress":1},"dropped":0,"gaps":{"accel":0,"gyro":0,"motion":0},"maxGapMs":{},"motionHz":0,"obdHz":0,"queueDepthMax":1,"timeouts":0,"windowS":10},"kind":"stats","t":10000000000}
+        {"data":{"detail":"user","event":"stop"},"kind":"lifecycle","t":10500000000}
+        """#
+
+    var document: LogDocument {
+        get throws { try codec.document(from: Data(Self.version7Recording.utf8)) }
+    }
+
+    static func ms(_ value: Int64) -> MonotonicTimestamp {
+        MonotonicTimestamp(nanoseconds: value * 1_000_000)
+    }
+
+    static func routes(_ events: [LogEvent]) -> [(t: MonotonicTimestamp, sample: RouteSample)] {
+        events.compactMap { if case .route(let sample) = $0.payload { ($0.timestamp, sample) } else { nil } }
+    }
+
+    static func clears(_ events: [LogEvent]) -> [(t: MonotonicTimestamp, sample: RouteClearedSample)] {
+        events.compactMap { if case .routeCleared(let sample) = $0.payload { ($0.timestamp, sample) } else { nil } }
+    }
+
+    /// The fixture's first route, built from Swift values.
+    static func firstRoute() throws -> RouteSample {
+        let route = try Route(
+            id: "r1",
+            polyline: [
+                RoutePoint(latE7: -450_001_200, lonE7: -1_200_000_300),
+                RoutePoint(latE7: -450_001_200, lonE7: -1_199_995_800),
+                RoutePoint(latE7: -450_004_200, lonE7: -1_199_995_800),
+                RoutePoint(latE7: -450_005_700, lonE7: -1_199_994_600),
+            ],
+            steps: [
+                RouteStep(instruction: "", distanceM: 0, polylineRange: 0...0, maneuver: .depart),
+                RouteStep(instruction: "Tournez à droite / Rue 2", distanceM: 35.4, polylineRange: 0...1, maneuver: .right),
+                RouteStep(instruction: "Arrive", distanceM: 477.1, polylineRange: 1...3, maneuver: .arrive),
+            ],
+            distanceM: 512.5, expectedTravelTimeS: 61, source: .appleMaps, label: "Harbour")
+        return RouteSample(reason: .user, route: route, origin: RouteOrigin(latitude: -45.00012, longitude: -120.00003))
+    }
+
+    @Test("A v7 recording parses")
+    func readsVersion7Header() throws {
+        let header = try document.header
+        #expect(header.formatVersion == .v7)
+        #expect(header.startedAt == Date(timeIntervalSince1970: 1_793_491_200))
+        #expect(header.referenceUptimeSeconds == 3_600.25)
+        #expect(header.adapter == nil && header.polling == nil)
+        #expect(header.timeZone == "UTC")
+    }
+
+    @Test("Every v7 row decodes to its own payload; only the unknown kind is unrecognized, its data kept")
+    func readsEveryRow() throws {
+        let events = try document.events
+        #expect(events.count == 15)
+        #expect(events.map(\.payload.kind) == [
+            "lifecycle", "location", "route", "route", "route", "routeCleared", "route", "routeCleared",
+            "route", "routeCleared", "route", "routeProgress", "routeCleared", "stats", "lifecycle",
+        ])
+        for event in events {
+            if case .unrecognized(let kind, let data) = event.payload {
+                #expect(kind == "routeProgress")
+                #expect(data == .object(["distanceAlongM": .double(12.5), "routeID": .string("r6")]))
+            }
+        }
+    }
+
+    @Test("route rows keep reason, the whole route and the origin; unknown reason, source and maneuver are kept verbatim")
+    func readsRoutes() throws {
+        let rows = Self.routes(try document.events)
+        #expect(rows.count == 6)
+        #expect(rows.map(\.t) == [Self.ms(1_500), Self.ms(4_000), Self.ms(5_000), Self.ms(6_500), Self.ms(7_500), Self.ms(8_200)])
+        #expect(rows.map(\.sample.reason.rawValue) == ["user", "offRoute", "alternative", "restored", "detour", "user"])
+        #expect(rows.map(\.sample.route.id) == ["r1", "r2", "r3", "r4", "r5", "r6"])
+
+        #expect(rows[0].sample == (try Self.firstRoute()))
+        #expect(rows[0].sample.route.polyline[3].latitude == -45.00057)
+        #expect(rows[0].sample.route.steps[1].instruction == "Tournez à droite / Rue 2")
+
+        #expect(rows[1].sample.reason == .offRoute)
+        #expect(rows[1].sample.origin == RouteOrigin(latitude: -45.0002, longitude: -119.99995))
+        #expect(rows[2].sample.reason == .alternative)
+        #expect(rows[2].sample.route.label == nil)
+
+        #expect(rows[3].sample.reason == .restored)
+        #expect(rows[3].sample.origin == nil, "a restored route had no request")
+        #expect(rows[3].sample.route.steps[1].maneuver == .roundaboutExit(exit: 2))
+
+        #expect(rows[4].sample.reason == .unknown("detour"))
+        #expect(rows[4].sample.route.source == .unknown("osrm"))
+        #expect(rows[4].sample.route.steps[0].maneuver == .unknown("keepLeft"))
+
+        #expect(rows[5].sample.route.steps.isEmpty)
+        #expect(rows[5].sample.route.source == .synthetic)
+        for row in rows {
+            #expect(row.sample.origin?.isValid ?? true)
+        }
+    }
+
+    @Test("routeCleared rows keep reason and the ended route's id; an unknown reason is kept verbatim")
+    func readsClears() throws {
+        let rows = Self.clears(try document.events)
+        #expect(rows.map(\.t) == [Self.ms(6_000), Self.ms(7_000), Self.ms(8_000), Self.ms(8_500)])
+        #expect(rows.map(\.sample) == [
+            RouteClearedSample(reason: .failed, routeID: "r3"),
+            RouteClearedSample(reason: .cancelled, routeID: "r4"),
+            RouteClearedSample(reason: .arrived, routeID: "r5"),
+            RouteClearedSample(reason: .unknown("superseded"), routeID: "r6"),
+        ])
+    }
+
+    @Test("Rewriting a v7 recording reproduces it unchanged, unknown kind and unknown strings included")
+    func rewritesVersion7Identically() throws {
+        let original = Data(Self.version7Recording.utf8)
+        let rewritten = try codec.encode(try document)
+        #expect(rewritten == original + Data("\n".utf8))
+    }
+
+    @Test("v7 is a declared, readable version")
+    func version7IsDeclared() {
+        #expect(LogFormatVersion(rawValue: 7) == .v7)
+        #expect(LogFormatVersion.v7 <= .current)
+    }
+
+    @Test("The v7 kinds, their keys and the reason vocabularies are stable on-disk strings")
+    func stringsAreStable() throws {
+        #expect(LogEventKind.route.rawValue == "route")
+        #expect(LogEventKind.routeCleared.rawValue == "routeCleared")
+        #expect(RouteSample.Reason.known.map(\.rawValue) == ["user", "offRoute", "alternative", "restored"])
+        #expect(RouteClearedSample.Reason.known.map(\.rawValue) == ["arrived", "cancelled", "failed"])
+
+        let line = try codec.line(for: LogEvent(timestamp: Self.ms(1_500), payload: .route(try Self.firstRoute())))
+        #expect(String(decoding: line, as: UTF8.self) == #"{"data":{"origin":{"latitude":-45.00012,"longitude":-120.00003},"reason":"user","route":{"distanceM":512.5,"expectedTravelTimeS":61,"id":"r1","label":"Harbour","polylineE7":[-450001200,-1200000300,0,4500,-3000,0,-1500,1200],"source":"appleMaps","steps":[{"distanceM":0,"from":0,"instruction":"","maneuver":"depart","to":0},{"distanceM":35.4,"from":0,"instruction":"Tournez à droite / Rue 2","maneuver":"right","to":1},{"distanceM":477.1,"from":1,"instruction":"Arrive","maneuver":"arrive","to":3}]}},"kind":"route","t":1500000000}"# + "\n")
+
+        var noOrigin = try Self.firstRoute()
+        noOrigin.origin = nil
+        noOrigin.reason = .restored
+        let restored = String(decoding: try codec.line(for: LogEvent(timestamp: .zero, payload: .route(noOrigin))), as: UTF8.self)
+        #expect(restored.hasPrefix(#"{"data":{"reason":"restored","route":{"distanceM":512.5,"#), "no origin key when absent")
+        #expect(!restored.contains("origin"))
+
+        let cleared = try codec.line(for: LogEvent(timestamp: Self.ms(8_000), payload: .routeCleared(RouteClearedSample(reason: .arrived, routeID: "r5"))))
+        #expect(String(decoding: cleared, as: UTF8.self) == #"{"data":{"reason":"arrived","routeID":"r5"},"kind":"routeCleared","t":8000000000}"# + "\n")
+    }
+}

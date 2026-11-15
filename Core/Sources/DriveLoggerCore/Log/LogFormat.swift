@@ -50,8 +50,17 @@ public enum LogFormatVersion: Int, Hashable, Sendable, Codable, CaseIterable, Co
     /// the driver marked and drop the tap on re-export.
     case v6 = 6
 
+    /// v6 plus the kinds `route` (`RouteSample`: a route was set or
+    /// replaced, the whole `Route` embedded, with a reason and the optional
+    /// origin of the request) and `routeCleared` (`RouteClearedSample`: the
+    /// route ended, with a reason and the ended route's id). Nothing else
+    /// changed, so v1–v6 files decode exactly as before. A v6 reader refuses
+    /// a v7 header rather than keep the route rows only as `unrecognized`
+    /// and replay the drive as if no route had been set.
+    case v7 = 7
+
     /// The version new recordings are written in.
-    public static let current: LogFormatVersion = .v6
+    public static let current: LogFormatVersion = .v7
 
     public static func < (lhs: LogFormatVersion, rhs: LogFormatVersion) -> Bool {
         lhs.rawValue < rhs.rawValue

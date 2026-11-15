@@ -74,9 +74,16 @@ enum TapFixtures {
         case .navPrior: .navPrior(NavPriorSample(
             latitude: 0, longitude: 0, covEE: 100, covEN: 0, covNN: 100, headingDeg: 90, headingStdDeg: 5,
             converged: true, speedMps: 10, restoreClass: "moving", source: "navigate", estimateT: t))
+        // v7: not tapped. The engine ignores routes until prompt 53 decides
+        // how a route reaches it; a replay reads the rows from the file.
+        case .route: .route(RouteSample(reason: .user, route: tapRoute))
+        case .routeCleared: .routeCleared(RouteClearedSample(reason: .arrived, routeID: tapRoute.id))
         }
         return LogEvent(timestamp: t, payload: payload)
     }
+
+    /// A fixed, valid three-point route (`RouteCodingTests.small`).
+    static let tapRoute: Route = try! RouteCodingTests.small()
 
     /// The kinds `LogSink` taps: the navigation inputs plus the v4 GPS
     /// switch, which gates which fixes navigation may use.

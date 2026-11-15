@@ -339,6 +339,8 @@ struct RecordingCSVTests {
             LogEvent(timestamp: t, payload: .manualFix(ManualFixSample(latitude: 0, longitude: 0, pressedT: t, speedSource: "unknown"))),
             LogEvent(timestamp: t, payload: .gpsSwitch(GPSSwitchSample(on: false, source: .driver))),
             LogEvent(timestamp: t, payload: .navPrior(NavPriorSampleTests.sample)),
+            LogEvent(timestamp: t, payload: .route(RouteSample(reason: .user, route: TapFixtures.tapRoute))),
+            LogEvent(timestamp: t, payload: .routeCleared(RouteClearedSample(reason: .arrived, routeID: "r1"))),
         ]
     }()
 

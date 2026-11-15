@@ -9,10 +9,12 @@ import Foundation
 // 100 Hz streams, OBD latency percentiles (t - requestT), `elm` outcome
 // counts, the recorder's own stats rows, manual position fixes (v3; the raw
 // tap of a snapped pin, v6), the
-// driver's GPS switch changes (v4), the navigator's hand-over prior (v5) and
-// the truncation report; `--csv` writes one CSV per kind for analysis in
-// Python (`manualFix.csv`, `gpsSwitch.csv`, `navPrior.csv` included). Reads
-// every format version `LogCodec` knows (v1–v6) and refuses a newer one.
+// driver's GPS switch changes (v4), the navigator's hand-over prior (v5),
+// one route line (v7: route rows by reason, their total length, cleared
+// rows by reason; no coordinates) and the truncation report; `--csv` writes
+// one CSV per kind for analysis in Python (`manualFix.csv`, `gpsSwitch.csv`,
+// `navPrior.csv`, `route.csv`, `routeCleared.csv` included). Reads every
+// format version `LogCodec` knows (v1–v7) and refuses a newer one.
 // `--strict` stops at the
 // first malformed line or damaged member instead of skipping it.
 //
