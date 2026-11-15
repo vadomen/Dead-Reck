@@ -1291,3 +1291,15 @@ Reviewers: three fresh opus reviewers on disjoint sets. A: Route model + RouteEd
 | R90.1-7 | MINOR | `ReplayRoute.swift:342`: the missed-turn "route turns ≥ 45°" candidate guard is untested (removing it survived); straight-through boundaries could yield a "wrong" route identical to the base. | DEFERRED | BACKLOG. |
 
 Tests at HEAD 64601ef: Core 1311 tests in 157 suites passed (36 known issues); release NavigationRoadPerfTests, NavigationB0Tests and RouteEdgeMatcherPerfTests passed (10 tests). App/ unchanged in the range.
+
+### Round 2
+
+Reviewers: one fresh opus reviewer, whole range. Result: 0 BLOCKER, 2 MAJOR, 1 MINOR. R90.1-1..3 verified covered (author mutation search guard `(c.toPoint <= 0 || fg.record.isOneway)` → `(c.toPoint <= 0)` re-checked: caught). Bit-identical re-run not needed: since round 1's re-run, Core/Sources changed only in `Route.unpack`, which is reached only by decoding a v7 route row or a `--route` file. The acceptance drives are pre-v7 and the hash runs pass no route file, and the new check equals the old one for every input except `Int64.min`, where the old one trapped.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R90.2-1 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/Roads/RouteEdgeMatcher.swift:667`: the way offset in `segmentIndices` (`wayPointOffset + i`) was untested (`UInt32(i)` survived; the only assertion was on an offset-0 edge). It links the matcher to `RoadSegmentKey`, used by the on-route-edge metric and parallel's exclusion; on a way split at a junction the second edge's keys would be wrong and `onRouteEdgeShare` too low. | FIXED | 8060787 (test only): `ReplayRouteTests/segmentKeysUseWayOffset`; mutation caught. |
+| R90.2-2 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/Replay/ReplayRoute.swift:638-650`: scoring each track sample against the route active at its time was untested (every stats test had one route; `polylines[r]` → `polylines[0]` survived). After an offRoute rebuild in a v7 recording, cross-track would be measured against the abandoned route. | FIXED | 8060787 (test only): `ReplayRouteTests/activeRoutePerSample`, two v7 route rows on different streets; `polylines[0]` and `keys[0]` mutations caught. |
+| R90.2-3 | MINOR | `Core/Sources/replay_nav/main.swift:897`: `--route-write` writes only the first active route; on a v7 recording with several route rows the later ones are dropped silently (docs/NAVIGATION.md says "the route used"). | DEFERRED | BACKLOG. |
+
+Tests at HEAD 8060787: Core 1313 tests in 157 suites passed (36 known issues); release perf filter 10 passed.
