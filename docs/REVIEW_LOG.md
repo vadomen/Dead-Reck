@@ -1257,3 +1257,17 @@ Reviewers: one fresh opus reviewer. Result: 0 BLOCKER, 1 MAJOR, 1 MINOR. R89.2-1
 | R89.3-2 | MINOR | `NavigationEngine.swift:1613`: `mahalanobis2Untempered` for a down-weighted FIXPIN fix was not pinned to R = claimed σ²; `s2 = positionSigma²` survived. | FIXED | cc6d93b: bounds |r|²/σ_raised² < M²untempered ≤ |r|²/σ_claimed² in the down-weighted test; mutation caught. |
 
 Tests at HEAD cc6d93b: Core 1237 tests in 149 suites passed (36 known issues).
+
+### Round 4
+
+Reviewers: one fresh opus reviewer. Result: 0 BLOCKER, 0 MAJOR, 1 MINOR. R89.3-1 and R89.3-2 verified covered (author mutation `guard jump.listed` re-checked: caught). Core/Sources unchanged since cf42628.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R89.4-1 | MINOR | `Core/Sources/DriveLoggerCore/Navigation/NavigationEngine.swift:1601-1608`: observed R for a down-weighted FIXPIN phone source, and for σ above the offset, untested (two mutations survived). Observe-only, FIXPIN off by default. | DEFERRED | BACKLOG. |
+
+Tests at HEAD cc6d93b: Core 1237 tests in 149 suites passed (36 known issues).
+
+### Run 89 summary
+
+4 rounds; 5 fixed (R89.1-1, R89.1-2, R89.2-1, R89.3-1, R89.3-2), all test-only; 0 rejected; 2 deferred (R89.2-2, R89.4-1). Final tests: Core 1237 tests in 149 suites passed (36 known issues); release NavigationRoadPerfTests and NavigationB0Tests passed at cf42628 (Core/Sources unchanged since); replay acceptance matrix 101/101 identical to 5758ab4 (wall-time fields only). Outcome: closed, ready to merge into `routing`.
