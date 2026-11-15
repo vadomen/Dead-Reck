@@ -1246,3 +1246,14 @@ Reviewers: one fresh opus reviewer. Result: 0 BLOCKER, 1 MAJOR, 1 MINOR. R89.1-1
 | R89.2-2 | MINOR | `NavigationEngine.swift:1423`: `zeroGateEvidence` false after a slow fix resets the moving-fix run is untested (`>` → `!=` survived). | DEFERRED | BACKLOG. |
 
 Tests at HEAD 1ef890a: Core 1231 tests in 149 suites passed (36 known issues).
+
+### Round 3
+
+Reviewers: one fresh opus reviewer. Result: 0 BLOCKER, 1 MAJOR, 1 MINOR. R89.2-1 verified covered (author mutation `jump.judged &&` dropped re-checked: caught). Core/Sources unchanged since cf42628.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R89.3-1 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/NavigationEngine.swift:1631`: the path and restore outcome of a `max` that is not in `list` (not a hit, or after the cap) were untested; `guard jump.isMax \|\| jump.listed` → `guard jump.listed` survived. A zero-hit run whose max reseeded would report `update`, and the survey's "path of max" column reads this field. | FIXED | cc6d93b (tests only): unlisted max equals the listed entry of the same fix (restoreRejected drive at threshold -1 vs above every M²); a max after a full list (cap 2, cap 0) keeps its path; plus a sweep: temper 0 → M² 0, first of equal maxima, `resolve` targets, negative cap, summary text and the 20-line limit. 10 mutations, all caught. |
+| R89.3-2 | MINOR | `NavigationEngine.swift:1613`: `mahalanobis2Untempered` for a down-weighted FIXPIN fix was not pinned to R = claimed σ²; `s2 = positionSigma²` survived. | FIXED | cc6d93b: bounds |r|²/σ_raised² < M²untempered ≤ |r|²/σ_claimed² in the down-weighted test; mutation caught. |
+
+Tests at HEAD cc6d93b: Core 1237 tests in 149 suites passed (36 known issues).
