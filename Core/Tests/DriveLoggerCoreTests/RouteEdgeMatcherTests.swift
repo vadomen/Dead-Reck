@@ -346,4 +346,23 @@ struct RouteEdgeMatcherTests {
         // Passed: SE (roundabout piece, no), E (entry only, no), NE (exit, yes); left at N: exit 2.
         #expect(contexts[1]?.roundabout == true && contexts[1]?.roundaboutExit == 2)
     }
+
+    @Test("R90.3-1: after a break the path backtracks to the best candidate of the last layer before it, not its first")
+    func breakBacktracksToBest() throws {
+        // Way 1, 12 m east, sorts first among the candidates; the route runs on
+        // way 2 (0 m), then over an unmapped stretch onto way 3.
+        let net = try Self.network([
+            Self.way(1, Self.residential, [(1, 12, -1000), (2, 12, 0)]),
+            Self.way(2, Self.residential, [(3, 0, -1000), (4, 0, 0)]),
+            Self.way(3, Self.residential, [(5, 0, 300), (6, 0, 1000)]),
+        ])
+        let m = try Self.match(net, [(0, -900), (0, 900)])
+        #expect(Self.ways(m) == [2, 3], "\(Self.ways(m))")
+        #expect(m.gaps.count == 1)
+        let gap = try #require(m.gaps.first)
+        #expect(gap.startM >= 900 && gap.startM <= 920, "gap \(gap)")
+        let first = try #require(m.edges.first)
+        #expect(first.osmWayID == 2 && first.routeFromM == 0)
+        #expect(m.coverage > 0.8, "coverage \(m.coverage)")
+    }
 }
