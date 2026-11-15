@@ -198,12 +198,13 @@ public enum ReplayRecordedRoutes {
 /// modulo their count) is taken.
 public enum RoutePerturbation: String, Hashable, Sendable, Codable, CaseIterable {
     /// The route goes straight where the drive turned. Candidates: matched
-    /// edge boundaries at a pack node where the route turns by at least
-    /// `minTurnDegrees` and a drivable edge leaves the node within
-    /// `straightDegrees` of the incoming direction. The perturbed route is
-    /// the base up to that node, then straight on for `missedTurnLengthM`
-    /// (at each later node the drivable edge nearest straight on, within
-    /// `straightDegrees`), and ends there.
+    /// edge boundaries at a shared vertex (in any pack) where the route
+    /// turns by at least `minTurnDegrees` (20 m chords of the two edges)
+    /// and a drivable way leaves the vertex within `straightDegrees` of the
+    /// incoming direction. The perturbed route is the base up to that
+    /// vertex, then straight on for `missedTurnLengthM` (at each later edge
+    /// end the drivable way nearest straight on, within `straightDegrees`),
+    /// and ends there, or earlier where no way goes on straight.
     case missedTurn = "missed-turn"
     /// A neighbouring street. Candidates: matched edges the route follows
     /// for at least `parallelMinLengthM`; for each, the nearest other road
@@ -282,50 +283,68 @@ public enum RoutePerturber {
         return bearingDeg(offset(points[0], end))
     }
 
-    /// Drivable edges leaving pack node `node` other than `exclude`, with
-    /// their points in travel order (from the node).
-    static func leaving(_ network: RoadNetwork, pack p: Int, node: Int, exclude: Set<Int>)
-        -> [(edge: RoadNetwork.EdgeRef, points: [RoadPoint])]
-    {
-        let pack = network.packs[p]
+    /// Every drivable way out of the point `p`, in any pack (segments
+    /// listed in its cell, shadowed copies excluded): along each edge that
+    /// has a point equal to `p`, forwards when `p` is not its last point,
+    /// backwards when it is two-way and `p` is not its first. Points in
+    /// travel order, starting at `p`.
+    static func leaving(_ network: RoadNetwork, at p: RoadPoint) -> [(edge: RoadNetwork.EdgeRef, points: [RoadPoint])] {
+        var edges: [RoadNetwork.EdgeRef] = []
+        var seen: Set<RoadNetwork.EdgeRef> = []
+        for ref in network.segments(nearLatitude: p.latitude, longitude: p.longitude) {
+            let s = network.segment(ref)
+            guard s.a == p || s.b == p else { continue }
+            let e = RoadNetwork.EdgeRef(pack: ref.pack, edge: s.edgeIndex)
+            if seen.insert(e).inserted { edges.append(e) }
+        }
         var out: [(edge: RoadNetwork.EdgeRef, points: [RoadPoint])] = []
-        for f in pack.incidentEdges(node) where !exclude.contains(f) {
-            let r = pack.edge(f)
-            let ref = RoadNetwork.EdgeRef(pack: p, edge: f)
-            if Int(r.from) == node { out.append((ref, travelPoints(network, ref, forward: true))) }
-            if Int(r.to) == node, !r.isOneway, r.from != r.to {
-                out.append((ref, travelPoints(network, ref, forward: false)))
+        for e in edges {
+            let points = travelPoints(network, e, forward: true)
+            let oneway = network.packs[e.pack].edge(e.edge).isOneway
+            for j in points.indices where points[j] == p {
+                if j < points.count - 1 { out.append((e, Array(points[j...]))) }
+                if j > 0, !oneway { out.append((e, Array(points[...j].reversed()))) }
             }
         }
         return out
+    }
+
+    /// The vertex of a matched edge at `alongM` (metres from its first
+    /// point), when one is within 1 m.
+    static func vertex(_ network: RoadNetwork, _ e: RoadNetwork.EdgeRef, at alongM: Double) -> Int? {
+        let points = travelPoints(network, e, forward: true)
+        var s = 0.0
+        for j in points.indices {
+            if j > 0 { s += RoadGeometry.distanceM(from: points[j - 1], to: points[j]) }
+            if abs(s - alongM) < 1 { return j }
+        }
+        return nil
     }
 
     static func missedTurn(_ base: Route, match: RouteEdgeMatch, network: RoadNetwork, seed: UInt64)
         -> (route: Route, info: ReplayRoutePerturbation)?
     {
         let edges = match.edges
-        struct Candidate { var along: Double; var node: RoadPoint; var straight: [RoadPoint]; var pack: Int; var nodeIndex: Int; var incoming: Double }
+        struct Candidate { var along: Double; var node: RoadPoint; var straight: [RoadPoint]; var incoming: Double }
         var candidates: [Candidate] = []
         for i in edges.indices.dropLast() {
             let a = edges[i], b = edges[i + 1]
-            guard RouteEdgeMatcher.contiguous(edges, i, i + 1), a.edge.pack == b.edge.pack else { continue }
-            let pack = network.packs[a.edge.pack]
-            let ra = pack.edge(a.edge.edge)
-            let lengthA = Double(ra.lengthDm) / 10
-            // The route must leave a at its end node.
-            let atEnd = a.forward ? a.edgeToM >= lengthA - 1 : a.edgeToM <= 1
-            guard atEnd else { continue }
-            let node = Int(a.forward ? ra.to : ra.from)
-            let inPoints = Array(travelPoints(network, a.edge, forward: !a.forward))  // from the node backwards
-            let incoming = (headBearing(inPoints) + 180).truncatingRemainder(dividingBy: 360)
-            let outRoute = headBearing(travelPoints(network, b.edge, forward: b.forward))
-            guard abs(diffDeg(outRoute, incoming)) >= RoutePerturbation.minTurnDegrees else { continue }
-            let options = leaving(network, pack: a.edge.pack, node: node, exclude: [a.edge.edge, b.edge.edge])
+            guard RouteEdgeMatcher.contiguous(edges, i, i + 1),
+                  let ja = vertex(network, a.edge, at: a.edgeToM), let jb = vertex(network, b.edge, at: b.edgeFromM) else { continue }
+            let pa = travelPoints(network, a.edge, forward: true), pb = travelPoints(network, b.edge, forward: true)
+            guard pa[ja] == pb[jb] else { continue }
+            let node = pa[ja]
+            // Back along a from the node (against travel), and on along b.
+            let back = a.forward ? Array(pa[...ja].reversed()) : Array(pa[ja...])
+            let on = b.forward ? Array(pb[jb...]) : Array(pb[...jb].reversed())
+            guard back.count >= 2, on.count >= 2 else { continue }
+            let incoming = (headBearing(back) + 180).truncatingRemainder(dividingBy: 360)
+            guard abs(diffDeg(headBearing(on), incoming)) >= RoutePerturbation.minTurnDegrees else { continue }
+            let options = leaving(network, at: node)
                 .map { ($0, abs(diffDeg(headBearing($0.points), incoming))) }
                 .filter { $0.1 <= RoutePerturbation.straightDegrees }
             guard let best = options.min(by: { ($0.1, $0.0.edge) < ($1.1, $1.0.edge) }) else { continue }
-            candidates.append(Candidate(along: a.routeToM, node: pack.node(node), straight: best.0.points,
-                                        pack: a.edge.pack, nodeIndex: node, incoming: incoming))
+            candidates.append(Candidate(along: a.routeToM, node: node, straight: best.0.points, incoming: incoming))
         }
         guard !candidates.isEmpty else { return nil }
         let chosen = Int(seed % UInt64(candidates.count))
@@ -334,9 +353,7 @@ public enum RoutePerturber {
         var wrong: [RoadPoint] = [c.node]
         var length = 0.0
         var current = c.straight
-        var heading = c.incoming
-        var visitedNodes: Set<Int> = [c.nodeIndex]
-        let pack = network.packs[c.pack]
+        var visited: Set<RoadPoint> = [c.node]
         walk: while true {
             for p in current.dropFirst() {
                 let previous = wrong[wrong.count - 1]
@@ -355,13 +372,11 @@ public enum RoutePerturber {
                 length += step
                 wrong.append(p)
             }
-            guard current.count >= 2 else { break }
-            heading = bearingDeg(offset(current[current.count - 2], current[current.count - 1]))
-            // The node at the end of this edge.
-            let endPoint = current[current.count - 1]
-            guard let endNode = nodeIndex(pack, at: endPoint), visitedNodes.insert(endNode).inserted else { break }
-            let next = leaving(network, pack: c.pack, node: endNode, exclude: [])
-                .filter { $0.points.count >= 2 && $0.points[1] != current[current.count - 2] }
+            let end = current[current.count - 1]
+            guard visited.insert(end).inserted else { break }
+            let heading = bearingDeg(offset(current[current.count - 2], end))
+            let next = leaving(network, at: end)
+                .filter { $0.points[1] != current[current.count - 2] }
                 .map { ($0, abs(diffDeg(headBearing($0.points), heading))) }
                 .filter { $0.1 <= RoutePerturbation.straightDegrees }
                 .min { ($0.1, $0.0.edge) < ($1.1, $1.0.edge) }
@@ -377,19 +392,6 @@ public enum RoutePerturber {
         return (route, ReplayRoutePerturbation(mode: RoutePerturbation.missedTurn.rawValue, seed: seed,
                                                candidates: candidates.count, chosen: chosen, atAlongM: c.along,
                                                wrongLengthM: length, lateralM: nil))
-    }
-
-    /// The node of `pack` at `point`, found through the edges listed in the
-    /// point's cell (an edge end with equal coordinates).
-    static func nodeIndex(_ pack: RoadPack, at point: RoadPoint) -> Int? {
-        let cell = pack.grid.cell(latitude: point.latitude, longitude: point.longitude)
-        var found: Int?
-        pack.forEachSegment(inCellX: cell.cx, y: cell.cy) { start in
-            guard found == nil else { return }
-            let r = pack.edge(pack.edgeOfPoint(start))
-            if pack.node(Int(r.from)) == point { found = Int(r.from) } else if pack.node(Int(r.to)) == point { found = Int(r.to) }
-        }
-        return found
     }
 
     static func parallel(_ base: Route, match: RouteEdgeMatch, network: RoadNetwork, seed: UInt64)

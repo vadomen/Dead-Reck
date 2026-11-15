@@ -144,6 +144,25 @@ struct ReplayRouteTests {
         #expect(RoutePerturber.perturb(base, mode: .missedTurn, match: match, network: net, seed: 7)?.route == wrong)
     }
 
+    @Test("missed-turn across packs: the straight way on is in the other pack, and ends where nothing goes on")
+    func missedTurnAcrossPacks() throws {
+        // Pack A: the street up to the junction and the side street east;
+        // pack B: the street on north of the junction, 300 m long.
+        let a = try RoadFixture.build([
+            M.way(1, M.residential, [(1, 0, -600), (2, 0, 0)]),
+            M.way(2, M.residential, [(2, 0, 0), (3, 600, 0)]),
+        ])
+        let b = try RoadFixture.build([M.way(3, M.residential, [(2, 0, 0), (4, 0, 300)])])
+        let net = try RoadNetwork(packs: [a, b])
+        let base = try Self.route([(0, -500), (0, 0), (500, 0)])
+        let match = RouteEdgeMatcher(network: net).match(base)
+        #expect(match.coverage > 0.99)
+        let (wrong, info) = try #require(RoutePerturber.perturb(base, mode: .missedTurn, match: match, network: net, seed: 0))
+        #expect(info.candidates == 1 && abs(info.wrongLengthM - 300) < 1)
+        let end = RoadFixture.metres(RoadPoint(latE7: wrong.polyline.last!.latE7, lonE7: wrong.polyline.last!.lonE7))
+        #expect(abs(end.east) < 0.5 && abs(end.north - 300) < 1, "end \(end)")
+    }
+
     @Test("missed-turn: the seed picks among the turns in route order")
     func missedTurnSeed() throws {
         let net = try Self.crossNetwork()
