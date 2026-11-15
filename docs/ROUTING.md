@@ -220,6 +220,17 @@ So some drives have none:
 - drive-9, manual and manual-3: **pin-anchored, not scored**. They have no clean track.
 - jammed-A and jammed-B: no source.
 
+Independent check (drive-analyst, 2026-11-15; details in `docs/NAVIGATION.md`
+"Prompt 51 E.3"): the clean-fix selection, coverage (within 0.02) and cross-track
+numbers were reproduced. clean-long is trustworthy for the whole drive. drive-8 is
+trustworthy, but on two dual-carriageway stretches the reference sits 10–14 m off the
+true carriageway (matched, just inside 15 m). drive-7 is trustworthy only for its
+clean span, the last ~270 s; its weak flag comes from one residential oneway that was
+driven against its mapped direction (mapping error or contraflow: unresolved), so it
+is a pack-data property, not route quality. clean is trustworthy only for 6–122 s
+and 202–~361 s: its tail (~362–445 s) is unmapped and slow, and 623 m of its length
+is a chord across a GNSS hole.
+
 BACKLOG `ROUTE-REF-CONFIRMED` (user, a prerequisite of prompt 53) is the way out: a
 candidate rendered for the driver to confirm or correct, stored in git-ignored
 `logs/routes/`. Reference routes are never in the repo. First measurements:

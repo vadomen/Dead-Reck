@@ -921,9 +921,17 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   - **No route flag**: a v7 recording's own `route` rows are used, each active
     until the next `route` or `routeCleared` row or the end of the run.
   - Output: `metrics.json` gets an optional `route` key (coverage, gaps, edges,
-    windows, perturbation, reference fix counts, estimate statistics, and
+    windows, perturbation, reference fix counts, estimate statistics; a
+    reference route's `routes[]` entry also has `spanLengthM`,
+    `spanMatchedLengthM`, `spanCoverage` (matched length over GNSS-span length,
+    chords between spans excluded from both), `spanGaps` (gap parts inside
+    spans) and `chordGaps` (gap parts inside chords): every unmatched metre is
+    in exactly one list, and a route that is not a reference route leaves the
+    fields absent; `isWeak` stays on the whole-polyline coverage), and
     `estimateWhileWithheld`, the same statistics restricted to t after the
     `--gps` mask); the summary gets Route lines and `metrics.md` a Route block;
+    for a reference route the summary and `metrics.md` add a line such as
+    `spans only  coverage 0.840 of 3.05 km driven (chords 0.62 km left out; weak is judged on the whole polyline); gaps in spans 7 (487 m, longest 180 m), in chords 4 (307 m)`;
     the GeoJSON gets a `route` LineString feature, last. Without route flags and
     without route rows the output is byte-identical to before.
   - Definitions. **On a route edge**: the estimate's nearest road segment within
@@ -2665,12 +2673,45 @@ The estimate against the route (cross-track in metres; ranges are over the seeds
 | drive-8 | whole window | 1357 s | 3 / 10 / 16 | 92–94 % | 0 % |
 | drive-8 | after mask 785 s | 1266 s | 3 / 10 / 16 | 97–99 % | 0 % |
 
-- **clean is weak because of unmapped roads**: 83 of 216 withheld clean fixes lie more
-  than 15 m from every edge; the estimate is off road 38–44 % of the time.
-- **drive-7 is weak, probably because of a oneway** mapped against the driven
-  direction (likely, not proven): 44 withheld clean fixes have only
-  heading-incompatible edges within 15 m, the matcher rejects them, and that is
-  the 290 m gap.
+Span-only coverage (`spanCoverage`: matched length over the GNSS-span length, the
+chords between spans left out of both; `isWeak` still uses the whole polyline).
+The E.3 outputs are now per seed; no E.3 number above changed.
+
+| drive | whole polyline | spans only | span length | chords | gaps in spans (total, longest) | gaps in chords |
+|---|---|---|---|---|---|---|
+| clean-long | 0.997 | 0.997 | 7.89 km | 0 | 1 (20 m, 20 m) | 0 |
+| clean | 0.784 weak | 0.840 | 3.05 km | 0.62 km | 7 (487 m, 180 m) | 4 (307 m) |
+| drive-7 | 0.885 weak | 0.885 | 3.18 km | 0 | 4 (367 m, 290 m) | 0 |
+| drive-8 | 0.996 | 0.995 | 12.45 km | 0.39 km | 2 (57 m, 47 m) | 0 |
+
+**Independent check (drive-analyst, 2026-11-15).** It reproduced the clean-fix
+selection exactly on all four drives, the coverage within 0.02 with an independent
+matcher, and the seed-1 cross-track numbers above for all four. Verdicts:
+
+- **clean-long: trustworthy** as a reference, the whole drive.
+- **drive-8: trustworthy, with a caveat.** On two dual-carriageway stretches the
+  reference sits 10–14 m off the true carriageway: fix accuracy is about 10 m
+  there, so it is matched, but only just inside 15 m. 7.2 % of its matched
+  samples are 10–15 m off, against 0.1 % on clean-long. Excluding one such
+  stretch takes the after-mask p95 from about 10 m to 7.8 m.
+- **drive-7: trustworthy only for its clean span**, the last ~270 s; the earlier
+  fixes are all 30 m accuracy or worse. The 290 m gap is confirmed: 46 fixes at
+  about 2 m accuracy, 3–5 m from a single residential oneway, with course
+  opposite to its mapped direction (median 178 degrees). No other
+  heading-compatible road lies within 25 m, and it is the only pass over that
+  way. A mapping error cannot be told from contraflow driving with this data:
+  **unresolved**. With oneway ignored, coverage would be 0.997. So the weak flag
+  is a property of the pack data, not of the route's quality.
+- **clean: trustworthy only for 6–122 s and 202–~361 s.** Its unmatched samples
+  split as: about 42 % in the 623 m chord across a 79 s GNSS hole; about 22 % a
+  genuinely unmapped, slow tail at ~362–445 s (no segment within 30 m for 81 of
+  84 fixes); about 28 % near-misses, where mapped roads lie 15–35 m away
+  (unmapped service lanes or a geometry offset, unresolved); the rest is the start
+  manoeuvre. The after-mask off-road 38 % is almost exactly that tail, so clean's
+  on-edge and off-road shares say little about the engine. Without the tail the
+  after-mask p95 is 4 m.
+- All reversals are low-speed manoeuvres at the start or end of a drive. There
+  are no unconnected jumps inside spans and no oneway violations.
 - GNSS noise is not the limit: clean-long 0.997, drive-8 0.996.
 - Independence: drive-7's mask-after 1800 s withholds every fix after 1800 s and the
   reference starts at 1869 s, so it is independent. On drive-8 the engine gets fixes
