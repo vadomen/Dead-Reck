@@ -1314,3 +1314,18 @@ Reviewers: one fresh opus reviewer, whole range. Result: 0 BLOCKER, 1 MAJOR, 1 M
 | R90.3-2 | MINOR | `Core/Sources/DriveLoggerCore/Navigation/Replay/ReplayRoute.swift:428-434`: parallel mode's reverse-direction branch (a two-way neighbour drawn against the route taken backwards; a oneway drawn against it skipped) is never exercised by a test. | DEFERRED | BACKLOG. |
 
 Tests at HEAD 598000d: Core 1314 tests in 157 suites passed (36 known issues); release perf filter 10 passed.
+
+### Round 4
+
+Reviewers: one fresh opus reviewer, whole range. Result: 0 BLOCKER, 0 MAJOR, 2 MINOR. R90.3-1 verified covered (author mutation `back[k][j] = bestPrevious` → `0` re-checked: caught). The reviewer's mutation dropping `linked[k]` from the coverage guard was caught by `searchRespectsOneway`. No Core/Sources change since round 2; the bit-identical result stands.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R90.4-1 | MINOR | `Core/Sources/DriveLoggerCore/Navigation/Replay/ReplayRoute.swift:338`: missed-turn's incoming chord for an edge travelled against its point order (`a.forward == false`) is untested (ignoring `a.forward` survived). Roughly half of real junctions arrive on a backward edge, so a regression would silently change which junction a `--seed` picks. | DEFERRED | BACKLOG. |
+| R90.4-2 | MINOR | `Core/Sources/replay_nav/main.swift:866`: a perturbed reference route (`--route-from-reference --route-perturb`) keeps only the windows and loses `alongRanges`/`spans`, so its cross-track counts the chords and it has no span coverage. That contradicts docs/NAVIGATION.md's "spans only", and base-vs-perturbed rows are not on the same footing. | DEFERRED | BACKLOG (before prompt 53's robustness runs). |
+
+Tests at HEAD c4fb20b: Core 1314 tests in 157 suites passed (36 known issues); release perf filter 10 passed.
+
+### Run 90 summary
+
+4 rounds; 6 fixed (R90.1-1, R90.1-2, R90.1-3, R90.2-1, R90.2-2, R90.3-1), all test-only except R90.1-3 (`Route.unpack` range check); 0 rejected; 8 deferred (R90.1-4, R90.1-5, R90.1-6, R90.1-7, R90.2-3, R90.3-2, R90.4-1, R90.4-2). Final tests: Core 1314 tests in 157 suites passed (36 known issues); release perf filter 10 passed; App unchanged (871 tests passed at 5ea2762). Bit-identical: author hash proof 101/101 at d1584e8, plus the reviewer's clean seed-1 roads off/on re-run at a8616d6; Core/Sources changed after that only in `Route.unpack`, which is not reached without a route file or v7 route rows. Outcome: closed, ready to merge into `routing` (merge: pending).
