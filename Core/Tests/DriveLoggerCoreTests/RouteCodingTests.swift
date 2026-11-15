@@ -106,14 +106,53 @@ struct RouteCodingTests {
         #expect(route.source == .unknown("futureMaps"))
         #expect(route.steps[1].maneuver == .unknown("keepRightFork"))
         #expect(try F.string(route) == json)
-        // An exit number on an unknown maneuver is tolerated (dropped).
+        // An exit number on an unknown maneuver is kept and re-exported byte for byte.
         let withExit = json.replacingOccurrences(
             of: #""from":0,"instruction":"Turn right""#, with: #""exitNumber":2,"from":0,"instruction":"Turn right""#
         )
-        #expect(try Self.decode(withExit).steps[1].maneuver == .unknown("keepRightFork"))
+        let read = try Self.decode(withExit)
+        #expect(read.steps[1].maneuver == .unknown("keepRightFork", exitNumber: 2))
+        #expect(read.steps[1].maneuver != .unknown("keepRightFork"))
+        #expect(try F.string(read) == withExit)
+        // Even an exit number this build would reject on a roundabout (0) survives on an unknown name.
+        let zero = withExit.replacingOccurrences(of: #""exitNumber":2"#, with: #""exitNumber":0"#)
+        #expect(try F.string(Self.decode(zero)) == zero)
         // Equality goes by raw string.
         #expect(RouteSource.unknown("appleMaps") == .appleMaps)
         #expect(RouteManeuver.unknown("left") == .left)
+    }
+
+    @Test("Equality and hashing agree for unknown spellings of known maneuvers; a known name decodes to its case")
+    func unknownEqualsKnown() throws {
+        let pairs: [(RouteManeuver, RouteManeuver)] = [
+            (.unknown("left"), .left),
+            (.unknown("roundaboutExit", exitNumber: 2), .roundaboutExit(exit: 2)),
+            (.unknown("roundaboutExit"), .roundaboutExit(exit: nil)),
+        ]
+        for (a, b) in pairs {
+            #expect(a == b && a.hashValue == b.hashValue, "\(a) vs \(b)")
+            #expect(Set([a, b]).count == 1)
+            // Encoded, the unknown spelling reads back as the known case.
+            let read = try #require(RouteManeuver(rawName: a.rawName, exitNumber: a.exitNumber))
+            switch read {
+            case .unknown: Issue.record("\(a) read back as unknown")
+            default: #expect(read == b)
+            }
+        }
+        #expect(RouteManeuver.unknown("roundaboutExit", exitNumber: 2) != .roundaboutExit(exit: 3))
+        #expect(RouteSource.unknown("synthetic").hashValue == RouteSource.synthetic.hashValue)
+        // Through a route: an unknown spelling of a known name round-trips to the known case.
+        let points = [RoutePoint(latE7: 0, lonE7: 0), RoutePoint(latE7: 4500, lonE7: 0)]
+        func route(_ m: RouteManeuver) throws -> Route {
+            try Route(id: "u", polyline: points,
+                      steps: [RouteStep(instruction: "", distanceM: 50, polylineRange: 0...1, maneuver: m)],
+                      distanceM: 50, expectedTravelTimeS: 5, source: .unknown("synthetic"))
+        }
+        let decoded = try JSONDecoder().decode(Route.self, from: F.encode(route(.unknown("roundaboutExit", exitNumber: 4))))
+        if case .roundaboutExit(exit: 4) = decoded.steps[0].maneuver {} else { Issue.record("not decoded as roundaboutExit(4)") }
+        if case .synthetic = decoded.source {} else { Issue.record("source not decoded as synthetic") }
+        // An exit number on a known non-roundabout name cannot be written.
+        #expect(throws: RouteError.invalidExitNumber(stepIndex: 0)) { try route(.unknown("left", exitNumber: 3)) }
     }
 
     @Test("The raw strings are frozen format")

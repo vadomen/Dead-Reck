@@ -13,7 +13,7 @@ import Foundation
 ///
 /// JSON keys (part of the log format): `distanceM`, `from`, `instruction`,
 /// `maneuver`, `to`, and `exitNumber` only on a `roundaboutExit` with a known
-/// exit number.
+/// exit number (or on an unknown maneuver that was read with one).
 public struct RouteStep: Hashable, Sendable {
     /// The provider's text, as given; may be empty.
     public let instruction: String
@@ -38,6 +38,11 @@ public struct RouteStep: Hashable, Sendable {
         guard distanceM.isFinite, distanceM >= 0 else { throw RouteError.invalidStepDistance(stepIndex: stepIndex) }
         guard polylineRange.lowerBound >= 0 else { throw RouteError.stepOutOfBounds(stepIndex: stepIndex) }
         if case .roundaboutExit(let exit?) = maneuver, exit < 1 {
+            throw RouteError.invalidExitNumber(stepIndex: stepIndex)
+        }
+        // An exit number on a known name other than roundaboutExit, even
+        // spelled as `.unknown`, could not be read back.
+        if RouteManeuver(rawName: maneuver.rawName, exitNumber: maneuver.exitNumber) == nil {
             throw RouteError.invalidExitNumber(stepIndex: stepIndex)
         }
     }

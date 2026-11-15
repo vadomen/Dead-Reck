@@ -22,9 +22,11 @@ import Foundation
 /// - `steps[].from` / `to`: inclusive polyline index bounds; the step's
 ///   maneuver happens at `to` (`RouteStep`).
 /// - `label` is omitted when nil. `steps[].exitNumber` appears only on a
-///   `roundaboutExit` step whose exit number is known (`RouteStep`).
+///   `roundaboutExit` step whose exit number is known, or on an unknown
+///   maneuver read with one (`RouteStep`).
 /// - Unknown `source` and `maneuver` strings decode to `.unknown` and keep
-///   their string, so a route written by a newer build survives a re-export.
+///   their string (and a step's exit number), so a route written by a newer
+///   build survives a re-export byte for byte.
 /// - Decoding rejects malformed input: an odd or short `polylineE7`, a
 ///   coordinate out of range, a step range out of bounds or out of order, a
 ///   negative or non-finite distance or time (`RouteError`).

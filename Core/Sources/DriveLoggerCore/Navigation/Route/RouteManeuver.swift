@@ -10,9 +10,12 @@ import Foundation
 /// matcher).
 ///
 /// The raw names are on disk (`steps[].maneuver`): never change one. An
-/// unknown name decodes to `.unknown` and keeps its string. Equality and
-/// hashing go by `rawName` and `exitNumber`, so `.unknown("left")` equals
-/// `.left`.
+/// unknown name decodes to `.unknown` and keeps its string and its
+/// `exitNumber`, so a newer writer's step re-exports byte for byte. A known
+/// name always decodes to its own case. Equality and hashing both go by
+/// `rawName` and `exitNumber` (so they agree): `.unknown("left")` equals
+/// `.left`, and `.unknown("roundaboutExit", exitNumber: 2)` equals
+/// `.roundaboutExit(exit: 2)`.
 public enum RouteManeuver: Sendable, CustomStringConvertible {
     case depart
     case straight
@@ -24,8 +27,9 @@ public enum RouteManeuver: Sendable, CustomStringConvertible {
     case merge
     case exitRamp
     case arrive
-    /// A maneuver this build does not know; the raw name is kept.
-    case unknown(String)
+    /// A maneuver this build does not know; the raw name and the exit
+    /// number (when the step had one) are kept.
+    case unknown(String, exitNumber: Int? = nil)
 
     /// The on-disk name, without the exit number.
     public var rawName: String {
@@ -43,19 +47,23 @@ public enum RouteManeuver: Sendable, CustomStringConvertible {
         case .merge: "merge"
         case .exitRamp: "exitRamp"
         case .arrive: "arrive"
-        case .unknown(let name): name
+        case .unknown(let name, _): name
         }
     }
 
-    /// The exit number of a `roundaboutExit`, else nil.
+    /// The exit number of a `roundaboutExit`, or the one an unknown
+    /// maneuver was read with; else nil.
     public var exitNumber: Int? {
-        if case .roundaboutExit(let exit) = self { return exit }
-        return nil
+        switch self {
+        case .roundaboutExit(let exit): exit
+        case .unknown(_, let exit): exit
+        default: nil
+        }
     }
 
-    /// Parses an on-disk name. Nil when `exitNumber` is given on a known
-    /// maneuver other than `roundaboutExit` (malformed). On an unknown name
-    /// the exit number is ignored.
+    /// Parses an on-disk name: a known name gives its case. Nil when
+    /// `exitNumber` is given on a known maneuver other than `roundaboutExit`
+    /// (malformed). An unknown name keeps the exit number as it is.
     public init?(rawName: String, exitNumber: Int? = nil) {
         let parsed: RouteManeuver = switch rawName {
         case "depart": .depart
@@ -71,7 +79,7 @@ public enum RouteManeuver: Sendable, CustomStringConvertible {
         case "merge": .merge
         case "exitRamp": .exitRamp
         case "arrive": .arrive
-        default: .unknown(rawName)
+        default: .unknown(rawName, exitNumber: exitNumber)
         }
         switch parsed {
         case .roundaboutExit, .unknown: break
