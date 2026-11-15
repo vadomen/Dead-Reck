@@ -1271,3 +1271,23 @@ Tests at HEAD cc6d93b: Core 1237 tests in 149 suites passed (36 known issues).
 ### Run 89 summary
 
 4 rounds; 5 fixed (R89.1-1, R89.1-2, R89.2-1, R89.3-1, R89.3-2), all test-only; 0 rejected; 2 deferred (R89.2-2, R89.4-1). Final tests: Core 1237 tests in 149 suites passed (36 known issues); release NavigationRoadPerfTests and NavigationB0Tests passed at cf42628 (Core/Sources unchanged since); replay acceptance matrix 101/101 identical to 5758ab4 (wall-time fields only). Outcome: closed, ready to merge into `routing`.
+
+## Run 90: Prompt 51 R1 (MapKit spike docs, route model, RouteEdgeMatcher, log v7 route rows, routes in replay_nav, reference routes) (routing..r1-route-core: 809fa59..a8616d6), started 2026-11-15
+
+Note: on branch `routing` (decision D6), not `main`.
+
+### Round 1
+
+Reviewers: three fresh opus reviewers on disjoint sets. A: Route model + RouteEdgeMatcher. B: log v7, inspect_log, CSV, fixtures, LOG_FORMAT, CLAUDE.md. C: replay, replay_nav, docs. Result: 0 BLOCKER, 3 MAJOR, 4 MINOR. Bit-identical re-run (C): clean, seed 1, roads off and on, base 809fa59 vs a8616d6, GeoJSON byte-identical, metrics differ only in msPerStep/maxIngestMs; with `--route-from-reference` and with `--route-perturb missed-turn`, metrics minus `route`/mode/timing are identical to base (the engine ignores the route). B: v1–v6 fixtures byte-unchanged (append-only hunk). Author mutations re-checked, all caught: `activeRouteID = nil` removed (B); oneway candidate filter disabled (A); `projectionRanges` not narrowed (C).
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R90.1-1 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/Roads/RouteEdgeMatcher.swift:500`: the graph search's guard against entering a oneway backwards was untested (`(c.toPoint <= 0 \|\| fg.record.isOneway)` → `(c.toPoint <= 0)` survived). Only the per-sample candidate filter was covered, so a sub-10 m oneway connector could be matched against its direction. | FIXED | 64601ef (test only): `RouteEdgeMatcherTests/searchRespectsOneway`, an 8 m connector against the route; mutation caught. |
+| R90.1-2 | MAJOR | `RouteEdgeMatcher.swift:263`: the roundabout exit count's rule that an entry-only oneway arm is not an exit was untested (`return true` survived; the only roundabout fixture had two-way arms). | FIXED | 64601ef (test only): `RouteEdgeMatcherTests/roundaboutExitRule` with entry-only, exit-only and roundabout-tagged pieces at ring nodes; both rule mutations caught. |
+| R90.1-3 | MAJOR (reviewer: MINOR; raised by the orchestrator: a reader must never crash on a damaged line) | `Core/Sources/DriveLoggerCore/Navigation/Route/Route.swift:263`: `abs()` trapped on `Int64.min` in `polylineE7`, crashing the reader instead of throwing, which bypassed `LogRecovery.skipMalformedLines`. | FIXED | 64601ef: range check without `abs`; three `Int64.min` inputs throw; `int64MinLineSkipped` shows recovery skips the line. |
+| R90.1-4 | MINOR | `Core/Sources/DriveLoggerCore/Log/RecordingCSV.swift:125`: no test tells route.csv `points` from `steps` (the test route has 3 of each; swapping survived). | DEFERRED | BACKLOG. |
+| R90.1-5 | MINOR | `docs/NAVIGATION.md:942-943`: "coverage includes the chords, which can only lower it" is wrong; a chord on a mapped road raises whole-polyline coverage (drive-8 0.996 whole vs 0.995 spans). Weak on the whole polyline is not conservative. | DEFERRED | BACKLOG. |
+| R90.1-6 | MINOR | `Core/Sources/DriveLoggerCore/Navigation/Replay/ReplayRoute.swift:680`: the "either direction" heading rule for "on a route edge" is untested (`oneway: false` → `true` survived). | DEFERRED | BACKLOG. |
+| R90.1-7 | MINOR | `ReplayRoute.swift:342`: the missed-turn "route turns ≥ 45°" candidate guard is untested (removing it survived); straight-through boundaries could yield a "wrong" route identical to the base. | DEFERRED | BACKLOG. |
+
+Tests at HEAD 64601ef: Core 1311 tests in 157 suites passed (36 known issues); release NavigationRoadPerfTests, NavigationB0Tests and RouteEdgeMatcherPerfTests passed (10 tests). App/ unchanged in the range.
