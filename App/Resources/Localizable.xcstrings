@@ -1,6 +1,36 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "%@ · %@" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ · %@"
+          }
+        }
+      }
+    },
+    "%@ · %@ left" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ · %2$@ залишилось"
+          }
+        }
+      }
+    },
+    "%@ km" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ км"
+          }
+        }
+      }
+    },
     "-- MB" : {
       "localizations" : {
         "uk" : {
@@ -102,6 +132,26 @@
         }
       }
     },
+    "%@ on known roads" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ на відомих дорогах"
+          }
+        }
+      }
+    },
+    "%@ on known roads (weak)" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ на відомих дорогах (слабко)"
+          }
+        }
+      }
+    },
     "%@ unavailable: %@" : {
       "localizations" : {
         "uk" : {
@@ -173,6 +223,236 @@
         }
       }
     },
+    "Address or place" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Адреса або місце"
+          }
+        }
+      }
+    },
+    "Apple Maps is busy. Try again in a moment." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apple Maps зайняті. Спробуйте за мить."
+          }
+        }
+      }
+    },
+    "Arrive" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Прибуття"
+          }
+        }
+      }
+    },
+    "Arrived" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Прибули"
+          }
+        }
+      }
+    },
+    "Away from the route" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поза маршрутом"
+          }
+        }
+      }
+    },
+    "Cancel route" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скасувати маршрут"
+          }
+        }
+      }
+    },
+    "Clear recent destinations" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Очистити нещодавні пункти призначення"
+          }
+        }
+      }
+    },
+    "Clear recent destinations?" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Очистити нещодавні пункти призначення?"
+          }
+        }
+      }
+    },
+    "Clear text" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Очистити текст"
+          }
+        }
+      }
+    },
+    "Close" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Закрити"
+          }
+        }
+      }
+    },
+    "Could not rebuild. The current route stays." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не вдалося перебудувати. Поточний маршрут залишається."
+          }
+        }
+      }
+    },
+    "Destination" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пункт призначення"
+          }
+        }
+      }
+    },
+    "Dropped pin" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Позначена точка"
+          }
+        }
+      }
+    },
+    "End route" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Завершити маршрут"
+          }
+        }
+      }
+    },
+    "End this route?" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Завершити цей маршрут?"
+          }
+        }
+      }
+    },
+    "Exit" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Зʼїзд"
+          }
+        }
+      }
+    },
+    "Finding routes…" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пошук маршрутів…"
+          }
+        }
+      }
+    },
+    "Home" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Дім"
+          }
+        }
+      }
+    },
+    "Keep current route" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Залишити поточний маршрут"
+          }
+        }
+      }
+    },
+    "Keep in recents" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Залишити в нещодавніх"
+          }
+        }
+      }
+    },
+    "Keep route" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Залишити маршрут"
+          }
+        }
+      }
+    },
+    "Kept on this iPhone only, never sent to us." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Лише на цьому iPhone, нам не надсилаються."
+          }
+        }
+      }
+    },
+    "Left" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ліворуч"
+          }
+        }
+      }
+    },
     "%lld dBm" : {
       "localizations" : {
         "uk" : {
@@ -235,6 +515,26 @@
         }
       }
     },
+    "%lld h %lld min" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld год %2$lld хв"
+          }
+        }
+      }
+    },
+    "%lld m" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld м"
+          }
+        }
+      }
+    },
     "%lld maps" : {
       "localizations" : {
         "en" : {
@@ -283,6 +583,16 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "%lld min" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld хв"
           }
         }
       }
@@ -2203,12 +2513,32 @@
         }
       }
     },
+    "Matching…" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Зіставлення…"
+          }
+        }
+      }
+    },
     "Memory" : {
       "localizations" : {
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Памʼять"
+          }
+        }
+      }
+    },
+    "Merge" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Злиття"
           }
         }
       }
@@ -2386,6 +2716,16 @@
         }
       }
     },
+    "No active route" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Немає активного маршруту"
+          }
+        }
+      }
+    },
     "No adapter chosen" : {
       "localizations" : {
         "uk" : {
@@ -2448,6 +2788,16 @@
         }
       }
     },
+    "No internet connection" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Немає зʼєднання з інтернетом"
+          }
+        }
+      }
+    },
     "No location access — the map can't show where you are" : {
       "comment" : "Map bottom line when Location is refused (followed by the Settings button).",
       "localizations" : {
@@ -2496,6 +2846,16 @@
         }
       }
     },
+    "No reliable position. A pin on the map sets it." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Немає надійної позиції. Її можна задати позначкою на карті."
+          }
+        }
+      }
+    },
     "No road map here · %@" : {
       "localizations" : {
         "uk" : {
@@ -2522,6 +2882,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Карт доріг не встановлено"
+          }
+        }
+      }
+    },
+    "No road pack covers the route" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Жодна карта доріг не покриває маршрут"
           }
         }
       }
@@ -2553,6 +2923,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Немає карт доріг — навігація без доріг"
+          }
+        }
+      }
+    },
+    "No saved destinations yet" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Збережених пунктів призначення ще немає"
           }
         }
       }
@@ -2727,6 +3107,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "не перевірено"
+          }
+        }
+      }
+    },
+    "Nothing found" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нічого не знайдено"
           }
         }
       }
@@ -3185,6 +3575,16 @@
         }
       }
     },
+    "Pin" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Закріпити"
+          }
+        }
+      }
+    },
     "Plug the adapter into the car's OBD port, then pair it once in Settings → OBD adapter. After that, navigation starts by itself whenever the adapter connects." : {
       "localizations" : {
         "uk" : {
@@ -3235,6 +3635,16 @@
         }
       }
     },
+    "Position uncertain" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Позиція невизначена"
+          }
+        }
+      }
+    },
     "Privacy policy" : {
       "localizations" : {
         "uk" : {
@@ -3281,6 +3691,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "У черзі"
+          }
+        }
+      }
+    },
+    "Rebuild" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перебудувати"
+          }
+        }
+      }
+    },
+    "Recent" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нещодавні"
           }
         }
       }
@@ -3517,6 +3947,26 @@
         }
       }
     },
+    "Retry" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Повторити"
+          }
+        }
+      }
+    },
+    "Right" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Праворуч"
+          }
+        }
+      }
+    },
     "Road data © OpenStreetMap contributors, available under the Open Database License (ODbL) 1.0." : {
       "localizations" : {
         "uk" : {
@@ -3573,6 +4023,96 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Дороги в роботі"
+          }
+        }
+      }
+    },
+    "Roundabout exit" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Виїзд із кільця"
+          }
+        }
+      }
+    },
+    "Route" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Маршрут"
+          }
+        }
+      }
+    },
+    "Route anyway" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Прокласти все одно"
+          }
+        }
+      }
+    },
+    "Route %lld of %lld, %@" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Маршрут %1$lld з %2$lld, %3$@"
+          }
+        }
+      }
+    },
+    "Route roads" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Дороги маршруту"
+          }
+        }
+      }
+    },
+    "Route started" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Маршрут розпочато"
+          }
+        }
+      }
+    },
+    "Save as Home" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Зберегти як «Дім»"
+          }
+        }
+      }
+    },
+    "Save as Work" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Зберегти як «Робота»"
+          }
+        }
+      }
+    },
+    "Saved destinations" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Збережені пункти призначення"
           }
         }
       }
@@ -3718,6 +4258,26 @@
         }
       }
     },
+    "Sharp left" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Різко ліворуч"
+          }
+        }
+      }
+    },
+    "Sharp right" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Різко праворуч"
+          }
+        }
+      }
+    },
     "Showing the saved list." : {
       "localizations" : {
         "uk" : {
@@ -3768,6 +4328,36 @@
         }
       }
     },
+    "Slight left" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Трохи ліворуч"
+          }
+        }
+      }
+    },
+    "Slight right" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Трохи праворуч"
+          }
+        }
+      }
+    },
+    "Something went wrong." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Щось пішло не так."
+          }
+        }
+      }
+    },
     "Speak GPS changes" : {
       "localizations" : {
         "uk" : {
@@ -3794,6 +4384,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "ПОЧАТИ"
+          }
+        }
+      }
+    },
+    "Start" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Почати"
           }
         }
       }
@@ -3934,6 +4534,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Використано памʼяті: %@"
+          }
+        }
+      }
+    },
+    "Straight" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Прямо"
+          }
+        }
+      }
+    },
+    "Straight line, %@" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "По прямій: %@"
           }
         }
       }
@@ -4137,6 +4757,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "OBD-адаптер не опитує авто. Підключіть його в Налаштування → OBD-адаптер або оберіть запис без OBD."
+          }
+        }
+      }
+    },
+    "The pin is your starting point." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Позначка — ваша точка відправлення."
           }
         }
       }
@@ -4383,6 +5013,16 @@
         }
       }
     },
+    "U-turn" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Розворот"
+          }
+        }
+      }
+    },
     "Vehicle note (e.g. Touareg 2025)" : {
       "localizations" : {
         "uk" : {
@@ -4453,12 +5093,42 @@
         }
       }
     },
+    "When you search for a place or ask for a route, your search text and the route's start and end are sent to Apple (MapKit). Nothing is sent to us." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Коли ви шукаєте місце або просите маршрут, текст пошуку та початок і кінець маршруту надсилаються до Apple (MapKit). Нам нічого не надсилається."
+          }
+        }
+      }
+    },
+    "Where to?" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Куди їдемо?"
+          }
+        }
+      }
+    },
     "While navigating or recording, says \"%@\", \"%@\" or \"%@\", at most once every 5 minutes each." : {
       "localizations" : {
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Під час навігації або запису озвучує «%1$@», «%2$@» чи «%3$@» — не частіше ніж раз на 5 хвилин кожне."
+          }
+        }
+      }
+    },
+    "Work" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Робота"
           }
         }
       }
@@ -4551,6 +5221,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Для цих регіонів ви обрали «Ніколи». Скиньте, щоб карту знову пропонували під час зупинки."
+          }
+        }
+      }
+    },
+    "Your position is uncertain. A pin on the map sets it." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Позиція невизначена. Її можна задати позначкою на карті."
           }
         }
       }
