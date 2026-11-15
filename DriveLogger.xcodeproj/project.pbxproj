@@ -88,6 +88,7 @@
 		7DD66338B59A7A207D14CEA0 /* DisplayFormat.swift in Sources */ = {isa = PBXBuildFile; fileRef = B53946399BBD92F429878756 /* DisplayFormat.swift */; };
 		7F69D364F14A6FD77890E104 /* RecordingSessionNavigateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5B25FA2C706670738AB0C42 /* RecordingSessionNavigateTests.swift */; };
 		80920D5FFE9F6525692A73C6 /* BLECentralTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18315FE7C7FFF70B0B2850DD /* BLECentralTests.swift */; };
+		8184284DF378556916F8129A /* RecordingRouteRowsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BBE04F1C3EA901EA1AD0199 /* RecordingRouteRowsTests.swift */; };
 		81F5EBBAA98312994EF58596 /* NavigationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B18D429E4AABA5D1F5FC2F96 /* NavigationService.swift */; };
 		82891859E116200BA6C5A457 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86A02542CBEAAABFB5818C05 /* SettingsView.swift */; };
 		871718535B66E899906E77B8 /* DeveloperGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE42CD1A4F400CC1B8396393 /* DeveloperGate.swift */; };
@@ -269,6 +270,7 @@
 		79AA76F90AA76DBBFB107AF4 /* PackNetworkMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PackNetworkMonitor.swift; sourceTree = "<group>"; };
 		79BD174ED6261D2946AA43BC /* MapViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapViewModel.swift; sourceTree = "<group>"; };
 		7A7D538948AB7548114E94F4 /* PackDownloadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PackDownloadTests.swift; sourceTree = "<group>"; };
+		7BBE04F1C3EA901EA1AD0199 /* RecordingRouteRowsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingRouteRowsTests.swift; sourceTree = "<group>"; };
 		7CEF883B97D59B155B858636 /* NavigationFeed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NavigationFeed.swift; sourceTree = "<group>"; };
 		7E9EAA45AA9D251A77C9D3F3 /* MapHUDViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapHUDViews.swift; sourceTree = "<group>"; };
 		81484511F34B0A4E437C7239 /* MapSpeedTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapSpeedTests.swift; sourceTree = "<group>"; };
@@ -434,6 +436,7 @@
 				8F64AB89646F92C2F82C8308 /* PackNetworkPolicyTests.swift */,
 				BBF22D7D56F4B5DF12EBEC05 /* PackOfferMonitorTests.swift */,
 				AE6CDF84F2A1779A8758EF24 /* RecordingNavPriorTests.swift */,
+				7BBE04F1C3EA901EA1AD0199 /* RecordingRouteRowsTests.swift */,
 				0D2F9F3B73447BA4697222DE /* RecordingSessionLogHealthTests.swift */,
 				E5B25FA2C706670738AB0C42 /* RecordingSessionNavigateTests.swift */,
 				054B04838405BB2A03DF2023 /* RecordingSessionTests.swift */,
@@ -862,6 +865,7 @@
 				69ED61874A6618CC10CFDD47 /* PackNetworkPolicyTests.swift in Sources */,
 				B5FB756B281D7438DD5EF5B0 /* PackOfferMonitorTests.swift in Sources */,
 				F6834EE1342DA37B6CBF1DF7 /* RecordingNavPriorTests.swift in Sources */,
+				8184284DF378556916F8129A /* RecordingRouteRowsTests.swift in Sources */,
 				C945C19EA207DDAC807ED960 /* RecordingSessionLogHealthTests.swift in Sources */,
 				7F69D364F14A6FD77890E104 /* RecordingSessionNavigateTests.swift in Sources */,
 				7AC8D2001A8B6452A3F6D8FE /* RecordingSessionTests.swift in Sources */,
