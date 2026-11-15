@@ -415,6 +415,14 @@ public enum ReplayReport {
                          + String(format: ", coverage %.3f", e.coverage) + (e.isWeak ? " (weak)" : "")
                          + ", \(e.gaps.count) gap\(e.gaps.count == 1 ? "" : "s")" + String(format: " (longest %.0f m)", longest)
                          + ", \(e.edges) edges; time " + (windows.count > 4 ? windows.prefix(4).joined(separator: ", ") + ", … (\(windows.count) windows)" : windows.joined(separator: ", ")))
+            if let spanCoverage = e.spanCoverage, let spanLength = e.spanLengthM {
+                let spanGaps = e.spanGaps ?? [], chordGaps = e.chordGaps ?? []
+                lines.append("  spans only  " + String(format: "coverage %.3f of %.2f km driven (chords %.2f km left out; weak is judged on the whole polyline)",
+                                                       spanCoverage, spanLength / 1000, (e.lengthM - spanLength) / 1000)
+                             + "; gaps in spans \(spanGaps.count)" + String(format: " (%.0f m, longest %.0f m)", spanGaps.reduce(0) { $0 + $1.lengthM },
+                                                                         spanGaps.map(\.lengthM).max() ?? 0)
+                             + ", in chords \(chordGaps.count)" + String(format: " (%.0f m)", chordGaps.reduce(0) { $0 + $1.lengthM }))
+            }
         }
         if let used = r.referenceFixesUsed, let seen = r.referenceFixesSeen {
             lines.append("Route ref.    \(used) clean fixes of \(seen) location rows (accuracy ≤ 20 m, speed and course valid, spans joined ≤ 5 s)"

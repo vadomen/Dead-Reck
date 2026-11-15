@@ -267,4 +267,39 @@ struct ReplayRouteTests {
         #expect((spans.crossTrackMaxM ?? 0) > 140)
         #expect((chord.crossTrackMaxM ?? 100) < 1)
     }
+
+    @Test("Span-only coverage leaves the chords out; gaps are split into span and chord parts; isWeak stays on the whole polyline")
+    func spanCoverage() throws {
+        // Roads under both spans, none under the 300 m chord between them.
+        let net = try M.network([
+            M.way(1, M.residential, [(1, 0, -800), (2, 0, 800)]),
+            M.way(2, M.residential, [(3, 300, -800), (4, 300, 800)]),
+        ])
+        let first: [NavigationInput] = (0...10).map { k in Self.fix(Double(k), 0, Double(k) * 10) }
+        let second: [NavigationInput] = (20...30).map { k in Self.fix(Double(k), 300, 100 + Double(k - 20) * 10) }
+        let reference = try #require(ReferenceRouteBuilder.build(inputs: first + second))
+        let match = RouteEdgeMatcher(network: net).match(reference.route)
+        let active = ReplayActiveRoute(route: reference.route, match: match, windows: reference.windows,
+                                       alongRanges: reference.projectionRanges, spans: reference.spans.map(\.alongM))
+        let e = ReplayRouteEvaluation.entry(active)
+        // Whole polyline: 500 m, the chord mostly unmatched.
+        #expect(abs(e.lengthM - 500) < 0.5)
+        #expect(e.coverage < 0.6 && e.isWeak)
+        // Spans only: 200 m driven, matched.
+        #expect(abs((e.spanLengthM ?? 0) - 200) < 0.5)
+        #expect((e.spanCoverage ?? 0) > 0.95, "\(String(describing: e.spanCoverage))")
+        let chord = (e.chordGaps ?? []).reduce(0) { $0 + $1.lengthM }
+        let inSpans = (e.spanGaps ?? []).reduce(0) { $0 + $1.lengthM }
+        #expect(chord > 200)
+        // Every unmatched metre is in exactly one of the two lists.
+        #expect(abs(chord + inSpans - e.gaps.reduce(0) { $0 + $1.lengthM }) < 1e-6)
+        #expect(abs((e.spanMatchedLengthM ?? 0) - ((e.spanLengthM ?? 0) - inSpans)) < 1e-9)
+        // Not a reference route: no span numbers.
+        let plain = ReplayRouteEvaluation.entry(ReplayActiveRoute(route: reference.route, match: match, windows: reference.windows))
+        #expect(plain.spanCoverage == nil && plain.chordGaps == nil)
+        // The split itself: a gap across a span end is cut there.
+        let split = ReplayRouteEvaluation.splitGaps([RouteMatchGap(startM: 80, endM: 150)], spans: [0...100, 400...500], lengthM: 500)
+        #expect(split.inSpans == [RouteMatchGap(startM: 80, endM: 100)])
+        #expect(split.inChords == [RouteMatchGap(startM: 100, endM: 150)])
+    }
 }

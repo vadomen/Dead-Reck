@@ -846,7 +846,8 @@ for path in paths {
             reference = ReferenceRouteBuilder.build(inputs: inputs, excluded: entry?.excludeFixes ?? [])
             if let reference {
                 actives = [ReplayActiveRoute(route: reference.route, match: matcher.match(reference.route),
-                                             windows: reference.windows, alongRanges: reference.projectionRanges)]
+                                             windows: reference.windows, alongRanges: reference.projectionRanges,
+                                             spans: reference.spans.map(\.alongM))]
                 from = "reference"
                 routeSuffix = "-route-ref"
             } else {

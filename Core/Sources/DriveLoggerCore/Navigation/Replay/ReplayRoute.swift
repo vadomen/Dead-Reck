@@ -522,12 +522,20 @@ public struct ReplayActiveRoute: Sendable {
     /// route's spans, so the chords between spans never count); nil: the
     /// whole polyline.
     public var alongRanges: [ClosedRange<Double>]?
+    /// A reference route's spans, metres along the polyline (exact, not
+    /// narrowed): the driven path. The rest are chords. nil: not a
+    /// reference route.
+    public var spans: [ClosedRange<Double>]?
 
-    public init(route: Route, match: RouteEdgeMatch, windows: [ReplayTimeWindow], alongRanges: [ClosedRange<Double>]? = nil) {
+    public init(
+        route: Route, match: RouteEdgeMatch, windows: [ReplayTimeWindow], alongRanges: [ClosedRange<Double>]? = nil,
+        spans: [ClosedRange<Double>]? = nil
+    ) {
         self.route = route
         self.match = match
         self.windows = windows
         self.alongRanges = alongRanges
+        self.spans = spans
     }
 }
 
@@ -561,6 +569,19 @@ public struct ReplayRouteReport: Hashable, Sendable, Codable {
         public var gaps: [RouteMatchGap]
         public var edges: Int
         public var windows: [ReplayTimeWindow]
+        /// Reference routes only (nil otherwise): coverage of the driven
+        /// path, the spans, with the straight chords between spans left out
+        /// of both the matched and the total length. `coverage` and
+        /// `isWeak` stay on the whole polyline, as `RouteEdgeMatcher`
+        /// defines them; this is reported next to them.
+        public var spanLengthM: Double?
+        public var spanMatchedLengthM: Double?
+        public var spanCoverage: Double?
+        /// The parts of `gaps` inside spans and inside chords (each gap
+        /// split at span ends; a gap wholly in a chord appears only in
+        /// `chordGaps`).
+        public var spanGaps: [RouteMatchGap]?
+        public var chordGaps: [RouteMatchGap]?
     }
 
     /// `file`, `reference` or `recording`.
@@ -664,11 +685,48 @@ public enum ReplayRouteEvaluation {
     }
 
     public static func entry(_ active: ReplayActiveRoute) -> ReplayRouteReport.Entry {
-        ReplayRouteReport.Entry(
+        var entry = ReplayRouteReport.Entry(
             id: active.route.id, source: active.route.source.rawValue, points: active.route.polyline.count,
             lengthM: active.match.routeLengthM, coverage: active.match.coverage, isWeak: active.match.isWeak,
             matchedLengthM: active.match.matchedLengthM, gaps: active.match.gaps, edges: active.match.edges.count,
             windows: active.windows
         )
+        if let spans = active.spans {
+            let split = splitGaps(active.match.gaps, spans: spans, lengthM: active.match.routeLengthM)
+            let spanLength = spans.reduce(0) { $0 + ($1.upperBound - $1.lowerBound) }
+            let unmatched = split.inSpans.reduce(0) { $0 + $1.lengthM }
+            entry.spanLengthM = spanLength
+            entry.spanMatchedLengthM = max(spanLength - unmatched, 0)
+            entry.spanCoverage = spanLength > 0 ? max(spanLength - unmatched, 0) / spanLength : 0
+            entry.spanGaps = split.inSpans
+            entry.chordGaps = split.inChords
+        }
+        return entry
+    }
+
+    /// Splits each gap at span ends into its parts inside spans and inside
+    /// the chords (everything along the polyline outside every span).
+    public static func splitGaps(_ gaps: [RouteMatchGap], spans: [ClosedRange<Double>], lengthM: Double)
+        -> (inSpans: [RouteMatchGap], inChords: [RouteMatchGap])
+    {
+        let sorted = spans.sorted { $0.lowerBound < $1.lowerBound }
+        var chords: [ClosedRange<Double>] = []
+        var cursor = 0.0
+        for s in sorted {
+            if s.lowerBound > cursor { chords.append(cursor...s.lowerBound) }
+            cursor = max(cursor, s.upperBound)
+        }
+        if lengthM > cursor { chords.append(cursor...lengthM) }
+        func parts(_ ranges: [ClosedRange<Double>]) -> [RouteMatchGap] {
+            var out: [RouteMatchGap] = []
+            for g in gaps {
+                for r in ranges {
+                    let a = max(g.startM, r.lowerBound), b = min(g.endM, r.upperBound)
+                    if b > a { out.append(RouteMatchGap(startM: a, endM: b)) }
+                }
+            }
+            return out
+        }
+        return (parts(sorted), parts(chords))
     }
 }
