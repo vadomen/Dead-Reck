@@ -186,6 +186,38 @@ struct NavigationFixJumpObserveTests {
         #expect(jumps.hits == 1)
     }
 
+    @Test func restoreRejectedLabelsOnlyTheJudgedFix() throws {
+        // R89.2-1: the drive above with threshold below 0, so every measured
+        // fix is listed. `restore.status` stays `.rejected` for the rest of
+        // the run; only the fix the judge ran on is `restoreRejected`.
+        let drive = S(initialHeadingDeg: 30, [.stop(seconds: 5), .ramp(seconds: 5, from: 0, to: 12),
+                                              .straight(seconds: 20, speed: 12)])
+        let parked = (east: 500.0, north: 800.0)
+        let p = S.plane.geodetic(east: parked.east, north: parked.north)
+        let prior = NavigationPrior(latitude: p.latitude, longitude: p.longitude, covEE: 25, covEN: 0, covNN: 25,
+                                    headingDeg: 30, headingStdDeg: 3, savedT: S.ms(-600), lastSpeedMps: 0,
+                                    restoreClass: .parked)
+        let events = drive.events(gyroNoise: 0.001, fix: { t, state, _ in
+            guard t >= 12 else { return nil }
+            return S.Fix(east: state.east + parked.east + 280, north: state.north + parked.north - 380,
+                         accuracy: 15, latency: 0.3)
+        })
+        let engine = Self.run(events, observe: Self.observation(threshold: -1), prior: prior).engine
+        #expect(engine.restore.status == .rejected && engine.restore.reason == .fix)
+        let jumps = try #require(engine.fixJumps)
+        #expect(jumps.list.count == jumps.fixesMeasured && jumps.fixesMeasured > 5, "every measured fix listed")
+        let first = try #require(jumps.list.first)
+        #expect(abs(first.fixT - 12) < 1e-9)
+        #expect(first.path == .restoreRejected && first.restore == .rejected)
+        let later = jumps.list.dropFirst()
+        #expect(later.allSatisfy { $0.path != .restoreRejected }, "the status stays rejected; the label does not")
+        #expect(later.allSatisfy { $0.restore == nil }, "the judge ran once")
+        #expect(jumps.list.filter { $0.path == .restoreRejected }.count == 1)
+        // The max is the judged fix, labelled as such.
+        let max = try #require(jumps.max)
+        #expect(max == first && max.path == .restoreRejected && max.restore == .rejected)
+    }
+
     @Test func agreeingFixAgainstAnUnconfirmedPriorRecordsTheJudgeOutcome() throws {
         // Threshold below 0: every measured fix is listed with its path.
         let drive = S(initialHeadingDeg: 30, [.stop(seconds: 6)])
