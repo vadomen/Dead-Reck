@@ -1220,3 +1220,18 @@ Reviewers: one fresh opus reviewer (link layer and the docs changed since round 
 ### Run 88 summary
 
 3 rounds; 5 fixed (R88.1-1, R88.1-2, R88.2-1, R88.2-2, R88.2-3); 0 rejected; 2 deferred (R88.1-3, R88.1-4). Final tests: Core 1216 tests in 148 suites passed (36 known issues); App 871 tests in 131 suites passed; replay acceptance matrix 73/73 identical to ee17b73 (wall-time fields only). Outcome: closed, ready to merge.
+
+## Run 89: Prompt 50 fix jumps, re-scoped to observe-only (fix-jump M² counter in replay metrics, step A and survey docs, NAV-FIXJUMP and NAV-RESTORE-1FIX deferred) (routing..fix-jump-gate: 5758ab4..db70485), started 2026-11-14
+
+Note: on branch `routing` (decision D6), not `main`.
+
+### Round 1
+
+Reviewers: one fresh opus reviewer. Result: 0 BLOCKER, 2 MAJOR, 0 MINOR. Bit-identical re-run: clean, seed 1, roads on, base 5758ab4 vs db70485, GeoJSON byte-identical, metrics differ only in wall-time fields and the added `fixJumps`. Author mutation `restore.status == .rejected` → `.confirmed` re-checked: caught.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R89.1-1 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/NavigationEngine.swift:1602-1644, 1423`: no test for the path labels `rejectedOffRoad`, `reseedBlocked`, `updateDownweighted`, for the FIXPIN down-weighted R in `observeFixJump`, or for `zeroGateEvidence == true`; the mutation rejectedOffRoad → `else if false` survived 52 tests. A wrong label would misread the survey's path column and the NAV-FIXJUMP revisit trigger. | FIXED | 72fdf0b (tests only): one synthetic test per path, FIXPIN σ and temper computed independently, OBD-zero run with moving fixes. Mutations of each branch, the FIXPIN σ and temper lines and the `zeroGateEvidence` argument all caught. |
+| R89.1-2 | MAJOR | `NavigationEngine.swift:1595`: the `shiftSince` latency shift in the innovation was untested; dropping it survived. A 1 s old fix at 25 m/s would carry ~25 m of extra innovation and false hits. | FIXED | 72fdf0b (test only): moving car, 0.75 s latency, M² and innovation against independently computed cloud moments plus shift; dropping the shift caught. |
+
+Tests at HEAD 72fdf0b: Core 1230 tests in 149 suites passed (36 known issues). Release NavigationRoadPerfTests and NavigationB0Tests passed at cf42628 (Navigation sources unchanged since).
