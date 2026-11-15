@@ -1303,3 +1303,14 @@ Reviewers: one fresh opus reviewer, whole range. Result: 0 BLOCKER, 2 MAJOR, 1 M
 | R90.2-3 | MINOR | `Core/Sources/replay_nav/main.swift:897`: `--route-write` writes only the first active route; on a v7 recording with several route rows the later ones are dropped silently (docs/NAVIGATION.md says "the route used"). | DEFERRED | BACKLOG. |
 
 Tests at HEAD 8060787: Core 1313 tests in 157 suites passed (36 known issues); release perf filter 10 passed.
+
+### Round 3
+
+Reviewers: one fresh opus reviewer, whole range. Result: 0 BLOCKER, 1 MAJOR, 1 MINOR. R90.2-1 and R90.2-2 verified covered (author mutation `wayPointOffset + UInt32(i)` → `UInt32(i)` re-checked: caught). The reviewer's candidate de-dup mutation (keep first instead of lowest emission) was caught by existing tests. No Core/Sources change since round 2; the bit-identical result stands.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R90.3-1 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/Roads/RouteEdgeMatcher.swift:558-563`: after a Viterbi break, backtracking to the best-cost candidate of the previous non-empty layer was untested (`back[k][j] = bestPrevious` → `0` survived; every break in the tests had its best candidate at index 0). With a parallel road sorting first, the stretch before a break would go onto the wrong road (probe: coverage 0.84 → 0.37). | FIXED | 598000d (test only): `RouteEdgeMatcherTests/breakBacktracksToBest`; mutation caught. |
+| R90.3-2 | MINOR | `Core/Sources/DriveLoggerCore/Navigation/Replay/ReplayRoute.swift:428-434`: parallel mode's reverse-direction branch (a two-way neighbour drawn against the route taken backwards; a oneway drawn against it skipped) is never exercised by a test. | DEFERRED | BACKLOG. |
+
+Tests at HEAD 598000d: Core 1314 tests in 157 suites passed (36 known issues); release perf filter 10 passed.
