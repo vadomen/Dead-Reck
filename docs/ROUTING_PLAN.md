@@ -1,6 +1,6 @@
 # Routing plan: navigation along a route
 
-**Status:** approved 2026-11-14 (D1–D6). Prompt 49 done (commit 579a796 on branch `routing`, 2026-11-14, review run 88; not in `main`).
+**Status:** approved 2026-11-14 (D1–D6). Prompt 49 done (commit 579a796 on branch `routing`, 2026-11-14, review run 88; not in `main`). Prompt 50 done 2026-11-14 as observe-only (gate dropped by the user; branch `fix-jump-gate` into `routing`).
 Context: `logs/HANDOFF_2026-11-13_ROUTING.md`, `logs/DEBRIEF_2026-11-02.md`.
 Engine model and adoption rule: `docs/NAVIGATION.md`.
 
@@ -27,7 +27,7 @@ Once routing is done, branch `nav-noobd` comes back, this time with the route as
 
 ## Prompt sequence
 
-The next free prompt number is 49. Every prompt gets its own branch or worktree, then `/review-loop`, then a merge.
+The next free prompt number is 51 (prompt 50 is done, observe-only). Every prompt gets its own branch or worktree, then `/review-loop`, then a merge.
 The user does the push.
 
 ### 49: Prerequisites (on `routing`)
@@ -54,10 +54,15 @@ Done (commit 579a796 on `routing`, 2026-11-14; review run 88; not in `main`).
 
 ### 50: Rejecting fixes that jump (debrief #3, engine, OBD mode)
 
-- **Problem.** A fix that claimed 15 m lay 472 m away. The engine accepted it, and it moved the estimate.
-- **Gate.** Use the Mahalanobis distance of the fix from the particle cloud. If the fix is far outside its claimed accuracy, do not take it. A fix like that is only accepted after N consistent fixes in a row, which covers the case where the engine itself is the one that is lost.
-- **Config.** Add a `NavigationConfig` key. The default is set by the adoption rule.
-- **Adoption.** Use `nav-adoption`: all runs × seeds 1–5 × roads on and off. Report the drive-2026-11-02 case separately.
+Done as observe-only (commit cf42628 on branch `fix-jump-gate`; the gate was dropped by the user's decision on 2026-11-14).
+
+- **Problem.** A fix that claimed 15 m lay 472 m away and the estimate moved.
+- **Diagnosis (step A).** The fix was a network fix. The restored-prior check (`judgeRestore`) moved the estimate, not the fix gating. The pins show the fix was right and the restored prior wrong.
+- **What landed.** An observe-only counter: `replay_nav` writes `fixJumps` per row in `metrics.json` and a "Fix jumps" line in the summary (M² of the innovation against P + R, threshold 25). It changes no engine behaviour and is off in the app. 101 cells hash-identical. Details: `docs/NAVIGATION.md` "Prompt 50: fix jumps (2026-11-14)".
+- **Survey result.** A plain M² > 25 gate would have blocked correct fixes (clean 201.6 s, drive-11-02). The only bad-fix examples are the constant-offset stream (drive-10) and a bounded ~27 m drag (clean 123–127 s).
+- **Backlog.** NAV-FIXJUMP (the gate, deferred) and NAV-RESTORE-1FIX (one fix discards a restored prior, deferred).
+- **No device check.** The app is unchanged.
+- **Next:** prompt 51, unchanged.
 
 ### 51 = R1: Spike, route model in Core, route log
 

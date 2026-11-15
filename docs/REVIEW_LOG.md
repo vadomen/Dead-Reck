@@ -1220,3 +1220,54 @@ Reviewers: one fresh opus reviewer (link layer and the docs changed since round 
 ### Run 88 summary
 
 3 rounds; 5 fixed (R88.1-1, R88.1-2, R88.2-1, R88.2-2, R88.2-3); 0 rejected; 2 deferred (R88.1-3, R88.1-4). Final tests: Core 1216 tests in 148 suites passed (36 known issues); App 871 tests in 131 suites passed; replay acceptance matrix 73/73 identical to ee17b73 (wall-time fields only). Outcome: closed, ready to merge.
+
+## Run 89: Prompt 50 fix jumps, re-scoped to observe-only (fix-jump M² counter in replay metrics, step A and survey docs, NAV-FIXJUMP and NAV-RESTORE-1FIX deferred) (routing..fix-jump-gate: 5758ab4..db70485), started 2026-11-14
+
+Note: on branch `routing` (decision D6), not `main`.
+
+### Round 1
+
+Reviewers: one fresh opus reviewer. Result: 0 BLOCKER, 2 MAJOR, 0 MINOR. Bit-identical re-run: clean, seed 1, roads on, base 5758ab4 vs db70485, GeoJSON byte-identical, metrics differ only in wall-time fields and the added `fixJumps`. Author mutation `restore.status == .rejected` → `.confirmed` re-checked: caught.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R89.1-1 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/NavigationEngine.swift:1602-1644, 1423`: no test for the path labels `rejectedOffRoad`, `reseedBlocked`, `updateDownweighted`, for the FIXPIN down-weighted R in `observeFixJump`, or for `zeroGateEvidence == true`; the mutation rejectedOffRoad → `else if false` survived 52 tests. A wrong label would misread the survey's path column and the NAV-FIXJUMP revisit trigger. | FIXED | 72fdf0b (tests only): one synthetic test per path, FIXPIN σ and temper computed independently, OBD-zero run with moving fixes. Mutations of each branch, the FIXPIN σ and temper lines and the `zeroGateEvidence` argument all caught. |
+| R89.1-2 | MAJOR | `NavigationEngine.swift:1595`: the `shiftSince` latency shift in the innovation was untested; dropping it survived. A 1 s old fix at 25 m/s would carry ~25 m of extra innovation and false hits. | FIXED | 72fdf0b (test only): moving car, 0.75 s latency, M² and innovation against independently computed cloud moments plus shift; dropping the shift caught. |
+
+Tests at HEAD 72fdf0b: Core 1230 tests in 149 suites passed (36 known issues). Release NavigationRoadPerfTests and NavigationB0Tests passed at cf42628 (Navigation sources unchanged since).
+
+### Round 2
+
+Reviewers: one fresh opus reviewer. Result: 0 BLOCKER, 1 MAJOR, 1 MINOR. R89.1-1 and R89.1-2 verified covered. No Core source change since cf42628, so round 1's bit-identical result stands. Author mutation rejectedOffRoad → `else if false` re-checked: caught.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R89.2-1 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/NavigationEngine.swift:1633`: the `jump.judged &&` guard on the `restoreRejected` label was untested; dropping it survived. After a judge rejection `restore.status` stays `.rejected`, so every later hit and max would read `restoreRejected` in a `--prior` replay. | FIXED | 1ef890a (test only): `restoreRejectedLabelsOnlyTheJudgedFix` lists every fix (threshold -1) and asserts only the judged fix carries the label; the mutation is caught. |
+| R89.2-2 | MINOR | `NavigationEngine.swift:1423`: `zeroGateEvidence` false after a slow fix resets the moving-fix run is untested (`>` → `!=` survived). | DEFERRED | BACKLOG. |
+
+Tests at HEAD 1ef890a: Core 1231 tests in 149 suites passed (36 known issues).
+
+### Round 3
+
+Reviewers: one fresh opus reviewer. Result: 0 BLOCKER, 1 MAJOR, 1 MINOR. R89.2-1 verified covered (author mutation `jump.judged &&` dropped re-checked: caught). Core/Sources unchanged since cf42628.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R89.3-1 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/NavigationEngine.swift:1631`: the path and restore outcome of a `max` that is not in `list` (not a hit, or after the cap) were untested; `guard jump.isMax \|\| jump.listed` → `guard jump.listed` survived. A zero-hit run whose max reseeded would report `update`, and the survey's "path of max" column reads this field. | FIXED | cc6d93b (tests only): unlisted max equals the listed entry of the same fix (restoreRejected drive at threshold -1 vs above every M²); a max after a full list (cap 2, cap 0) keeps its path; plus a sweep: temper 0 → M² 0, first of equal maxima, `resolve` targets, negative cap, summary text and the 20-line limit. 10 mutations, all caught. |
+| R89.3-2 | MINOR | `NavigationEngine.swift:1613`: `mahalanobis2Untempered` for a down-weighted FIXPIN fix was not pinned to R = claimed σ²; `s2 = positionSigma²` survived. | FIXED | cc6d93b: bounds |r|²/σ_raised² < M²untempered ≤ |r|²/σ_claimed² in the down-weighted test; mutation caught. |
+
+Tests at HEAD cc6d93b: Core 1237 tests in 149 suites passed (36 known issues).
+
+### Round 4
+
+Reviewers: one fresh opus reviewer. Result: 0 BLOCKER, 0 MAJOR, 1 MINOR. R89.3-1 and R89.3-2 verified covered (author mutation `guard jump.listed` re-checked: caught). Core/Sources unchanged since cf42628.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R89.4-1 | MINOR | `Core/Sources/DriveLoggerCore/Navigation/NavigationEngine.swift:1601-1608`: observed R for a down-weighted FIXPIN phone source, and for σ above the offset, untested (two mutations survived). Observe-only, FIXPIN off by default. | DEFERRED | BACKLOG. |
+
+Tests at HEAD cc6d93b: Core 1237 tests in 149 suites passed (36 known issues).
+
+### Run 89 summary
+
+4 rounds; 5 fixed (R89.1-1, R89.1-2, R89.2-1, R89.3-1, R89.3-2), all test-only; 0 rejected; 2 deferred (R89.2-2, R89.4-1). Final tests: Core 1237 tests in 149 suites passed (36 known issues); release NavigationRoadPerfTests and NavigationB0Tests passed at cf42628 (Core/Sources unchanged since); replay acceptance matrix 101/101 identical to 5758ab4 (wall-time fields only). Outcome: closed, ready to merge into `routing`.

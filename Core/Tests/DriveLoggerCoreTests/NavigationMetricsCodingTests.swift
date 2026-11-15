@@ -69,6 +69,14 @@ struct NavigationMetricsCodingTests {
         restore.fixesOlderThanSave = 1
         restore.slowPullOutKmh = 8
         metrics.restore = restore
+        // The fix-jump observation (prompt 50) filled too.
+        var jumps = FixJumpObservation(chi2Threshold: 25, listCap: 100)
+        let hit = FixJumpObservation.Hit(
+            t: 95.25, fixT: 94.75, mahalanobis2: 509.5, mahalanobis2Untempered: 509.5, innovationM: 473,
+            accuracyM: 15, sigmaM: 10, temper: 1, network: true, path: .update, restore: nil, zeroGateEvidence: false)
+        let recorded = jumps.record(hit)
+        jumps.resolve(isMax: recorded.isMax, listed: recorded.listed, path: .restoreRejected, restore: .rejected)
+        metrics.fixJumps = jumps
         return metrics
     }
 
@@ -192,7 +200,7 @@ struct NavigationMetricsCodingTests {
             == ["consistency", "consistencyWithTruthSigma", "motionStartT", "pinScoring", "pins",
                 "checkpointsAfterScoreUntil", "roadMetrics", "roadSetHash", "roads", "scoreUntilT",
                 "roadsAttachedAfterInputs", "attachedRoadSetHash", "roadsExtendedAfterInputs", "fixesExcludedByTruth", "fixPinDecisions",
-                "maxErrorByKind", "gpsSwitch", "restore"].sorted())
+                "maxErrorByKind", "gpsSwitch", "restore", "fixJumps"].sorted())
         for key in later {
             var old = row
             old.removeValue(forKey: key.stringValue)
@@ -218,6 +226,7 @@ struct NavigationMetricsCodingTests {
             case .maxErrorByKind: #expect(decoded.maxErrorByKind == nil)
             case .gpsSwitch: #expect(decoded.gpsSwitch == nil)
             case .restore: #expect(decoded.restore == nil)
+            case .fixJumps: #expect(decoded.fixJumps == nil)
             default: Issue.record("unexpected later key \(key)")
             }
         }

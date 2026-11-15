@@ -637,6 +637,14 @@ public enum NavigationReplay {
     /// "Metrics added to replay_nav").
     public static let defaultWrongRoadToleranceM = 20.0
 
+    /// Prompt 50, observe-only (`FixJumpObservation`): a fix whose M²
+    /// against the estimate exceeds this is a hit. A replay constant, not
+    /// a `NavigationConfig` key: a key would change the config's canonical
+    /// JSON and hash, which the sidecar header carries. Reporting only.
+    public static let fixJumpObserveChi2 = 25.0
+    /// Most hits listed per run (`FixJumpObservation.list`).
+    public static let fixJumpObserveListCap = 100
+
     /// Why a manual fix is not scored.
     ///
     /// The rule (replay-side scoring, not causal: the classification of a pin
@@ -1076,6 +1084,9 @@ public struct ReplayResult: Hashable, Sendable, Codable {
     /// UX-20: the state captured at `ReplayOptions.savePrior`; nil without
     /// it, and when the engine had no estimate then.
     public var savedRestoreState: NavigationRestoreState? = nil
+    /// Prompt 50, observe-only: fixes far from the estimate
+    /// (`FixJumpObservation`, threshold `NavigationReplay.fixJumpObserveChi2`).
+    public var fixJumps: FixJumpObservation? = nil
 
     public var heldOutFixes: [Fix] { fixes.filter { $0.withheld == .heldOut } }
 }
@@ -1172,6 +1183,8 @@ private struct ReplayRun {
         let fromStart = options.roadAttach == .fromStart
         engine = NavigationEngine(config: options.config, roads: fromStart ? options.roads?.network : nil,
                                   prior: options.prior)
+        engine.fixJumps = FixJumpObservation(chi2Threshold: NavigationReplay.fixJumpObserveChi2,
+                                             listCap: NavigationReplay.fixJumpObserveListCap)
         if let roads = options.roads, options.roadAttach == .live {
             // As `LiveNavigationRun.ingest(_:selector:emit:)`: the selector's
             // packs are watched from the first input on.
@@ -1783,6 +1796,7 @@ private struct ReplayRun {
         }
         if options.prior != nil { result.restore = engine.restore }
         result.savedRestoreState = savedRestoreState
+        result.fixJumps = engine.fixJumps
         result.maxErrorByKind = KindMaxError.byKind(checkpoints)
         if let scoreUntilT = truth?.scoreUntilT {
             result.scoreUntilT = scoreUntilT

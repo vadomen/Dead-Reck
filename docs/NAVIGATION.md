@@ -1192,6 +1192,18 @@ how many withheld clean-fix checkpoints they removed) record it; a run
 without it (absent or empty) writes none of these keys, so its outputs are
 byte-identical to the build before it.
 
+- **Fix jumps** (prompt 50, observe only; "Prompt 50: fix jumps (2026-11-14)"):
+  `metrics.json` has `fixJumps` per row: `chi2Threshold` (25), `listCap`
+  (100), `fixesMeasured`, `hits` (M² > 25), `max` (the entry with the largest
+  M², hit or not) and `list` (≤ 100 hits). An entry has `t`, `fixT`,
+  `mahalanobis2`, `mahalanobis2Untempered`, `innovationM`, `accuracyM`,
+  `sigmaM`, `temper`, `network`, `path` (`restoreRejected`,
+  `rejectedOffRoad`, `reseed`, `reseedBlocked`, `updateDownweighted`,
+  `update`), `restore` and `zeroGateEvidence`. The run summary has a
+  "Fix jumps" line and up to 20 hit lines; `metrics.md` is unchanged. The
+  threshold and the cap are replay constants (`fixJumpObserveChi2`,
+  `fixJumpObserveListCap`), not `NavigationConfig` keys.
+
 ## Live in the app (N4 B)
 
 `App/Sources/Navigation/NavigationService.swift` is an actor, off the main
@@ -2485,6 +2497,102 @@ is the parked prior's known risk extended to slow pull-outs: a car moved
 while parked (synthetic 300 m) stays wrong until a fix that can reject it;
 with only coarse fixes that took 219 s on two seeds and never came on
 three. 110-cell no-prior matrix byte-identical to main after the change.
+
+### Prompt 50: fix jumps (2026-11-14)
+
+Debrief #3 (drive-11-02, "a fix claiming 15 m accuracy 472 m away moves the
+estimate") was to get a gate on the fix's Mahalanobis distance. The user
+dropped the gate on 2026-11-14 (BACKLOG NAV-FIXJUMP). What landed (commit
+cf42628) is an observe-only counter. It changes no engine behaviour.
+
+**Step A: the drive-11-02 jump (t ≈ 95.1 s).**
+
+- The fix was a network fix claiming 14.9 m, 0.03 s old, with no course and no
+  speed, 473 m from the estimate, M² ≈ 509 (~22σ).
+- The engine was on an unconfirmed restored prior (ellipse 225 × 45 m,
+  on-road share 0.24).
+- What moved the estimate was the restored-prior check (`judgeRestore`: d²
+  509 > `rejectChi2` 9.21 → `discardPrior` → re-initialise on the fix). It was
+  not the Kalman update, not the clean-fix reseed (no course; reseeds 0) and
+  not the road fix gate (network fixes bypass it; `fixesRejectedOffRoad` 0).
+- The next two fixes agreed with the jump once moved by the OBD distance.
+- The pins show the fix was right and the engine wrong: the pre-jump estimate
+  could not reach any pin within the OBD distance (short by 560 / 465 /
+  228 m), while the fix fits pins 2–3 and pin 1 within tolerance.
+
+**The counter.** `replay_nav` writes `fixJumps` (keys under "replay_nav"
+above). `NavigationEngine.fixJumps` is nil in the app: the live engine and
+the sidecar are unchanged.
+
+- Measured in `ingestLocation`: after the invalid / older-than-save / stale /
+  held filters and the GPS switch, while an estimate exists (an unconfirmed
+  restored prior included), and before any path acts (restore judge, road fix
+  gate, reseed, FIXPIN, update).
+- P is the cloud mixture covariance (`cloudMoments()`, as the restore judge
+  uses). r is the fix shifted by `shiftSince` minus the cloud mean. R is what
+  the ordinary update would use: network σ²/temper, FIXPIN-inflated for
+  down-weighted sources, otherwise σ². O(particles) per measured fix; the
+  list is capped.
+- Threshold 25 and cap 100 are replay constants, not config keys: a key
+  would change the sidecar header's config hash and JSON.
+
+**Hash proof.** 101 cells (10 acceptance runs incl. manual-3 × seeds 1–5 ×
+roads off/on, plus drive-11-02 as live): 101 identical, 0 different. GeoJSON
+byte-identical. The `--write-sidecar` output identical with only `msPerStep` /
+`maxStepMs` masked (wall time; a base-vs-base control differs in the same two
+fields). The 25 pre-existing `metrics.json` keys equal apart from the timing
+fields. 1226 tests in 149 suites pass, including the new
+`NavigationFixJumpObserveTests` (10); release perf tests pass.
+
+**Survey** (roads on, OBD mode; acceptance drives seeds 1–5, others one run):
+
+| recording | fixes measured | hits | max M² | fix type / path of max |
+|---|---|---|---|---|
+| clean | 154 | 8–9 | 81.0 (s1); 60.2–60.8 (s2–5) | GNSS / update |
+| clean-long | 382 | 0 | 1.0 | GNSS / update |
+| manual | 58 | 0 | 0.7 | network / update |
+| manual-3 | 105 | 0 | 0.6 | network / update |
+| jammed-A | 71 | 0 | 0.3 | network / update |
+| jammed-B | 57 | 0 | 0.4 | network / update |
+| drive-7 | 130 | 0 | 1.3 | network / update |
+| drive-8 | 162 | 0 | 15.8 | GNSS / update |
+| drive-9 (1) | 108 | 0 | 1.0 | network / update |
+| drive-9 (2) | 113 | 0 | 1.4 | network / update |
+| drive-10 | 297 | 2 | 98.7 | GNSS (accessory) / update |
+| drive-11 | 94 | 0 | 1.4 | network / update |
+| drive-11-02 | 46 | 1 | 509.7 | network / restoreRejected |
+| drive-12 (parked, 0 m) | 35 | 0 | 0.5 | network / update |
+| drive-13 | 694 | 0 | 0.5 | GNSS / reseed |
+| drive-14 | 126 | 0 | 3.0 | network / update |
+| cal-3 | 4 | 0 | 0.0 | network / update |
+| cal-4 | 129 | 0 | 0.8 | network / update |
+| cal-5 | 1388 | 0 | 10.0 | GNSS / update |
+
+**Episodes** (verdict = which side was right):
+
+- clean 5.4 s (M² 33): stationary start, the 8 m fix against an init from
+  ~26 m fixes. Fix right (moderate confidence).
+- clean 87–91 s (3 hits, M² ~25): fixes ~29 m off near a stop (fix chord 71 m
+  against OBD path 42 m). Engine right; it barely moved (~3 m), so no harm.
+- clean 123–127 s (4 hits, M² 37–62, 29–48 m accuracy, 154–197 m away):
+  physically impossible fix jumps. Engine right but dragged ~27 m of excess
+  travel; a 74 s GNSS gap follows.
+- clean 201.6 s (M² 27–81, no hit in seed 4): first fix after the 74 s gap.
+  Fix right, engine ~160–170 m wrong (on-road 0 → 0.998, the following fixes
+  agree to 3–5 m, error at the 230 s truth 2.5 m).
+- drive-10 61.9 s and 214.9 s (M² 94, 99): the known constant-offset CarPlay
+  stream (~300–330 m), each 3 s after a user pin; one update pulled the
+  estimate 283 m and 54 m off the pin. Fix wrong, engine (pin) right. This is
+  the documented constant-offset limit ("Constant-offset GNSS check"): the
+  following fixes keep the same offset, so a single-fix gate would have to
+  reject them persistently.
+- drive-11-02 95.1 s: fix right (step A).
+
+**Conclusion.** A plain M² > 25 gate would have blocked correct fixes on
+clean 201.6 s and drive-11-02. The only bad-fix examples are the
+constant-offset stream (drive-10, outside any confirmation rule) and a
+bounded ~27 m drag (clean 123–127 s). No gate was adopted; the counter stays
+as a measuring tool. No PLAN §6 device check: the app is unchanged.
 
 ## Known limitations and options
 
