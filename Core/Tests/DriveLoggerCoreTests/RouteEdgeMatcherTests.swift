@@ -291,4 +291,59 @@ struct RouteEdgeMatcherTests {
         #expect(first == second)
         #expect(Self.ways(first) == [11, 10, 12])
     }
+
+    @Test("R90.1-1: the graph search never enters a oneway backwards, even where it would be the only short way on")
+    func searchRespectsOneway() throws {
+        // A ends at node 2 (0, 0); B starts at node 3 (8, 0); the 8 m
+        // connector C runs from 3 to 2, oneway against the route. No other
+        // way joins A and B. The route drives straight across.
+        let net = try Self.network([
+            Self.way(1, Self.residential, [(1, -300, 0), (2, 0, 0)]),
+            Self.way(2, Self.residential, [(3, 8, 0), (4, 300, 0)]),
+            Self.way(3, Self.oneway, [(3, 8, 0), (2, 0, 0)]),
+        ])
+        let m = try Self.match(net, [(-250, 1), (250, 1)])
+        #expect(Self.ways(m) == [1, 2], "\(Self.ways(m))")
+        #expect(!m.edges.contains { $0.flags.contains(.oneway) && !$0.forward })
+        // No way through: the junction is a gap, not a jump.
+        #expect(m.gaps.count == 1)
+        // Driven the oneway's way, the connector is used, forwards.
+        let back = try Self.match(net, [(250, 1), (-250, 1)])
+        #expect(Self.ways(back) == [2, 3, 1] && back.gaps.isEmpty)
+        #expect(back.edges.filter { $0.osmWayID == 3 }.allSatisfy { $0.forward })
+    }
+
+    @Test("R90.1-2: exits are counted only at ring nodes with a drivable way out; an entry-only oneway arm and a roundabout piece are not exits")
+    func roundaboutExitRule() throws {
+        let ring: [(Int64, Double, Double)] = (0..<8).map { k in
+            let p = Self.ringPoint(k)
+            return (Int64(100 + k), p.0, p.1)
+        }
+        let net = try Self.network([
+            Self.way(10, ["highway": "tertiary", "junction": "roundabout"], ring + [ring[0]]),
+            Self.way(11, Self.residential, [(1, 0, -300), (100, 0, -30)]),
+            // At the SE node a roundabout-tagged piece leaves (not an exit).
+            Self.way(17, ["highway": "tertiary", "junction": "roundabout"], [(101, Self.ringPoint(1).0, Self.ringPoint(1).1), (7, 120, -120)]),
+            // At the east node only an entry (oneway into the ring).
+            Self.way(15, Self.oneway, [(5, 300, 0), (102, 30, 0)]),
+            // At the NE node only an exit (oneway out of the ring).
+            Self.way(16, Self.oneway, [(103, Self.ringPoint(3).0, Self.ringPoint(3).1), (6, 250, 250)]),
+            Self.way(13, Self.residential, [(104, 0, 30), (3, 0, 300)]),
+        ])
+        let offsets = [(0.0, -250.0), Self.ringPoint(0), Self.ringPoint(1), Self.ringPoint(2), Self.ringPoint(3),
+                       Self.ringPoint(4), (0.0, 250.0)]
+        let polyline = try Self.polyline(offsets)
+        let matcher = RouteEdgeMatcher(network: net)
+        let m = matcher.match(polyline)
+        #expect(Self.ways(m) == [11, 10, 13] && m.coverage > 0.99, "\(Self.ways(m)) \(m.coverage)")
+        let ranges = [0...0, 0...1, 1...5, 5...6]
+        let route = try Route(
+            id: "ring", polyline: polyline.points,
+            steps: ranges.map { RouteStep(instruction: "", distanceM: 0, polylineRange: $0, maneuver: .straight) },
+            distanceM: polyline.lengthM, expectedTravelTimeS: 60, source: .synthetic
+        )
+        let contexts = matcher.roadContexts(for: route, match: m)
+        // Passed: SE (roundabout piece, no), E (entry only, no), NE (exit, yes); left at N: exit 2.
+        #expect(contexts[1]?.roundabout == true && contexts[1]?.roundaboutExit == 2)
+    }
 }

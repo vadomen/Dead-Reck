@@ -181,6 +181,10 @@ struct RouteCodingTests {
         ("latitude past 90", #""polylineE7":[100000,-200000,4500,0,0,4500]"#, #""polylineE7":[100000,-200000,900000000,0,0,4500]"#),
         ("longitude past 180", #""polylineE7":[100000,-200000,4500,0,0,4500]"#, #""polylineE7":[100000,-200000,4500,0,0,1800200001]"#),
         ("overflowing delta", #""polylineE7":[100000,-200000,4500,0,0,4500]"#, #""polylineE7":[100000,-200000,9223372036854775807,0,0,4500]"#),
+        // R90.1-3: Int64.min must throw, not trap in abs().
+        ("Int64.min latitude", #""polylineE7":[100000,-200000,4500,0,0,4500]"#, #""polylineE7":[-9223372036854775808,0,0,4500]"#),
+        ("Int64.min longitude", #""polylineE7":[100000,-200000,4500,0,0,4500]"#, #""polylineE7":[0,-9223372036854775808,0,4500]"#),
+        ("delta to Int64.min", #""polylineE7":[100000,-200000,4500,0,0,4500]"#, #""polylineE7":[-100000,-200000,-9223372036854675808,0,0,4500]"#),
         ("fractional coordinate", #""polylineE7":[100000,-200000,4500,0,0,4500]"#, #""polylineE7":[100000,-200000,4500.5,0,0,4500]"#),
         ("step past the end", #""from":1,"instruction":"Arrive","maneuver":"arrive","to":2"#, #""from":1,"instruction":"Arrive","maneuver":"arrive","to":3"#),
         ("step from after to", #""from":1,"instruction":"Arrive","maneuver":"arrive","to":2"#, #""from":2,"instruction":"Arrive","maneuver":"arrive","to":1"#),
@@ -197,6 +201,25 @@ struct RouteCodingTests {
         let json = Self.smallJSON.replacingOccurrences(of: original, with: replacement)
         #expect(json != Self.smallJSON)
         #expect(throws: (any Error).self, "\(name)") { try Self.decode(json) }
+    }
+
+    @Test("R90.1-3: a route row whose polylineE7 reaches Int64.min is a malformed line: recovery skips it, strict reports it")
+    func int64MinLineSkipped() throws {
+        let codec = LogCodec()
+        var header = AnalysisFixtures.header
+        header.formatVersion = .v7
+        let good = LogEvent(timestamp: MonotonicTimestamp(seconds: 1), payload: .routeCleared(RouteClearedSample(reason: .arrived, routeID: "r1")))
+        let routeLine = try codec.line(for: LogEvent(
+            timestamp: MonotonicTimestamp(seconds: 2), payload: .route(RouteSample(reason: .user, route: Self.small()))
+        ))
+        let damaged = String(decoding: routeLine, as: UTF8.self)
+            .replacingOccurrences(of: #""polylineE7":[100000,-200000,4500,0,0,4500]"#, with: #""polylineE7":[-9223372036854775808,0,0,4500]"#)
+        #expect(damaged.contains("-9223372036854775808"))
+        let data = try codec.line(for: header) + codec.line(for: good) + Data(damaged.utf8) + codec.line(for: good)
+        let document = try codec.document(from: data, recovery: .skipMalformedLines)
+        #expect(document.events == [good, good])
+        #expect(document.skippedLineIndices == [2])
+        #expect(throws: (any Error).self) { try codec.document(from: data, recovery: .strict) }
     }
 
     @Test("Route.init rejects what decoding rejects")

@@ -259,8 +259,11 @@ extension Route: Codable {
             // A delta big enough to overflow cannot lead to a valid point.
             let (newLat, latOverflow) = lat.addingReportingOverflow(packed[2 * index])
             let (newLon, lonOverflow) = lon.addingReportingOverflow(packed[2 * index + 1])
+            // No `abs`: it traps on Int64.min, and a damaged log line must
+            // throw (and be skipped by recovery), never crash the reader.
             guard !latOverflow, !lonOverflow,
-                  abs(newLat) <= RoutePoint.maxLatE7, abs(newLon) <= RoutePoint.maxLonE7
+                  newLat >= -RoutePoint.maxLatE7, newLat <= RoutePoint.maxLatE7,
+                  newLon >= -RoutePoint.maxLonE7, newLon <= RoutePoint.maxLonE7
             else { throw RouteError.coordinateOutOfRange(pointIndex: index) }
             lat = newLat
             lon = newLon
