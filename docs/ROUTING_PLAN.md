@@ -27,7 +27,7 @@ Once routing is done, branch `nav-noobd` comes back, this time with the route as
 
 ## Prompt sequence
 
-The next free prompt number is 51 (prompt 50 is done, observe-only). Every prompt gets its own branch or worktree, then `/review-loop`, then a merge.
+The next free prompt number is 52 (prompt 51 is done on `r1-route-core`, merge pending review; prompt 50 is done, observe-only). Every prompt gets its own branch or worktree, then `/review-loop`, then a merge.
 The user does the push.
 
 ### 49: Prerequisites (on `routing`)
@@ -66,6 +66,8 @@ Done as observe-only (commit cf42628 on branch `fix-jump-gate`; the gate was dro
 
 ### 51 = R1: Spike, route model in Core, route log
 
+**Status: done on branch `r1-route-core` (2026-11-15), merge pending review.** Results: `docs/ROUTING.md` (spike verdict "usable with limits", Kyiv-only geometry check; route model; `RouteEdgeMatcher`), `docs/LOG_FORMAT.md` (v7), `docs/NAVIGATION.md` ("replay_nav" and "Prompt 51 E.3"). Replay output without route flags is byte-identical (101/101). The plan below is the original; where the result differs: the reference-route flag is `--route-from-reference` (not `--route-from-truth`), `route` has the extra reason `restored` and an optional `origin` with `source`, and `routeCleared` carries `routeID`.
+
 1. **Spike `MKLocalSearch` / `MKDirections` in Kyiv**, 5–10 typical requests. Check:
    - address quality (house number, entrance);
    - whether alternatives exist;
@@ -90,12 +92,21 @@ Done as observe-only (commit cf42628 on branch `fix-jump-gate`; the gate was dro
    - Add a v7 fixture. Earlier versions must stay readable. Update `docs/LOG_FORMAT.md`.
 5. **`replay_nav`.**
    - `--route <file.json>`: a route from a file.
-   - `--route-from-truth`: a synthetic route built from the reference track, for replay without a real route.
+   - `--route-from-reference`: a route built from the recording's clean GNSS fixes (never from the engine's own estimate), for replay without a real route. Drives without clean fixes have none (`docs/ROUTING.md`).
    - `--route-perturb <mode>`: a wrong route, used for robustness tests in R3.
    - Without these flags the output must be byte-identical.
    - Document the flags in `docs/NAVIGATION.md`, section "replay_nav".
 
 ### 52 = R2: Destination and route UI
+
+**What the spike changes (prompt 51, `docs/ROUTING.md`; user's search limits, 2026-11-15):**
+- **Search languages:** uk and en only; no Latin transliteration of Ukrainian names.
+- **Fallback:** fraction house numbers and businesses by name are unreliable, so the long-press pin is a required fallback, not an extra.
+- **Pace and retry:** pace requests (about 1.5 s apart) and retry on throttling; `MKError` code 3 can look like "no result".
+- **Alternatives:** the alternate route sets are not stable between calls; do not assume a second call returns the same set.
+- **Steps:** the first step's instruction is empty; do not show it.
+- **Adapter location:** `RepositoryInvariantTests` forbids the MapKit routing and search type names in `Core/` and `App/Sources/Navigation`. The `MKRoute` to `Route` adapter must live elsewhere, or the test needs a user decision. Settle this first.
+- The geometry check covers Kyiv only (BACKLOG `ROUTE-SPIKE-OUTSIDE`).
 
 **Choosing a destination:**
 1. **Search.**
@@ -129,6 +140,10 @@ Done as observe-only (commit cf42628 on branch `fix-jump-gate`; the gate was dro
 
 ### 53 = R3: Route in the engine (OBD mode first)
 
+**From prompt 51:**
+- **Weak rule:** a route whose `RouteEdgeMatcher` coverage is below 0.90 is weak: guidance and display only, no edge prior.
+- **First numbers (`docs/NAVIGATION.md` "Prompt 51 E.3"):** with a strong reference the estimate is already on the route's edges 96–99 % of the time (clean-long, drive-8 after the mask), so there is little to gain there. The room is on weak references and loops, which cannot be scored until BACKLOG `ROUTE-REF-CONFIRMED` (human-confirmed reference routes for the jammed drives) is done. It is a prerequisite of this prompt.
+
 1. **Edge prior.**
    - Particles on route edges get a bonus at the junction-transition step.
    - Leaving the route costs a configurable penalty. It is not a ban, because the driver may leave the route.
@@ -140,7 +155,7 @@ Done as observe-only (commit cf42628 on branch `fix-jump-gate`; the gate was dro
    - Rebuild throttle: no more than once every X seconds.
 4. **Adoption** (`nav-adoption`, two-sided):
    - **Without a route:** sidecar byte-identical.
-   - **`--route-from-truth`:** the median does not regress, and there are gains on interchanges and loops. Report time off-road on those segments separately.
+   - **`--route-from-reference`:** the median does not regress, and there are gains on interchanges and loops. Report time off-road on those segments separately.
    - **`--route-perturb`:** the route diverges from the truth, for example a missed exit or a different street. The engine must not lock onto the route. It must detect leaving the route within the agreed time and distance, with no larger error than the run without a route. **This is the main risk of R3.**
 5. Update NAVIGATION.md and NAV_SIDECAR.md (route progress and off-route fields in the sidecar if needed; that is a sidecar version, not a log version).
 
@@ -165,7 +180,7 @@ Done as observe-only (commit cf42628 on branch `fix-jump-gate`; the gate was dro
   - arrival.
 - After the debrief:
   - Return to `nav-noobd`.
-  - Replay with `--obd none` + (a) + `--route-from-truth`.
+  - Replay with `--obd none` + (a) + `--route-from-reference`.
   - **Criterion:** median ≲ 100 m, and better than showing the last fix.
   - Then plan bringing no-OBD into routing.
 
