@@ -132,7 +132,7 @@ public struct RouteMatchedEdge: Hashable, Sendable {
 }
 
 /// An unmatched stretch of the route, metres along its polyline.
-public struct RouteMatchGap: Hashable, Sendable {
+public struct RouteMatchGap: Hashable, Sendable, Codable {
     public var startM: Double
     public var endM: Double
     public var lengthM: Double { endM - startM }

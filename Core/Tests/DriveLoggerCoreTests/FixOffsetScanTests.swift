@@ -182,6 +182,8 @@ import Testing
             "--wrong-road-tolerance",
             "--fixpin-inject", "--fixpin-two-pins", "--fixpin-survey", "--fixpin-pins", "--fixpin-separation",
             "--fixpin-engine-no-roads",
+            // Prompt 51 E (docs/NAVIGATION.md "replay_nav" adds them to the --fix-offset list).
+            "--route", "--route-from-reference", "--route-perturb", "--route-write",
         ]
         #expect(FixOffsetScan.engineOnlyFlags == documented,
                 "missing \(documented.subtracting(FixOffsetScan.engineOnlyFlags).sorted()), extra \(FixOffsetScan.engineOnlyFlags.subtracting(documented).sorted())")
