@@ -302,4 +302,52 @@ struct ReplayRouteTests {
         #expect(split.inSpans == [RouteMatchGap(startM: 80, endM: 100)])
         #expect(split.inChords == [RouteMatchGap(startM: 100, endM: 150)])
     }
+
+    @Test("R90.2-1: segment keys carry the edge's wayPointOffset: a route on the second edge of a split way is on it")
+    func segmentKeysUseWayOffset() throws {
+        // Way 1 A–J–B is split at J by the side street, so its second edge
+        // starts at way point 1.
+        let net = try M.network([
+            M.way(1, M.residential, [(1, 0, -300), (2, 0, 0), (3, 0, 300)]),
+            M.way(2, M.residential, [(2, 0, 0), (4, 300, 0)]),
+        ])
+        let base = try Self.route([(1, 10), (1, 290)])
+        let match = RouteEdgeMatcher(network: net).match(base)
+        let last = try #require(match.edges.last)
+        #expect(last.osmWayID == 1 && last.wayPointOffset == 1)
+        #expect(last.segmentIndices == 1...1)
+        let active = ReplayActiveRoute(route: base, match: match, windows: [ReplayTimeWindow(fromT: 0, toT: 100)])
+        let track = Self.track((0..<20).map { (Double($0), 2, 20 + Double($0) * 10, 0) })
+        let s = ReplayRouteEvaluation.stats(track: track, routes: [active], network: net)
+        #expect(s.samples == 20 && s.onRouteEdgeShare == 1)
+    }
+
+    @Test("R90.2-2: each sample is scored against the route active at its time (v7 rows: one route, then another)")
+    func activeRoutePerSample() throws {
+        let net = try M.network([
+            M.way(1, M.residential, [(1, 0, -800), (2, 0, 800)]),
+            M.way(2, M.residential, [(3, 200, -800), (4, 200, 800)]),
+        ])
+        func route(_ id: String, _ east: Double) throws -> Route {
+            let line = try M.polyline([(east, -700), (east, 700)])
+            return try Route(id: id, polyline: line.points, steps: [], distanceM: line.lengthM,
+                             expectedTravelTimeS: 100, source: .appleMaps)
+        }
+        let events = [
+            LogEvent(timestamp: MonotonicTimestamp(seconds: 0), payload: .route(RouteSample(reason: .user, route: try route("a", 0)))),
+            LogEvent(timestamp: MonotonicTimestamp(seconds: 50), payload: .route(RouteSample(reason: .offRoute, route: try route("b", 200)))),
+        ]
+        let recorded = ReplayRecordedRoutes.routes(in: events, endT: 99.5)
+        #expect(recorded.map { $0.window } == [ReplayTimeWindow(fromT: 0, toT: 50), ReplayTimeWindow(fromT: 50, toT: 99.5)])
+        let matcher = RouteEdgeMatcher(network: net)
+        let actives = recorded.map { ReplayActiveRoute(route: $0.route, match: matcher.match($0.route), windows: [$0.window]) }
+        // On street a before the switch, on street b after it (t 50.5 on).
+        var points: [(t: Double, east: Double, north: Double, heading: Double)] = []
+        for k in 0..<50 { points.append((Double(k), 0, -500 + Double(k) * 10, 0)) }
+        for k in 0..<50 { points.append((50.5 + Double(k) * 0.98, 200, -500 + Double(k) * 10, 0)) }
+        let s = ReplayRouteEvaluation.stats(track: Self.track(points), routes: actives, network: net)
+        #expect(s.samples == 100)
+        #expect((s.crossTrackMaxM ?? 100) < 0.5, "\(String(describing: s.crossTrackMaxM))")
+        #expect(s.onRouteEdgeShare == 1 && s.offRoadShare == 0)
+    }
 }
