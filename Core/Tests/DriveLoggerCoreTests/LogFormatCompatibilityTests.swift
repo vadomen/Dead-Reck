@@ -874,14 +874,17 @@ struct LogFormatCompatibilityV6Tests {
 /// Format v7 counterpart. Same rule: frozen when v7 was introduced (prompt
 /// 51 item D, route rows) and never edited to fit a later change. v7 = v6 +
 /// the kinds `route` (a route set or replaced: `reason`, the embedded
-/// `Route`, optional `origin`) and `routeCleared` (`reason`, `routeID`). The
+/// `Route`, optional `origin` with an optional `source`) and `routeCleared`
+/// (`reason`, `routeID`). The
 /// fixture is a recording without OBD: a reference fix, then a route the
 /// driver chose (with label, a non-ASCII instruction and a slash), an
 /// off-route rebuild, an alternative, a failed clear, a restored route with
 /// a roundabout exit number, a cancel, a route whose reason, source and
 /// maneuver this build does not know, an arrival, a route with no steps
 /// and a clear whose reason this build does not know, plus a row of a kind
-/// this build does not know. Every clear names the route the latest `route`
+/// this build does not know. Origins: each known `source` (`fix`,
+/// `estimate`, `pin`), one this build does not know, one without a source,
+/// and the restored route has none. Every clear names the route the latest `route`
 /// row set. Coordinates are invented, in open ocean in the South Pacific:
 /// no real place.
 @Suite("Log format compatibility v7")
@@ -892,15 +895,15 @@ struct LogFormatCompatibilityV7Tests {
         {"app":{"build":"70","name":"DriveLogger","version":"0.7.0"},"device":{"model":"iPhone16,1","systemName":"iOS","systemVersion":"18.6"},"formatVersion":7,"mount":"windscreen, portrait","referenceUptimeSeconds":3600.25,"sessionID":"7D9EBF30-4B5C-4D6E-AF80-91A2B3C4D5E6","startedAt":"2026-11-01T00:00:00Z","timeZone":"UTC","vehicle":"test vehicle"}
         {"data":{"event":"start"},"kind":"lifecycle","t":0}
         {"data":{"ageS":0.25,"altitude":5,"course":90,"courseAccuracy":5,"horizontalAccuracy":6,"latitude":-45.00012,"longitude":-120.00003,"receivedT":1250000000,"speed":12.5,"speedAccuracy":0.5,"verticalAccuracy":4},"kind":"location","t":1000000000}
-        {"data":{"origin":{"latitude":-45.00012,"longitude":-120.00003},"reason":"user","route":{"distanceM":512.5,"expectedTravelTimeS":61,"id":"r1","label":"Harbour","polylineE7":[-450001200,-1200000300,0,4500,-3000,0,-1500,1200],"source":"appleMaps","steps":[{"distanceM":0,"from":0,"instruction":"","maneuver":"depart","to":0},{"distanceM":35.4,"from":0,"instruction":"Tournez à droite / Rue 2","maneuver":"right","to":1},{"distanceM":477.1,"from":1,"instruction":"Arrive","maneuver":"arrive","to":3}]}},"kind":"route","t":1500000000}
-        {"data":{"origin":{"latitude":-45.0002,"longitude":-119.99995},"reason":"offRoute","route":{"distanceM":240,"expectedTravelTimeS":30,"id":"r2","label":"Harbour","polylineE7":[-450002000,-1199999500,-2000,0,0,2500],"source":"appleMaps","steps":[{"distanceM":0,"from":0,"instruction":"","maneuver":"depart","to":0},{"distanceM":22.2,"from":0,"instruction":"Turn left","maneuver":"left","to":1},{"distanceM":217.8,"from":1,"instruction":"Arrive","maneuver":"arrive","to":2}]}},"kind":"route","t":4000000000}
-        {"data":{"origin":{"latitude":-45.00022,"longitude":-119.99995},"reason":"alternative","route":{"distanceM":260.5,"expectedTravelTimeS":34,"id":"r3","polylineE7":[-450002200,-1199999500,0,3000,-1800,0],"source":"appleMaps","steps":[{"distanceM":0,"from":0,"instruction":"","maneuver":"depart","to":0},{"distanceM":23.6,"from":0,"instruction":"Turn right","maneuver":"right","to":1},{"distanceM":236.9,"from":1,"instruction":"","maneuver":"arrive","to":2}]}},"kind":"route","t":5000000000}
+        {"data":{"origin":{"latitude":-45.00012,"longitude":-120.00003,"source":"fix"},"reason":"user","route":{"distanceM":512.5,"expectedTravelTimeS":61,"id":"r1","label":"Harbour","polylineE7":[-450001200,-1200000300,0,4500,-3000,0,-1500,1200],"source":"appleMaps","steps":[{"distanceM":0,"from":0,"instruction":"","maneuver":"depart","to":0},{"distanceM":35.4,"from":0,"instruction":"Tournez à droite / Rue 2","maneuver":"right","to":1},{"distanceM":477.1,"from":1,"instruction":"Arrive","maneuver":"arrive","to":3}]}},"kind":"route","t":1500000000}
+        {"data":{"origin":{"latitude":-45.0002,"longitude":-119.99995,"source":"estimate"},"reason":"offRoute","route":{"distanceM":240,"expectedTravelTimeS":30,"id":"r2","label":"Harbour","polylineE7":[-450002000,-1199999500,-2000,0,0,2500],"source":"appleMaps","steps":[{"distanceM":0,"from":0,"instruction":"","maneuver":"depart","to":0},{"distanceM":22.2,"from":0,"instruction":"Turn left","maneuver":"left","to":1},{"distanceM":217.8,"from":1,"instruction":"Arrive","maneuver":"arrive","to":2}]}},"kind":"route","t":4000000000}
+        {"data":{"origin":{"latitude":-45.00022,"longitude":-119.99995,"source":"pin"},"reason":"alternative","route":{"distanceM":260.5,"expectedTravelTimeS":34,"id":"r3","polylineE7":[-450002200,-1199999500,0,3000,-1800,0],"source":"appleMaps","steps":[{"distanceM":0,"from":0,"instruction":"","maneuver":"depart","to":0},{"distanceM":23.6,"from":0,"instruction":"Turn right","maneuver":"right","to":1},{"distanceM":236.9,"from":1,"instruction":"","maneuver":"arrive","to":2}]}},"kind":"route","t":5000000000}
         {"data":{"reason":"failed","routeID":"r3"},"kind":"routeCleared","t":6000000000}
         {"data":{"reason":"restored","route":{"distanceM":180,"expectedTravelTimeS":25,"id":"r4","polylineE7":[-450004000,-1199999000,1000,1000,1000,-1000],"source":"appleMaps","steps":[{"distanceM":0,"from":0,"instruction":"","maneuver":"depart","to":0},{"distanceM":15.6,"exitNumber":2,"from":0,"instruction":"At the roundabout, take the 2nd exit","maneuver":"roundaboutExit","to":1},{"distanceM":164.4,"from":1,"instruction":"Arrive","maneuver":"arrive","to":2}]}},"kind":"route","t":6500000000}
         {"data":{"reason":"cancelled","routeID":"r4"},"kind":"routeCleared","t":7000000000}
-        {"data":{"reason":"detour","route":{"distanceM":95,"expectedTravelTimeS":12,"id":"r5","polylineE7":[-450003000,-1199998000,800,0],"source":"osrm","steps":[{"distanceM":95,"from":0,"instruction":"Keep left","maneuver":"keepLeft","to":1}]}},"kind":"route","t":7500000000}
+        {"data":{"origin":{"latitude":-45.0003,"longitude":-119.9998},"reason":"detour","route":{"distanceM":95,"expectedTravelTimeS":12,"id":"r5","polylineE7":[-450003000,-1199998000,800,0],"source":"osrm","steps":[{"distanceM":95,"from":0,"instruction":"Keep left","maneuver":"keepLeft","to":1}]}},"kind":"route","t":7500000000}
         {"data":{"reason":"arrived","routeID":"r5"},"kind":"routeCleared","t":8000000000}
-        {"data":{"origin":{"latitude":-45.00022,"longitude":-119.9998},"reason":"user","route":{"distanceM":50,"expectedTravelTimeS":6,"id":"r6","polylineE7":[-450002200,-1199998000,4500,0],"source":"synthetic","steps":[]}},"kind":"route","t":8200000000}
+        {"data":{"origin":{"latitude":-45.00022,"longitude":-119.9998,"source":"beacon"},"reason":"user","route":{"distanceM":50,"expectedTravelTimeS":6,"id":"r6","polylineE7":[-450002200,-1199998000,4500,0],"source":"synthetic","steps":[]}},"kind":"route","t":8200000000}
         {"data":{"distanceAlongM":12.5,"routeID":"r6"},"kind":"routeProgress","t":8300000000}
         {"data":{"reason":"superseded","routeID":"r6"},"kind":"routeCleared","t":8500000000}
         {"data":{"bytesWritten":4096,"counts":{"lifecycle":1,"location":1,"route":6,"routeCleared":4,"routeProgress":1},"dropped":0,"gaps":{"accel":0,"gyro":0,"motion":0},"maxGapMs":{},"motionHz":0,"obdHz":0,"queueDepthMax":1,"timeouts":0,"windowS":10},"kind":"stats","t":10000000000}
@@ -939,7 +942,7 @@ struct LogFormatCompatibilityV7Tests {
                 RouteStep(instruction: "Arrive", distanceM: 477.1, polylineRange: 1...3, maneuver: .arrive),
             ],
             distanceM: 512.5, expectedTravelTimeS: 61, source: .appleMaps, label: "Harbour")
-        return RouteSample(reason: .user, route: route, origin: RouteOrigin(latitude: -45.00012, longitude: -120.00003))
+        return RouteSample(reason: .user, route: route, origin: RouteOrigin(latitude: -45.00012, longitude: -120.00003, source: .fix))
     }
 
     @Test("A v7 recording parses")
@@ -981,7 +984,11 @@ struct LogFormatCompatibilityV7Tests {
         #expect(rows[0].sample.route.steps[1].instruction == "Tournez à droite / Rue 2")
 
         #expect(rows[1].sample.reason == .offRoute)
-        #expect(rows[1].sample.origin == RouteOrigin(latitude: -45.0002, longitude: -119.99995))
+        #expect(rows[1].sample.origin == RouteOrigin(latitude: -45.0002, longitude: -119.99995, source: .estimate))
+        #expect(rows.map { $0.sample.origin?.source?.rawValue ?? "-" } == ["fix", "estimate", "pin", "-", "-", "beacon"])
+        #expect(rows[2].sample.origin?.source == .pin)
+        if case .unknown("beacon")? = rows[5].sample.origin?.source {} else { Issue.record("beacon not kept as unknown") }
+        #expect(rows[4].sample.origin == RouteOrigin(latitude: -45.0003, longitude: -119.9998), "an origin without a source")
         #expect(rows[2].sample.reason == .alternative)
         #expect(rows[2].sample.route.label == nil)
 
@@ -1031,9 +1038,10 @@ struct LogFormatCompatibilityV7Tests {
         #expect(LogEventKind.routeCleared.rawValue == "routeCleared")
         #expect(RouteSample.Reason.known.map(\.rawValue) == ["user", "offRoute", "alternative", "restored"])
         #expect(RouteClearedSample.Reason.known.map(\.rawValue) == ["arrived", "cancelled", "failed"])
+        #expect(RouteOrigin.Source.known.map(\.rawValue) == ["fix", "estimate", "pin"])
 
         let line = try codec.line(for: LogEvent(timestamp: Self.ms(1_500), payload: .route(try Self.firstRoute())))
-        #expect(String(decoding: line, as: UTF8.self) == #"{"data":{"origin":{"latitude":-45.00012,"longitude":-120.00003},"reason":"user","route":{"distanceM":512.5,"expectedTravelTimeS":61,"id":"r1","label":"Harbour","polylineE7":[-450001200,-1200000300,0,4500,-3000,0,-1500,1200],"source":"appleMaps","steps":[{"distanceM":0,"from":0,"instruction":"","maneuver":"depart","to":0},{"distanceM":35.4,"from":0,"instruction":"Tournez à droite / Rue 2","maneuver":"right","to":1},{"distanceM":477.1,"from":1,"instruction":"Arrive","maneuver":"arrive","to":3}]}},"kind":"route","t":1500000000}"# + "\n")
+        #expect(String(decoding: line, as: UTF8.self) == #"{"data":{"origin":{"latitude":-45.00012,"longitude":-120.00003,"source":"fix"},"reason":"user","route":{"distanceM":512.5,"expectedTravelTimeS":61,"id":"r1","label":"Harbour","polylineE7":[-450001200,-1200000300,0,4500,-3000,0,-1500,1200],"source":"appleMaps","steps":[{"distanceM":0,"from":0,"instruction":"","maneuver":"depart","to":0},{"distanceM":35.4,"from":0,"instruction":"Tournez à droite / Rue 2","maneuver":"right","to":1},{"distanceM":477.1,"from":1,"instruction":"Arrive","maneuver":"arrive","to":3}]}},"kind":"route","t":1500000000}"# + "\n")
 
         var noOrigin = try Self.firstRoute()
         noOrigin.origin = nil
@@ -1041,6 +1049,9 @@ struct LogFormatCompatibilityV7Tests {
         let restored = String(decoding: try codec.line(for: LogEvent(timestamp: .zero, payload: .route(noOrigin))), as: UTF8.self)
         #expect(restored.hasPrefix(#"{"data":{"reason":"restored","route":{"distanceM":512.5,"#), "no origin key when absent")
         #expect(!restored.contains("origin"))
+
+        let unsourced = RouteOrigin(latitude: -45.0003, longitude: -119.9998)
+        #expect(try RouteFixture.string(unsourced) == #"{"latitude":-45.0003,"longitude":-119.9998}"#, "no source key when unknown")
 
         let cleared = try codec.line(for: LogEvent(timestamp: Self.ms(8_000), payload: .routeCleared(RouteClearedSample(reason: .arrived, routeID: "r5"))))
         #expect(String(decoding: cleared, as: UTF8.self) == #"{"data":{"reason":"arrived","routeID":"r5"},"kind":"routeCleared","t":8000000000}"# + "\n")

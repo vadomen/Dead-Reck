@@ -79,5 +79,6 @@ struct LogFormatCurrentStateTests {
         // Pinned in `LogFormatCompatibilityV7Tests`.
         #expect(RouteSample.Reason.known.count == 4)
         #expect(RouteClearedSample.Reason.known.count == 3)
+        #expect(RouteOrigin.Source.known.count == 3)
     }
 }

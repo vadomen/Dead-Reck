@@ -11,7 +11,7 @@ import Foundation
 /// route without a `routeCleared` row in between; `routeCleared` ends it.
 ///
 /// ```json
-/// {"data":{"origin":{"latitude":-45.0001,"longitude":-119.9999},"reason":"user","route":{…}},"kind":"route","t":1500000000}
+/// {"data":{"origin":{"latitude":-45.00012,"longitude":-120.00003,"source":"fix"},"reason":"user","route":{…}},"kind":"route","t":1500000000}
 /// ```
 ///
 /// A route is guidance, not a measurement: neither the polyline nor
@@ -26,7 +26,8 @@ public struct RouteSample: Hashable, Sendable, Codable {
     /// The route, in `Route`'s own JSON (key `route`).
     public var route: Route
     /// Where the route request started (the position the app gave the
-    /// provider as the source of the trip); absent when there was no request
+    /// provider as the start of the trip, and where it took it from);
+    /// absent when there was no request
     /// (a route restored from storage) or the app did not record it.
     public var origin: RouteOrigin?
 
@@ -142,15 +143,59 @@ public struct RouteClearedSample: Hashable, Sendable, Codable {
 
 /// The start of a route request, degrees WGS 84, under the same keys as
 /// every other position in the log (`manualFix`, `navPrior`, `location`):
-/// `latitude`, `longitude`. Not a fix and not an engine input: only what the
-/// app asked the provider to route from.
+/// `latitude`, `longitude`, plus `source`, where the app took the position
+/// from. Not a fix and not an engine input: only what the app asked the
+/// provider to route from, even when `source` is `fix`.
+///
+/// ```json
+/// {"latitude":-45.00012,"longitude":-120.00003,"source":"fix"}
+/// ```
 public struct RouteOrigin: Hashable, Sendable, Codable {
     public var latitude: Double
     public var longitude: Double
+    /// Where the position came from; omitted when the app does not know.
+    public var source: Source?
 
-    public init(latitude: Double, longitude: Double) {
+    public init(latitude: Double, longitude: Double, source: Source? = nil) {
         self.latitude = latitude
         self.longitude = longitude
+        self.source = source
+    }
+
+    /// `source` vocabulary. The raw strings are on disk: never change one.
+    /// Equality and hashing go by `rawValue`, as for `RouteSample.Reason`.
+    public enum Source: Sendable, CustomStringConvertible {
+        /// A location fix (the reference GNSS stream's latest `location`).
+        case fix
+        /// The navigator's estimate.
+        case estimate
+        /// A position the driver marked on the map (a manual fix).
+        case pin
+        /// A source this build does not know; the string is kept.
+        case unknown(String)
+
+        /// Every source this build writes, in format order.
+        public static let known: [Source] = [.fix, .estimate, .pin]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "fix": self = .fix
+            case "estimate": self = .estimate
+            case "pin": self = .pin
+            default: self = .unknown(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .fix: "fix"
+            case .estimate: "estimate"
+            case .pin: "pin"
+            case .unknown(let value): value
+            }
+        }
+
+        public var description: String { rawValue }
     }
 
     /// Finite and within ±90° / ±180°. Decoding does not check it (the row
@@ -168,6 +213,22 @@ extension RouteSample.Reason: Hashable {
 }
 
 extension RouteSample.Reason: Codable {
+    public init(from decoder: any Decoder) throws {
+        self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+}
+
+extension RouteOrigin.Source: Hashable {
+    public static func == (lhs: Self, rhs: Self) -> Bool { lhs.rawValue == rhs.rawValue }
+    public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
+}
+
+extension RouteOrigin.Source: Codable {
     public init(from decoder: any Decoder) throws {
         self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
     }

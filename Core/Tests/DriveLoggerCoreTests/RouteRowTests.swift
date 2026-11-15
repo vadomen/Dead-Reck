@@ -44,6 +44,12 @@ struct RouteRowTests {
         #expect(RouteSample.Reason.unknown("offRoute") == .offRoute)
         #expect(RouteSample.Reason.unknown("offRoute").hashValue == RouteSample.Reason.offRoute.hashValue)
         #expect(RouteClearedSample.Reason.unknown("arrived") == .arrived)
+        #expect(try decoder.decode(RouteOrigin.Source.self, from: Data(#""beacon""#.utf8)) == .unknown("beacon"))
+        #expect(RouteOrigin.Source.unknown("pin") == .pin)
+        #expect(RouteOrigin.Source.unknown("pin").hashValue == RouteOrigin.Source.pin.hashValue)
+        for source in RouteOrigin.Source.known {
+            if case .unknown = RouteOrigin.Source(rawValue: source.rawValue) { Issue.record("\(source) parsed as unknown") }
+        }
         for reason in RouteSample.Reason.known {
             #expect(RouteSample.Reason(rawValue: reason.rawValue) == reason)
             if case .unknown = RouteSample.Reason(rawValue: reason.rawValue) { Issue.record("\(reason) parsed as unknown") }
@@ -123,13 +129,14 @@ struct RouteRowTests {
     /// vertices per 30 km outside short residential trips (up to about 850
     /// per 30 km there) and 4–20 steps. Measured here: a spike-like route
     /// (400 points at 75 m, 12 steps, English instructions of about 32
-    /// characters) is 5 945 bytes; a dense one (600 points at 50 m, 20 steps,
+    /// characters) is 5 965 bytes; a dense one (600 points at 50 m, 20 steps,
     /// Ukrainian instructions of 39 characters, mostly two bytes each in
-    /// UTF-8) is 9 813 bytes. Both with a UUID id, a label and an origin.
+    /// UTF-8) is 9 833 bytes. Both with a UUID id, a label and an origin
+    /// with a source.
     @Test("A 30 km route row is one line of 5–7 KB (spike-like) and at most 10 KiB (dense)")
     func thirtyKilometreRow() throws {
         let codec = LogCodec()
-        let origin = RouteOrigin(latitude: -45.0001234, longitude: -120.0004321)
+        let origin = RouteOrigin(latitude: -45.0001234, longitude: -120.0004321, source: .estimate)
 
         let typical = try F.route(F.wandering(count: 400, spacingM: 75, turnEvery: 33),
                                   breaks: Array(stride(from: 33, to: 400, by: 33).prefix(10)),
@@ -219,22 +226,26 @@ struct RouteRowTests {
     func csv() throws {
         #expect(RecordingCSV.columns(for: "route") == [
             "t", "reason", "routeID", "source", "label", "distanceM", "expectedTravelTimeS", "points", "steps",
-            "originLatitude", "originLongitude", "route",
+            "originLatitude", "originLongitude", "originSource", "route",
         ])
         #expect(RecordingCSV.columns(for: "routeCleared") == ["t", "reason", "routeID"])
 
         let small = try RouteCodingTests.small()
-        let withOrigin = Self.at(1_500, .route(RouteSample(reason: .user, route: small, origin: RouteOrigin(latitude: -45.00012, longitude: -120.00003))))
+        let withOrigin = Self.at(1_500, .route(RouteSample(reason: .user, route: small, origin: RouteOrigin(latitude: -45.00012, longitude: -120.00003, source: .estimate))))
         #expect(RecordingCSV.values(for: withOrigin) == [
             "1500000000", "user", "r1", "synthetic", "Home", "99.5", "20.0", "3", "3", "-45.00012", "-120.00003",
-            RouteCodingTests.smallJSON,
+            "estimate", RouteCodingTests.smallJSON,
         ])
+        let unsourced = Self.at(0, .route(RouteSample(reason: .user, route: small, origin: RouteOrigin(latitude: 1, longitude: 2))))
+        #expect(RecordingCSV.values(for: unsourced)[9...11] == ["1.0", "2.0", ""])
+        let unknownSource = Self.at(0, .route(RouteSample(reason: .user, route: small, origin: RouteOrigin(latitude: 1, longitude: 2, source: .unknown("beacon")))))
+        #expect(RecordingCSV.values(for: unknownSource)[11] == "beacon")
         let bare = Self.at(0, .route(RouteSample(reason: .unknown("detour"), route: try RouteCodingTests.small(label: nil))))
         let values = RecordingCSV.values(for: bare)
-        #expect(values[1] == "detour" && values[4] == "" && values[9] == "" && values[10] == "")
+        #expect(values[1] == "detour" && values[4] == "" && values[9] == "" && values[10] == "" && values[11] == "")
         // The JSON cell is quoted RFC 4180-style and decodes back to the route.
         #expect(RecordingCSV.line(values).contains(#","{""distanceM"":99.5,"#))
-        #expect(try JSONDecoder().decode(Route.self, from: Data(values[11].utf8)) == (try RouteCodingTests.small(label: nil)))
+        #expect(try JSONDecoder().decode(Route.self, from: Data(values[12].utf8)) == (try RouteCodingTests.small(label: nil)))
 
         let cleared = Self.at(8_000, .routeCleared(RouteClearedSample(reason: .unknown("expired"), routeID: "r5")))
         #expect(RecordingCSV.values(for: cleared) == ["8000000000", "expired", "r5"])
