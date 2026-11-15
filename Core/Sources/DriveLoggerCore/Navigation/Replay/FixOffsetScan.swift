@@ -194,6 +194,7 @@ public enum FixOffsetScan {
         "--pin-pair-window", "--wrong-road-tolerance",
         "--fixpin-inject", "--fixpin-two-pins", "--fixpin-survey", "--fixpin-pins", "--fixpin-separation",
         "--fixpin-engine-no-roads",
+        "--route", "--route-from-reference", "--route-perturb", "--route-write",
     ]
 
     /// The engine-only flags among `given` (the command line's flags), each

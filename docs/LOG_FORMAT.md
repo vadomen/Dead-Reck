@@ -4,7 +4,7 @@ Field-by-field reference for DriveLogger recordings. The code in
 `Core/Sources/DriveLoggerCore/Log/` is authoritative; this file must be updated
 in the same commit as any change to it.
 
-Current version: **6** (`LogFormatVersion.current`). Readable: **1, 2, 3, 4, 5, 6**.
+Current version: **7** (`LogFormatVersion.current`). Readable: **1, 2, 3, 4, 5, 6, 7**.
 
 ## File
 
@@ -87,7 +87,7 @@ Current version: **6** (`LogFormatVersion.current`). Readable: **1, 2, 3, 4, 5, 
 
 | Field | Type | Since | Meaning |
 |---|---|---|---|
-| `formatVersion` | int | 1 | `1` to `5` (current: `5`). A reader refuses versions newer than it knows. |
+| `formatVersion` | int | 1 | `1` to `7` (current: `7`). A reader refuses versions newer than it knows. |
 | `sessionID` | UUID string | 1 | Unique per recording. |
 | `startedAt` | ISO 8601 string | 1 | Wall clock at start, whole seconds, UTC. The only wall-clock anchor. |
 | `referenceUptimeSeconds` | double, s | 1 | Seconds since boot at start; `t = 0` here. |
@@ -155,6 +155,8 @@ verbatim (`LogEvent.Payload.unrecognized`) instead of dropping it.
 | `manualFix` | 3 | driver double-tapped a position | user |
 | `gpsSwitch` | 4 | driver tapped the GPS switch | user |
 | `navPrior` | 5 | Record start | at most once |
+| `route` | 7 | the route takes effect | rare |
+| `routeCleared` | 7 | the route ends | rare |
 
 ### `motion`
 
@@ -702,6 +704,66 @@ not written; a `lifecycle` `error` row `navPrior invalid: <field>` is
 written instead and the run starts fresh. `restoreClass` and `source` values
 are frozen strings (`NavigationRestoreClass`, `NavPriorSample.Source`).
 
+### `route`, `routeCleared`
+
+The route the driver follows (v7, prompt 51; the routing plan is
+`docs/ROUTING_PLAN.md`, the model `docs/ROUTING.md`). Nothing writes these rows
+yet: the app gets them in prompt 52. Core types: `RouteSample`,
+`RouteClearedSample`, `Route`.
+
+```json
+{"data":{"origin":{"latitude":-45.00012,"longitude":-120.00003,"source":"fix"},"reason":"user","route":{"distanceM":512.5,"expectedTravelTimeS":61,"id":"r1","label":"Harbour","polylineE7":[-450001200,-1200000300,0,4500,-3000,0,-1500,1200],"source":"appleMaps","steps":[{"distanceM":0,"from":0,"instruction":"","maneuver":"depart","to":0},{"distanceM":35.4,"from":0,"instruction":"Tournez à droite / Rue 2","maneuver":"right","to":1},{"distanceM":477.1,"from":1,"instruction":"Arrive","maneuver":"arrive","to":3}]}},"kind":"route","t":1500000000}
+{"data":{"reason":"arrived","routeID":"r5"},"kind":"routeCleared","t":8000000000}
+```
+
+(Invented values.) **`t` = `clock.now()`** when the route takes effect (`route`) or
+ends (`routeCleared`).
+
+| Field | Type, unit | Meaning |
+|---|---|---|
+| `reason` (`route`) | string | Why the route was set. Open set; known values `user`, `offRoute`, `alternative`, `restored`. A reader keeps an unknown value verbatim. |
+| `route` | object | The `Route`: `id`, `label` (optional), `source`, `distanceM` (m), `expectedTravelTimeS` (s), `polylineE7`, `steps`. |
+| `origin` | object, optional | Where the route was requested from: `latitude`, `longitude` (degrees, WGS 84) and optional `source`. Absent when not known. |
+| `origin.source` | string, optional | What the origin was: `fix`, `estimate` or `pin`. Open set; omitted when unknown, an unknown string is kept. |
+| `route.source` | string | `appleMaps`, `synthetic`; open, an unknown string is kept. |
+| `steps[].maneuver` | string | `depart`, `straight`, `slightLeft`, `left`, `sharpLeft`, `slightRight`, `right`, `sharpRight`, `uTurn`, `roundaboutExit`, `merge`, `exitRamp`, `arrive`; open, an unknown string is kept (with its `exitNumber`). |
+| `steps[].from`, `to` | int | Closed range of polyline point indexes. The maneuver happens at `to`. |
+| `steps[].exitNumber` | int, optional | Only on `roundaboutExit` (and kept on an unknown maneuver). |
+| `reason` (`routeCleared`) | string | Open set; known values `arrived`, `cancelled`, `failed`. |
+| `routeID` | string | The `id` of the route that ended. |
+
+**`polylineE7`** is a flat integer array: the first point absolute (latitude, then
+longitude, degrees times 1e7), then one (dLat, dLon) pair per further point, each
+relative to the previous point. Worked example, the array in the row above:
+
+| index | values | point (degrees times 1e7) |
+|---|---|---|
+| 0 | `-450001200, -1200000300` | (-450001200, -1200000300) |
+| 1 | `0, 4500` | (-450001200, -1199995800) |
+| 2 | `-3000, 0` | (-450004200, -1199995800) |
+| 3 | `-1500, 1200` | (-450005700, -1199994600) |
+
+Four points, so the steps' `to` runs up to 3. Deltas have no wrap at 180 degrees. A
+reader rejects an odd or short array, non-integers, out-of-range coordinates,
+overflowing deltas, steps out of bounds or order, and negative or non-finite
+distances or times; a malformed `route` row fails decode (strict reading stops,
+recovery skips that line).
+
+Size: a 30 km route row is about 5,965 bytes for a typical route (400 points at 75 m,
+12 steps, English) and 9,833 bytes for a dense one (600 points at 50 m, 20 steps,
+Ukrainian), before gzip.
+
+Semantics:
+
+- A `route` row **replaces** the active route. A rebuild (`offRoute`, `alternative`)
+  writes a new row with the whole route.
+- A `routeCleared` row names the active route by `routeID` and clears it. Analysis warns
+  when the id is not the active route's.
+- Route rows are not tapped into the navigator (`LogSink.isTapped` is unchanged);
+  prompt 53 decides. A recording is the same without them.
+- `replay_nav` without route flags replays a v7 recording's own route rows
+  (`docs/NAVIGATION.md`).
+
 ## Versions
 
 | Version | Changes |
@@ -712,7 +774,7 @@ are frozen strings (`NavigationRestoreClass`, `NavPriorSample.Source`).
 | 4 | New kind `gpsSwitch` (`on`, `source`; `source` vocabulary `driver`, open). Nothing else changed: every v3 row is written and read exactly as before. A v3 reader refuses a v4 file rather than keep the switch rows as unrecognized and replay the drive as if GPS had stayed on. |
 | 5 | New kind `navPrior` (the Navigate to Record hand-over estimate; `restoreClass` vocabulary `moving`, `standingStop`, `parked`; `source` vocabulary `navigate`, open). Nothing else changed: every v4 row is written and read exactly as before. A v4 reader refuses a v5 file rather than keep the row as unrecognized and replay the drive from a fresh start. |
 | 6 | `manualFix` gains the optional `tapLatitude`, `tapLongitude` (the raw tap of a pin that snapped to a road; `latitude`/`longitude` are then the snapped point), and `mapSpanM` may be up to 1500 m for a snapped pin. No new kind; every v5 row is written and read exactly as before. Pin truth is the tap when present (see `manualFix`). A v5 reader refuses a v6 file rather than take the snapped point for the place the driver marked and drop the tap on re-export. |
-| 7 | Reserved for route events (routing plan, `docs/ROUTING_PLAN.md`, prompt 51). Not written yet; `LogFormatVersion.current` is still 6. |
+| 7 | New kinds `route` (`reason` vocabulary `user`, `offRoute`, `alternative`, `restored`, open; optional `origin` with optional `source` `fix`, `estimate`, `pin`, open) and `routeCleared` (`reason` `arrived`, `cancelled`, `failed`, open; `routeID`). Nothing else changed: every v6 row is written and read exactly as before. A v6 reader refuses a v7 file rather than keep the rows as unrecognized. |
 
 Within v2, without a version bump (both read unchanged by every v2 reader):
 M4 added the `lifecycle` value `locationAuthorization` (`event` is an open
@@ -728,8 +790,12 @@ per recording.
 Every version stays readable. v2 only adds optional fields, so DriveLogger
 decodes a v1 file into the same types with those fields absent. v3, v4 and v5
 each only add a kind. v6 only adds two optional `manualFix` fields, absent
-when reading an older file. Frozen fixtures for all six versions are in
-`LogFormatCompatibilityTests`.
+when reading an older file. v7 only adds two kinds. Frozen fixtures for all
+seven versions are in `LogFormatCompatibilityTests`; the v1–v6 fixtures stay
+frozen and unchanged. The v7 fixture uses invented coordinates and covers every
+known reason, an unknown reason, source and maneuver, a route with no steps, a
+non-ASCII instruction, an origin with each source, an unknown source, no source
+and no origin, and one unknown kind; re-export is byte-identical.
 
 ## Reading recordings outside DriveLogger
 
@@ -765,10 +831,24 @@ note) and every `gpsSwitch` change
 without one says `Nav prior none (navigation started fresh)`; warnings for more
 than one row, a row after the first input, and an invalid row). `--csv` writes one CSV per kind
 (`manualFix.csv` has every field, `tapLatitude`, `tapLongitude` last; `gpsSwitch.csv` is `t,on,source` with
-`on` as `true`/`false`; `navPrior.csv` has every field): `t` in integer nanoseconds, empty cell
+`on` as `true`/`false`; `navPrior.csv` has every field; `route.csv` and `routeCleared.csv`, below): `t` in integer nanoseconds, empty cell
 for an absent field, RFC 4180 quoting, compact JSON for `stats.counts` and for
 unknown kinds. `--strict` stops at the first damaged member or malformed line.
 
+- Routes (v7): one `Routes` line. A v7 file with route rows:
+  `Routes        6 set (user 2, offRoute 1, alternative 1, restored 1, detour 1), 1.34 km in total; cleared 4 (arrived 1, cancelled 1, failed 1, superseded 1)`.
+  A v7 file without any: `Routes        none`. The line is absent before v7. It
+  prints no coordinates, labels or ids. The total length is the sum of each row's
+  `distanceM` (each rebuild adds its whole route). Warnings: a `routeCleared` whose
+  `routeID` is not the active route's, and an origin out of range.
+
+  | CSV | Columns |
+  |---|---|
+  | `route.csv` | `t,reason,routeID,source,label,distanceM,expectedTravelTimeS,points,steps,originLatitude,originLongitude,originSource,route` (`route` is the full Route JSON) |
+  | `routeCleared.csv` | `t,reason,routeID` |
+
+  (`detour` and `superseded` in the sample line are unknown reasons from a fixture,
+  shown to illustrate that open values are counted.)
 - `Duration` runs from the `start` row to the last `t` (from the first row in
   a file without a `start` row). Rows stamped before the `start` row — the
   start-up init, a pre-dated CoreMotion batch — are reported on a separate

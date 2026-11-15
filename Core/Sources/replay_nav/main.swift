@@ -15,6 +15,25 @@ import Foundation
 //       [--fixpin-inject <out.jsonl> [--fixpin-two-pins] [--fixpin-survey] [--fixpin-pins <n>] [--fixpin-separation <s>] [--fixpin-engine-no-roads]]
 //       [--save-prior <state.json> [--save-prior-at <s>|end] [--save-prior-engine-off]]
 //       [--prior <state.json> [--prior-offset <dE>,<dN>]] [--start-at <s>] [--no-prior]
+//       [--route <route.json> | --route-from-reference] [--route-perturb missed-turn|parallel] [--route-write <route.json>]
+//
+// Prompt 51 E, routes (analysis only: the engine never sees a route, so
+// every estimate is unchanged). Needs --roads. --route: a `Route` in its
+// log JSON (one log), applied over the whole run. --route-from-reference:
+// the recording's own clean GNSS fixes (`ReferenceRouteRule`: accuracy
+// ≤ 20 m, valid speed, valid course when moving ≥ 2 m/s; spans joined
+// when ≤ 5 s apart; every fix in the file, whatever --gps withholds; truth
+// excludeFixes left out) as a synthetic route covering only its spans'
+// time windows. Without either, a v7 recording's own `route` rows are used
+// (each from its row to the next route or routeCleared row). The route is
+// matched onto the packs (`RouteEdgeMatcher`) and the summary, metrics.json
+// (`route`), metrics.md and the GeoJSON report its coverage and gaps and
+// the estimate's cross-track distance to it and share on a route edge over
+// the route's time (and after the --gps mask, when there is one).
+// --route-perturb: a deliberately wrong route built from it
+// (`RoutePerturbation`, the --seed-th candidate place). --route-write: the
+// route used (perturbed if asked), as JSON (one log). Labels: -route-file,
+// -route-ref, then -<mode>-s<seed>; none for a recording's own rows.
 //
 // Prompt 40, the Navigate → Record hand-over (log v5): a recording that
 // carries a `navPrior` row started its live run from that prior, so every
@@ -182,6 +201,7 @@ let usage = """
            [--fixpin-inject <out.jsonl> [--fixpin-two-pins] [--fixpin-survey] [--fixpin-pins <n>] [--fixpin-separation <s>] [--fixpin-engine-no-roads]]
            [--save-prior <state.json> [--save-prior-at <s>|end] [--save-prior-engine-off]]
            [--prior <state.json> [--prior-offset <dE>,<dN>]] [--start-at <s>] [--no-prior]
+           [--route <route.json> | --route-from-reference] [--route-perturb missed-turn|parallel] [--route-write <route.json>]
     """
 
 var arguments = Array(CommandLine.arguments.dropFirst())
@@ -224,6 +244,10 @@ var priorPath: String?
 var priorOffset: (east: Double, north: Double)?
 var startAt: Double?
 var noPrior = false
+var routePath: String?
+var routeFromReference = false
+var routePerturb: RoutePerturbation?
+var routeWritePath: String?
 
 func number(_ text: String, _ flag: String) -> Double {
     guard let value = Double(text), value.isFinite else { fail("\(flag) needs a number, got \(text)\n\(usage)", status: 2) }
@@ -395,6 +419,18 @@ while !arguments.isEmpty {
         startAt = number(value(), argument)
     case "--no-prior":
         noPrior = true
+    case "--route":
+        routePath = value()
+    case "--route-from-reference":
+        routeFromReference = true
+    case "--route-perturb":
+        let name = value()
+        guard let mode = RoutePerturbation(rawValue: name) else {
+            fail("--route-perturb takes \(RoutePerturbation.allCases.map(\.rawValue).joined(separator: " or ")), not \(name)\n\(usage)", status: 2)
+        }
+        routePerturb = mode
+    case "--route-write":
+        routeWritePath = value()
     case "-h", "--help":
         print(usage)
         exit(EXIT_SUCCESS)
@@ -441,6 +477,28 @@ if (comparePath != nil || writeSidecarPath != nil) && paths.count != 1 {
 }
 if !injectRoads.isEmpty && comparePath != nil {
     fail("--inject-roads replays a library change; --compare follows the sidecar's roads lines: drop one\n\(usage)", status: 2)
+}
+// Prompt 51 E: routes are matched onto the given packs.
+let routeFlags = routePath != nil || routeFromReference || routePerturb != nil || routeWritePath != nil
+if routeFlags && roadPaths.isEmpty && injectRoads.isEmpty {
+    fail("--route, --route-from-reference, --route-perturb and --route-write need --roads (the route is matched onto the packs)\n\(usage)", status: 2)
+}
+if routePath != nil && routeFromReference {
+    fail("--route and --route-from-reference are two sources: give one\n\(usage)", status: 2)
+}
+if (routePath != nil || routeWritePath != nil) && paths.count != 1 {
+    fail("--route and --route-write take exactly one log\n\(usage)", status: 2)
+}
+if routePerturb != nil && routePath == nil && !routeFromReference {
+    fail("--route-perturb needs --route or --route-from-reference\n\(usage)", status: 2)
+}
+var fileRoute: Route?
+if let routePath {
+    do {
+        fileRoute = try JSONDecoder().decode(Route.self, from: Data(contentsOf: URL(fileURLWithPath: routePath)))
+    } catch {
+        fail("cannot read the route \(routePath): \(error)", status: 1)
+    }
 }
 if wrongRoadTolerance != nil && roadPaths.isEmpty && injectRoads.isEmpty {
     print("note: --wrong-road-tolerance has no effect without --roads")
@@ -770,7 +828,82 @@ for path in paths {
     if savePriorPath != nil {
         options.savePrior = ReplaySavePrior(atS: savePriorAt, header: header, engineOff: savePriorEngineOff)
     }
-    let result = NavigationReplay.run(logName: name, inputs: inputs, options: options, truth: entry)
+    var result = NavigationReplay.run(logName: name, inputs: inputs, options: options, truth: entry)
+    // Prompt 51 E: the route, analysis only (after the run; the engine
+    // never saw it). Nothing here runs without a route source.
+    var routeSuffix = ""
+    if let network = roads?.network {
+        let matcher = RouteEdgeMatcher(network: network)
+        var actives: [ReplayActiveRoute] = []
+        var from = ""
+        var reference: ReferenceRoute?
+        if let fileRoute {
+            actives = [ReplayActiveRoute(route: fileRoute, match: matcher.match(fileRoute),
+                                         windows: [ReplayTimeWindow(fromT: result.startT, toT: result.endT)])]
+            from = "file"
+            routeSuffix = "-route-file"
+        } else if routeFromReference {
+            reference = ReferenceRouteBuilder.build(inputs: inputs, excluded: entry?.excludeFixes ?? [])
+            if let reference {
+                actives = [ReplayActiveRoute(route: reference.route, match: matcher.match(reference.route),
+                                             windows: reference.windows, alongRanges: reference.projectionRanges,
+                                             spans: reference.spans.map(\.alongM))]
+                from = "reference"
+                routeSuffix = "-route-ref"
+            } else {
+                print("Warning       \(name): no clean GNSS span for a reference route; no route report")
+            }
+        } else {
+            actives = ReplayRecordedRoutes.routes(in: events, endT: result.endT).map {
+                ReplayActiveRoute(route: $0.route, match: matcher.match($0.route), windows: [$0.window])
+            }
+            from = "recording"
+        }
+        var perturbation: ReplayRoutePerturbation?
+        if let mode = routePerturb, let base = actives.first {
+            if let wrong = RoutePerturber.perturb(base.route, mode: mode, match: base.match, network: network,
+                                                  seed: options.config.seed) {
+                actives = [ReplayActiveRoute(route: wrong.route, match: matcher.match(wrong.route), windows: base.windows)]
+                perturbation = wrong.info
+                routeSuffix += "-\(mode.rawValue)-s\(options.config.seed)"
+            } else {
+                print("Warning       \(name): --route-perturb \(mode.rawValue): no candidate place on this route; no route report")
+                actives = []
+                routeSuffix = ""
+            }
+        }
+        if !actives.isEmpty {
+            let withheldFrom: Double? = switch options.gps {
+            case .maskAfter(let s): s
+            case .maskAfterMotion(let s): result.motionStartT.map { $0 + s }
+            default: nil
+            }
+            let estimate = ReplayRouteEvaluation.stats(track: result.track, routes: actives, network: network)
+            result.route = ReplayRouteReport(
+                from: from, routes: actives.map(ReplayRouteEvaluation.entry), perturbation: perturbation,
+                referenceFixesSeen: reference?.fixesSeen, referenceFixesUsed: reference?.fixesUsed,
+                referenceFixesExcludedByTruth: reference?.fixesExcludedByTruth, estimate: estimate,
+                withheldFromT: withheldFrom,
+                estimateWhileWithheld: withheldFrom.map {
+                    ReplayRouteEvaluation.stats(track: result.track, routes: actives, network: network, from: $0)
+                }
+            )
+            result.routePolylines = actives.map { ReplayRoutePolyline($0.route) }
+            result.mode += routeSuffix
+            if let routeWritePath {
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+                do {
+                    try (encoder.encode(actives[0].route) + Data("\n".utf8)).write(to: URL(fileURLWithPath: routeWritePath))
+                    print("Route         wrote \(routeWritePath)")
+                } catch {
+                    fail("cannot write \(routeWritePath): \(error)", status: 1)
+                }
+            }
+        } else if routeWritePath != nil {
+            print("Warning       \(name): no route to write")
+        }
+    }
     if let savePriorPath {
         if let state = result.savedRestoreState {
             do {
@@ -798,7 +931,7 @@ for path in paths {
     print("")
     metrics.append(ReplayMetrics(result))
     let stem = name.hasSuffix(".jsonl.gz") ? String(name.dropLast(9)) : name
-    let geoURL = outDirectory.appendingPathComponent("\(stem)-\(options.label).geojson")
+    let geoURL = outDirectory.appendingPathComponent("\(stem)-\(options.label)\(routeSuffix).geojson")
     do {
         try ReplayReport.geoJSON(result).write(to: geoURL)
         print("GeoJSON       \(geoURL.path)\n")

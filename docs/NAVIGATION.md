@@ -805,7 +805,8 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   [--fix-offset-max <m>] [--fix-offset-step <m>] [--fix-offset-stat mean|median] \
   [--fix-offset-course <deg>|off] [--fix-offset-test <m>@<deg>]... [--fix-offset-trace] \
   [--save-prior <state.json> [--save-prior-at <s>|end] [--save-prior-engine-off]] \
-  [--prior <state.json> [--prior-offset <dE>,<dN>]] [--start-at <s>] [--no-prior]
+  [--prior <state.json> [--prior-offset <dE>,<dN>]] [--start-at <s>] [--no-prior] \
+  [--route <route.json> | --route-from-reference] [--route-perturb missed-turn|parallel] [--route-write <route.json>]
 ```
 
 - **Navigate → Record hand-over (prompt 40, log v5)**: a recording with a
@@ -888,9 +889,60 @@ cd Core && swift run -c release replay_nav <log.jsonl.gz>... [--gps use|mask-aft
   The engine run's flags (`--gps`, `--hold-out-acc`, `--truth`, `--seed`,
   `--particles`, `--set`, `--out`, `--as-live`, `--file-order`,
   `--compare` and its tolerances, `--write-sidecar`, `--pin-pair-window`,
-  `--wrong-road-tolerance`, `--fixpin-*`; `FixOffsetScan.engineOnlyFlags`)
+  `--wrong-road-tolerance`, `--fixpin-*`, `--route`, `--route-from-reference`,
+  `--route-perturb`, `--route-write`; `FixOffsetScan.engineOnlyFlags`)
   are refused with `--fix-offset` (status 2, R35.2-3): it would ignore them.
   Results: "Constant-offset GNSS check" below.
+
+- **Routes (prompt 51, log v7)**, `Core/.../Navigation/Replay/ReplayRoute.swift`.
+  The engine ignores the route: no engine, config or sidecar change. The
+  route flags all need `--roads` (status 2 without). Types and matcher:
+  `docs/ROUTING.md`.
+  - `--route <file.json>`: a bare Route JSON, active from the run's start to its
+    end. One log only. Label `-route-file`.
+  - `--route-from-reference`: a reference route from the recording's clean GNSS
+    fixes. It reads every location row, including the fixes `--gps` withholds.
+    Clean = accuracy in (0, 20] m, `hasValidSpeed`, `hasValidCourse` when
+    moving at 2 m/s or more, not simulated, not in the truth file's
+    `excludeFixes`. A span joins fixes at most 5 s apart and has at least 2
+    fixes. Source `synthetic`. Several logs allowed. Label `-route-ref`.
+  - `--route-perturb missed-turn|parallel`: a wrong route made from the `--route`
+    or reference route, deterministic: the place is number (seed mod candidate
+    count) among the candidates in route order. Label `-<mode>-s<seed>`.
+    `missed-turn`: a matched-edge boundary at a shared vertex where the route turns
+    45 degrees or more and a drivable way leaves within 30 degrees of the incoming
+    direction; the route goes straight for 500 m (the straightest way at each edge
+    end). `parallel`: a matched stretch of at least 150 m with another road 25–150 m
+    to the side, within 20 degrees (oneway only forwards), not on the route; the
+    route follows it over the stretch and rejoins. With no candidate: a warning and
+    no route report.
+  - `--route-write <file>`: writes the route used (the perturbed one if asked),
+    sorted keys. One log only.
+  - **No route flag**: a v7 recording's own `route` rows are used, each active
+    until the next `route` or `routeCleared` row or the end of the run.
+  - Output: `metrics.json` gets an optional `route` key (coverage, gaps, edges,
+    windows, perturbation, reference fix counts, estimate statistics; a
+    reference route's `routes[]` entry also has `spanLengthM`,
+    `spanMatchedLengthM`, `spanCoverage` (matched length over GNSS-span length,
+    chords between spans excluded from both), `spanGaps` (gap parts inside
+    spans) and `chordGaps` (gap parts inside chords): every unmatched metre is
+    in exactly one list, and a route that is not a reference route leaves the
+    fields absent; `isWeak` stays on the whole-polyline coverage), and
+    `estimateWhileWithheld`, the same statistics restricted to t after the
+    `--gps` mask); the summary gets Route lines and `metrics.md` a Route block;
+    for a reference route the summary and `metrics.md` add a line such as
+    `spans only  coverage 0.840 of 3.05 km driven (chords 0.62 km left out; weak is judged on the whole polyline); gaps in spans 7 (487 m, longest 180 m), in chords 4 (307 m)`;
+    the GeoJSON gets a `route` LineString feature, last. Without route flags and
+    without route rows the output is byte-identical to before.
+  - Definitions. **On a route edge**: the estimate's nearest road segment within
+    15 m whose direction is within 45 degrees of the estimate's heading (either
+    direction) is one of the matched route's segment keys. **Off road**: no such
+    segment at all. **Cross-track**: the absolute cross-track to the route
+    polyline, nearest-rank median and p95; for a reference route only over the
+    spans (chords between spans excluded). **Coverage** includes the chords, which
+    can only lower it. **Weak**: coverage below 0.90.
+  - Reference routes are written to git-ignored `logs/routes/<alias>.json`, never to
+    the repo.
 
 - Inputs: motion, OBD, location, manualFix and (v4) gpsSwitch from any v1–v4
   recording, fed in arrival order: by `t`, a location fix by
@@ -2593,6 +2645,89 @@ clean 201.6 s and drive-11-02. The only bad-fix examples are the
 constant-offset stream (drive-10, outside any confirmation rule) and a
 bounded ~27 m drag (clean 123–127 s). No gate was adopted; the counter stays
 as a measuring tool. No PLAN §6 device check: the app is unchanged.
+
+### Prompt 51 E.3: the estimate against a reference route (2026-11-15)
+
+Reference routes from clean GNSS fixes (`--route-from-reference`, rule in
+`docs/ROUTING.md`), roads national + ua-30, seeds 1–5, acceptance GPS flags. The engine
+ignores the route; this scores where the estimate runs against the route's edges.
+
+Reference route and its match to the packs:
+
+| drive | reference window(s), s | length | coverage | gaps (longest) |
+|---|---|---|---|---|
+| clean-long | −1 to 657 | 7.89 km | 0.997 | 1 (20 m) |
+| clean | 6–122, 202–445 | 3.67 km | 0.784 weak | 10 (250 m) |
+| drive-7 | 1869–2138 | 3.18 km | 0.885 weak | 4 (290 m) |
+| drive-8 | 664–687, 695–705, 727–1988, 1999–2005, 2035–2092 | 12.84 km | 0.996 | 2 (47 m) |
+
+The estimate against the route (cross-track in metres; ranges are over the seeds):
+
+| drive | portion | samples | cross-track med / p95 / max (m) | on route edge | off road |
+|---|---|---|---|---|---|
+| clean-long | whole window | 656 s | 0 / 7 / 10 | 98.5–98.8 % | 0.3 % |
+| clean-long | after mask 380 s | 276 s | 2 / 7 / 10 | 96.4–97.1 % | 0.7 % |
+| clean | whole window | 360 s | 2–3 / 8–9 / 14–16 | 53–56 % | 39–44 % |
+| clean | after mask 230 s | 215 s | 2–5 / 9–12 / 11–16 | 60–61 % | 38 % |
+| drive-7 | after 1800 s (all) | 269 s | 4–5 / 17 / 21 | 58–62 % | 13 % |
+| drive-8 | whole window | 1357 s | 3 / 10 / 16 | 92–94 % | 0 % |
+| drive-8 | after mask 785 s | 1266 s | 3 / 10 / 16 | 97–99 % | 0 % |
+
+Span-only coverage (`spanCoverage`: matched length over the GNSS-span length, the
+chords between spans left out of both; `isWeak` still uses the whole polyline).
+The E.3 outputs are now per seed; no E.3 number above changed.
+
+| drive | whole polyline | spans only | span length | chords | gaps in spans (total, longest) | gaps in chords |
+|---|---|---|---|---|---|---|
+| clean-long | 0.997 | 0.997 | 7.89 km | 0 | 1 (20 m, 20 m) | 0 |
+| clean | 0.784 weak | 0.840 | 3.05 km | 0.62 km | 7 (487 m, 180 m) | 4 (307 m) |
+| drive-7 | 0.885 weak | 0.885 | 3.18 km | 0 | 4 (367 m, 290 m) | 0 |
+| drive-8 | 0.996 | 0.995 | 12.45 km | 0.39 km | 2 (57 m, 47 m) | 0 |
+
+**Independent check (drive-analyst, 2026-11-15).** It reproduced the clean-fix
+selection exactly on all four drives, the coverage within 0.02 with an independent
+matcher, and the seed-1 cross-track numbers above for all four. Verdicts:
+
+- **clean-long: trustworthy** as a reference, the whole drive.
+- **drive-8: trustworthy, with a caveat.** On two dual-carriageway stretches the
+  reference sits 10–14 m off the true carriageway: fix accuracy is about 10 m
+  there, so it is matched, but only just inside 15 m. 7.2 % of its matched
+  samples are 10–15 m off, against 0.1 % on clean-long. Excluding one such
+  stretch takes the after-mask p95 from about 10 m to 7.8 m.
+- **drive-7: trustworthy only for its clean span**, the last ~270 s; the earlier
+  fixes are all 30 m accuracy or worse. The 290 m gap is confirmed: 46 fixes at
+  about 2 m accuracy, 3–5 m from a single residential oneway, with course
+  opposite to its mapped direction (median 178 degrees). No other
+  heading-compatible road lies within 25 m, and it is the only pass over that
+  way. A mapping error cannot be told from contraflow driving with this data:
+  **unresolved**. With oneway ignored, coverage would be 0.997. So the weak flag
+  is a property of the pack data, not of the route's quality.
+- **clean: trustworthy only for 6–122 s and 202–~361 s.** Its unmatched samples
+  split as: about 42 % in the 623 m chord across a 79 s GNSS hole; about 22 % a
+  genuinely unmapped, slow tail at ~362–445 s (no segment within 30 m for 81 of
+  84 fixes); about 28 % near-misses, where mapped roads lie 15–35 m away
+  (unmapped service lanes or a geometry offset, unresolved); the rest is the start
+  manoeuvre. The after-mask off-road 38 % is almost exactly that tail, so clean's
+  on-edge and off-road shares say little about the engine. Without the tail the
+  after-mask p95 is 4 m.
+- All reversals are low-speed manoeuvres at the start or end of a drive. There
+  are no unconnected jumps inside spans and no oneway violations.
+- GNSS noise is not the limit: clean-long 0.997, drive-8 0.996.
+- Independence: drive-7's mask-after 1800 s withholds every fix after 1800 s and the
+  reference starts at 1869 s, so it is independent. On drive-8 the engine gets fixes
+  until 785 s, so only the "after mask" row is independent.
+- **Not scored**: drive-9, manual and manual-3 (pin-anchored, no clean track);
+  jammed-A and jammed-B (no source).
+- **Reading for prompt 53.** Where the reference is strong (clean-long, drive-8 after
+  the mask) the estimate is already on the route's edges 96–99 % of the time. The
+  room for a route prior is on drives with weak references and loops, which this
+  measurement cannot yet score: hence BACKLOG `ROUTE-REF-CONFIRMED`.
+
+**Hash proof (E.4).** 10 acceptance runs x seeds 1–5 x roads off/on, plus the as-live
+cell from prompt 50 = 101 cells, with `--write-sidecar`, base 809fa59 against HEAD:
+**101/101 identical** at 15c74e2 and again at 042c838. GeoJSON byte-identical;
+sidecar, `metrics.json`, `metrics.md` and stdout equal with the timing fields masked.
+The as-live cell exits 4 on both sides, as in prompt 50.
 
 ## Known limitations and options
 

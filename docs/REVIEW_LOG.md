@@ -1271,3 +1271,61 @@ Tests at HEAD cc6d93b: Core 1237 tests in 149 suites passed (36 known issues).
 ### Run 89 summary
 
 4 rounds; 5 fixed (R89.1-1, R89.1-2, R89.2-1, R89.3-1, R89.3-2), all test-only; 0 rejected; 2 deferred (R89.2-2, R89.4-1). Final tests: Core 1237 tests in 149 suites passed (36 known issues); release NavigationRoadPerfTests and NavigationB0Tests passed at cf42628 (Core/Sources unchanged since); replay acceptance matrix 101/101 identical to 5758ab4 (wall-time fields only). Outcome: closed, ready to merge into `routing`.
+
+## Run 90: Prompt 51 R1 (MapKit spike docs, route model, RouteEdgeMatcher, log v7 route rows, routes in replay_nav, reference routes) (routing..r1-route-core: 809fa59..a8616d6), started 2026-11-15
+
+Note: on branch `routing` (decision D6), not `main`.
+
+### Round 1
+
+Reviewers: three fresh opus reviewers on disjoint sets. A: Route model + RouteEdgeMatcher. B: log v7, inspect_log, CSV, fixtures, LOG_FORMAT, CLAUDE.md. C: replay, replay_nav, docs. Result: 0 BLOCKER, 3 MAJOR, 4 MINOR. Bit-identical re-run (C): clean, seed 1, roads off and on, base 809fa59 vs a8616d6, GeoJSON byte-identical, metrics differ only in msPerStep/maxIngestMs; with `--route-from-reference` and with `--route-perturb missed-turn`, metrics minus `route`/mode/timing are identical to base (the engine ignores the route). B: v1–v6 fixtures byte-unchanged (append-only hunk). Author mutations re-checked, all caught: `activeRouteID = nil` removed (B); oneway candidate filter disabled (A); `projectionRanges` not narrowed (C).
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R90.1-1 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/Roads/RouteEdgeMatcher.swift:500`: the graph search's guard against entering a oneway backwards was untested (`(c.toPoint <= 0 \|\| fg.record.isOneway)` → `(c.toPoint <= 0)` survived). Only the per-sample candidate filter was covered, so a sub-10 m oneway connector could be matched against its direction. | FIXED | 64601ef (test only): `RouteEdgeMatcherTests/searchRespectsOneway`, an 8 m connector against the route; mutation caught. |
+| R90.1-2 | MAJOR | `RouteEdgeMatcher.swift:263`: the roundabout exit count's rule that an entry-only oneway arm is not an exit was untested (`return true` survived; the only roundabout fixture had two-way arms). | FIXED | 64601ef (test only): `RouteEdgeMatcherTests/roundaboutExitRule` with entry-only, exit-only and roundabout-tagged pieces at ring nodes; both rule mutations caught. |
+| R90.1-3 | MAJOR (reviewer: MINOR; raised by the orchestrator: a reader must never crash on a damaged line) | `Core/Sources/DriveLoggerCore/Navigation/Route/Route.swift:263`: `abs()` trapped on `Int64.min` in `polylineE7`, crashing the reader instead of throwing, which bypassed `LogRecovery.skipMalformedLines`. | FIXED | 64601ef: range check without `abs`; three `Int64.min` inputs throw; `int64MinLineSkipped` shows recovery skips the line. |
+| R90.1-4 | MINOR | `Core/Sources/DriveLoggerCore/Log/RecordingCSV.swift:125`: no test tells route.csv `points` from `steps` (the test route has 3 of each; swapping survived). | DEFERRED | BACKLOG. |
+| R90.1-5 | MINOR | `docs/NAVIGATION.md:942-943`: "coverage includes the chords, which can only lower it" is wrong; a chord on a mapped road raises whole-polyline coverage (drive-8 0.996 whole vs 0.995 spans). Weak on the whole polyline is not conservative. | DEFERRED | BACKLOG. |
+| R90.1-6 | MINOR | `Core/Sources/DriveLoggerCore/Navigation/Replay/ReplayRoute.swift:680`: the "either direction" heading rule for "on a route edge" is untested (`oneway: false` → `true` survived). | DEFERRED | BACKLOG. |
+| R90.1-7 | MINOR | `ReplayRoute.swift:342`: the missed-turn "route turns ≥ 45°" candidate guard is untested (removing it survived); straight-through boundaries could yield a "wrong" route identical to the base. | DEFERRED | BACKLOG. |
+
+Tests at HEAD 64601ef: Core 1311 tests in 157 suites passed (36 known issues); release NavigationRoadPerfTests, NavigationB0Tests and RouteEdgeMatcherPerfTests passed (10 tests). App/ unchanged in the range.
+
+### Round 2
+
+Reviewers: one fresh opus reviewer, whole range. Result: 0 BLOCKER, 2 MAJOR, 1 MINOR. R90.1-1..3 verified covered (author mutation search guard `(c.toPoint <= 0 || fg.record.isOneway)` → `(c.toPoint <= 0)` re-checked: caught). Bit-identical re-run not needed: since round 1's re-run, Core/Sources changed only in `Route.unpack`, which is reached only by decoding a v7 route row or a `--route` file. The acceptance drives are pre-v7 and the hash runs pass no route file, and the new check equals the old one for every input except `Int64.min`, where the old one trapped.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R90.2-1 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/Roads/RouteEdgeMatcher.swift:667`: the way offset in `segmentIndices` (`wayPointOffset + i`) was untested (`UInt32(i)` survived; the only assertion was on an offset-0 edge). It links the matcher to `RoadSegmentKey`, used by the on-route-edge metric and parallel's exclusion; on a way split at a junction the second edge's keys would be wrong and `onRouteEdgeShare` too low. | FIXED | 8060787 (test only): `ReplayRouteTests/segmentKeysUseWayOffset`; mutation caught. |
+| R90.2-2 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/Replay/ReplayRoute.swift:638-650`: scoring each track sample against the route active at its time was untested (every stats test had one route; `polylines[r]` → `polylines[0]` survived). After an offRoute rebuild in a v7 recording, cross-track would be measured against the abandoned route. | FIXED | 8060787 (test only): `ReplayRouteTests/activeRoutePerSample`, two v7 route rows on different streets; `polylines[0]` and `keys[0]` mutations caught. |
+| R90.2-3 | MINOR | `Core/Sources/replay_nav/main.swift:897`: `--route-write` writes only the first active route; on a v7 recording with several route rows the later ones are dropped silently (docs/NAVIGATION.md says "the route used"). | DEFERRED | BACKLOG. |
+
+Tests at HEAD 8060787: Core 1313 tests in 157 suites passed (36 known issues); release perf filter 10 passed.
+
+### Round 3
+
+Reviewers: one fresh opus reviewer, whole range. Result: 0 BLOCKER, 1 MAJOR, 1 MINOR. R90.2-1 and R90.2-2 verified covered (author mutation `wayPointOffset + UInt32(i)` → `UInt32(i)` re-checked: caught). The reviewer's candidate de-dup mutation (keep first instead of lowest emission) was caught by existing tests. No Core/Sources change since round 2; the bit-identical result stands.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R90.3-1 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/Roads/RouteEdgeMatcher.swift:558-563`: after a Viterbi break, backtracking to the best-cost candidate of the previous non-empty layer was untested (`back[k][j] = bestPrevious` → `0` survived; every break in the tests had its best candidate at index 0). With a parallel road sorting first, the stretch before a break would go onto the wrong road (probe: coverage 0.84 → 0.37). | FIXED | 598000d (test only): `RouteEdgeMatcherTests/breakBacktracksToBest`; mutation caught. |
+| R90.3-2 | MINOR | `Core/Sources/DriveLoggerCore/Navigation/Replay/ReplayRoute.swift:428-434`: parallel mode's reverse-direction branch (a two-way neighbour drawn against the route taken backwards; a oneway drawn against it skipped) is never exercised by a test. | DEFERRED | BACKLOG. |
+
+Tests at HEAD 598000d: Core 1314 tests in 157 suites passed (36 known issues); release perf filter 10 passed.
+
+### Round 4
+
+Reviewers: one fresh opus reviewer, whole range. Result: 0 BLOCKER, 0 MAJOR, 2 MINOR. R90.3-1 verified covered (author mutation `back[k][j] = bestPrevious` → `0` re-checked: caught). The reviewer's mutation dropping `linked[k]` from the coverage guard was caught by `searchRespectsOneway`. No Core/Sources change since round 2; the bit-identical result stands.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R90.4-1 | MINOR | `Core/Sources/DriveLoggerCore/Navigation/Replay/ReplayRoute.swift:338`: missed-turn's incoming chord for an edge travelled against its point order (`a.forward == false`) is untested (ignoring `a.forward` survived). Roughly half of real junctions arrive on a backward edge, so a regression would silently change which junction a `--seed` picks. | DEFERRED | BACKLOG. |
+| R90.4-2 | MINOR | `Core/Sources/replay_nav/main.swift:866`: a perturbed reference route (`--route-from-reference --route-perturb`) keeps only the windows and loses `alongRanges`/`spans`, so its cross-track counts the chords and it has no span coverage. That contradicts docs/NAVIGATION.md's "spans only", and base-vs-perturbed rows are not on the same footing. | DEFERRED | BACKLOG (before prompt 53's robustness runs). |
+
+Tests at HEAD c4fb20b: Core 1314 tests in 157 suites passed (36 known issues); release perf filter 10 passed.
+
+### Run 90 summary
+
+4 rounds; 6 fixed (R90.1-1, R90.1-2, R90.1-3, R90.2-1, R90.2-2, R90.3-1), all test-only except R90.1-3 (`Route.unpack` range check); 0 rejected; 8 deferred (R90.1-4, R90.1-5, R90.1-6, R90.1-7, R90.2-3, R90.3-2, R90.4-1, R90.4-2). Final tests: Core 1314 tests in 157 suites passed (36 known issues); release perf filter 10 passed; App unchanged (871 tests passed at 5ea2762). Bit-identical: author hash proof 101/101 at d1584e8, plus the reviewer's clean seed-1 roads off/on re-run at a8616d6; Core/Sources changed after that only in `Route.unpack`, which is not reached without a route file or v7 route rows. Outcome: closed, ready to merge into `routing` (merge: pending).

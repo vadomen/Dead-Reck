@@ -28,6 +28,11 @@ public struct RecordingAnalyzer {
     private var manualFixes: [RecordingSummary.ManualFix] = []
     private var gpsSwitches: [RecordingSummary.GPSSwitch] = []
     private var navPriors: [RecordingSummary.NavPrior] = []
+    private var routes: [RecordingSummary.RouteSet] = []
+    private var routeClears: [RecordingSummary.RouteClear] = []
+    /// `id` of the route the latest `route` row set, until a
+    /// `routeCleared` row ends it.
+    private var activeRouteID: String?
     /// A `motion`, `location` or `obd` row (an engine input) has been seen.
     private var sawEngineInput = false
     private var stats = StatsAccumulation()
@@ -76,6 +81,12 @@ public struct RecordingAnalyzer {
             gpsSwitches.append(RecordingSummary.GPSSwitch(t: event.timestamp, sample: sample))
         case .navPrior(let sample):
             navPriors.append(RecordingSummary.NavPrior(t: event.timestamp, sample: sample, afterFirstInput: sawEngineInput))
+        case .route(let sample):
+            routes.append(RecordingSummary.RouteSet(t: event.timestamp, sample: sample))
+            activeRouteID = sample.route.id
+        case .routeCleared(let sample):
+            routeClears.append(RecordingSummary.RouteClear(t: event.timestamp, sample: sample, activeRouteID: activeRouteID))
+            activeRouteID = nil
         default:
             break
         }
@@ -115,6 +126,8 @@ public struct RecordingAnalyzer {
             manualFixes: manualFixes,
             gpsSwitches: gpsSwitches,
             navPriors: navPriors,
+            routes: routes,
+            routeClears: routeClears,
             stats: stats.summary
         )
     }
@@ -335,6 +348,33 @@ public struct RecordingSummary: Hashable, Sendable {
         }
     }
 
+    /// A `route` row (v7): a route was set or replaced.
+    public struct RouteSet: Hashable, Sendable {
+        public var t: MonotonicTimestamp
+        public var sample: RouteSample
+
+        public init(t: MonotonicTimestamp, sample: RouteSample) {
+            self.t = t
+            self.sample = sample
+        }
+    }
+
+    /// A `routeCleared` row (v7): the route ended.
+    public struct RouteClear: Hashable, Sendable {
+        public var t: MonotonicTimestamp
+        public var sample: RouteClearedSample
+        /// `id` of the route the latest earlier `route` row set, nil when no
+        /// route was active (none set yet, or already cleared). A row whose
+        /// `routeID` differs ended a route the file never set.
+        public var activeRouteID: String?
+
+        public init(t: MonotonicTimestamp, sample: RouteClearedSample, activeRouteID: String?) {
+            self.t = t
+            self.sample = sample
+            self.activeRouteID = activeRouteID
+        }
+    }
+
     public var header: LogHeader
     public var report: LogReadReport
     public var eventCount: Int
@@ -361,6 +401,10 @@ public struct RecordingSummary: Hashable, Sendable {
     public var gpsSwitches: [GPSSwitch]
     /// Every `navPrior` row, in file order (the recorder writes at most one).
     public var navPriors: [NavPrior] = []
+    /// Every `route` row, in file order.
+    public var routes: [RouteSet] = []
+    /// Every `routeCleared` row, in file order.
+    public var routeClears: [RouteClear] = []
     /// Aggregate of the recorder's own `stats` rows.
     public var stats: Stats?
 
@@ -429,6 +473,14 @@ public struct RecordingSummary: Hashable, Sendable {
                 warnings.append("navPrior row invalid (\(field)): a replay starts fresh")
             }
         }
+        let invalidOrigins = routes.filter { $0.sample.origin.map { !$0.isValid } ?? false }.count
+        if invalidOrigins > 0 {
+            warnings.append("\(invalidOrigins) route row(s) with an origin out of range")
+        }
+        for clear in routeClears where clear.activeRouteID != clear.sample.routeID {
+            let active = clear.activeRouteID.map { "route \"\($0)\" was active" } ?? "no route was active"
+            warnings.append("routeCleared at \(Self.format(clear.t.seconds, 3)) s ends route \"\(clear.sample.routeID)\", but \(active)")
+        }
         return warnings
     }
 
@@ -477,10 +529,14 @@ public struct RecordingSummary: Hashable, Sendable {
         }
         out.append("Events        \(eventCount)")
         out.append("")
-        out.append("  kind        count     rate Hz  max gap ms  gaps>50ms  gap total ms  out-of-order")
+        // 10 wide as always; wider only when a kind name is longer
+        // (`routeCleared`, an unknown kind), so no name is cut.
+        let kindWidth = max(10, kinds.map(\.kind.count).max() ?? 0)
+        out.append("  " + "kind".padding(toLength: kindWidth, withPad: " ", startingAt: 0)
+            + "  count     rate Hz  max gap ms  gaps>50ms  gap total ms  out-of-order")
         for kind in kinds {
             out.append(
-                "  " + kind.kind.padding(toLength: 10, withPad: " ", startingAt: 0)
+                "  " + kind.kind.padding(toLength: kindWidth, withPad: " ", startingAt: 0)
                     + Self.right(String(kind.count), 7)
                     + Self.right(kind.rateHz.map { Self.format($0, 2) } ?? "-", 12)
                     + Self.right(kind.maxIntervalMs.map { Self.format($0, 1) } ?? "-", 12)
@@ -530,6 +586,9 @@ public struct RecordingSummary: Hashable, Sendable {
         } else if header.formatVersion >= .v5 {
             out.append("Nav prior     none (navigation started fresh)")
         }
+        if let routeLine {
+            out.append("Routes        " + routeLine)
+        }
         if let stats {
             let gaps = Self.counts(stats.totalGaps, order: StatsAccumulator.gapKinds.map(\.rawValue))
             out.append("Stats rows    \(stats.rows): motionHz min \(Self.format(stats.minMotionHz, 1)) mean \(Self.format(stats.meanMotionHz, 1)); obdHz min \(Self.format(stats.minObdHz, 1)) mean \(Self.format(stats.meanObdHz, 1)); queue depth max \(stats.maxQueueDepth); dropped \(stats.totalDropped); timeouts \(stats.totalTimeouts); gaps \(gaps.isEmpty ? "none" : gaps); \(stats.lastBytesWritten) bytes")
@@ -562,6 +621,32 @@ public struct RecordingSummary: Hashable, Sendable {
             line += "  tap \(format(sample.truthLatitude, 7)), \(format(sample.truthLongitude, 7))"
         }
         if let note = sample.note { line += "  note: \(note)" }
+        return line
+    }
+
+    /// `<n> set (<reason> <count>, …), <total> km in total; cleared <n>
+    /// (<reason> <count>, …)`, or `none` in a v7 file without route rows;
+    /// nil before v7 with none. The total is the sum of the rows' provider
+    /// `distanceM` (a rebuild counts its whole new route). Reasons in format
+    /// order, then unknown ones alphabetically. No coordinates, ids or
+    /// labels: `--csv` has those.
+    var routeLine: String? {
+        if routes.isEmpty, routeClears.isEmpty {
+            return header.formatVersion >= .v7 ? "none" : nil
+        }
+        var reasons: [String: Int] = [:]
+        for route in routes { reasons[route.sample.reason.rawValue, default: 0] += 1 }
+        var cleared: [String: Int] = [:]
+        for clear in routeClears { cleared[clear.sample.reason.rawValue, default: 0] += 1 }
+        let totalKm = routes.reduce(0) { $0 + $1.sample.route.distanceM } / 1_000
+        var line = "\(routes.count) set"
+        if !routes.isEmpty {
+            line += " (" + Self.counts(reasons, order: RouteSample.Reason.known.map(\.rawValue)) + ")"
+        }
+        line += ", \(Self.format(totalKm, 2)) km in total; cleared \(routeClears.count)"
+        if !routeClears.isEmpty {
+            line += " (" + Self.counts(cleared, order: RouteClearedSample.Reason.known.map(\.rawValue)) + ")"
+        }
         return line
     }
 

@@ -80,6 +80,10 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
     /// Prompt 50, observe-only: fixes far from the estimate
     /// (`FixJumpObservation`). nil (absent) in files written before it.
     public var fixJumps: FixJumpObservation?
+    /// Prompt 51 E: the route and the estimate against it
+    /// (`ReplayRouteReport`). nil (absent) without a route, and in files
+    /// written before it.
+    public var route: ReplayRouteReport?
 
     public init(_ result: ReplayResult) {
         logName = result.logName
@@ -123,6 +127,7 @@ public struct ReplayMetrics: Hashable, Sendable, Codable {
         gpsSwitch = result.gpsSwitch
         restore = result.restore
         fixJumps = result.fixJumps
+        route = result.route
     }
 
     /// `metrics.json` key: one row per log and mode.
@@ -146,6 +151,7 @@ extension ReplayMetrics {
         case gpsSwitch
         case restore
         case fixJumps
+        case route
     }
 
     /// Keys every `metrics.json` row has had since the first one (N2). A row
@@ -162,7 +168,7 @@ extension ReplayMetrics {
     ///   `motionStartT`, `consistency`, `consistencyWithTruthSigma`, `pins`,
     ///   `pinScoring`, `roads`, `roadSetHash`, `roadMetrics`, `scoreUntilT`,
     ///   `checkpointsAfterScoreUntil`, `roadsAttachedAfterInputs`,
-    ///   `attachedRoadSetHash`, `roadsExtendedAfterInputs`, `fixesExcludedByTruth`, `fixPinDecisions`, `maxErrorByKind`, `gpsSwitch`, `restore`, `fixJumps` (and any key a
+    ///   `attachedRoadSetHash`, `roadsExtendedAfterInputs`, `fixesExcludedByTruth`, `fixPinDecisions`, `maxErrorByKind`, `gpsSwitch`, `restore`, `fixJumps`, `route` (and any key a
     ///   later build adds, which must be optional or take a default here).
     /// - `config` and `counters` decode tolerantly themselves: a config key
     ///   or counter added later takes its default (0 for a counter).
@@ -210,6 +216,7 @@ extension ReplayMetrics {
         gpsSwitch = try c.decodeIfPresent(ReplayResult.GPSSwitchReport.self, forKey: .gpsSwitch)
         restore = try c.decodeIfPresent(NavigationRestore.self, forKey: .restore)
         fixJumps = try c.decodeIfPresent(FixJumpObservation.self, forKey: .fixJumps)
+        route = try c.decodeIfPresent(ReplayRouteReport.self, forKey: .route)
     }
 }
 
@@ -381,6 +388,7 @@ public enum ReplayReport {
             lines.append("Restore       " + restoreText(restore))
         }
         if let jumps = result.fixJumps { lines.append(contentsOf: fixJumpLines(jumps)) }
+        if let route = result.route { lines.append(contentsOf: routeLines(route)) }
         lines.append("Consistency   " + consistencyText(result.consistency) + " (engine ellipse)")
         lines.append("  + truth σ   " + consistencyText(result.consistencyWithTruthSigma) + " (engine covariance + truth σ²; gated)")
         lines.append("Max error     \(m(result.maxErrorM)) m (\(pct(result.maxErrorPercent)))")
@@ -395,6 +403,45 @@ public enum ReplayReport {
             lines.append(contentsOf: roadLines(result.roadMetrics, counters: result.counters))
         }
         return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// The summary's `Route` lines (prompt 51 E).
+    public static func routeLines(_ r: ReplayRouteReport) -> [String] {
+        var lines: [String] = []
+        for e in r.routes {
+            let longest = e.gaps.map(\.lengthM).max() ?? 0
+            let windows = e.windows.map { String(format: "%.0f–%.0f s", $0.fromT, $0.toT) }
+            lines.append("Route         from \(r.from) (\(e.source)), \(e.points) points, " + String(format: "%.2f km", e.lengthM / 1000)
+                         + String(format: ", coverage %.3f", e.coverage) + (e.isWeak ? " (weak)" : "")
+                         + ", \(e.gaps.count) gap\(e.gaps.count == 1 ? "" : "s")" + String(format: " (longest %.0f m)", longest)
+                         + ", \(e.edges) edges; time " + (windows.count > 4 ? windows.prefix(4).joined(separator: ", ") + ", … (\(windows.count) windows)" : windows.joined(separator: ", ")))
+            if let spanCoverage = e.spanCoverage, let spanLength = e.spanLengthM {
+                let spanGaps = e.spanGaps ?? [], chordGaps = e.chordGaps ?? []
+                lines.append("  spans only  " + String(format: "coverage %.3f of %.2f km driven (chords %.2f km left out; weak is judged on the whole polyline)",
+                                                       spanCoverage, spanLength / 1000, (e.lengthM - spanLength) / 1000)
+                             + "; gaps in spans \(spanGaps.count)" + String(format: " (%.0f m, longest %.0f m)", spanGaps.reduce(0) { $0 + $1.lengthM },
+                                                                         spanGaps.map(\.lengthM).max() ?? 0)
+                             + ", in chords \(chordGaps.count)" + String(format: " (%.0f m)", chordGaps.reduce(0) { $0 + $1.lengthM }))
+            }
+        }
+        if let used = r.referenceFixesUsed, let seen = r.referenceFixesSeen {
+            lines.append("Route ref.    \(used) clean fixes of \(seen) location rows (accuracy ≤ 20 m, speed and course valid, spans joined ≤ 5 s)"
+                         + ((r.referenceFixesExcludedByTruth ?? 0) > 0 ? "; \(r.referenceFixesExcludedByTruth!) excluded by truth excludeFixes" : ""))
+        }
+        if let p = r.perturbation {
+            lines.append("Route wrong   \(p.mode), seed \(p.seed): place \(p.chosen + 1) of \(p.candidates)" + String(format: " at %.0f m along, wrong part %.0f m", p.atAlongM, p.wrongLengthM)
+                         + (p.lateralM.map { String(format: ", %.0f m to the side", $0) } ?? ""))
+        }
+        func stats(_ s: ReplayRouteStats) -> String {
+            guard s.samples > 0 else { return "no estimate in the route's time" }
+            return "cross-track median \(m(s.crossTrackMedianM)) m, p95 \(m(s.crossTrackP95M)) m, max \(m(s.crossTrackMaxM)) m; "
+                + "on a route edge \(pct(s.onRouteEdgeShare.map { $0 * 100 })), off road \(pct(s.offRoadShare.map { $0 * 100 })) (\(s.samples) s)"
+        }
+        lines.append("Route est.    " + stats(r.estimate))
+        if let withheld = r.estimateWhileWithheld, let from = r.withheldFromT {
+            lines.append(String(format: "  withheld    after t %.0f s: ", from) + stats(withheld))
+        }
+        return lines
     }
 
     /// Most hits `fixJumpLines` lists; the rest are in `metrics.json`.
@@ -613,6 +660,10 @@ public enum ReplayReport {
             }
             if let restore = r.restore {
                 out += "Restored prior (UX-20, replay only): \(restoreText(restore)).\n\n"
+            }
+            if let route = r.route {
+                out += "Route (prompt 51 E, analysis only):\n\n" + routeLines(route).map { "- " + $0.drop { $0 != " " }.trimmingCharacters(in: .whitespaces) }
+                    .joined(separator: "\n") + "\n\n"
             }
             out += "| kind | t s | distance m | error m | % of distance | σ heading ° | inside 95 % | + truth σ | truth σ m | 95 % ellipse |\n|---|---:|---:|---:|---:|---:|---|---|---:|---|\n"
             for cp in r.checkpoints where cp.kind != .cleanFix {
@@ -859,6 +910,14 @@ public enum ReplayReport {
                 "type": "Feature",
                 "geometry": ["type": "LineString", "coordinates": sample.points.map { [$0[1], $0[0]] }],
                 "properties": properties,
+            ])
+        }
+        // Prompt 51 E, after every earlier feature: the route(s).
+        for line in result.routePolylines ?? [] {
+            features.append([
+                "type": "Feature",
+                "geometry": ["type": "LineString", "coordinates": line.coordinates],
+                "properties": ["kind": "route", "id": line.id],
             ])
         }
         let collection: [String: Any] = ["type": "FeatureCollection", "features": features]

@@ -24,6 +24,9 @@ public enum LogEventKind: String, Hashable, Sendable, Codable, CaseIterable {
     case gpsSwitch
     // v5
     case navPrior
+    // v7
+    case route
+    case routeCleared
 }
 
 /// One timestamped record in a recording.
@@ -67,6 +70,10 @@ public struct LogEvent: Hashable, Sendable, Codable {
         /// The navigator's estimate the recording's navigation run started
         /// from (v5, at most one, before every input). `t` is Record start.
         case navPrior(NavPriorSample)
+        /// A route was set or replaced (v7). `t` is when it took effect.
+        case route(RouteSample)
+        /// The route ended with no replacement (v7). `t` is when it ended.
+        case routeCleared(RouteClearedSample)
 
         /// A record whose `kind` this build doesn't know, with its payload kept
         /// verbatim so a round-trip through an older reader doesn't destroy
@@ -91,6 +98,8 @@ public struct LogEvent: Hashable, Sendable, Codable {
             case .manualFix: LogEventKind.manualFix.rawValue
             case .gpsSwitch: LogEventKind.gpsSwitch.rawValue
             case .navPrior: LogEventKind.navPrior.rawValue
+            case .route: LogEventKind.route.rawValue
+            case .routeCleared: LogEventKind.routeCleared.rawValue
             case .unrecognized(let kind, _): kind
             }
         }
@@ -140,6 +149,10 @@ public struct LogEvent: Hashable, Sendable, Codable {
             payload = .gpsSwitch(try container.decode(GPSSwitchSample.self, forKey: .data))
         case .navPrior:
             payload = .navPrior(try container.decode(NavPriorSample.self, forKey: .data))
+        case .route:
+            payload = .route(try container.decode(RouteSample.self, forKey: .data))
+        case .routeCleared:
+            payload = .routeCleared(try container.decode(RouteClearedSample.self, forKey: .data))
         case nil:
             payload = .unrecognized(
                 kind: kind,
@@ -181,6 +194,10 @@ public struct LogEvent: Hashable, Sendable, Codable {
         case .gpsSwitch(let sample):
             try container.encode(sample, forKey: .data)
         case .navPrior(let sample):
+            try container.encode(sample, forKey: .data)
+        case .route(let sample):
+            try container.encode(sample, forKey: .data)
+        case .routeCleared(let sample):
             try container.encode(sample, forKey: .data)
         case .unrecognized(_, let data):
             try container.encodeIfPresent(data, forKey: .data)

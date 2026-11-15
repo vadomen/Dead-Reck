@@ -200,7 +200,7 @@ struct NavigationMetricsCodingTests {
             == ["consistency", "consistencyWithTruthSigma", "motionStartT", "pinScoring", "pins",
                 "checkpointsAfterScoreUntil", "roadMetrics", "roadSetHash", "roads", "scoreUntilT",
                 "roadsAttachedAfterInputs", "attachedRoadSetHash", "roadsExtendedAfterInputs", "fixesExcludedByTruth", "fixPinDecisions",
-                "maxErrorByKind", "gpsSwitch", "restore", "fixJumps"].sorted())
+                "maxErrorByKind", "gpsSwitch", "restore", "fixJumps", "route"].sorted())
         for key in later {
             var old = row
             old.removeValue(forKey: key.stringValue)
@@ -227,6 +227,7 @@ struct NavigationMetricsCodingTests {
             case .gpsSwitch: #expect(decoded.gpsSwitch == nil)
             case .restore: #expect(decoded.restore == nil)
             case .fixJumps: #expect(decoded.fixJumps == nil)
+            case .route: #expect(decoded.route == nil)
             default: Issue.record("unexpected later key \(key)")
             }
         }

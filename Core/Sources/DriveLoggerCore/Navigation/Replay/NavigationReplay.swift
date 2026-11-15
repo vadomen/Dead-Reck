@@ -1087,6 +1087,12 @@ public struct ReplayResult: Hashable, Sendable, Codable {
     /// Prompt 50, observe-only: fixes far from the estimate
     /// (`FixJumpObservation`, threshold `NavigationReplay.fixJumpObserveChi2`).
     public var fixJumps: FixJumpObservation? = nil
+    /// Prompt 51 E, analysis only: the route(s) of the run and how the
+    /// estimate ran against them (`ReplayRouteEvaluation`); set by
+    /// replay_nav after the run. nil without a route.
+    public var route: ReplayRouteReport? = nil
+    /// GeoJSON only: the routes' polylines; nil without a route.
+    public var routePolylines: [ReplayRoutePolyline]? = nil
 
     public var heldOutFixes: [Fix] { fixes.filter { $0.withheld == .heldOut } }
 }

@@ -24,7 +24,8 @@ Core/                        DriveLoggerCore — local SwiftPM package, pure log
     Recording/               SensorSource, stats, ELM→log event mapping, simulated sources
     Navigation/              Dead-reckoning engine (particle filter), config, sidecar, live run
       Replay/                Recordings through the engine, truth file, metrics, GeoJSON
-      Roads/                 Road pack format, index, network, map matching
+      Roads/                 Road pack format, index, network, map matching, route-to-edges matcher
+      Route/                 Route model, maneuvers, geometry helpers
   Sources/inspect_log/       Mac CLI: summarise a recording
   Sources/replay_nav/        Mac CLI: replay recordings through the engine
   Sources/RoadPackBuild/ build_roads/   Road pack builder (Mac only)
@@ -48,6 +49,7 @@ first and `Read` the section with offset/limit, not the whole file.
 - Log format: `docs/LOG_FORMAT.md`. Sidecar: `docs/NAV_SIDECAR.md`. Road packs: `docs/ROAD_PACK.md`.
 - Navigation model, config, `replay_nav`, adoption rule, acceptance drives and
   current results: `docs/NAVIGATION.md`. Open plans: `docs/N3_PLAN.md`, `docs/N4_PLAN.md`, `docs/ROUTING_PLAN.md`.
+- Routes (MapKit spike, route model, `RouteEdgeMatcher`, reference routes): `docs/ROUTING.md`.
 - Milestones, decisions, device checklist (§6): `docs/PLAN.md`. Open items:
   `docs/BACKLOG.md` (grep by ID or milestone), `docs/BACKLOG_UX.md`.
 - Review ledger: `docs/REVIEW_LOG.md` (current runs only; pass the range's rows, never the file).
