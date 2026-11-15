@@ -1235,3 +1235,14 @@ Reviewers: one fresh opus reviewer. Result: 0 BLOCKER, 2 MAJOR, 0 MINOR. Bit-ide
 | R89.1-2 | MAJOR | `NavigationEngine.swift:1595`: the `shiftSince` latency shift in the innovation was untested; dropping it survived. A 1 s old fix at 25 m/s would carry ~25 m of extra innovation and false hits. | FIXED | 72fdf0b (test only): moving car, 0.75 s latency, M² and innovation against independently computed cloud moments plus shift; dropping the shift caught. |
 
 Tests at HEAD 72fdf0b: Core 1230 tests in 149 suites passed (36 known issues). Release NavigationRoadPerfTests and NavigationB0Tests passed at cf42628 (Navigation sources unchanged since).
+
+### Round 2
+
+Reviewers: one fresh opus reviewer. Result: 0 BLOCKER, 1 MAJOR, 1 MINOR. R89.1-1 and R89.1-2 verified covered. No Core source change since cf42628, so round 1's bit-identical result stands. Author mutation rejectedOffRoad → `else if false` re-checked: caught.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R89.2-1 | MAJOR | `Core/Sources/DriveLoggerCore/Navigation/NavigationEngine.swift:1633`: the `jump.judged &&` guard on the `restoreRejected` label was untested; dropping it survived. After a judge rejection `restore.status` stays `.rejected`, so every later hit and max would read `restoreRejected` in a `--prior` replay. | FIXED | 1ef890a (test only): `restoreRejectedLabelsOnlyTheJudgedFix` lists every fix (threshold -1) and asserts only the judged fix carries the label; the mutation is caught. |
+| R89.2-2 | MINOR | `NavigationEngine.swift:1423`: `zeroGateEvidence` false after a slow fix resets the moving-fix run is untested (`>` → `!=` survived). | DEFERRED | BACKLOG. |
+
+Tests at HEAD 1ef890a: Core 1231 tests in 149 suites passed (36 known issues).
