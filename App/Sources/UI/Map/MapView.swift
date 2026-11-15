@@ -616,11 +616,12 @@ struct GPSMapView: View {
                 switch RouteCameraRule.action(from: old, to: new) {
                 case .frameRoute:
                     guard let points = routeFlow?.chosenRoute?.polyline.map({ ($0.latitude, $0.longitude) }),
-                          let region = RouteFraming.region(points: points, coveredFraction: 0.4) else { return }
-                    updateFollow { $0.userGesture(at: ContinuousClock.now) }
+                          let region = RouteFraming.region(points: points, coveredFraction: 0.4, coveredTop: 0.18, usableWidth: 0.8) else { return }
+                    // Held off (no 8 s auto-resume, no countdown) while the alternatives are shown.
+                    if follow.isFollowing { updateFollow { $0.followTapped(at: ContinuousClock.now) } }
                     withAnimation(.easeInOut(duration: 0.6)) { position = .region(region) }
                 case .resumeFollow:
-                    updateFollow { $0.followTapped(at: ContinuousClock.now) }
+                    if !follow.isFollowing { updateFollow { $0.followTapped(at: ContinuousClock.now) } }
                     moveCameraToCar(duration: 0.8)
                 case .none: break
                 }

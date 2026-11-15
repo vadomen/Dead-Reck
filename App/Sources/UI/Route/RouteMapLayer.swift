@@ -99,8 +99,9 @@ enum RouteCameraRule {
     }
 }
 
-/// The region that shows a whole route above a panel covering the bottom
-/// `coveredFraction` of the map. Pure.
+/// The region that shows a whole route between the HUD (top `coveredTop` of the
+/// map) and a panel covering the bottom `coveredFraction`; `usableWidth` leaves
+/// room for the rail. Pure.
 enum RouteFraming {
     /// Room around the route inside the visible part.
     static let margin = 1.35
@@ -110,7 +111,8 @@ enum RouteFraming {
 
     /// `aspect`: map width over height.
     static func region(
-        points: [(latitude: Double, longitude: Double)], coveredFraction: Double, aspect: Double = 0.5
+        points: [(latitude: Double, longitude: Double)], coveredFraction: Double, coveredTop: Double = 0,
+        aspect: Double = 0.5, usableWidth: Double = 1
     ) -> MKCoordinateRegion? {
         guard let first = points.first else { return nil }
         var minLat = first.latitude, maxLat = first.latitude, minLon = first.longitude, maxLon = first.longitude
@@ -120,14 +122,15 @@ enum RouteFraming {
         }
         let centreLat = (minLat + maxLat) / 2, centreLon = (minLon + maxLon) / 2
         let cosLat = max(cos(centreLat * .pi / 180), 0.05)
-        let visibleFraction = min(max(1 - coveredFraction, 0.2), 1)
+        let visibleFraction = min(max(1 - coveredFraction - coveredTop, 0.2), 1)
         let latNeeded = (maxLat - minLat) * margin
-        let lonNeeded = (maxLon - minLon) * margin * cosLat / max(aspect, 0.1)
+        let lonNeeded = (maxLon - minLon) * margin * cosLat / max(aspect * usableWidth, 0.1)
         let visibleLat = min(max(max(latNeeded, lonNeeded), minSpan), maxSpan)
         let totalLat = visibleLat / visibleFraction
-        // The visible part is the top: its centre is `coveredFraction / 2` of the
-        // total above the region's centre, so the region's centre goes south.
-        let shiftedLat = centreLat - totalLat * coveredFraction / 2
+        // The visible part sits between the HUD (top) and the panel (bottom): its
+        // centre is `(coveredFraction - coveredTop) / 2` of the total above the
+        // region's centre, so the region's centre goes south by that much.
+        let shiftedLat = centreLat - totalLat * (coveredFraction - coveredTop) / 2
         guard abs(shiftedLat) <= 90, abs(centreLon) <= 180 else { return nil }
         let totalLon = min(totalLat * aspect / cosLat, 360)
         return MKCoordinateRegion(

@@ -21,9 +21,9 @@ struct RouteSheets: ViewModifier {
                 Group {
                     if flow.phase == .search { DestinationSearchSheet(flow: flow) } else { PlaceCardSheet(flow: flow) }
                 }
-                .presentationDetents(flow.phase == .search ? [.large] : [.height(PlaceCardSheet.height), .large])
+                .presentationDetents(flow.phase == .search ? [.large] : [.height(PlaceCardSheet.height(for: flow.originChoice)), .large])
                 // The card leaves the map usable: the driver's pin is a double tap on it.
-                .presentationBackgroundInteraction(.enabled(upThrough: .height(PlaceCardSheet.height)))
+                .presentationBackgroundInteraction(.enabled(upThrough: .height(PlaceCardSheet.height(for: flow.originChoice))))
                 .presentationDragIndicator(.visible)
             }
         }
@@ -58,7 +58,10 @@ struct DestinationSearchSheet: View {
             .safeAreaInset(edge: .top) { field }
         }
         .onChange(of: text) { _, new in flow.updateQuery(new) }
-        .onAppear { focused = true }
+        .onAppear {
+            text = flow.query
+            focused = true
+        }
     }
 
     private var field: some View {
@@ -153,7 +156,15 @@ struct DestinationSearchSheet: View {
 // MARK: - Place card
 
 struct PlaceCardSheet: View {
-    static let height: CGFloat = 340
+    /// Room for the title, the address, the buttons; the uncertain and no-position
+    /// states add the note and Route anyway.
+    static func height(for choice: RouteOriginChoice) -> CGFloat {
+        switch choice {
+        case .estimate, .fix: 250
+        case .uncertain: 360
+        case .needsPin: 320
+        }
+    }
     var flow: RouteFlowModel
 
     var body: some View {
@@ -229,10 +240,12 @@ struct PlaceCardSheet: View {
                 Button { flow.route() } label: {
                     Label(flow.isRebuild ? String(localized: "Rebuild") : String(localized: "Route"), systemImage: "arrow.triangle.turn.up.right.diamond.fill")
                         .font(.title3.weight(.bold))
-                        .foregroundStyle(HUDColors.onAccent)
+                        // Disabled: a flat grey face with readable secondary text, not a faded blue one.
+                        .foregroundStyle(routeEnabled ? HUDColors.onAccent : Color.secondary)
                         .frame(maxWidth: .infinity, minHeight: 56)
-                        .background(HUDColors.accent, in: RoundedRectangle(cornerRadius: RouteBarLayout.cornerRadius))
-                        .opacity(routeEnabled ? 1 : 0.4)
+                        .background(
+                            routeEnabled ? AnyShapeStyle(HUDColors.accent) : AnyShapeStyle(Color(.tertiarySystemFill)),
+                            in: RoundedRectangle(cornerRadius: RouteBarLayout.cornerRadius))
                 }
                 .buttonStyle(.plain)
                 .disabled(!routeEnabled)

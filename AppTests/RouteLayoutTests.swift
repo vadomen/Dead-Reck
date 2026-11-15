@@ -87,6 +87,12 @@ struct RouteLayoutTests {
             #expect(p.0 <= top && p.0 >= visibleBottom - 1e-9)
             #expect(abs(p.1 - region.center.longitude) <= region.span.longitudeDelta / 2)
         }
+        // With the HUD above: the route also stays below the top part.
+        let both = try #require(RouteFraming.region(points: points, coveredFraction: 0.4, coveredTop: 0.18, usableWidth: 0.8))
+        let bothTop = both.center.latitude + both.span.latitudeDelta / 2
+        let hudBottom = bothTop - both.span.latitudeDelta * 0.18
+        let panelTop = bothTop - both.span.latitudeDelta * 0.6
+        for p in points { #expect(p.0 <= hudBottom + 1e-9 && p.0 >= panelTop - 1e-9) }
         #expect(RouteFraming.region(points: [], coveredFraction: 0.4) == nil)
         let tiny = try #require(RouteFraming.region(points: [(0, 0), (0, 0)], coveredFraction: 0.4))
         #expect(tiny.span.latitudeDelta >= RouteFraming.minSpan)
