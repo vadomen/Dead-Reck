@@ -1352,3 +1352,17 @@ Reviewers: three parallel opus reviewers on disjoint sets. A: `App/Sources/Route
 | R91.1-10 | MINOR | `App/Sources/UI/Map/MapCameraLogic.swift:278`, `MapEllipseFit.swift:75`, `MapHUD.swift:295`: the bottom reserve is a fixed 60 pt slot (0 for the offer frame) whatever the bar shows: an at-a-stop offer card during guidance sits ~121 pt higher than modelled (AX2 SE: car under the card); in REL-DEMO the heading-up auto-zoom reserves 60 pt for a bar that is not drawn. | DEFERRED | BACKLOG. |
 
 Tests at HEAD (before the round): Core 1316 passed (36 known issues); app 944 passed. Tests after round 1 (0e69b9a): app 952 passed, Core 1316 (36 known issues).
+
+### Round 2
+
+Reviewers: two fresh opus reviewers. A: logic; all round-1 fixes verified correct, no findings of its own on them. B: UI, strings, docs.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R91.2-1 | MAJOR | `site/public/privacy.html:17,31`, `site/public/uk/privacy.html:17,31`, `docs/APP_STORE_METADATA.md:133,148`: absolute claims ("does not collect, transmit or sell any data", "makes no network requests with your data", Review Notes "No personal data leaves the phone") contradict the MapKit search/route paragraph; effective date not bumped. | FIXED | 0a34849 (`docs/APP_STORE_METADATA.md` part in the round-2 ledger commit): site en/uk short version and "Where the data goes" bullet reworded (nothing sent to us; only place search and route requests and map tiles go to Apple/MapKit); effective date November 16, 2026. |
+| R91.2-2 | MINOR | `App/Sources/Route/RouteTypes.swift:49-51` vs texts: the search region centre is the full-precision estimate/fix, not "approximate". | FIXED | 0a34849 (metadata part in the round-2 ledger commit): "approximate" dropped from About en/uk, site, glossary §10 and metadata; folded into the R91.2-1 fix. |
+| R91.2-3 | MINOR | `App/Sources/UI/Map/MapHUDViews.swift:75-83`: the GPS button's ±15 pt padding overlaps the OBD label row by ~11 pt, so the effective GPS target there is ~33–35 pt; the `gpsTapTarget` test only checks line + 2·padding. | DEFERRED | BACKLOG. |
+| R91.2-4 | MINOR | `App/Sources/UI/Route/RouteSheets.swift:213,218`: the uncertain/no-position card says "A pin on the map sets it." while "Pin" on the same card is the save-as menu and a long-press drops a destination; the action meant is the double-tap "I'm here" pin. | DEFERRED | BACKLOG. |
+| R91.2-5 | MAJOR | `App/Sources/UI/Map/MapView.swift:146`: the route flow's live inputs are bound in `MapScreen.onAppear` to MapScreen's current session/feed, which during the demo are the demo's; if `onAppear` fires then (Settings cover closing after Demo drive), the flow stays bound to the demo session after the demo ends (no estimate, "Position uncertain", no arrival). | FIXED | 0a34849: live inputs bound once in `RootView.onAppear` to the app's session, feed and map model via `RouteWiring.install(flow:on:navigation:model:)`, binding removed from `MapView`; test `inputsFromAppObjects`. Raised by reviewer A as an unverified risk; confirmed by the orchestrator from the code path (trigger not device-verified). |
+
+Tests after round 2 (0a34849): app 953 passed, Core 1316 (36 known issues).
