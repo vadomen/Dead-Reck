@@ -707,9 +707,12 @@ are frozen strings (`NavigationRestoreClass`, `NavPriorSample.Source`).
 ### `route`, `routeCleared`
 
 The route the driver follows (v7, prompt 51; the routing plan is
-`docs/ROUTING_PLAN.md`, the model `docs/ROUTING.md`). Nothing writes these rows
-yet: the app gets them in prompt 52. Core types: `RouteSample`,
-`RouteClearedSample`, `Route`.
+`docs/ROUTING_PLAN.md`, the model `docs/ROUTING.md`). Nothing wrote these rows
+before prompt 52; the app writes them since, only while Record runs. Core types:
+`RouteSample`, `RouteClearedSample`, `Route`. When Record starts with an active route
+(the Navigate to Record hand-over), a `route` row with reason `restored` is written
+right after `start` (and after `navPrior`, if present); it carries the original
+request's `origin`. No schema change.
 
 ```json
 {"data":{"origin":{"latitude":-45.00012,"longitude":-120.00003,"source":"fix"},"reason":"user","route":{"distanceM":512.5,"expectedTravelTimeS":61,"id":"r1","label":"Harbour","polylineE7":[-450001200,-1200000300,0,4500,-3000,0,-1500,1200],"source":"appleMaps","steps":[{"distanceM":0,"from":0,"instruction":"","maneuver":"depart","to":0},{"distanceM":35.4,"from":0,"instruction":"Tournez à droite / Rue 2","maneuver":"right","to":1},{"distanceM":477.1,"from":1,"instruction":"Arrive","maneuver":"arrive","to":3}]}},"kind":"route","t":1500000000}

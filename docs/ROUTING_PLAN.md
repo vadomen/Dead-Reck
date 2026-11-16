@@ -27,7 +27,7 @@ Once routing is done, branch `nav-noobd` comes back, this time with the route as
 
 ## Prompt sequence
 
-The next free prompt number is 52 (prompt 51 is done on `r1-route-core`, merge pending review; prompt 50 is done, observe-only). Every prompt gets its own branch or worktree, then `/review-loop`, then a merge.
+The next free prompt number is 53 (prompt 52 is done in code on `r2-route-ui`, device checks open; prompt 51 is done on `r1-route-core`, merged into `routing` as 349d36c; prompt 50 is done, observe-only). Every prompt gets its own branch or worktree, then `/review-loop`, then a merge.
 The user does the push.
 
 ### 49: Prerequisites (on `routing`)
@@ -98,6 +98,12 @@ Done as observe-only (commit cf42628 on branch `fix-jump-gate`; the gate was dro
    - Document the flags in `docs/NAVIGATION.md`, section "replay_nav".
 
 ### 52 = R2: Destination and route UI
+
+**Status: done in code on branch `r2-route-ui` (2026-11-15); device checks open (PLAN §6 "Added by prompt 52").** What was built: `docs/ROUTING.md` "App flow (prompt 52)". Where the result differs from the plan below: the long-press pin is passed as pressed, with no snapping to our packs (MKDirections snaps to its own network); the app adapter lives in `App/Sources/Route/`. Deferred: engine use of the route (53), automatic off-route detection and rebuild (UX-45), voice (54), share extension, route restore after relaunch (UX-44), offline routing. Notes for the next prompts:
+- **53:** the `RouteEdgeMatcher` result is computed once at Start (when installed packs cover the route) and kept with the active route; the UI shows it only in Settings → Diagnostics → Route. The matcher builds its own `RoadNetwork` from the pack library because `NavigationService` does not expose the live network (BACKLOG `ROUTE-NETWORK-SHARE`). The display guard (cross-track above 150 m, "Away from the route") is UI only and writes no row; 53 owns real off-route detection and the `offRoute` reason.
+- **53 and replay:** when Record starts with an active route, a `route` row with reason `restored` is written right after `start` (and `navPrior`), carrying the original origin, so `replay_nav` sees the route from the start of such a recording.
+- **54:** guidance text and distances come from the Core projection of the estimate on the polyline; the uncertain-position state already shows "Position uncertain" instead of a distance, and voice must follow that rule.
+- **55:** drive checks are the PLAN §6 list for prompt 52.
 
 **What the spike changes (prompt 51, `docs/ROUTING.md`; user's search limits, 2026-11-15):**
 - **Search languages:** uk and en only; no Latin transliteration of Ukrainian names.

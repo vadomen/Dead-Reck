@@ -559,3 +559,17 @@ Items 1-7 above (demo pipeline) and the airplane-mode check (item 1) cover the d
 2. **Same in the background:** the same pull and replug with the app in the background during Navigate and the screen locked: attempts continue, and the link recovers after the replug (BLE-RECONNECT).
 3. **Link drops during init:** with an adapter whose BLE link drops during init (or at the edge of range), the recording shows `attempt n in d, connect pending, next session after the backoff` and a "held until the backoff ends" note, and sessions start no faster than 1, 2, 4 … 30 s apart (BLE-RECONNECT, R88.1-1).
 4. **Dot legend:** open "What the map dot means" from the GPS indicator in the map HUD card, and from Settings → About. The text matches the dot colours on the map (UX-43).
+
+### Added by prompt 52, destination, route and basic guidance (branch `r2-route-ui`) — not verified on a device
+1. **Search in uk and en:** with the system language Ukrainian, then English, type a street, a landmark and a business. Suggestions appear as you type, picking one opens the place card. No transliteration is attempted; a Latin spelling of a Ukrainian name may find nothing (`docs/ROUTING.md`).
+2. **Long-press destination:** hold on the map for 0.5 s: the place card opens at that point, and the point is used as pressed (no snapping to our packs).
+3. **Route from the estimate under jamming:** with Navigate running, converged and GPS jammed or off, build a route. The card shows the start as the estimate (log `origin.source` `estimate`), not the raw iOS location. With the estimate still finding (wide ellipse), the card says the position is uncertain and offers "I'm here" first and "Route anyway" second.
+4. **Alternatives:** up to 3 routes are listed with time and distance; switching between them redraws the lines without a new request.
+5. **Rebuild:** the "Away from the route" banner appears at more than 150 m cross-track; Rebuild builds a new route to the same destination (log reason `alternative`). Nothing rebuilds on its own.
+6. **Cancel:** the X on the next-manoeuvre bar asks for confirmation, then the route disappears (log `routeCleared` `cancelled` while recording).
+7. **Arrival:** stop near the destination (less than 50 m along the route, below 1 m/s for 3 s): "Arrived" appears and the route clears (`routeCleared` `arrived`).
+8. **No network at start:** with no connection, search and route show a message and Retry, never "nothing found"; a failed request leaves no route and writes nothing.
+9. **A recording with route rows:** record a drive with a route active, then read it with `inspect_log` (the `Routes` line and `route.csv`). Include a Navigate to Record hand-over with an active route: the first rows after `start` (and `navPrior`) are a `route` row with reason `restored` carrying the original origin.
+10. **Long-press vs pan vs double-tap on the map:** a long press opens the card; a drag of 10 pt or more cancels it and pans; double-tap still zooms and does not open a card; pinch and rotate are unaffected.
+11. **Layout:** on an iPhone SE (3rd gen) in heading-up the destination bar (52 pt) sits above the OSM credit band, the right rail above it, and the road ahead keeps 340 pt (304 pt with the recording row). The GPS indicator is a 44 pt tap target (R88.1-4).
+12. **Saved destinations:** recents (10) and Home/Work appear in the empty search state; Settings → "Saved destinations" deletes one by swipe and "Clear recent destinations" clears the list.

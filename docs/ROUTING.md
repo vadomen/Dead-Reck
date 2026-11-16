@@ -236,11 +236,82 @@ candidate rendered for the driver to confirm or correct, stored in git-ignored
 `logs/routes/`. Reference routes are never in the repo. First measurements:
 `docs/NAVIGATION.md` "Prompt 51 E.3".
 
-## Note for prompt 52
+## App flow (prompt 52)
 
-- `RepositoryInvariantTests` forbids the MapKit routing and search type names in
-  `Core/` and in `App/Sources/Navigation`. The `MKRoute` to `Route` adapter (and the
-  search code) must live elsewhere, or the test needs a user decision. Decide this
-  first.
-- The search limits in "Spike" above apply: uk/en only, the long-press pin as a
-  required fallback, paced requests with a retry on throttling.
+Done in code on branch `r2-route-ui`; device checks in `docs/PLAN.md` §6 "Added by
+prompt 52". The search limits in "Spike" above apply: uk/en only, the long-press pin
+as a required fallback, paced requests with a retry on throttling.
+
+**Where MapKit lives.** The `MKRoute` to `Route` adapter and the search code are in
+`App/Sources/Route/`, the only place `MKLocalSearch`, `MKDirections`, `MKRoute` and
+`MKMapItem` may appear. `RepositoryInvariantTests` forbids those names everywhere
+else, including `Core/` and `App/Sources/Navigation`. The views are in
+`App/Sources/UI/Route/`.
+
+**Flow** (`RouteFlowModel`): idle, search, place card, requesting, alternatives,
+guiding, arrived, idle.
+- `cancel()` goes to idle from any state; with an active route it writes
+  `routeCleared` `cancelled`. `dismiss()` backs out of a sheet or a rebuild and keeps
+  the active route.
+- A long press (0.5 s; a drag of 10 pt or more cancels it) on the map opens the place
+  card directly. The point is passed as pressed, with no snapping to our packs:
+  MKDirections snaps to its own network.
+- Search shows completions as you type. The region is centred on the FuGPS estimate,
+  else the last good fix, else Kyiv-wide. uk and en only, no transliteration. The empty
+  state shows recents and the pinned Home and Work.
+- Layout E (UX-32): a 52 pt destination bar at the bottom above the OSM credit band;
+  the right rail sits above it. During guidance it becomes the next-manoeuvre bar
+  (glyph and distance, instruction, remaining distance and time, X to cancel with a
+  confirmation). Nothing is added at the top.
+
+**Origin rules** (`origin.source` in the `route` row):
+- (a) Navigate or Record running and the engine estimate not "finding" (converged,
+  95 % semi-major at most 1,000 m, that is `PositionStatus.isFinding` false): the
+  estimate, source `estimate`.
+- (b) Estimate finding: the card says the position is uncertain; "I'm here" pin first
+  (source `pin`), "Route anyway" second (source `estimate`).
+- (c) No estimate: the raw fix only if accuracy is at most 15 m, age at most 5 s and
+  GPS is not switched off (source `fix`); otherwise the app asks for a pin.
+- Raw iOS location is never used silently.
+
+**Failure and pacing.**
+- The completer is debounced; requests are at least 1.5 s apart.
+- Throttled (`MKError` code 3): backoff 2, 4, 8, 16, 30 s; after 6 attempts a "busy"
+  message, never "nothing found".
+- Offline or nothing found: a message and Retry.
+- An in-flight request is cancelled when the query or the destination changes.
+- A failed request with no route writes nothing; a failed rebuild keeps the current
+  route.
+- Up to 3 alternatives are kept as shown and never re-requested to redraw (the sets
+  are not stable between calls).
+
+**Guidance.**
+- The route line is drawn under the estimate marker. Progress is the Core projection
+  of the FuGPS estimate on the polyline. With an uncertain estimate the bar shows
+  "Position uncertain" instead of a distance.
+- Display guard: cross-track above 150 m shows "Away from the route" and Rebuild. There
+  is no automatic rebuild and no log row (UX-45).
+- Manual Rebuild is a new request to the same destination: `route` row with reason
+  `alternative`; a new destination gives `user`.
+- Arrival: remaining below 50 m along the route and stopped (below 1 m/s) for at least
+  3 s writes `routeCleared` `arrived` and shows "Arrived".
+
+**Matcher.** `RouteEdgeMatcher` runs once at Start when the installed packs cover the
+route. The result is kept with the active route for prompt 53 and shown only in
+Settings → Diagnostics → Route. It builds its own `RoadNetwork` from the pack library
+(BACKLOG `ROUTE-NETWORK-SHARE`).
+
+**Recording.** `RecordingSession.recordRoute` and `recordRouteCleared` write v7 rows
+stamped `clock.now()`, only while Record runs. At Record start with an active route
+(a Navigate to Record hand-over in the same app session) a `route` row with reason
+`restored` follows `start` (and `navPrior`, if present), with the original origin. With
+no route the recording is unchanged.
+
+**Saved destinations.** Recents (at most 10, newest first, de-duplicated) and pinned
+Home and Work, in Application Support, on the device only, no sync. Settings → "Saved
+destinations": swipe to delete, "Clear recent destinations". Never in logs, analytics
+or the pasteboard.
+
+**Not in prompt 52:** engine use of the route (53), automatic off-route detection
+and rebuild (UX-45), voice (54), a share extension, route restore after an app
+relaunch (UX-44), offline routing.
