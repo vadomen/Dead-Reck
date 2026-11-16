@@ -618,10 +618,10 @@ struct GPSMapView: View {
                     guard let points = routeFlow?.chosenRoute?.polyline.map({ ($0.latitude, $0.longitude) }),
                           let region = RouteFraming.region(points: points, coveredFraction: 0.4, coveredTop: 0.18, usableWidth: 0.8) else { return }
                     // Held off (no 8 s auto-resume, no countdown) while the alternatives are shown.
-                    if follow.isFollowing { updateFollow { $0.followTapped(at: ContinuousClock.now) } }
+                    updateFollow { $0.hold() }
                     withAnimation(.easeInOut(duration: 0.6)) { position = .region(region) }
                 case .resumeFollow:
-                    if !follow.isFollowing { updateFollow { $0.followTapped(at: ContinuousClock.now) } }
+                    updateFollow { $0.resume() }
                     moveCameraToCar(duration: 0.8)
                 case .none: break
                 }
@@ -993,7 +993,7 @@ struct GPSMapView: View {
     /// time are all read here, before that zoom starts.
     private func handleDoubleTap(at point: CGPoint, proxy: MapProxy) {
         guard let coordinate = proxy.convert(point, from: .named(Self.space)) else { return }
-        routeFlow?.setOriginPin(GeoPoint(latitude: coordinate.latitude, longitude: coordinate.longitude))
+        routeFlow?.setOriginPin(GeoPoint(latitude: coordinate.latitude, longitude: coordinate.longitude), visibleSpanM: visibleSpanM)
         switch ManualFixTap.perform(
             latitude: coordinate.latitude, longitude: coordinate.longitude,
             visibleSpanM: visibleSpanM, marking: manual

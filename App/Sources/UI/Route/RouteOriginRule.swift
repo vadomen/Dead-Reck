@@ -56,13 +56,20 @@ enum RouteOriginRule {
             && fix.ageS.isFinite && fix.ageS >= 0 && fix.ageS <= maxFixAgeS
     }
 
+    /// The raw fix as a position to use: good (`isGoodFix`) and GPS not switched
+    /// off. The one rule for the origin, the card's distance and the search region.
+    static func usableFix(_ inputs: RouteOriginInputs) -> GeoPoint? {
+        guard !inputs.gpsOff, let fix = inputs.fix, isGoodFix(fix) else { return nil }
+        return fix.point
+    }
+
     static func choose(_ inputs: RouteOriginInputs) -> RouteOriginChoice {
         if inputs.runActive, let estimate = inputs.estimate {
             if PositionStatus.isFinding(estimate) { return .uncertain(estimate: estimate.position, pin: inputs.pin) }
             return .estimate(estimate.position)
         }
         // Raw iOS location is never used silently: it must be good and in use.
-        if let fix = inputs.fix, !inputs.gpsOff, isGoodFix(fix) { return .fix(fix.point) }
+        if let point = usableFix(inputs) { return .fix(point) }
         return .needsPin(pin: inputs.pin)
     }
 

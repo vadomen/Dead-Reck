@@ -145,6 +145,12 @@ enum RouteFraming {
 enum RouteGesture {
     static let longPressSeconds = 0.5
     static let cancelDistance = 10.0
+
+    /// The touch after the long press: a pin only when the finger stayed put
+    /// (a pan after the press must not drop a pin at its start point).
+    static func dropsPin(translation: CGSize) -> Bool {
+        hypot(Double(translation.width), Double(translation.height)) < cancelDistance
+    }
 }
 
 struct RouteLongPress: ViewModifier {
@@ -157,7 +163,7 @@ struct RouteLongPress: ViewModifier {
             LongPressGesture(minimumDuration: RouteGesture.longPressSeconds, maximumDistance: RouteGesture.cancelDistance)
                 .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .named(space)))
                 .onEnded { value in
-                    guard case .second(true, let drag?) = value,
+                    guard case .second(true, let drag?) = value, RouteGesture.dropsPin(translation: drag.translation),
                           let coordinate = proxy.convert(drag.startLocation, from: .named(space)) else { return }
                     action(GeoPoint(latitude: coordinate.latitude, longitude: coordinate.longitude))
                 })

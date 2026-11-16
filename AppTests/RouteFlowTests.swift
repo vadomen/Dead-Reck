@@ -206,6 +206,147 @@ struct RouteFlowTests {
         #expect(rig.flow.phase == .placeCard && rig.flow.alternatives.isEmpty)
     }
 
+    // MARK: Stale answers (live MapKit ignores cancellation; the flow's own guard is the protection)
+
+    private func routes(prefix: String) -> [Route] {
+        (1...3).map { RouteFixtures.route(id: "\(prefix)\($0)", lengthM: 2_000 + Double($0) * 100) }
+    }
+
+    @Test("A request cancelled and replaced: A's late answer, while B is still requesting, is dropped")
+    func staleRequestWhileRequesting() async {
+        let rig = Rig()
+        rig.director.holds = true
+        rig.director.results = [.success(routes(prefix: "a")), .success(routes(prefix: "b"))]
+        rig.flow.longPress(at: RouteFixtures.point(alongM: 300))
+        rig.flow.route()
+        await waitUntil("A in flight") { rig.director.calls.count == 1 }
+        rig.flow.dismiss()
+        rig.flow.longPress(at: RouteFixtures.point(alongM: 900))
+        rig.flow.route()
+        await waitUntil("B in flight") { rig.director.calls.count == 2 }
+        rig.director.release(call: 0)
+        try? await Task.sleep(for: .milliseconds(30))
+        #expect(rig.flow.phase == .requesting && rig.flow.alternatives.isEmpty, "A's answer is not B's")
+        rig.director.release(call: 1)
+        await waitUntil("B's alternatives") { rig.flow.phase == .alternatives }
+        #expect(rig.flow.alternatives.map(\.id) == ["b1", "b2", "b3"])
+        rig.flow.start()
+        #expect(rig.sink.rows == [.route(id: "b1", reason: "user", source: "estimate")])
+    }
+
+    @Test("A's answer arriving after B's is dropped too; the written route row is B's")
+    func staleRequestAfterAnswer() async {
+        let rig = Rig()
+        rig.director.holds = true
+        rig.director.results = [.success(routes(prefix: "a")), .success(routes(prefix: "b"))]
+        rig.flow.longPress(at: RouteFixtures.point(alongM: 300))
+        rig.flow.route()
+        await waitUntil("A in flight") { rig.director.calls.count == 1 }
+        rig.flow.dismiss()
+        rig.flow.longPress(at: RouteFixtures.point(alongM: 900))
+        rig.flow.route()
+        await waitUntil("B in flight") { rig.director.calls.count == 2 }
+        rig.director.release(call: 1)
+        await waitUntil("B's alternatives") { rig.flow.phase == .alternatives }
+        rig.director.release(call: 0)
+        try? await Task.sleep(for: .milliseconds(30))
+        #expect(rig.flow.alternatives.map(\.id) == ["b1", "b2", "b3"])
+        rig.flow.start()
+        #expect(rig.sink.rows == [.route(id: "b1", reason: "user", source: "estimate")])
+        #expect(rig.flow.active?.place.latitude == RouteFixtures.point(alongM: 900).latitude)
+    }
+
+    @Test("A resolve cancelled and replaced: A's late answer does not open A's card; B's place stays")
+    func staleResolve() async {
+        let rig = Rig()
+        rig.searcher.holdsResolve = true
+        let a = RoutePlace(name: "Place A", addressLine: "", latitude: 0.01, longitude: 0.01)
+        let b = RoutePlace(name: "Place B", addressLine: "", latitude: 0.02, longitude: 0.02)
+        rig.searcher.resolveResults = [.success(a), .success(b)]
+        rig.flow.openSearch()
+        rig.flow.select(DestinationCompletion(id: "a", title: "A", subtitle: ""))
+        await waitUntil("A resolving") { rig.searcher.resolved == 1 }
+        rig.flow.dismiss()
+        rig.flow.openSearch()
+        rig.flow.select(DestinationCompletion(id: "b", title: "B", subtitle: ""))
+        await waitUntil("B resolving") { rig.searcher.resolved == 2 }
+        rig.searcher.releaseResolve(call: 0)
+        try? await Task.sleep(for: .milliseconds(30))
+        #expect(rig.flow.phase == .search && rig.flow.place == nil, "A's answer is not B's")
+        rig.searcher.releaseResolve(call: 1)
+        await waitUntil("B's card") { rig.flow.phase == .placeCard }
+        #expect(rig.flow.place == b)
+        // And A answering after B's card is open changes nothing.
+        let late = Rig()
+        late.searcher.holdsResolve = true
+        late.searcher.resolveResults = [.success(a), .success(b)]
+        late.flow.openSearch()
+        late.flow.select(DestinationCompletion(id: "a", title: "A", subtitle: ""))
+        await waitUntil("A resolving") { late.searcher.resolved == 1 }
+        late.flow.dismiss()
+        late.flow.openSearch()
+        late.flow.select(DestinationCompletion(id: "b", title: "B", subtitle: ""))
+        await waitUntil("B resolving") { late.searcher.resolved == 2 }
+        late.searcher.releaseResolve(call: 1)
+        await waitUntil("B's card") { late.flow.phase == .placeCard }
+        late.searcher.releaseResolve(call: 0)
+        try? await Task.sleep(for: .milliseconds(30))
+        #expect(late.flow.place == b)
+    }
+
+    // MARK: Pin span rule, usable fix
+
+    @Test("The origin pin follows the recorded pin's span rule: a tap on a map zoomed out past 300 m is refused")
+    func originPinSpan() {
+        let rig = Rig(estimate: RouteFixtures.nav(major: 2_400, converged: false))
+        rig.flow.longPress(at: RouteFixtures.origin)
+        let pin = GeoPoint(latitude: 0.001, longitude: 0.001)
+        rig.flow.setOriginPin(pin, visibleSpanM: 5_000)
+        rig.flow.setOriginPin(pin, visibleSpanM: nil)
+        #expect(rig.flow.originPin == nil)
+        rig.flow.setOriginPin(pin, visibleSpanM: 250)
+        #expect(rig.flow.originPin == pin)
+    }
+
+    @Test("With GPS switched off and no estimate: no straight-line distance from the spoofed fix, search not centred on it")
+    func gpsOffFix() async {
+        let fix = RawFixInput(point: GeoPoint(latitude: 0.001, longitude: 0.001), horizontalAccuracy: 5, ageS: 1)
+        let off = Rig(estimate: nil, fix: fix, gpsOff: true)
+        off.flow.longPress(at: RouteFixtures.origin)
+        #expect(off.flow.distanceToPlaceM == nil)
+        off.flow.openSearch()
+        off.flow.updateQuery("x")
+        await waitUntil("query") { !off.searcher.regions.isEmpty }
+        #expect(off.searcher.regions.last == .kyivWide)
+        let on = Rig(estimate: nil, fix: fix, gpsOff: false)
+        on.flow.longPress(at: RouteFixtures.origin)
+        #expect(on.flow.distanceToPlaceM != nil)
+        on.flow.openSearch()
+        on.flow.updateQuery("x")
+        await waitUntil("query") { !on.searcher.regions.isEmpty }
+        #expect(on.searcher.regions.last?.latitude == 0.001)
+        let bad = Rig(estimate: nil, fix: RawFixInput(point: fix.point, horizontalAccuracy: 50, ageS: 1))
+        bad.flow.longPress(at: RouteFixtures.origin)
+        #expect(bad.flow.distanceToPlaceM == nil)
+    }
+
+    // MARK: Wiring
+
+    @Test("The provider Record asks returns the active route of the flow the map uses, with its origin")
+    func providerWiring() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let session = RecordingFixtures.session(store: scratch.store)
+        let rig = Rig()
+        RouteWiring.install(flow: rig.flow, on: session)
+        #expect(session.activeRouteProvider?() == nil)
+        await rig.toGuiding()
+        let handOver = session.activeRouteProvider?()
+        #expect(handOver?.route.id == "r1" && handOver?.origin?.source?.rawValue == "estimate")
+        rig.flow.cancel()
+        #expect(session.activeRouteProvider?() == nil, "follows the flow's state, not a copy")
+    }
+
     // MARK: Search
 
     @Test("Typing is debounced and a new query cancels the one waiting; the region is centred on the estimate")

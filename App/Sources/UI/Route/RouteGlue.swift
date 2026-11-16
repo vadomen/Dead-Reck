@@ -38,6 +38,16 @@ enum RouteInputs {
     }
 }
 
+/// Hooks the flow the map uses into the session: Record asks it for the active
+/// route at Start (`restored` row). Called from the kept `@State` flow, never
+/// from `RootView.init` (SwiftUI re-runs it, and each run makes a throwaway flow).
+enum RouteWiring {
+    @MainActor
+    static func install(flow: RouteFlowModel, on session: RecordingSession) {
+        session.activeRouteProvider = { [weak flow] in flow?.handOver }
+    }
+}
+
 /// Route rows into the recording (`RecordingSession.recordRoute`,
 /// `recordRouteCleared`): written only while Record is running; outside a
 /// recording both are no-ops and the session picks the route up at Start

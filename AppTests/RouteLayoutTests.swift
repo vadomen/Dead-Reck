@@ -104,6 +104,14 @@ struct RouteLayoutTests {
         #expect(RouteGesture.cancelDistance == 10)
     }
 
+    @Test("After the press, a pan drops no pin; a finger that stayed put does")
+    func panAfterPress() {
+        #expect(RouteGesture.dropsPin(translation: .zero))
+        #expect(RouteGesture.dropsPin(translation: CGSize(width: 6, height: 6)))
+        #expect(!RouteGesture.dropsPin(translation: CGSize(width: 10, height: 0)))
+        #expect(!RouteGesture.dropsPin(translation: CGSize(width: 0, height: -200)))
+    }
+
     @Test("The route line is distinct from the roads line and the estimate, and differs per scheme")
     func colours() {
         for dark in [false, true] {

@@ -145,7 +145,7 @@ final class RouteFlowModel {
     var distanceToPlaceM: Double? {
         guard let place else { return nil }
         let inputs = liveInputs().origin
-        guard let from = inputs.estimate?.position ?? inputs.fix?.point else { return nil }
+        guard let from = inputs.estimate?.position ?? RouteOriginRule.usableFix(inputs) else { return nil }
         return Self.straightLineM(from, place.coordinate)
     }
 
@@ -185,7 +185,7 @@ final class RouteFlowModel {
         let inputs = liveInputs().origin
         let region = SearchRegion.choose(
             estimate: inputs.estimate?.position,
-            lastGoodFix: inputs.fix.flatMap { RouteOriginRule.isGoodFix($0) ? $0.point : nil })
+            lastGoodFix: RouteOriginRule.usableFix(inputs))
         searchTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -257,8 +257,10 @@ final class RouteFlowModel {
     // MARK: Origin and request
 
     /// The driver placed the "I'm here" pin (a double tap while the card is open).
-    func setOriginPin(_ point: GeoPoint) {
-        guard phase == .placeCard else { return }
+    /// Under the same span rule as the recorded pin (`PinPrecision`): a tap on a
+    /// map zoomed out past 300 m is refused, here too.
+    func setOriginPin(_ point: GeoPoint, visibleSpanM: Double?) {
+        guard phase == .placeCard, PinPrecision.isPreciseEnough(visibleSpanM: visibleSpanM) else { return }
         originPin = point
         routeAnyway = false
     }

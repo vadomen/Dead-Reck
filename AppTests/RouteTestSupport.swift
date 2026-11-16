@@ -37,6 +37,12 @@ final class VirtualClock: @unchecked Sendable {
 final class StubSearcher: DestinationSearching {
     var completionResult: Result<[DestinationCompletion], RouteServiceError> = .success([])
     var resolveResult: Result<RoutePlace, RouteServiceError> = .success(RouteFixtures.place)
+    /// Per call (the last repeats); empty: `resolveResult` for every call.
+    var resolveResults: [Result<RoutePlace, RouteServiceError>] = []
+    /// Resolve calls wait for `releaseResolve(call:)`, and, like the live
+    /// MapKit search, do not honour Swift cancellation.
+    var holdsResolve = false
+    private var heldResolves: [Int: CheckedContinuation<Void, Never>] = [:]
     private(set) var queries: [String] = []
     private(set) var regions: [SearchRegion] = []
     private(set) var resolved = 0
@@ -49,7 +55,14 @@ final class StubSearcher: DestinationSearching {
 
     func resolve(_ completion: DestinationCompletion) async throws -> RoutePlace {
         resolved += 1
-        return try resolveResult.get()
+        let call = resolved - 1
+        if holdsResolve { await withCheckedContinuation { heldResolves[call] = $0 } }
+        if resolveResults.isEmpty { return try resolveResult.get() }
+        return try resolveResults[min(call, resolveResults.count - 1)].get()
+    }
+
+    func releaseResolve(call: Int) {
+        heldResolves.removeValue(forKey: call)?.resume()
     }
 }
 
@@ -60,21 +73,31 @@ final class StubDirector: RouteDirecting {
     private(set) var calls: [(origin: GeoPoint, destination: GeoPoint)] = []
     /// While set, a call waits for `release()` (to test cancelling a request in flight).
     var holds = false
-    private var held: [CheckedContinuation<Void, Never>] = []
+    /// The live directions request does not honour Swift cancellation: by default neither does this stub, so
+    /// a cancelled request still answers and only the flow's own guard keeps the answer out.
+    var ignoresCancellation = true
+    private var held: [Int: CheckedContinuation<Void, Never>] = [:]
 
     func routes(from origin: GeoPoint, to destination: GeoPoint, label: String?) async throws -> [Route] {
         calls.append((origin, destination))
-        let index = min(calls.count - 1, results.count - 1)
+        let call = calls.count - 1
+        let index = min(call, results.count - 1)
         if holds {
-            await withCheckedContinuation { held.append($0) }
-            try Task.checkCancellation()
+            await withCheckedContinuation { held[call] = $0 }
+            if !ignoresCancellation { try Task.checkCancellation() }
         }
         return try results[index].get()
     }
 
     func release() {
-        held.forEach { $0.resume() }
-        held = []
+        let all = held
+        held = [:]
+        all.values.forEach { $0.resume() }
+    }
+
+    /// Answers one call (0-based, in call order).
+    func release(call: Int) {
+        held.removeValue(forKey: call)?.resume()
     }
 }
 

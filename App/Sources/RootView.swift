@@ -159,8 +159,6 @@ struct RootView: View {
         // `-uiRouteStub search|place|alternatives|guiding|uncertain|away|arrived|offline` (screenshots).
         if let stub = RouteDebugStubs.flow(argument: UserDefaults.standard.string(forKey: "uiRouteStub")) { flow = stub }
         #endif
-        let live = flow
-        services.session.activeRouteProvider = { [weak live] in live?.handOver }
         return flow
     }
 
@@ -253,6 +251,8 @@ struct RootView: View {
         // feed is its own view so only it observes the 16 Hz `live` status.
         .background(MapFeed(session: bound.session, model: map, mount: bound.mountConfirmation))
         .task { await roadsWarning.run() }
+        // The route the map uses is the one Record asks at Start.
+        .onAppear { RouteWiring.install(flow: route, on: services.session) }
         // The demo's own roads warning, polled only while it runs.
         .task(id: services.demo.isRunning) {
             if services.demo.isRunning { await demoWarning.run() }

@@ -69,6 +69,13 @@ struct FollowController: Equatable, Sendable {
 
     /// The Follow button. Paused: resume now. Following: off for good until
     /// tapped again.
+    /// Holds the camera off whatever the mode is (following, paused or off): no
+    /// resume deadline, no countdown. Used while route alternatives are framed.
+    mutating func hold() { mode = .manualOff }
+
+    /// Back to following, from any mode (unlike `followTapped`, never a toggle).
+    mutating func resume() { mode = .following }
+
     mutating func followTapped(at now: ContinuousClock.Instant) {
         mode = (mode == .following) ? .manualOff : .following
     }
