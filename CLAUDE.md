@@ -32,7 +32,8 @@ Core/                        DriveLoggerCore — local SwiftPM package, pure log
   Tests/DriveLoggerCoreTests/
 App/                         iOS app target — owns every Apple framework
   Sources/Link/ Sensors/ Recording/ Navigation/   BLE + OBD link, CoreMotion/CoreLocation, RecordingSession, NavigationService
-  Sources/UI/                Map, Record, Sessions, Settings, Console, Support
+  Sources/Route/             MapKit search and routing adapters; the only place MKLocalSearch/MKDirections/MKRoute/MKMapItem may appear
+  Sources/UI/                Map, Record, Route, Sessions, Settings, Console, Support
   Resources/Info.plist       Hand-maintained; XcodeGen does not generate it
 AppTests/                    App unit tests (Swift Testing)
 Config/                      Signing.xcconfig (committed), Local.xcconfig (git-ignored)
