@@ -42,9 +42,20 @@ enum RouteInputs {
 /// route at Start (`restored` row). Called from the kept `@State` flow, never
 /// from `RootView.init` (SwiftUI re-runs it, and each run makes a throwaway flow).
 enum RouteWiring {
+    /// Also binds what the flow reads to the app's own session, estimate feed and
+    /// map model, once. The map must not bind it: while the demo runs the map's
+    /// session and feed are the demo's, and a bind then would outlive the demo.
     @MainActor
-    static func install(flow: RouteFlowModel, on session: RecordingSession) {
+    static func install(
+        flow: RouteFlowModel, on session: RecordingSession, navigation: NavigationFeed? = nil, model: MapViewModel? = nil
+    ) {
         session.activeRouteProvider = { [weak flow] in flow?.handOver }
+        if let navigation, let model {
+            flow.bindLiveInputs { [weak session, weak model, weak navigation] in
+                guard let session, let model, let navigation else { return RouteLiveInputs() }
+                return RouteInputs.make(session: session, model: model, navigation: navigation)
+            }
+        }
     }
 }
 

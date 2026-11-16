@@ -347,6 +347,28 @@ struct RouteFlowTests {
         #expect(session.activeRouteProvider?() == nil, "follows the flow's state, not a copy")
     }
 
+    @Test("The flow reads the app's own session, feed and map model, bound once at the root; the map never rebinds (a demo's objects must not outlive the demo)")
+    func inputsFromAppObjects() throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let session = RecordingFixtures.session(store: scratch.store)
+        let flow = RouteFlowModel(
+            searcher: StubSearcher(), director: StubDirector(), saved: SavedDestinationsStore.preview())
+        let fix = LocationSample(
+            latitude: 0.001, longitude: 0.002, altitude: 0, horizontalAccuracy: 5, verticalAccuracy: 5,
+            speed: 0, speedAccuracy: 1, course: 0, courseAccuracy: 5)
+        let model = MapViewModel(track: GPSTrack(), latest: fix)
+        model.ingestDisplay(fix, isActive: true)
+        let feed = NavigationFeed(display: RouteFixtures.nav())
+        RouteWiring.install(flow: flow, on: session, navigation: feed, model: model)
+        let inputs = flow.liveInputs().origin
+        #expect(inputs.fix?.point == GeoPoint(latitude: 0.001, longitude: 0.002), "from the app's map model")
+        #expect(!inputs.runActive && inputs.estimate == nil, "the app session has no run: no estimate is offered")
+        // The map's source never binds the flow: a bind from the demo's objects would outlive the demo.
+        let map = try LocalizationRepo.text("App/Sources/UI/Map/MapView.swift")
+        #expect(!map.contains("bindLiveInputs"))
+    }
+
     // MARK: Search
 
     @Test("Typing is debounced and a new query cancels the one waiting; the region is centred on the estimate")

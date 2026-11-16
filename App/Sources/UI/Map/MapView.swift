@@ -143,7 +143,6 @@ struct MapScreen: View {
         }
         .onAppear { thermal = ProcessInfo.processInfo.thermalState }
         .routeSheets(demo == nil ? routeFlow : nil)
-        .onAppear { routeFlow?.bindLiveInputs { [session, model, navigation] in RouteInputs.make(session: session, model: model, navigation: navigation) } }
         .onChange(of: session.isGPSSwitchOn, initial: true) { _, on in model.setGPSSwitch(on: on) }
         .onChange(of: link?.state, initial: true) { _, state in model.noteLink(state, adapter: link?.rememberedAdapterID) }
         .onChange(of: link?.rememberedAdapterID) { _, id in model.noteLink(link?.state, adapter: id) }

@@ -252,7 +252,7 @@ struct RootView: View {
         .background(MapFeed(session: bound.session, model: map, mount: bound.mountConfirmation))
         .task { await roadsWarning.run() }
         // The route the map uses is the one Record asks at Start.
-        .onAppear { RouteWiring.install(flow: route, on: services.session) }
+        .onAppear { RouteWiring.install(flow: route, on: services.session, navigation: navigation, model: map) }
         // The demo's own roads warning, polled only while it runs.
         .task(id: services.demo.isRunning) {
             if services.demo.isRunning { await demoWarning.run() }

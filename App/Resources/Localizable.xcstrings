@@ -5093,12 +5093,12 @@
         }
       }
     },
-    "When you search for a place or ask for a route, your search text, the start and end of the route, and your approximate current position (to rank nearby places) are sent to Apple (MapKit). Nothing is sent to us." : {
+    "When you search for a place or ask for a route, your search text, the start and end of the route, and your current position (to rank nearby places) are sent to Apple (MapKit). Nothing is sent to us." : {
       "localizations" : {
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Коли ви шукаєте місце або просите маршрут, текст пошуку, початок і кінець маршруту та ваша приблизна позиція (щоб показати ближчі місця) надсилаються до Apple (MapKit). Нам нічого не надсилається."
+            "value" : "Коли ви шукаєте місце або просите маршрут, текст пошуку, початок і кінець маршруту та ваша поточна позиція (щоб показати ближчі місця) надсилаються до Apple (MapKit). Нам нічого не надсилається."
           }
         }
       }
