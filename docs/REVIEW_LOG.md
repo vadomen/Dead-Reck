@@ -1329,3 +1329,26 @@ Tests at HEAD c4fb20b: Core 1314 tests in 157 suites passed (36 known issues); r
 ### Run 90 summary
 
 4 rounds; 6 fixed (R90.1-1, R90.1-2, R90.1-3, R90.2-1, R90.2-2, R90.3-1), all test-only except R90.1-3 (`Route.unpack` range check); 0 rejected; 8 deferred (R90.1-4, R90.1-5, R90.1-6, R90.1-7, R90.2-3, R90.3-2, R90.4-1, R90.4-2). Final tests: Core 1314 tests in 157 suites passed (36 known issues); release perf filter 10 passed; App unchanged (871 tests passed at 5ea2762). Bit-identical: author hash proof 101/101 at d1584e8, plus the reviewer's clean seed-1 roads off/on re-run at a8616d6; Core/Sources changed after that only in `Route.unpack`, which is not reached without a route file or v7 route rows. Outcome: closed, ready to merge into `routing` (merge: pending).
+
+## Run 91: Prompt 52 R2 route UI (destination search and long-press, route alternatives, guidance bar, arrival, route rows in recordings, saved destinations, privacy texts) (routing..r2-route-ui: 349d36c..261c6b4), started 2026-11-16
+
+Note: on branch `routing` (decision D6), not `main`.
+
+### Round 1
+
+Reviewers: three parallel opus reviewers on disjoint sets. A: `App/Sources/Route`, RecordingSession, RootView, invariant test. B: route flow model, origin rule, guidance. C: UI views, MapView hooks, strings, docs, site. All rows confirmed by the orchestrator against the code.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R91.1-1 | MAJOR | `App/Sources/RootView.swift:42,160-163`: `RootView.init` (re-run by SwiftUI at launch and on every scenePhase change) builds a new `RouteFlowModel` and repoints `session.activeRouteProvider` at it, while `@State` keeps the first one, so the Record-start `route restored` row is never written in the real app. | FIXED | 0e69b9a: provider installed from the kept `@State` flow in `RootView.onAppear` (`RouteWiring.install`); test `providerWiring`. |
+| R91.1-2 | MAJOR | `App/Sources/UI/Map/MapView.swift:621`: alternatives framing holds follow only when following; a paused follow (double-tap pin or pan just before) auto-resumes after 8 s and discards the framing, with a re-centre countdown above the card. | FIXED | 0e69b9a: `FollowController.hold()`/`resume()`; test `holdFromAnyMode`. |
+| R91.1-3 | MAJOR | `MapView.swift:996`: the route origin pin is set before the span check, so a double-tap refused as too far out (> 300 m span) still becomes the route origin (source pin). | FIXED | 0e69b9a: `PinPrecision` span rule on the route pin; test `originPinSpan`. |
+| R91.1-4 | MAJOR | `App/Sources/UI/Route/RouteMapLayer.swift:156-162`: after the 0.5 s long press, the drag's translation is ignored, so long-press-then-pan drops a destination pin at a wrong point. | FIXED | 0e69b9a: `RouteGesture.dropsPin(translation:)`, a drag of 10 pt or more drops no pin; test `panAfterPress`. |
+| R91.1-5 | MAJOR | About text, site privacy pages en/uk, `docs/APP_STORE_METADATA.md`: privacy texts omit that place search sends the approximate current position (completer region centred on the estimate or good fix) to Apple. | FIXED | 0e69b9a: About, site en/uk and glossary §10 updated; `docs/APP_STORE_METADATA.md` follows in the same round. |
+| R91.1-6 | MAJOR | `App/Sources/UI/Route/RouteFlowModel.swift:148,186-188`: the place card's straight-line distance uses the raw fix without the good-fix rule or the GPS-off switch; the search region ignores GPS-off, so raw iOS location is used silently under jamming. | FIXED | 0e69b9a: `RouteOriginRule.usableFix` (good fix and GPS on) in the origin choice, the distance and the search region; test `gpsOffFix`. |
+| R91.1-7 | MAJOR | `AppTests/RouteTestSupport.swift:70` (`RouteFlowModel.swift:214,291`): the stale-result-after-cancel guard is never exercised (the stub checks cancellation itself); live MapKit calls ignore Swift cancellation, so a cancelled request's answer could become a new destination's alternatives. | FIXED | 0e69b9a (test only): the stubs ignore cancellation like live MapKit; tests `staleRequestWhileRequesting`, `staleRequestAfterAnswer`, `staleResolve`; mutation of the `!Task.isCancelled` guards fails the first and third. |
+| R91.1-8 | MINOR | `App/Resources/Localizable.xcstrings` (keys near lines 2854, 4769, 5233): uk strings call the "I'm here" map pin «позначка»; glossary §9 says «мітка» (позначка = the Record marker). | DEFERRED | BACKLOG. |
+| R91.1-9 | MINOR | `docs/APP_STORE_METADATA.md:177`: open point 11 says the site privacy pages are not yet edited; they were (3b4aa41). | FIXED | 0e69b9a: folded into the R91.1-5 fix (same paragraph). |
+| R91.1-10 | MINOR | `App/Sources/UI/Map/MapCameraLogic.swift:278`, `MapEllipseFit.swift:75`, `MapHUD.swift:295`: the bottom reserve is a fixed 60 pt slot (0 for the offer frame) whatever the bar shows: an at-a-stop offer card during guidance sits ~121 pt higher than modelled (AX2 SE: car under the card); in REL-DEMO the heading-up auto-zoom reserves 60 pt for a bar that is not drawn. | DEFERRED | BACKLOG. |
+
+Tests at HEAD (before the round): Core 1316 passed (36 known issues); app 944 passed. Tests after round 1 (0e69b9a): app 952 passed, Core 1316 (36 known issues).
