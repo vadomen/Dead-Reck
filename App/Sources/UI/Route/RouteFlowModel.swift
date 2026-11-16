@@ -97,6 +97,9 @@ final class RouteFlowModel {
     /// (`bindLiveInputs`); screenshot stubs fix it.
     @ObservationIgnored private(set) var liveInputs: () -> RouteLiveInputs = { RouteLiveInputs() }
     @ObservationIgnored private var inputsAreFixed = false
+    /// A fresh estimate for guidance, independent of the map: nil when none could be
+    /// had just now (a stale one is none). Unset (tests, stubs): the estimate in `liveInputs`.
+    @ObservationIgnored var estimateSource: (@MainActor () async -> NavDisplay?)?
     @ObservationIgnored private var searchTask: Task<Void, Never>?
     @ObservationIgnored private var requestTask: Task<Void, Never>?
     @ObservationIgnored private var edgeTask: Task<Void, Never>?
@@ -363,11 +366,19 @@ final class RouteFlowModel {
             while !Task.isCancelled {
                 try? await Task.sleep(for: self?.tickInterval ?? .milliseconds(500))
                 guard !Task.isCancelled, let self else { return }
-                let inputs = liveInputs()
-                tick(estimate: inputs.origin.runActive ? inputs.origin.estimate : nil, speedMS: inputs.speedMS,
-                     now: ProcessInfo.processInfo.systemUptime)
+                await loopStep(now: ProcessInfo.processInfo.systemUptime)
             }
         }
+    }
+
+    /// One 2 Hz step of the loop: the estimate comes from the flow's own source
+    /// (fresh or none), not from the map's poll, which stops when the map is hidden
+    /// or the phone is locked during Record.
+    func loopStep(now: TimeInterval) async {
+        var inputs = liveInputs()
+        if let estimateSource { inputs.origin.estimate = await estimateSource() }
+        guard phase == .guiding else { return }
+        tick(estimate: inputs.origin.runActive ? inputs.origin.estimate : nil, speedMS: inputs.speedMS, now: now)
     }
 
     /// One guidance step: progress along the route, the away guard and arrival.

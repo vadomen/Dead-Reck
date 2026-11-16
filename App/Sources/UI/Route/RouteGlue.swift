@@ -22,6 +22,21 @@ enum RouteInputs {
         return RouteLiveInputs(origin: inputs, speedMS: speedKmh.map { Double($0) / 3.6 })
     }
 
+    /// The speed from the session itself (OBD, else the latest fix): the map model's speed
+    /// is not fed GPS while the scene is inactive, and arrival must work with the phone locked.
+    @MainActor
+    static func sessionSpeed(_ session: RecordingSession) -> MapSpeedReadout {
+        let uptime = session.currentUptimeSeconds
+        let obdAge = session.obdSpeedReplyUptime.map { uptime - $0 }
+        let fix = session.latestFix
+        var fixAge: Double?
+        if let fix, let received = fix.receivedT {
+            let elapsed = session.manualFixTapTime()?.seconds ?? session.live.elapsed
+            fixAge = max(0, elapsed - (received.seconds - (fix.ageS ?? 0)))
+        }
+        return MapSpeedRule.resolve(obdKmh: session.live.obdSpeedKmh, obdAgeS: obdAge, fix: fix, fixAgeS: fixAge)
+    }
+
     /// From the live objects, on demand (nothing observed: the flow calls it when it needs it).
     @MainActor
     static func make(session: RecordingSession, model: MapViewModel, navigation: NavigationFeed) -> RouteLiveInputs {
@@ -34,7 +49,29 @@ enum RouteInputs {
         }
         return build(
             runActive: session.hasActiveRun, showsEstimate: status.showsEstimate, estimate: navigation.latest,
-            fix: model.latest, fixAgeS: fixAge, gpsOff: !session.isGPSSwitchOn || model.gpsOff, speedKmh: model.speed.kmh)
+            fix: model.latest, fixAgeS: fixAge, gpsOff: !session.isGPSSwitchOn || model.gpsOff,
+            speedKmh: sessionSpeed(session).kmh)
+    }
+}
+
+/// Guidance's own estimate: polls the feed itself (the map's poll stops when the map
+/// is hidden or the phone is locked) and uses it only if it was applied just now.
+enum RouteEstimate {
+    /// An estimate older than this is none.
+    static let maxAge: Duration = .seconds(1)
+
+    static func fresh(_ display: NavDisplay?, appliedAt: ContinuousClock.Instant?, now: ContinuousClock.Instant) -> NavDisplay? {
+        guard let display, let appliedAt, now - appliedAt <= maxAge else { return nil }
+        return display
+    }
+
+    @MainActor
+    static func source(feed: NavigationFeed) -> @MainActor () async -> NavDisplay? {
+        { [weak feed] in
+            guard let feed else { return nil }
+            await feed.poll()
+            return fresh(feed.latest, appliedAt: feed.latestAppliedAt, now: .now)
+        }
     }
 }
 
@@ -51,6 +88,7 @@ enum RouteWiring {
     ) {
         session.activeRouteProvider = { [weak flow] in flow?.handOver }
         if let navigation, let model {
+            flow.estimateSource = RouteEstimate.source(feed: navigation)
             flow.bindLiveInputs { [weak session, weak model, weak navigation] in
                 guard let session, let model, let navigation else { return RouteLiveInputs() }
                 return RouteInputs.make(session: session, model: model, navigation: navigation)

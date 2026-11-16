@@ -48,6 +48,8 @@ final class NavigationFeed {
     private(set) var restore: RestoreDisplay?
 
     @ObservationIgnored private(set) var latest: NavDisplay?
+    /// When `latest` was last written from a snapshot (guidance treats an older one as none).
+    @ObservationIgnored private(set) var latestAppliedAt: ContinuousClock.Instant?
     @ObservationIgnored private let source: Source?
     /// The generation the source's snapshots follow (the service's current
     /// run). Read before and after each snapshot: a poll across a run change
@@ -120,6 +122,7 @@ final class NavigationFeed {
         if nextRestore != restore { restore = nextRestore }
         let next = NavDisplay(snapshot)
         latest = next
+        latestAppliedAt = now
         writeStats(snapshot, at: now)
         writeEdge(snapshot)
         guard gate.admit(next, at: now) else { return false }

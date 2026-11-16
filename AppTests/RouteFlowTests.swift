@@ -369,6 +369,54 @@ struct RouteFlowTests {
         #expect(!map.contains("bindLiveInputs"))
     }
 
+    @Test("Guidance gets its own estimate: a flow whose map never polls still arrives and writes `arrived`")
+    func arrivalFromOwnSource() async {
+        let rig = Rig()
+        await rig.toGuiding()
+        let end = RouteFixtures.nav(RouteFixtures.point(alongM: 2_180))
+        rig.flow.estimateSource = { end }
+        // The inputs the map would give are frozen far from the end; only the source is fresh.
+        rig.flow.fixInputs {
+            RouteLiveInputs(origin: RouteOriginInputs(runActive: true, estimate: RouteFixtures.nav()), speedMS: 0)
+        }
+        await rig.flow.loopStep(now: 0)
+        await rig.flow.loopStep(now: 3.5)
+        #expect(rig.flow.phase == .arrived)
+        #expect(rig.sink.rows.last == .cleared(id: "r1", reason: "arrived"))
+    }
+
+    @Test("A source with no fresh estimate means no estimate: guidance says uncertain and never arrives")
+    func noFreshEstimate() async {
+        let rig = Rig()
+        await rig.toGuiding()
+        rig.flow.estimateSource = { nil }
+        let frozen = RouteFixtures.nav(RouteFixtures.point(alongM: 2_180))
+        rig.flow.fixInputs { RouteLiveInputs(origin: RouteOriginInputs(runActive: true, estimate: frozen), speedMS: 0) }
+        await rig.flow.loopStep(now: 0)
+        await rig.flow.loopStep(now: 10)
+        #expect(rig.flow.phase == .guiding && rig.flow.guidance?.status == .uncertain)
+    }
+
+    @Test("An estimate applied more than 1 s ago is none; a fresh one is used")
+    func freshness() {
+        let now = ContinuousClock.now
+        let nav = RouteFixtures.nav()
+        #expect(RouteEstimate.fresh(nav, appliedAt: now - .milliseconds(900), now: now) == nav)
+        #expect(RouteEstimate.fresh(nav, appliedAt: now - .milliseconds(1_100), now: now) == nil)
+        #expect(RouteEstimate.fresh(nav, appliedAt: nil, now: now) == nil)
+        #expect(RouteEstimate.fresh(nil, appliedAt: now, now: now) == nil)
+    }
+
+    @Test("The feed stamps each applied snapshot, so a poll that was dropped leaves the old stamp")
+    @MainActor func feedStamp() {
+        let feed = NavigationFeed(display: nil)
+        #expect(feed.latestAppliedAt == nil)
+        _ = feed.apply(
+            NavigationSnapshot(t: .zero, sessionID: nil, estimate: nil, stats: .init(), gnssInUse: false, gpsSwitchedOff: false),
+            at: ContinuousClock.now)
+        #expect(feed.latestAppliedAt != nil)
+    }
+
     // MARK: Search
 
     @Test("Typing is debounced and a new query cancels the one waiting; the region is centred on the estimate")
