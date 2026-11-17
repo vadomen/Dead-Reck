@@ -19,7 +19,8 @@ struct RouteBottomBar: View {
     var body: some View {
         Group {
             switch flow.phase {
-            case .idle, .search, .placeCard: DestinationField(onTap: { flow.openSearch() })
+            case .idle, .search: DestinationField(onTap: { flow.openSearch() })
+            case .placeCard: barSurface { PlaceCard(flow: flow) }
             case .requesting: RequestingBar(onCancel: { flow.dismiss() })
             case .alternatives: AlternativesCard(flow: flow)
             case .guiding: GuidanceBar(flow: flow, onEnd: { confirmsEnd = true })
