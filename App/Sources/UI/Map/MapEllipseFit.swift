@@ -57,6 +57,9 @@ enum EllipseFit {
         var leading: Double
         /// Covered at the right (the rail).
         var trailing: Double
+        /// Of `bottom`, what a card above the bottom inset covers (`MapLayout.bottomObstruction`):
+        /// 0 with none up. `CarPlacement.carFromTop(headingUp:offerShown:viewport:)` keeps the car above it.
+        var cardReserved: Double = 0
 
         /// A 6.1" phone before the map reports its size.
         static let reference = Viewport(
@@ -68,12 +71,16 @@ enum EllipseFit {
         }
 
         /// The viewport for a map of `size` (points) under `safeBottom`, with
-        /// the offer card (or the in-car card) up or not.
-        static func make(size: CGSize, safeBottom: Double, offerShown: Bool, offerHeight: Double? = nil) -> Viewport {
-            Viewport(
+        /// the offer card (or the in-car card) up or not, and the route bar's
+        /// measured height (nil: none measured).
+        static func make(
+            size: CGSize, safeBottom: Double, offerShown: Bool, offerHeight: Double? = nil, routeBarHeight: Double? = nil
+        ) -> Viewport {
+            let card = MapLayout.bottomObstruction(offerShown: offerShown, offerHeight: offerHeight, routeBarHeight: routeBarHeight)
+            return Viewport(
                 width: size.width, height: size.height, top: MapLayout.hudReserved,
-                bottom: MapLayout.bottomInset() + safeBottom + (offerShown ? MapLayout.offerReserved(cardHeight: offerHeight) : 0),
-                leading: MapLayout.edgeInset, trailing: MapLayout.railReserved)
+                bottom: MapLayout.bottomInset() + safeBottom + card,
+                leading: MapLayout.edgeInset, trailing: MapLayout.railReserved, cardReserved: card)
         }
     }
 

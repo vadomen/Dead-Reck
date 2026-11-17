@@ -153,41 +153,70 @@ struct DestinationSearchSheet: View {
 // MARK: - Place card
 
 /// The place card's content; `RouteBottomBar` puts it on the bar surface.
+enum PlaceCardRow: Equatable, CaseIterable {
+    case header, originNote, failure, actions
+
+    /// The rows that scroll past the bar's cap (R92.1-1): what the card says about the place and the origin.
+    static let scrolling: [PlaceCardRow] = [.header, .originNote]
+    /// The rows that never scroll (R93.1-2): the failure message with Retry, then the actions, so a
+    /// tap on Route that fails is always answered on screen.
+    static let pinned: [PlaceCardRow] = [.failure, .actions]
+}
+
 struct PlaceCard: View {
     var flow: RouteFlowModel
+    /// The bar's cap (`RouteBottomBar.maxHeight`): the rows in `PlaceCardRow.scrolling` scroll past it, `pinned` stay.
+    var maxHeight: Double?
 
     var body: some View {
         if let place = flow.place {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(place.name).font(.title2.weight(.bold)).lineLimit(2)
-                        if !place.addressLine.isEmpty {
-                            Text(place.addressLine).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
-                        }
-                        if let distance = flow.distanceToPlaceM {
-                            Text("Straight line, \(RouteFormat.distance(distance))")
-                                .font(.subheadline).foregroundStyle(.secondary)
-                        }
-                    }
-                    Spacer(minLength: 0)
-                    Button { flow.dismiss() } label: {
-                        Image(systemName: "xmark.circle.fill").font(.system(size: 28)).foregroundStyle(.secondary)
-                            .frame(width: RouteBarLayout.minTapTarget, height: RouteBarLayout.minTapTarget)
-                    }
-                    .accessibilityLabel(Text("Close"))
+            ScrollCard(maxHeight: maxHeight, spacing: 10, chrome: 20) {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(PlaceCardRow.scrolling, id: \.self) { row($0, place: place) }
                 }
-                originNote
-                if let failure = flow.failure {
-                    HStack {
-                        Text(RouteFormat.message(failure)).font(.headline).foregroundStyle(HUDColors.warn)
-                        Spacer(minLength: 0)
-                        if failure != .nothingFound { Button("Retry") { flow.retry() }.font(.headline) }
-                    }
+            } pinned: {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(PlaceCardRow.pinned, id: \.self) { row($0, place: place) }
                 }
-                actions(place: place)
             }
             .padding(.vertical, 10)
+        }
+    }
+
+    @ViewBuilder
+    private func row(_ row: PlaceCardRow, place: RoutePlace) -> some View {
+        switch row {
+        case .header:
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(place.name).font(.title2.weight(.bold)).lineLimit(2)
+                    if !place.addressLine.isEmpty {
+                        Text(place.addressLine).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+                    }
+                    if let distance = flow.distanceToPlaceM {
+                        Text("Straight line, \(RouteFormat.distance(distance))")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                    }
+                }
+                Spacer(minLength: 0)
+                Button { flow.dismiss() } label: {
+                    Image(systemName: "xmark.circle.fill").font(.system(size: 28)).foregroundStyle(.secondary)
+                        .frame(width: RouteBarLayout.minTapTarget, height: RouteBarLayout.minTapTarget)
+                }
+                .accessibilityLabel(Text("Close"))
+            }
+        case .originNote:
+            originNote
+        case .failure:
+            if let failure = flow.failure {
+                HStack {
+                    Text(RouteFormat.message(failure)).font(.headline).foregroundStyle(HUDColors.warn)
+                    Spacer(minLength: 0)
+                    if failure != .nothingFound { Button("Retry") { flow.retry() }.font(.headline) }
+                }
+            }
+        case .actions:
+            actions(place: place)
         }
     }
 

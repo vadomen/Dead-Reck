@@ -156,7 +156,7 @@ struct RootView: View {
             sink: RecordingSessionRouteSink(session: services.session),
             edgeMatcher: RouteEdgeMatching.makeMatcher(library: services.roadPacks))
         #if DEBUG
-        // `-uiRouteStub search|place|alternatives|guiding|uncertain|away|arrived|offline` (screenshots).
+        // `-uiRouteStub search|place|alternatives|guiding|guidingUncertain|uncertain|uncertainOffline|away|arrived|offline` (screenshots).
         if let stub = RouteDebugStubs.flow(argument: UserDefaults.standard.string(forKey: "uiRouteStub")) { flow = stub }
         #endif
         return flow

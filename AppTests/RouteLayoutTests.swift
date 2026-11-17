@@ -2,6 +2,7 @@ import CoreGraphics
 import DriveLoggerCore
 import Foundation
 import MapKit
+import SwiftUI
 import Testing
 import UIKit
 
@@ -194,5 +195,203 @@ struct RouteInputsTests {
         #expect(inputs.speedMS == 10)
         let none = RouteInputs.build(runActive: false, showsEstimate: true, estimate: nil, fix: fix(accuracy: 7), fixAgeS: nil, gpsOff: false, speedKmh: nil)
         #expect(none.origin.fix == nil && none.speedMS == nil, "a fix with no known age is not offered")
+    }
+}
+
+/// P52B-QA-1 and R92.1-1: a route card in the bottom column lifts the car and
+/// the ellipse fit above it, and never pushes the rail up under the HUD. iPhone
+/// SE (3rd generation) is the smallest screen: 375 x 667 pt, no bottom safe area.
+@Suite("Route card layout")
+struct RouteCardLayoutTests {
+    static let se = CGSize(width: 375, height: 667)
+    /// The tallest card measured: uncertain position and an offline failure, uk (R92.1-1), ~304 pt plus the 8 pt gap.
+    static let tallestBar = 304.0 + MapLayout.aboveCreditGap
+    static let topSafe = 20.0
+    static var cap: Double { MapBottomLayout.maxRouteBarHeight(containerHeight: Double(se.height), topSafe: topSafe) }
+
+    /// The card's top edge, points from the map's top (the bar ends at the credit band).
+    private func cardTop(barHeight: Double) -> Double {
+        Double(Self.se.height) - MapLayout.attributionBand - barHeight
+    }
+
+    @Test("The route bar adds only its height beyond the idle bar's slot, plus the gap; the offer card keeps its own number")
+    func obstruction() {
+        #expect(MapLayout.bottomObstruction(offerShown: false) == 0)
+        #expect(MapLayout.bottomObstruction(offerShown: false, routeBarHeight: MapLayout.bottomSlotHeight) == 0, "the idle bar is inside the base inset")
+        #expect(MapLayout.bottomObstruction(offerShown: false, routeBarHeight: 110) == 110 - MapLayout.bottomSlotHeight + MapLayout.offerCardGap)
+        #expect(MapLayout.bottomObstruction(offerShown: true) == MapLayout.offerCardReserved)
+        #expect(MapLayout.bottomObstruction(offerShown: true, offerHeight: 200) == 200 + MapLayout.offerCardGap)
+        #expect(MapLayout.bottomObstruction(offerShown: true, offerHeight: 200, routeBarHeight: 110)
+            == MapLayout.bottomObstruction(offerShown: true, offerHeight: 200) + 110 - MapLayout.bottomSlotHeight, "both up: they stack")
+        #expect(MapLayout.bottomObstruction(offerShown: false, routeBarHeight: .nan) == 0)
+    }
+
+    @Test("Tallest card on the SE: the car's point and the ellipse fit box sit above the card's top edge, heading-up and north-up")
+    func carAndEllipseAboveCard() {
+        for barHeight in [Self.tallestBar, Self.cap, 110, MapLayout.bottomSlotHeight] {
+            let viewport = EllipseFit.Viewport.make(size: Self.se, safeBottom: 0, offerShown: false, routeBarHeight: barHeight)
+            let top = cardTop(barHeight: barHeight)
+            for headingUp in [true, false] {
+                let from = CarPlacement.carFromTop(headingUp: headingUp, offerShown: false, viewport: viewport)
+                let carY = Double(Self.se.height) * from
+                #expect(carY + CarPlacement.carRadius <= top, "car mark above the card: headingUp \(headingUp), bar \(barHeight)")
+                #expect(carY - CarPlacement.carRadius >= viewport.top, "and below the HUD")
+                // A large ellipse across the track: its fitted box, in points, around the car.
+                let ellipse = FitEllipse(semiMajorM: 600, semiMinorM: 300, orientationDeg: 0)
+                let span = EllipseFit.requiredSpanM(ellipse: ellipse, cameraHeadingDeg: 0, carFromTop: from, viewport: viewport)
+                let pointsPerMetre = Double(Self.se.height) / span
+                let (_, ey) = EllipseFit.halfExtents(semiMajorM: 600, semiMinorM: 300, orientationDeg: 0, cameraHeadingDeg: 0)
+                #expect(carY + ey * pointsPerMetre <= top + 0.5, "ellipse bottom above the card: headingUp \(headingUp), bar \(barHeight)")
+                #expect(carY - ey * pointsPerMetre >= viewport.top - 0.5, "ellipse top below the HUD")
+            }
+        }
+    }
+
+    @Test("Without a card the placement is the old one; the camera centre puts the car where the placement says")
+    func placementWithoutCard() {
+        let free = EllipseFit.Viewport.make(size: Self.se, safeBottom: 0, offerShown: false)
+        #expect(CarPlacement.carFromTop(headingUp: true, offerShown: false, viewport: free) == CarPlacement.carFromTop)
+        #expect(CarPlacement.carFromTop(headingUp: false, offerShown: false, viewport: free) == 0.5)
+        let card = EllipseFit.Viewport.make(size: Self.se, safeBottom: 0, offerShown: false, routeBarHeight: Self.tallestBar)
+        let from = CarPlacement.carFromTop(headingUp: false, offerShown: false, viewport: card)
+        #expect(from < 0.5, "north-up lifts the car too")
+        let ahead = CarPlacement.aheadMetres(cameraDistance: 900, headingUp: true, carFromTop: from)
+        #expect(abs(CarPlacement.carScreenFraction(aheadMetres: ahead, cameraDistance: 900) - from) < 1e-9)
+        var zoom = FollowZoom()
+        zoom.carFromTop = 0.4
+        zoom.northUpCarFromTop = 0.3
+        #expect(zoom.placement(headingUp: true) == 0.4 && zoom.placement(headingUp: false) == 0.3)
+    }
+
+    @Test("The offer card keeps its placement (centred) when it clears; a taller one lifts the car above it")
+    func offerPlacement() {
+        let viewport = EllipseFit.Viewport.make(size: Self.se, safeBottom: 0, offerShown: true, offerHeight: 120)
+        #expect(CarPlacement.carFromTop(headingUp: true, offerShown: true, viewport: viewport) == 0.5)
+        let tall = EllipseFit.Viewport.make(size: Self.se, safeBottom: 0, offerShown: true, offerHeight: 260)
+        let from = CarPlacement.carFromTop(headingUp: true, offerShown: true, viewport: tall)
+        #expect(Double(Self.se.height) * from + CarPlacement.carRadius <= Double(Self.se.height) - tall.bottom)
+    }
+
+    @Test("R92.1-1: the capped bar keeps the rail under the HUD reserve; uncapped it would not")
+    func railUnderCap() {
+        let rail = CGSize(width: 56, height: MapLayout.railHeight)
+        func railTop(barHeight: Double) -> Double {
+            Double(MapBottomLayout.frames(container: Self.se, items: [], railSize: rail, creditWidth: 190, slot: barHeight).rail.minY)
+        }
+        let reserve = MapLayout.compassReserved(topSafe: Self.topSafe)
+        #expect(railTop(barHeight: Self.tallestBar) < reserve, "uncapped: over the compass, the reported bug")
+        #expect(railTop(barHeight: Self.cap) >= reserve - 0.001)
+        #expect(Self.cap > MapLayout.bottomSlotHeight)
+        // Taller screens leave more room; a tiny container still keeps the idle slot.
+        #expect(MapBottomLayout.maxRouteBarHeight(containerHeight: 852, topSafe: Self.topSafe) > Self.cap)
+        #expect(MapBottomLayout.maxRouteBarHeight(containerHeight: 852, topSafe: 59) < MapBottomLayout.maxRouteBarHeight(containerHeight: 852, topSafe: 20), "a notch pushes the compass down")
+        #expect(MapBottomLayout.maxRouteBarHeight(containerHeight: 100, topSafe: Self.topSafe) == MapLayout.bottomSlotHeight)
+    }
+
+    @Test("R93.1-1: at default type the uncertain place card (240 pt bar) and the three-route card (226 pt bar) fit under the cap on the SE, and the rail stays below the compass")
+    func defaultCardsFitWithoutScrolling() {
+        // Measured from the 52b screenshots at 2x, default type, uk: surface 232 + 8 gap; alternatives 218 + 8.
+        let reserve = MapLayout.compassReserved(topSafe: Self.topSafe)
+        for barHeight in [240.0, 226.0] {
+            #expect(barHeight <= Self.cap, "bar \(barHeight) pt, cap \(Self.cap)")
+            let rail = CGSize(width: 56, height: MapLayout.railHeight)
+            let frames = MapBottomLayout.frames(container: Self.se, items: [], railSize: rail, creditWidth: 190, slot: barHeight)
+            #expect(Double(frames.rail.minY) >= reserve, "rail top \(frames.rail.minY) under the compass reserve \(reserve)")
+        }
+        // The compass reserve is the status bar plus the compass, not the HUD card on the left.
+        #expect(reserve < MapLayout.hudReserved)
+    }
+
+    @Test("R93.1-2: the failure message and Retry are pinned with the actions, never in the scrolling part")
+    func failureIsPinned() {
+        #expect(PlaceCardRow.pinned.contains(.failure) && PlaceCardRow.pinned.contains(.actions))
+        #expect(!PlaceCardRow.scrolling.contains(.failure) && !PlaceCardRow.scrolling.contains(.actions))
+        #expect(Set(PlaceCardRow.pinned + PlaceCardRow.scrolling) == Set(PlaceCardRow.allCases), "every row is somewhere, once")
+        #expect(PlaceCardRow.pinned.count + PlaceCardRow.scrolling.count == PlaceCardRow.allCases.count)
+        #expect(PlaceCardRow.pinned.firstIndex(of: .failure)! < PlaceCardRow.pinned.firstIndex(of: .actions)!, "above the actions")
+    }
+
+    @Test("R92.1-1: whatever the text size, the card's surface stays within the cap; the actions stay outside the scroll")
+    func scrollRoomHoldsCap() {
+        let chrome = 20.0, spacing = 10.0, pinned = 108.0
+        // Pinned: the actions (108), with the failure row (about 56) and at large type (about 230).
+        // Info heights from default type to AX2 with the uk uncertain + offline texts.
+        for pinned in [pinned, 164, 230] {
+            for info in [60.0, 150, 250, 400, 700] {
+                let room = RouteBarLayout.scrollRoom(maxHeight: Self.cap, pinnedHeight: pinned, spacing: spacing, chrome: chrome)
+                let surface = chrome + min(info, room ?? .infinity) + spacing + pinned + MapLayout.aboveCreditGap
+                #expect(surface <= Self.cap + 0.001, "pinned \(pinned), info \(info) pt")
+            }
+        }
+        #expect(RouteBarLayout.scrollRoom(maxHeight: nil, pinnedHeight: pinned, spacing: spacing, chrome: chrome) == nil)
+        #expect(RouteBarLayout.scrollRoom(maxHeight: 100, pinnedHeight: 200, spacing: spacing, chrome: chrome) == 0, "never negative, no floor that would push the bar past the cap")
+    }
+}
+
+/// Review round 1 fix-up: the cards hug their content (as in 52b) and stretch to
+/// the cap only when the content passes it. Rendered in a window of finite height,
+/// like the bottom column: a ScrollView or ViewThatFits would take all of it.
+@MainActor
+@Suite("Route card hugs content")
+struct RouteCardHugTests {
+    final class Box { var height = 0.0 }
+
+    private struct Probe: View {
+        var flow: RouteFlowModel
+        var cap: Double?
+        var size: CGSize
+        var box: Box
+        var body: some View {
+            VStack(spacing: 0) {
+                Spacer(minLength: 0)
+                RouteBottomBar(flow: flow, maxHeight: cap)
+                    .onGeometryChange(for: Double.self, of: { Double($0.size.height) }) { box.height = $0 }
+            }
+            .frame(width: size.width, height: size.height)
+        }
+    }
+
+    private func spin(_ seconds: Double) async {
+        try? await Task.sleep(for: .seconds(seconds))
+    }
+
+    /// The bar's height for the stub `state` (a place card without a failure for "place") in a screen of `size`.
+    private func barHeight(state: String, cap: Double?, size: CGSize) async throws -> Double {
+        let flow = try #require(RouteDebugStubs.flow(argument: state))
+        for _ in 0..<100 where flow.phase != .placeCard { await spin(0.1) }
+        #expect(flow.phase == .placeCard)
+        let box = Box()
+        let window = UIWindow(frame: CGRect(origin: .zero, size: size))
+        let host = UIHostingController(rootView: Probe(flow: flow, cap: cap, size: size, box: box))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        for _ in 0..<5 {
+            await spin(0.15)
+            host.view.setNeedsLayout()
+            host.view.layoutIfNeeded()
+        }
+        window.isHidden = true
+        return box.height
+    }
+
+    @Test("A plain place card is as high with the cap as without it, and well under it, on the SE and a Plus")
+    func hugsContent() async throws {
+        for size in [CGSize(width: 375, height: 667), CGSize(width: 414, height: 896)] {
+            let cap = MapBottomLayout.maxRouteBarHeight(containerHeight: Double(size.height), topSafe: 20)
+            let free = try await barHeight(state: "place", cap: nil, size: size)
+            let capped = try await barHeight(state: "place", cap: cap, size: size)
+            #expect(free > 100, "measured at all: \(free)")
+            #expect(abs(capped - free) <= 1, "capped \(capped) vs free \(free) at \(size.height)")
+            #expect(capped < cap - 40, "well under the cap \(cap): \(capped)")
+        }
+    }
+
+    @Test("A card taller than the cap is exactly the cap (the info scrolls)")
+    func stretchesOnlyPastCap() async throws {
+        let size = CGSize(width: 375, height: 667)
+        let free = try await barHeight(state: "place", cap: nil, size: size)
+        let cap = free - 40
+        let capped = try await barHeight(state: "place", cap: cap, size: size)
+        #expect(abs(capped - cap) <= 1, "capped \(capped), cap \(cap)")
     }
 }

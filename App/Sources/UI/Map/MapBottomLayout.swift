@@ -56,6 +56,20 @@ enum MapBottomLayout {
         return Frames(credit: credit, items: placed.reversed(), rail: rail)
     }
 
+    /// The tallest the route bar (card plus its gap above the credit band) may
+    /// be: the rail sits on top of it, and its top stays under the status bar
+    /// and MapKit's compass (`MapLayout.compassReserved`; the rail is on the
+    /// right, so the HUD card on the left does not matter). `containerHeight`
+    /// is the map's height inside the bottom safe area, `topSafe` the top
+    /// safe area. Never less than the idle bar's slot.
+    static func maxRouteBarHeight(
+        containerHeight: Double, topSafe: Double, railHeight: Double = MapLayout.railHeight
+    ) -> Double {
+        max(MapLayout.bottomSlotHeight,
+            containerHeight - MapLayout.attributionBand - MapLayout.aboveCreditGap - railHeight
+                - MapLayout.compassReserved(topSafe: topSafe))
+    }
+
     /// Space between stacked items.
     static let itemGap: Double = 8
 }

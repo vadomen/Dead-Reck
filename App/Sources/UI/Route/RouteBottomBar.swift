@@ -10,19 +10,80 @@ enum RouteBarLayout {
     static let fieldHeight: Double = 52
     static let cornerRadius: Double = 16
     static let minTapTarget = MapLayout.minTapTarget
+    /// The surface's left and right padding, shared by every bar.
+    static let horizontalPadding: Double = 14
+    /// Above and below the content of the guidance bar, and so of the away and
+    /// arrived bars too (P52B-QA-2).
+    static let verticalPadding: Double = 6
+
+    /// The room for a card's scrolling part under `maxHeight` (the bar's cap,
+    /// including its gap above the credit band): what is left after the
+    /// surface's own padding (`chrome`), the pinned actions and the gap between.
+    static func scrollRoom(maxHeight: Double?, pinnedHeight: Double, spacing: Double, chrome: Double) -> Double? {
+        guard let maxHeight, maxHeight.isFinite else { return nil }
+        let surface = maxHeight - MapLayout.aboveCreditGap
+        // No floor: at the largest type the pinned actions take it all, and the rail must still clear the compass.
+        return max(0, surface - chrome - pinnedHeight - spacing)
+    }
+}
+
+/// A card whose information part (`info`) scrolls when the card would pass its
+/// cap (R92.1-1); `pinned` sits below it and never scrolls. The place card pins
+/// the failure message with Retry and the actions (`PlaceCardRow.pinned`), the
+/// alternatives card pins Cancel and Start. The card hugs its content: `info` is
+/// as high as it needs, and only an `info` taller than the room left under the
+/// cap becomes a `ScrollView` of exactly that room (a ScrollView or ViewThatFits
+/// would take all the height offered and stretch the card to the cap).
+struct ScrollCard<Info: View, Pinned: View>: View {
+    var maxHeight: Double?
+    var spacing: Double
+    /// The vertical padding the caller puts around the card.
+    var chrome: Double
+    @ViewBuilder var info: Info
+    @ViewBuilder var pinned: Pinned
+    @State private var pinnedHeight = 0.0
+    /// `info`'s own height, measured on a hidden copy; 0 until measured (shown plain).
+    @State private var infoHeight = 0.0
+
+    var body: some View {
+        let room = RouteBarLayout.scrollRoom(maxHeight: maxHeight, pinnedHeight: pinnedHeight, spacing: spacing, chrome: chrome)
+        VStack(alignment: .leading, spacing: spacing) {
+            Group {
+                if let room, infoHeight > room {
+                    ScrollView { info }.scrollIndicators(.visible).frame(height: room)
+                } else {
+                    info
+                }
+            }
+            .background {
+                info.fixedSize(horizontal: false, vertical: true).hidden()
+                    .onGeometryChange(for: Double.self, of: { Double($0.size.height) }) { infoHeight = $0 }
+            }
+            // Its own height, never squeezed by the cap: the scrolling part takes what is left.
+            pinned.fixedSize(horizontal: false, vertical: true)
+                .onGeometryChange(for: Double.self, of: { Double($0.size.height) }) { pinnedHeight = $0 }
+        }
+    }
 }
 
 struct RouteBottomBar: View {
     var flow: RouteFlowModel
+    /// The most this bar may be high, gap included (`MapBottomLayout.maxRouteBarHeight`); nil: no cap.
+    var maxHeight: Double?
     @State private var confirmsEnd = false
+
+    init(flow: RouteFlowModel, maxHeight: Double? = nil) {
+        self.flow = flow
+        self.maxHeight = maxHeight
+    }
 
     var body: some View {
         Group {
             switch flow.phase {
             case .idle, .search: DestinationField(onTap: { flow.openSearch() })
-            case .placeCard: barSurface { PlaceCard(flow: flow) }
+            case .placeCard: barSurface { PlaceCard(flow: flow, maxHeight: maxHeight) }
             case .requesting: RequestingBar(onCancel: { flow.dismiss() })
-            case .alternatives: AlternativesCard(flow: flow)
+            case .alternatives: AlternativesCard(flow: flow, maxHeight: maxHeight)
             case .guiding: GuidanceBar(flow: flow, onEnd: { confirmsEnd = true })
             case .arrived: ArrivedBar(place: flow.arrivedPlace, onDone: { flow.acknowledgeArrival() })
             }
@@ -40,7 +101,7 @@ struct RouteBottomBar: View {
 
 @MainActor private func barSurface<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
     content()
-        .padding(.horizontal, 14)
+        .padding(.horizontal, RouteBarLayout.horizontalPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .hudSurface(RoundedRectangle(cornerRadius: RouteBarLayout.cornerRadius))
 }
@@ -88,13 +149,17 @@ struct RequestingBar: View {
 /// and Start. The set is the one that was requested; nothing here asks again.
 struct AlternativesCard: View {
     var flow: RouteFlowModel
+    var maxHeight: Double?
 
     var body: some View {
         barSurface {
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(Array(flow.alternatives.enumerated()), id: \.offset) { index, route in
-                    row(index: index, route: route)
+            ScrollCard(maxHeight: maxHeight, spacing: 6, chrome: 16) {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(flow.alternatives.enumerated()), id: \.offset) { index, route in
+                        row(index: index, route: route)
+                    }
                 }
+            } pinned: {
                 HStack(spacing: 12) {
                     Button(flow.isRebuild && flow.active != nil ? String(localized: "Keep current route") : String(localized: "Cancel")) { flow.dismiss() }
                         .font(.headline)
@@ -173,6 +238,7 @@ struct GuidanceBar: View {
                             .background(HUDColors.accent, in: Capsule())
                             .foregroundStyle(HUDColors.onAccent)
                             .padding(.top, 4)
+                            .padding(.bottom, RouteBarLayout.verticalPadding)
                     }
                 }
                 Spacer(minLength: 0)
@@ -185,7 +251,7 @@ struct GuidanceBar: View {
                 .accessibilityLabel(Text("End route"))
             }
             .frame(minHeight: RouteBarLayout.fieldHeight, alignment: .top)
-            .padding(.vertical, 6)
+            .padding(.vertical, RouteBarLayout.verticalPadding)
         }
     }
 
@@ -252,6 +318,7 @@ struct ArrivedBar: View {
                     .frame(minWidth: RouteBarLayout.minTapTarget, minHeight: RouteBarLayout.fieldHeight)
             }
             .frame(minHeight: RouteBarLayout.fieldHeight)
+            .padding(.vertical, RouteBarLayout.verticalPadding)
         }
         // Closes itself: nothing stays on the map once the trip is over.
         .task {

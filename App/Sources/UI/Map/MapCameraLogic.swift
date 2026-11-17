@@ -250,6 +250,21 @@ enum CarPlacement {
         headingUp && !offerShown ? carFromTop : 0.5
     }
 
+    /// The placement with a card up, measured: the base one when the car's mark
+    /// already clears the cards (`viewport.height - viewport.bottom` is their
+    /// top edge), else the middle of the room between the HUD and the cards,
+    /// in either mode. Without a card (`cardReserved` 0) the base one.
+    static func carFromTop(headingUp: Bool, offerShown: Bool, viewport: EllipseFit.Viewport) -> Double {
+        let base = carFromTop(headingUp: headingUp, offerShown: offerShown)
+        guard viewport.cardReserved > 0, viewport.isUsable else { return base }
+        let cardTop = viewport.height - viewport.bottom
+        if viewport.height * base + carRadius + clearGap <= cardTop { return base }
+        return min(max((viewport.top + cardTop) / 2 / viewport.height, 0), base)
+    }
+
+    /// Space kept between the car's mark and a card's top edge.
+    static let clearGap = 8.0
+
     /// How far ahead of the car the camera centre goes, metres.
     static func aheadMetres(
         cameraDistance: Double, headingUp: Bool, carFromTop: Double = CarPlacement.carFromTop
