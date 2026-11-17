@@ -54,7 +54,7 @@ enum RouteInputs {
     }
 }
 
-/// Guidance's own estimate: polls the feed itself (the map's poll stops when the map
+/// Guidance's own estimate: reads the feed itself, without the write gate (the map's poll stops when the map
 /// is hidden or the phone is locked) and uses it only if it was applied just now.
 enum RouteEstimate {
     /// An estimate older than this is none.
@@ -69,8 +69,9 @@ enum RouteEstimate {
     static func source(feed: NavigationFeed) -> @MainActor () async -> NavDisplay? {
         { [weak feed] in
             guard let feed else { return nil }
-            await feed.poll()
-            return fresh(feed.latest, appliedAt: feed.latestAppliedAt, now: .now)
+            // Read-only: `poll` would take the map camera's gate slot (R91.4-2).
+            let display = await feed.peekEstimate()
+            return fresh(display, appliedAt: display == nil ? nil : .now, now: .now)
         }
     }
 }
@@ -88,7 +89,8 @@ enum RouteWiring {
     ) {
         session.activeRouteProvider = { [weak flow] in flow?.handOver }
         if let navigation, let model {
-            flow.estimateSource = RouteEstimate.source(feed: navigation)
+            // Stub flows (`-uiRouteStub`) fix their inputs: a live source would override them.
+            if !flow.inputsAreFixed { flow.estimateSource = RouteEstimate.source(feed: navigation) }
             flow.bindLiveInputs { [weak session, weak model, weak navigation] in
                 guard let session, let model, let navigation else { return RouteLiveInputs() }
                 return RouteInputs.make(session: session, model: model, navigation: navigation)

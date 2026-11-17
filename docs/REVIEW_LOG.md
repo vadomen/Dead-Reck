@@ -1394,3 +1394,19 @@ Reviewers: two fresh opus reviewers. A: logic; R91.3-1 verified fixed. B: UI, do
 ### Run 91 summary
 
 4 rounds; 11 MAJOR fixed (R91.1-1..7, R91.2-1, R91.2-5, R91.3-1, R91.3-2); 4 MINOR fixed (R91.1-9, R91.2-2, R91.3-3, R91.3-4); 0 rejected; 9 deferred (R91.1-8, R91.1-10, R91.2-3, R91.2-4, R91.3-5, R91.4-1, R91.4-2, R91.4-3). The privacy text came back three times (R91.1-5, R91.2-1, R91.3-2); the loop stopped and the user decided the wording (2026-11-17). Final tests at a6726ef: Core 1316 passed (36 known issues), app 957 passed (iPhone SE 3rd gen simulator). replay_nav acceptance matrix 101/101 identical vs 349d36c (Core/Sources unchanged). Outcome: closed, ready to merge into `routing` (merge: pending).
+
+## Run 92: Prompt 52b route UI follow-ups (guidance estimate peek, stub estimate source, place card in the bottom column, privacy saved destinations) (routing..r2-followups: e00bd7a..1e5b8a2), started 2026-11-17
+
+Note: on branch `routing` (decision D6), not `main`.
+
+### Round 1
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R92.1-1 | MINOR | `App/Sources/UI/Route/RouteBottomBar.swift:23` (with `MapView.swift:745-751` `bottomArea`): the place card now sits in the bottom column, so the right rail rises by the card's full height; on iPhone SE uk with an uncertain position plus an offline failure (card ~304 pt) the GPS-switch rail button moves to ~53 pt from the top, over the MapKit compass, and at xLarge text and above under the status bar (measured from uncertain-se-uk-light / offline-se-uk-dark at 2x; the combined state has no screenshot). | DEFERRED | BACKLOG. Suggested fix: cap the card height (ScrollView ≤ ~half the container) or hide the rail while the card is up at large type; add uncertain+offline and AX2 SE stub shots. |
+
+Reviewer side note (not a finding): with the peek, `RouteEstimate.fresh`'s 1 s rule is vacuous (the read is "now" by construction), no looser than before.
+
+### Run 92 summary
+
+1 round (the user asked for one round); 0 BLOCKER, 0 MAJOR; 0 fixed; 0 rejected; 1 deferred (R92.1-1). Closes R91.4-1 (0f63302), R91.4-2 (56be463, tests `guidanceDoesNotTakeTheGateSlot`, `guidanceReadHasNoSideEffects`) and R91.4-3 (e1f0727, test `stubInputsStayFixed`); the place card moved from a sheet with guessed detents to an in-map card (1e5b8a2). Final tests at 1e5b8a2: Core 1316 passed (36 known issues), app 960 passed (iPhone SE 3rd gen simulator). Screenshot QA: 64 shots retaken (`logs/p52b/screens`, `QA.md`), backlog rows P52B-QA-1, P52B-QA-2. replay_nav acceptance matrix 101/101 identical (wall-time fields masked) vs prompt 52 head outputs (Core/Sources tree unchanged since 349d36c); d1102 roads as-live exits 4 on both sides, as in prompt 52; `logs/p52b/hash`. Outcome: closed, ready to merge into `routing` (merge: pending).

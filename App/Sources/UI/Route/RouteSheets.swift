@@ -1,30 +1,27 @@
 import DriveLoggerCore
 import SwiftUI
 
-/// The search sheet and the place card: bottom sheets, opened only by a tap or
-/// a long press, never by themselves. One sheet whose content follows the
-/// flow's phase, so search → card does not dismiss and present again.
+/// The search sheet: a full-height sheet, opened only by a tap, never by itself.
+/// The place card is not a sheet: it sits in the map's bottom column like the
+/// alternatives card (`RouteBottomBar`), so the right rail stays above it and its
+/// height is its content's, with no detent to guess.
 struct RouteSheets: ViewModifier {
     var flow: RouteFlowModel?
 
     private var isShown: Binding<Bool> {
         Binding(
-            get: { flow.map { $0.phase == .search || $0.phase == .placeCard } ?? false },
+            get: { flow.map { $0.phase == .search } ?? false },
             set: { shown in
-                if !shown, let flow, flow.phase == .search || flow.phase == .placeCard { flow.dismiss() }
+                if !shown, let flow, flow.phase == .search { flow.dismiss() }
             })
     }
 
     func body(content: Content) -> some View {
         content.sheet(isPresented: isShown) {
             if let flow {
-                Group {
-                    if flow.phase == .search { DestinationSearchSheet(flow: flow) } else { PlaceCardSheet(flow: flow) }
-                }
-                .presentationDetents(flow.phase == .search ? [.large] : [.height(PlaceCardSheet.height(for: flow.originChoice)), .large])
-                // The card leaves the map usable: the driver's pin is a double tap on it.
-                .presentationBackgroundInteraction(.enabled(upThrough: .height(PlaceCardSheet.height(for: flow.originChoice))))
-                .presentationDragIndicator(.visible)
+                DestinationSearchSheet(flow: flow)
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
             }
         }
     }
@@ -155,16 +152,8 @@ struct DestinationSearchSheet: View {
 
 // MARK: - Place card
 
-struct PlaceCardSheet: View {
-    /// Room for the title, the address, the buttons; the uncertain and no-position
-    /// states add the note and Route anyway.
-    static func height(for choice: RouteOriginChoice) -> CGFloat {
-        switch choice {
-        case .estimate, .fix: 250
-        case .uncertain: 360
-        case .needsPin: 320
-        }
-    }
+/// The place card's content; `RouteBottomBar` puts it on the bar surface.
+struct PlaceCard: View {
     var flow: RouteFlowModel
 
     var body: some View {
@@ -198,9 +187,7 @@ struct PlaceCardSheet: View {
                 }
                 actions(place: place)
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 14)
-            .frame(maxHeight: .infinity, alignment: .top)
+            .padding(.vertical, 10)
         }
     }
 
