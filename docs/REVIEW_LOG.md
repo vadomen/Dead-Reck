@@ -1380,3 +1380,17 @@ Reviewers: two fresh opus reviewers. A: logic; R91.2-5 verified fixed. B: UI, do
 | R91.3-5 | MINOR | `App/Sources/UI/Route/RouteBottomBar.swift:77-79,98-100,168-174,249-251`, `RouteSheets.swift:76-77,129-131,254-256`: frame/padding/background applied on the Button, not inside its label, so the tappable area is smaller than the drawn 44 pt capsule (clear-text icon ~20 pt); the `tapTargets` test checks constants only. | DEFERRED | BACKLOG. |
 
 Tests after round 3 (7984fce): app 957 passed, Core 1316 (36 known issues).
+
+### Round 4
+
+Reviewers: two fresh opus reviewers. A: logic; R91.3-1 verified fixed. B: UI, docs, site; R91.3-2..4 verified, every privacy text consistent with the user's wording and true against the code. Result: 0 BLOCKER, 0 MAJOR, 3 MINOR; the loop stops.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R91.4-1 | MINOR | `site/public/privacy.html:45`, `site/public/uk/privacy.html:45`: "Deleting your data" omits saved destinations (Home, Work, up to 10 recents, precise coordinates and address lines in Application Support, not backed up) and how to delete them (Settings → Saved destinations, swipe or "Clear recent destinations"). | DEFERRED | BACKLOG. |
+| R91.4-2 | MINOR | `App/Sources/UI/Route/RouteGlue.swift:72`: the guidance loop's `feed.poll()` goes through the feed's `NavWriteGate` (≤ 1 write per 250 ms, > 1 m), so when it wins the slot the map's own poll returns `published == false` and the follow camera skips that write: during guidance the DR dot runs ahead of the centre ~once a second, and after a final move before a stop the camera may not catch up. | DEFERRED | BACKLOG. Suggested fix: a side-effect-free `NavigationFeed` peek for guidance. |
+| R91.4-3 | MINOR | `App/Sources/UI/Route/RouteGlue.swift:91`: `RouteWiring.install` sets `flow.estimateSource` even when DEBUG stub inputs are fixed, so `-uiRouteStub` guiding/away/arrived/guidingUncertain show "Position uncertain" / never arrive since 62feb5d (DEBUG only; screenshots in `logs/p52/screens` predate it). | DEFERRED | BACKLOG. |
+
+### Run 91 summary
+
+4 rounds; 11 MAJOR fixed (R91.1-1..7, R91.2-1, R91.2-5, R91.3-1, R91.3-2); 4 MINOR fixed (R91.1-9, R91.2-2, R91.3-3, R91.3-4); 0 rejected; 9 deferred (R91.1-8, R91.1-10, R91.2-3, R91.2-4, R91.3-5, R91.4-1, R91.4-2, R91.4-3). The privacy text came back three times (R91.1-5, R91.2-1, R91.3-2); the loop stopped and the user decided the wording (2026-11-17). Final tests at a6726ef: Core 1316 passed (36 known issues), app 957 passed (iPhone SE 3rd gen simulator). replay_nav acceptance matrix 101/101 identical vs 349d36c (Core/Sources unchanged). Outcome: closed, ready to merge into `routing` (merge: pending).
