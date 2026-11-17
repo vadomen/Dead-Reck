@@ -405,6 +405,8 @@ struct GPSMapView: View {
     var offerShown = false
     /// The card's measured height, so the ellipse fit keeps clear of its real size.
     @State private var offerCardHeight: Double?
+    /// The route bar's measured height (card and its gap above the credit band), nil while it is not up.
+    @State private var routeBarHeight: Double?
     /// The recording row in the top-left card. A view of its own (it reads
     /// the recorder's 16 Hz status), so this view stays plain values.
     var recordingControl: AnyView?
@@ -548,12 +550,34 @@ struct GPSMapView: View {
         self._toast = State(initialValue: initialToast)
     }
 
-    /// Hands the ellipse fit the map's size and what covers it.
+    /// The route bar is in the bottom column (a card, or the idle field).
+    private var routeBarShown: Bool {
+        guard let routeFlow else { return false }
+        return !(offerShown && routeFlow.phase == .idle)
+    }
+
+    /// The most the route bar may grow: the rail above it stays under the HUD reserve.
+    private var routeBarMaxHeight: Double {
+        MapBottomLayout.maxRouteBarHeight(containerHeight: mapGeometry.size.height - mapGeometry.safeBottom)
+    }
+
+    /// Hands the ellipse fit the map's size and what covers it (the offer card
+    /// or the route bar, measured), and places the car above it.
     private func applyViewport() {
         guard mapGeometry.size.width > 0, mapGeometry.size.height > 0 else { return }
-        headingState.zoom.viewport = EllipseFit.Viewport.make(
+        let viewport = EllipseFit.Viewport.make(
             size: mapGeometry.size, safeBottom: mapGeometry.safeBottom, offerShown: offerShown,
-            offerHeight: offerCardHeight)
+            offerHeight: offerCardHeight, routeBarHeight: routeBarShown ? routeBarHeight : nil)
+        headingState.zoom.viewport = viewport
+        headingState.zoom.carFromTop = CarPlacement.carFromTop(headingUp: true, offerShown: offerShown, viewport: viewport)
+        headingState.zoom.northUpCarFromTop = CarPlacement.carFromTop(headingUp: false, offerShown: offerShown, viewport: viewport)
+    }
+
+    /// A card came, went or changed height: the car moves to its new place.
+    private func placementChanged() {
+        applyViewport()
+        guard isLive, follow.isFollowing, let center = followCenter else { return }
+        withAnimation(.easeInOut(duration: 0.4)) { recenter(center: center) }
     }
 
     var body: some View {
@@ -609,7 +633,9 @@ struct GPSMapView: View {
                 await frameOnOpen()
                 await runLoop()
             }
-            .onChange(of: offerCardHeight) { applyViewport() }
+            .onChange(of: offerCardHeight) { placementChanged() }
+            .onChange(of: routeBarHeight) { placementChanged() }
+            .onChange(of: routeBarShown) { placementChanged() }
             // Alternatives: frame the whole route; Start or back: the normal follow mode.
             .onChange(of: routeFlow?.phase) { old, new in
                 switch RouteCameraRule.action(from: old, to: new) {
@@ -627,12 +653,7 @@ struct GPSMapView: View {
             }
             // R68.1-3: the car moves to the middle while the offer card is up
             // and back when it goes (heading-up only; north-up is centred).
-            .onChange(of: offerShown, initial: true) { _, shown in
-                headingState.zoom.carFromTop = CarPlacement.carFromTop(headingUp: true, offerShown: shown)
-                applyViewport()
-                guard headingUp, isLive, follow.isFollowing, let center = followCenter else { return }
-                withAnimation(.easeInOut(duration: 0.4)) { recenter(center: center) }
-            }
+            .onChange(of: offerShown, initial: true) { placementChanged() }
             // Fires on reselect/foreground too.
             .onChange(of: isLive, initial: true) { _, live in
                 guard live else { return }
@@ -748,7 +769,10 @@ struct GPSMapView: View {
                 bottomZone
                 rail
             }
-            if let routeFlow, !(offerShown && routeFlow.phase == .idle) { RouteBottomBar(flow: routeFlow) }
+            if let routeFlow, routeBarShown {
+                RouteBottomBar(flow: routeFlow, maxHeight: routeBarMaxHeight)
+                    .onGeometryChange(for: Double.self, of: { Double($0.size.height) }) { routeBarHeight = $0 }
+            }
             HStack(spacing: 0) {
                 Spacer(minLength: 0)
                 if roadsAttribution { MapAttributionLine() }
@@ -763,8 +787,7 @@ struct GPSMapView: View {
         #if DEBUG
         if Self.hidesTiles && isLive {
             SyntheticBasemap(
-                carFromTop: headingUp && follow.isFollowing
-                    ? CarPlacement.carFromTop(headingUp: true, offerShown: offerShown) : 0.5)
+                carFromTop: follow.isFollowing ? headingState.zoom.placement(headingUp: headingUp) : 0.5)
         } else {
             Color(.secondarySystemBackground).ignoresSafeArea()
         }
@@ -1150,24 +1173,30 @@ struct GPSMapView: View {
             headingState.zoom.frame(distance: framed)
             position = .camera(MapCamera(
                 centerCoordinate: Self.cameraCenter(
-                    car: center, distance: framed, heading: targetHeading, headingUp: true,
+                    car: center, distance: framed, heading: targetHeading,
                     carFromTop: headingState.zoom.carFromTop),
                 distance: framed, heading: targetHeading, pitch: 0
             ))
             return
         }
         headingState.zoom.frame(distance: nil)
+        // North-up region: the car sits above the cards, so the centre is north of it.
+        let shifted = CarPlacement.cameraCenter(
+            latitude: center.latitude, longitude: center.longitude, headingDegrees: 0,
+            aheadMetres: span * (headingState.zoom.northUpCarFromTop - 0.5))
         position = .region(MKCoordinateRegion(
-            center: center, latitudinalMeters: span, longitudinalMeters: span
+            center: CLLocationCoordinate2D(latitude: shifted.latitude, longitude: shifted.longitude),
+            latitudinalMeters: span, longitudinalMeters: span
         ))
     }
 
-    /// The camera centre that puts the car in the lower third in heading-up
-    /// (`CarPlacement`); the car itself in north-up.
+    /// The camera centre that puts the car at `carFromTop` (`CarPlacement`; the
+    /// zoom's placement for the mode): lower third in heading-up, the middle in
+    /// north-up, higher with a card up. North-up the heading is 0, so "ahead" is north.
     private static func cameraCenter(
-        car: CLLocationCoordinate2D, distance: Double, heading: Double, headingUp: Bool, carFromTop: Double
+        car: CLLocationCoordinate2D, distance: Double, heading: Double, carFromTop: Double
     ) -> CLLocationCoordinate2D {
-        let ahead = CarPlacement.aheadMetres(cameraDistance: distance, headingUp: headingUp, carFromTop: carFromTop)
+        let ahead = CarPlacement.aheadMetres(cameraDistance: distance, headingUp: true, carFromTop: carFromTop)
         let c = CarPlacement.cameraCenter(
             latitude: car.latitude, longitude: car.longitude, headingDegrees: heading, aheadMetres: ahead)
         return CLLocationCoordinate2D(latitude: c.latitude, longitude: c.longitude)
@@ -1192,8 +1221,8 @@ struct GPSMapView: View {
         let d = followDistance(estimate?.latest, heading: heading)
         position = .camera(MapCamera(
             centerCoordinate: Self.cameraCenter(
-                car: center, distance: d, heading: heading, headingUp: headingUp,
-                carFromTop: headingState.zoom.carFromTop),
+                car: center, distance: d, heading: heading,
+                carFromTop: headingState.zoom.placement(headingUp: headingUp)),
             distance: d, heading: heading, pitch: 0
         ))
     }
@@ -1285,7 +1314,7 @@ struct GPSMapView: View {
                 position = .camera(MapCamera(
                     centerCoordinate: Self.cameraCenter(
                         car: center.coordinate, distance: camera.distance, heading: camera.heading,
-                        headingUp: inputs.headingUp, carFromTop: headingState.zoom.carFromTop),
+                        carFromTop: headingState.zoom.placement(headingUp: inputs.headingUp)),
                     distance: camera.distance, heading: camera.heading, pitch: 0
                 ))
             }

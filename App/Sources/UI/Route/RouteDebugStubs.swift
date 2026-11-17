@@ -7,7 +7,8 @@ import Foundation
 /// Use with `-uiBlankMap 1 -uiFakeHUD ok,navEllipse` so the map carries no
 /// place names. States: `search`, `place`, `uncertain` (place card, uncertain
 /// position), `alternatives`, `guiding`, `guidingUncertain`, `away`, `arrived`,
-/// `offline`.
+/// `offline`, `uncertainOffline` (the tallest card: uncertain position, then
+/// Route anyway fails offline).
 @MainActor
 enum RouteDebugStubs {
     /// Start of every stub route: where `MapPreviewData.fakeNav` puts the estimate.
@@ -126,7 +127,7 @@ enum RouteDebugStubs {
             searcher: Searcher(), director: director, pacer: RequestPacer(clock: clock, debounce: 0, minInterval: 0),
             saved: saved)
         let first = routes()[0]
-        let uncertain = state == "uncertain"
+        let uncertain = state == "uncertain" || state == "uncertainOffline"
         let at: GeoPoint = switch state {
         case "away": point(first, alongM: 600, offsetM: 400)
         case "arrived": point(first, alongM: first.distanceM - 10)
@@ -137,7 +138,7 @@ enum RouteDebugStubs {
             origin: RouteOriginInputs(runActive: true, estimate: estimate(at: at, uncertain: uncertain)), speedMS: speed)
         let box = InputBox(inputs)
         flow.fixInputs { box.value }
-        if state == "offline" { director.failure = .offline }
+        if state == "offline" || state == "uncertainOffline" { director.failure = .offline }
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(1.5))
             switch state {
@@ -146,6 +147,10 @@ enum RouteDebugStubs {
                 flow.updateQuery("harb")
             case "place", "uncertain": flow.longPress(at: destination.coordinate)
             case "alternatives", "offline": step(flow)
+            case "uncertainOffline":
+                flow.longPress(at: destination.coordinate)
+                try? await Task.sleep(for: .milliseconds(300))
+                flow.route(anyway: true)
             default:
                 step(flow, start: true)
                 if state == "guidingUncertain" {

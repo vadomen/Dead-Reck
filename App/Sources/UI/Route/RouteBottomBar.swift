@@ -10,19 +10,64 @@ enum RouteBarLayout {
     static let fieldHeight: Double = 52
     static let cornerRadius: Double = 16
     static let minTapTarget = MapLayout.minTapTarget
+    /// The surface's left and right padding, shared by every bar.
+    static let horizontalPadding: Double = 14
+    /// A card's scrolling part never shrinks below this (the title and a line).
+    static let minScrollRoom: Double = 60
+
+    /// The room for a card's scrolling part under `maxHeight` (the bar's cap,
+    /// including its gap above the credit band): what is left after the
+    /// surface's own padding (`chrome`), the pinned actions and the gap between.
+    static func scrollRoom(maxHeight: Double?, pinnedHeight: Double, spacing: Double, chrome: Double) -> Double? {
+        guard let maxHeight, maxHeight.isFinite else { return nil }
+        let surface = maxHeight - MapLayout.aboveCreditGap
+        return max(minScrollRoom, surface - chrome - pinnedHeight - spacing)
+    }
+}
+
+/// A card whose information part scrolls when the card would pass its cap
+/// (R92.1-1), with the actions pinned below it so Route, Start and Retry stay
+/// on screen. Within the cap nothing scrolls: `ViewThatFits` takes the plain content.
+struct ScrollCard<Info: View, Pinned: View>: View {
+    var maxHeight: Double?
+    var spacing: Double
+    /// The vertical padding the caller puts around the card.
+    var chrome: Double
+    @ViewBuilder var info: Info
+    @ViewBuilder var pinned: Pinned
+    @State private var pinnedHeight = 0.0
+
+    var body: some View {
+        let room = RouteBarLayout.scrollRoom(maxHeight: maxHeight, pinnedHeight: pinnedHeight, spacing: spacing, chrome: chrome)
+        VStack(alignment: .leading, spacing: spacing) {
+            ViewThatFits(in: .vertical) {
+                info
+                ScrollView { info }.scrollIndicators(.visible)
+            }
+            .frame(maxHeight: room ?? .infinity)
+            pinned.onGeometryChange(for: Double.self, of: { Double($0.size.height) }) { pinnedHeight = $0 }
+        }
+    }
 }
 
 struct RouteBottomBar: View {
     var flow: RouteFlowModel
+    /// The most this bar may be high, gap included (`MapBottomLayout.maxRouteBarHeight`); nil: no cap.
+    var maxHeight: Double?
     @State private var confirmsEnd = false
+
+    init(flow: RouteFlowModel, maxHeight: Double? = nil) {
+        self.flow = flow
+        self.maxHeight = maxHeight
+    }
 
     var body: some View {
         Group {
             switch flow.phase {
             case .idle, .search: DestinationField(onTap: { flow.openSearch() })
-            case .placeCard: barSurface { PlaceCard(flow: flow) }
+            case .placeCard: barSurface { PlaceCard(flow: flow, maxHeight: maxHeight) }
             case .requesting: RequestingBar(onCancel: { flow.dismiss() })
-            case .alternatives: AlternativesCard(flow: flow)
+            case .alternatives: AlternativesCard(flow: flow, maxHeight: maxHeight)
             case .guiding: GuidanceBar(flow: flow, onEnd: { confirmsEnd = true })
             case .arrived: ArrivedBar(place: flow.arrivedPlace, onDone: { flow.acknowledgeArrival() })
             }
@@ -40,7 +85,7 @@ struct RouteBottomBar: View {
 
 @MainActor private func barSurface<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
     content()
-        .padding(.horizontal, 14)
+        .padding(.horizontal, RouteBarLayout.horizontalPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .hudSurface(RoundedRectangle(cornerRadius: RouteBarLayout.cornerRadius))
 }
@@ -88,13 +133,17 @@ struct RequestingBar: View {
 /// and Start. The set is the one that was requested; nothing here asks again.
 struct AlternativesCard: View {
     var flow: RouteFlowModel
+    var maxHeight: Double?
 
     var body: some View {
         barSurface {
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(Array(flow.alternatives.enumerated()), id: \.offset) { index, route in
-                    row(index: index, route: route)
+            ScrollCard(maxHeight: maxHeight, spacing: 6, chrome: 16) {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(flow.alternatives.enumerated()), id: \.offset) { index, route in
+                        row(index: index, route: route)
+                    }
                 }
+            } pinned: {
                 HStack(spacing: 12) {
                     Button(flow.isRebuild && flow.active != nil ? String(localized: "Keep current route") : String(localized: "Cancel")) { flow.dismiss() }
                         .font(.headline)

@@ -271,10 +271,15 @@ struct FollowZoom: Equatable, Sendable {
     /// UX-6: true after a driver zoom, until the next re-centre. While true,
     /// `autoFollowDistance` uses `chosen`; otherwise the speed-based `auto`.
     private(set) var driverOverride = false
-    /// Where the car sits (`CarPlacement.carFromTop(headingUp:offerShown:)`)
+    /// Where the car sits (`CarPlacement.carFromTop(headingUp:offerShown:viewport:)`)
     /// when heading-up: the ellipse fit keeps the ellipse inside the room
-    /// above and below it. North-up the car is centred.
+    /// above and below it.
     var carFromTop = CarPlacement.carFromTop
+    /// The same north-up: the middle, or above a card that would cover it.
+    var northUpCarFromTop = 0.5
+
+    /// The placement for the mode: what the camera centre and the fit use.
+    func placement(headingUp: Bool) -> Double { headingUp ? carFromTop : northUpCarFromTop }
     /// The map's size and what covers it (the view sets it); the ellipse fit
     /// divides by the room that is left.
     var viewport = EllipseFit.Viewport.reference
@@ -363,7 +368,7 @@ struct FollowZoom: Equatable, Sendable {
         guard let ellipse else { return 0 }
         return EllipseFit.requiredSpanM(
             ellipse: ellipse, cameraHeadingDeg: headingUp ? cameraHeading : 0,
-            carFromTop: headingUp ? carFromTop : 0.5, viewport: viewport)
+            carFromTop: placement(headingUp: headingUp), viewport: viewport)
     }
 
     private func widened(base: Double, headingUp: Bool, ellipse: FitEllipse?, cameraHeading: Double) -> Double {
@@ -383,12 +388,12 @@ struct FollowZoom: Equatable, Sendable {
     /// The fit for one ellipse with no hold: pure, for tests and previews.
     static func distance(
         chosen: Double, headingUp: Bool, ellipse: FitEllipse?, cameraHeading: Double = 0,
-        carFromTop: Double = CarPlacement.carFromTop, viewport: EllipseFit.Viewport = .reference
+        carFromTop: Double = CarPlacement.carFromTop, northUpCarFromTop: Double = 0.5, viewport: EllipseFit.Viewport = .reference
     ) -> Double {
         guard let ellipse else { return chosen }
         let span = EllipseFit.requiredSpanM(
             ellipse: ellipse, cameraHeadingDeg: headingUp ? cameraHeading : 0,
-            carFromTop: headingUp ? carFromTop : 0.5, viewport: viewport)
+            carFromTop: headingUp ? carFromTop : northUpCarFromTop, viewport: viewport)
         return distance(chosen: chosen, fitSpanM: span)
     }
 }

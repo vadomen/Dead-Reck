@@ -322,6 +322,21 @@ enum MapLayout {
         return cardHeight + offerCardGap
     }
 
+    /// What the bottom column covers above `bottomInset()` (the idle bar's slot is
+    /// already inside it): the offer or in-car card (measured height or the
+    /// default), plus the route bar's height beyond that slot, plus the gap
+    /// above whichever is highest. Zero with neither up. One number feeds the
+    /// ellipse fit and the car's placement, so the car and its ellipse stay in
+    /// the room above whatever card is showing.
+    static func bottomObstruction(
+        offerShown: Bool, offerHeight: Double? = nil, routeBarHeight: Double? = nil
+    ) -> Double {
+        var extra = 0.0
+        if let routeBarHeight, routeBarHeight.isFinite { extra = max(0, routeBarHeight - bottomSlotHeight) }
+        if offerShown { return extra + offerReserved(cardHeight: offerHeight) }
+        return extra > 0 ? extra + offerCardGap : 0
+    }
+
     /// Rail: four 56 pt buttons (GPS switch, North up, Following, Settings), gaps, and the GPS caption.
     static let railButtonCount = 4
     static let railCaptionHeight: Double = 18
