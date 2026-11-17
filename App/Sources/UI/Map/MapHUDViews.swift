@@ -75,11 +75,11 @@ struct MapHUDCard<Extra: View, Recording: View>: View {
                     Button(action: onGPSTap) {
                         HUDIndicatorLabel(indicator: state.gps, symbol: "location.fill", slashedSymbol: "location.slash.fill")
                             // A 44 pt-high hit area without moving anything: padding in, equal negative padding out.
-                            .padding(.vertical, 6)
+                            .padding(.vertical, MapLayout.gpsTapPadding)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .padding(.vertical, -6)
+                    .padding(.vertical, -MapLayout.gpsTapPadding)
                     HUDIndicatorLabel(indicator: state.obd, symbol: "cable.connector", slashedSymbol: "cable.connector.slash")
                 }
             }

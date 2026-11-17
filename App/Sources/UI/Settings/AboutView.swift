@@ -20,6 +20,8 @@ enum AboutContent {
     /// credit the map shows during the demo (`DemoDriveRoads.attribution`).
     static let demoMapCredit = String(localized: "\(DemoDriveRoads.attribution), ODbL 1.0. Demo drive map data: OSM data of 2026-10-08 (Geofabrik extract), bundled in the app.")
     static let mapsCredit = String(localized: "The map picture comes from Apple Maps (MapKit).")
+    /// Prompt 52: place search and routing go through Apple (MapKit).
+    static let searchPrivacy = String(localized: "When you search for a place or ask for a route, your search text, the start and end of the route, and your current position (to rank nearby places) are sent to Apple (MapKit). Nothing is sent to us.")
     /// Core's package has no dependencies and project.yml adds none.
     static let licences = String(localized: "This app bundles no third-party code.")
     static let attention = String(localized: "Keep your eyes on the road; set up the app before you drive.")
@@ -69,6 +71,7 @@ struct AboutScreen: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Apple Maps").font(.headline)
                     Text(AboutContent.mapsCredit)
+                    Text(AboutContent.searchPrivacy).foregroundStyle(.secondary)
                 }
                 .font(.subheadline)
                 .fixedSize(horizontal: false, vertical: true)

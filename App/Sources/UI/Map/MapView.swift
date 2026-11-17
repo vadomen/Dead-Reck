@@ -68,6 +68,8 @@ struct MapScreen: View {
     /// The running demo drive (REL-DEMO): its roads under the arrow, the DEMO
     /// badge, Stop demo. nil outside the demo.
     var demo: MapDemo?
+    /// Destination, route and guidance (prompt 52); nil in previews and during the demo.
+    var routeFlow: RouteFlowModel?
     @Environment(\.scenePhase) private var scenePhase
     @State private var thermal = ProcessInfo.processInfo.thermalState
     /// Settings → "Speak GPS changes" (UX-22); off by default.
@@ -123,6 +125,7 @@ struct MapScreen: View {
             },
             roadsAttribution: (roadsWarning?.attribution ?? false) || demo != nil,
             demo: demo,
+            routeFlow: demo == nil ? routeFlow : nil,
             offerCard: bottomCard,
             offerShown: offerIsShown || showsMountCard,
             recordingControl: fake.recording
@@ -139,6 +142,7 @@ struct MapScreen: View {
             thermal = ProcessInfo.processInfo.thermalState
         }
         .onAppear { thermal = ProcessInfo.processInfo.thermalState }
+        .routeSheets(demo == nil ? routeFlow : nil)
         .onChange(of: session.isGPSSwitchOn, initial: true) { _, on in model.setGPSSwitch(on: on) }
         .onChange(of: link?.state, initial: true) { _, state in model.noteLink(state, adapter: link?.rememberedAdapterID) }
         .onChange(of: link?.rememberedAdapterID) { _, id in model.noteLink(link?.state, adapter: id) }
@@ -391,6 +395,8 @@ struct GPSMapView: View {
     var roadsAttribution = false
     /// The running demo drive: roads overlay, DEMO badge, Stop demo; nil outside it.
     var demo: MapDemo?
+    /// Destination field, route line and long press (prompt 52); nil: none of it.
+    var routeFlow: RouteFlowModel?
     /// The at-a-stop road-pack offer (UX-8), top of the bottom-left zone; its own
     /// view, so this one stays plain values.
     var offerCard: AnyView?
@@ -491,6 +497,7 @@ struct GPSMapView: View {
         onGPSState: @escaping (HUDGPS, Int?) -> Void = { _, _ in },
         roadsAttribution: Bool = false,
         demo: MapDemo? = nil,
+        routeFlow: RouteFlowModel? = nil,
         offerCard: AnyView? = nil,
         offerShown: Bool = false,
         recordingControl: AnyView? = nil,
@@ -532,6 +539,7 @@ struct GPSMapView: View {
         self.onGPSState = onGPSState
         self.roadsAttribution = roadsAttribution
         self.demo = demo
+        self.routeFlow = routeFlow
         self.offerCard = offerCard
         self.offerShown = offerShown
         self.recordingControl = recordingControl
@@ -602,6 +610,21 @@ struct GPSMapView: View {
                 await runLoop()
             }
             .onChange(of: offerCardHeight) { applyViewport() }
+            // Alternatives: frame the whole route; Start or back: the normal follow mode.
+            .onChange(of: routeFlow?.phase) { old, new in
+                switch RouteCameraRule.action(from: old, to: new) {
+                case .frameRoute:
+                    guard let points = routeFlow?.chosenRoute?.polyline.map({ ($0.latitude, $0.longitude) }),
+                          let region = RouteFraming.region(points: points, coveredFraction: 0.4, coveredTop: 0.18, usableWidth: 0.8) else { return }
+                    // Held off (no 8 s auto-resume, no countdown) while the alternatives are shown.
+                    updateFollow { $0.hold() }
+                    withAnimation(.easeInOut(duration: 0.6)) { position = .region(region) }
+                case .resumeFollow:
+                    updateFollow { $0.resume() }
+                    moveCameraToCar(duration: 0.8)
+                case .none: break
+                }
+            }
             // R68.1-3: the car moves to the middle while the offer card is up
             // and back when it goes (heading-up only; north-up is centred).
             .onChange(of: offerShown, initial: true) { _, shown in
@@ -725,6 +748,7 @@ struct GPSMapView: View {
                 bottomZone
                 rail
             }
+            if let routeFlow, !(offerShown && routeFlow.phase == .idle) { RouteBottomBar(flow: routeFlow) }
             HStack(spacing: 0) {
                 Spacer(minLength: 0)
                 if roadsAttribution { MapAttributionLine() }
@@ -898,6 +922,7 @@ struct GPSMapView: View {
                 }
                 #endif
                 if let demo { DemoRoadsOverlay(roads: demo.roads, dark: scheme == .dark) }
+                if let routeFlow { RouteOverlay(flow: routeFlow, dark: scheme == .dark) }
                 TrackOverlay(track: track)
                 if let estimate {
                     NavOverlay(
@@ -947,6 +972,7 @@ struct GPSMapView: View {
                 SpatialTapGesture(count: 2, coordinateSpace: .named(Self.space))
                     .onEnded { handleDoubleTap(at: $0.location, proxy: proxy) }
             )
+            .modifier(RouteLongPress(space: Self.space, proxy: proxy) { routeFlow?.longPress(at: $0) })
         }
     }
 
@@ -966,6 +992,7 @@ struct GPSMapView: View {
     /// time are all read here, before that zoom starts.
     private func handleDoubleTap(at point: CGPoint, proxy: MapProxy) {
         guard let coordinate = proxy.convert(point, from: .named(Self.space)) else { return }
+        routeFlow?.setOriginPin(GeoPoint(latitude: coordinate.latitude, longitude: coordinate.longitude), visibleSpanM: visibleSpanM)
         switch ManualFixTap.perform(
             latitude: coordinate.latitude, longitude: coordinate.longitude,
             visibleSpanM: visibleSpanM, marking: manual

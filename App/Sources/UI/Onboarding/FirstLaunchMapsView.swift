@@ -5,7 +5,7 @@ import SwiftUI
 enum FirstLaunchMapsText {
     static let title = String(localized: "Road maps")
     static let why = String(localized: "Maps help navigation when GPS is poor. Nothing downloads until you tap the button.")
-    static let allowLocation = String(localized: "Allow location to suggest your region's map. It stays on the phone.")
+    static let allowLocation = String(localized: "Allow location to suggest your region's map. This is worked out on the phone.")
     static let lookingForRegion = String(localized: "Looking for your region…")
     static let later = String(localized: "Download maps later")
     static let laterNote = String(localized: "Later, everything is in Settings → Maps.")

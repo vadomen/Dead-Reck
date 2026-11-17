@@ -15,6 +15,29 @@ struct MapFollowTests {
         #expect(c.resumeDeadline == nil)
     }
 
+    @Test("hold() keeps the camera off from every mode: no deadline, no countdown, no auto-resume; resume() is never a toggle")
+    func holdFromAnyMode() {
+        var following = FollowController()
+        following.hold()
+        var paused = FollowController()
+        paused.userGesture(at: t(0))
+        paused.cameraSettled(at: t(1))
+        paused.hold()
+        var off = FollowController(following: false)
+        off.hold()
+        for var c in [following, paused, off] {
+            #expect(!c.isFollowing && c.resumeDeadline == nil)
+            let resumed = c.tick(now: t(1_000))
+            #expect(resumed == false, "a held camera never resumes by itself")
+            c.cameraSettled(at: t(1_001))
+            #expect(c.resumeDeadline == nil, "the framing's own camera change starts no countdown")
+            c.resume()
+            #expect(c.isFollowing)
+            c.resume()
+            #expect(c.isFollowing, "not a toggle")
+        }
+    }
+
     @Test("Gesture turns it off and it resumes at +8 s, not before")
     func gestureThenResume() {
         var c = FollowController()

@@ -202,11 +202,12 @@ struct MapHUDTests {
 
     // MARK: Layout
 
-    @Test("The destination slot lifts the rail and the bottom zone; 0 in v1.0")
+    @Test("The destination slot (the 52 pt bar and its gap, prompt 52) lifts the rail and the bottom zone")
     func bottomSlot() {
-        #expect(MapLayout.bottomSlotHeight == 0)
-        #expect(MapLayout.bottomInset() == MapLayout.attributionBand + 8)
-        #expect(MapLayout.bottomInset(slot: 56) == MapLayout.bottomInset() + 56)
+        #expect(MapLayout.bottomSlotHeight == 52 + MapLayout.aboveCreditGap)
+        #expect(MapLayout.bottomInset(slot: 0) == MapLayout.attributionBand + 8)
+        #expect(MapLayout.bottomInset() == MapLayout.bottomInset(slot: 0) + MapLayout.bottomSlotHeight)
+        #expect(MapLayout.bottomInset(slot: 56) == MapLayout.bottomInset(slot: 0) + 56)
         // The bottom zone stops left of the rail.
         #expect(MapLayout.railReserved == MapLayout.edgeInset * 2 + MapLayout.controlSize)
         #expect(MapLayout.controlSize >= 56 && MapLayout.minTapTarget >= 44)

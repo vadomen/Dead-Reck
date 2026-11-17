@@ -611,7 +611,9 @@ own: [docs/NAV_SIDECAR.md](docs/NAV_SIDECAR.md).
 
 ## Privacy
 
-- Navigate writes nothing to disk, and no location leaves the phone (the
+- Navigate writes nothing to disk. Recordings, position and searches are
+  never sent to us; place search and route requests send Apple (MapKit) the
+  search text, the route's start and end and the current position (the
   first-launch region suggestion is computed on the phone and not stored).
 - A recording and its sidecar contain the route driven and the times it was
   driven. They stay on the phone until you copy them off. Never commit them;

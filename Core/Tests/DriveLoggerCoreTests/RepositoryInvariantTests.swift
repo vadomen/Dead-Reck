@@ -153,12 +153,15 @@ struct RepositoryInvariantTests {
         #expect(Self.writeViolations(in: "// never call writeValue here", path: "App/Sources/Link/OBDLinkService.swift").isEmpty)
     }
 
-    // MARK: No routing or place search (N3.4 item 7)
+    // MARK: No routing or place search outside App/Sources/Route (N3.4 item 7, prompt 52)
 
     /// Navigation never asks Apple for routes, place search or map items:
-    /// positions stay on the phone and the roads are OSM packs only. The
-    /// four MapKit names are assembled from parts so this file never
-    /// contains them and needs no exclusion.
+    /// positions stay on the phone and the roads are OSM packs only. The one
+    /// place MapKit search and routing may live is `App/Sources/Route/` (the
+    /// destination search and the route request, prompt 52); everywhere
+    /// else in Core and the app, tests included, is checked. The four MapKit
+    /// names are assembled from parts so this file never contains them and
+    /// needs no exclusion.
     static let mapKitRoutingNames = ["Directions", "LocalSearch", "MapItem", "Route"].map { "MK" + $0 }
 
     /// The directories scanned: all of Core's Swift (sources, tests, the
@@ -166,17 +169,28 @@ struct RepositoryInvariantTests {
     /// scanned.
     static let routingFreePaths = ["Core/Sources", "Core/Tests", "App/Sources/Navigation"]
 
-    /// Why `text` (the file at `path`) mentions a MapKit routing or search
-    /// type, or empty. Comments count too: a mention is a plan to use it.
-    static func routingViolations(in text: String, path: String) -> [String] {
-        mapKitRoutingNames.filter { text.contains($0) }.map { "\(path) mentions \($0)" }
+    /// The app and its tests are scanned too, except the one allowed folder.
+    static let routingScannedAppPaths = ["App/Sources", "AppTests"]
+    static let routingAllowedPath = "App/Sources/Route"
+
+    /// Whether `path` (repository-relative) may mention the MapKit routing types.
+    static func routingAllowed(path: String) -> Bool {
+        path.hasPrefix(routingAllowedPath + "/")
     }
 
-    @Test("No MapKit routing or place search in Core or App/Sources/Navigation")
+    /// Why `text` (the file at `path`) mentions a MapKit routing or search
+    /// type, or empty. Comments count too: a mention is a plan to use it.
+    /// Files under `App/Sources/Route/` are the allowed place.
+    static func routingViolations(in text: String, path: String) -> [String] {
+        if routingAllowed(path: path) { return [] }
+        return mapKitRoutingNames.filter { text.contains($0) }.map { "\(path) mentions \($0)" }
+    }
+
+    @Test("No MapKit routing or place search in Core, App/Sources/Navigation or anywhere else outside App/Sources/Route")
     func noMapKitRouting() throws {
-        var files = try Self.routingFreePaths.flatMap { try Self.swiftFiles(under: $0) }
+        var files = try (Self.routingFreePaths + Self.routingScannedAppPaths).flatMap { try Self.swiftFiles(under: $0) }
         files.append(Self.repositoryRoot.appendingPathComponent("Core/Package.swift"))
-        for path in Self.routingFreePaths {
+        for path in Self.routingFreePaths + Self.routingScannedAppPaths {
             #expect(files.contains { Self.relativePath(of: $0).hasPrefix(path + "/") }, "\(path) not found from \(Self.repositoryRoot.path)")
         }
         #expect(files.contains { Self.relativePath(of: $0) == "Core/Tests/DriveLoggerCoreTests/RepositoryInvariantTests.swift" })
@@ -185,6 +199,25 @@ struct RepositoryInvariantTests {
             for problem in Self.routingViolations(in: text, path: Self.relativePath(of: file)) {
                 Issue.record(Comment(rawValue: problem))
             }
+        }
+    }
+
+    @Test("The adapter folder really holds the MapKit routing types (the allowance is not vacuous)")
+    func routeFolderUsesMapKit() throws {
+        let used = try Self.swiftFiles(under: Self.routingAllowedPath).contains { file in
+            let text = try String(contentsOf: file, encoding: .utf8)
+            return Self.mapKitRoutingNames.contains { text.contains($0) }
+        }
+        #expect(used)
+    }
+
+    @Test("Only App/Sources/Route is exempt: look-alike paths are not")
+    func allowanceIsExactlyTheFolder() {
+        let name = Self.mapKitRoutingNames[0]
+        #expect(Self.routingViolations(in: name, path: "App/Sources/Route/MapKitRouteDirector.swift").isEmpty)
+        for path in ["App/Sources/Navigation/RouteX.swift", "App/Sources/RouteExtras/X.swift", "App/Sources/UI/Route/X.swift",
+                     "AppTests/X.swift", "Core/Sources/DriveLoggerCore/Route/X.swift", "App/Sources/Routes/X.swift"] {
+            #expect(!Self.routingViolations(in: name, path: path).isEmpty, "\(path)")
         }
     }
 

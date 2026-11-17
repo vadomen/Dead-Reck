@@ -289,10 +289,13 @@ enum MapLayout {
     static let edgeInset: Double = 12
     /// The OSM line sits in this band at the very bottom, beside Apple's marks.
     static let attributionBand: Double = 22
-    /// Height of the full-width destination field (UX-19) at the bottom. 0 in
-    /// v1.0: nothing is drawn; the rail and the bottom-left zone lift by it
-    /// when it exists.
-    static let bottomSlotHeight: Double = 0
+    /// The destination bar (UX-19, prompt 52): 52 pt, with the gap above the
+    /// credit band under it. The rail and the bottom-left zone sit above it.
+    /// The guidance bar is taller; the column grows upward by the difference.
+    static let bottomSlotHeight: Double = 52 + aboveCreditGap
+    /// The GPS indicator's tap area: its label is about 15 pt high, so this much
+    /// padding above and below it makes a real 44 pt target (R88.1-4).
+    static let gpsTapPadding: Double = 15
 
     /// Gap between the screen's bottom (safe area) and the rail / bottom zone.
     static func bottomInset(slot: Double = bottomSlotHeight) -> Double {

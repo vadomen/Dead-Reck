@@ -192,6 +192,24 @@ struct RecordingNavigationFeed: Sendable {
     var droppedInputs: Int { tap.droppedInputs }
 }
 
+/// The route active in the app when Record starts (prompt 52 item 5): what
+/// `RecordingSession.activeRouteProvider` returns for the Navigate → Record
+/// hand-over. Core types only, so the session does not depend on the app's
+/// route flow.
+struct RecordingRouteHandOver: Hashable, Sendable {
+    /// The route as last passed to `recordRoute` (or set while no recording
+    /// ran); `label` is the destination label as shown.
+    let route: Route
+    /// The origin of the request that built `route`, as it would have been
+    /// passed to `recordRoute`; nil when not known.
+    let origin: RouteOrigin?
+
+    init(route: Route, origin: RouteOrigin? = nil) {
+        self.route = route
+        self.origin = origin
+    }
+}
+
 /// What the session knows about why a run ended (UX-20), handed to the
 /// navigation service with the feed (`RecordingNavigationFeed.runEnd`).
 /// Written on the main actor before the run's tap finishes, read by the
@@ -237,9 +255,10 @@ final class NavigationRunEnd: Sendable {
 /// negative `t`, never clamped — and then lets its link-event loop skip the
 /// next `deliveredLinkEventCount − consumed` events (delivered before Start:
 /// either in the replay or pre-Start poll traffic, which is not written).
-/// Placement: right after the `start` row (and the `navPrior` row, when
-/// there is one), before any other row; the `start` row stays the first
-/// line, and the first `stats` window still starts at `t ≈ 0` (the writer
+/// Placement: right after the `start` row (and the `navPrior` row and the
+/// `restored` `route` row, when there are), before any other row; the
+/// `start` row stays the first line, and the first `stats` window still
+/// starts at `t ≈ 0` (the writer
 /// starts it at the first row it sees). Each recording replays once, at
 /// its own Start; an init during a recording arrives live.
 /// Nothing is replayed when the link isn't connected at Start (M6.1-1: the
@@ -248,14 +267,16 @@ final class NavigationRunEnd: Sendable {
 ///
 /// **Rows it writes** (`lifecycle` unless noted): `start` (detail `without
 /// OBD: …` when started without a polling link), `navPrior` (format v5, at
-/// most one; "Hand-over prior" below), the replayed start-up
+/// most one; "Hand-over prior" below), `route` with reason `restored` (format
+/// v7, at most one; "Route rows" below), the replayed start-up
 /// init (`link`, `elm`, `adapter`; above), `locationAuthorization` (one per
 /// `LocationAuthorizationReporting` source, after the source rows: phone
 /// builds), `roadPacks` (once, when the road-pack library scan started at
 /// Start finishes while the recording is still running; none after Stop and
 /// none without a library), `calibrationStart` /
 /// `calibrationEnd`, `stop` (detail = stop reason), `manualFix` (format v3,
-/// `stageManualFix`, written when its undo window closes or at Stop), `background` /
+/// `stageManualFix`, written when its undo window closes or at Stop), `route` /
+/// `routeCleared` (format v7, `recordRoute` / `recordRouteCleared`), `background` /
 /// `foreground`, `memoryWarning`, `thermalState` (at start when not nominal,
 /// and on every change), `protectedDataUnavailable`, `lowDiskSpace`, `error`
 /// (a source that is unavailable or failed to start, no background location
@@ -379,6 +400,21 @@ final class NavigationRunEnd: Sendable {
 /// sample with an `invalidField` is not written and not handed over (the
 /// run starts fresh); an `error` row with detail `navPrior invalid:
 /// <field>` says so. Navigate runs never ask.
+///
+/// **Route rows (v7, prompt 52 item 5).** The app's route flow owns the
+/// route; the session only writes what it is told, and only into a
+/// recording. `recordRoute(_:reason:origin:)` writes a `route` row and
+/// `recordRouteCleared(routeID:reason:)` a `routeCleared` row, each stamped
+/// `clock.now()` of the recording and written through its sink (the
+/// navigation tap ignores both: not an engine input). Outside a writable
+/// recording both are no-ops: Navigate has no file. At Start, in the same
+/// synchronous step as the `navPrior` hand-over and after it, the session
+/// asks `activeRouteProvider` once; a route it returns is written as a
+/// `route` row with reason `restored` (and the origin of the request that
+/// built it) right after the `start` row and the `navPrior` row or its
+/// error row, before the start-up init replay. No route, no calls: no row,
+/// and the file is exactly what it was before v7 apart from the header's
+/// version.
 ///
 /// **Navigate (UX-1).** Off until `enableNavigate(_:)` (the app enables it
 /// at launch; tests that don't are Record-only and see exactly the session
@@ -539,6 +575,13 @@ final class RecordingSession {
     /// over); nil when that Start ended none (Navigate off, or not running).
     /// Set before the provider is asked.
     @ObservationIgnored private(set) var navigateEndedByStart: Int?
+    /// The Navigate → Record route hand-over (v7, prompt 52 item 5; the
+    /// type's doc, "Route rows"): called once per recording, synchronously
+    /// in `start`, in the same step as `navPriorProvider` and after it.
+    /// Returns the route active in the app at that moment (with the origin
+    /// of the request that built it), or nil when there is none. Must not
+    /// block. nil (the default): no `restored` row, ever.
+    @ObservationIgnored var activeRouteProvider: (@MainActor () -> RecordingRouteHandOver?)?
     /// Awaited inside the background task of the flush on `.background` and
     /// on a memory warning, after the log's own flush (R14.1-4): `AppServices`
     /// flushes the navigation sidecar here, which is otherwise flushed only
@@ -832,6 +875,13 @@ final class RecordingSession {
         } else if let invalidPriorField {
             rec.record(LifecycleSample(.error, detail: "navPrior invalid: \(invalidPriorField)"))
         }
+        // v7 hand-over: the route active at Start, after the header rows
+        // (`start`, then `navPrior` or its error row) and before the init
+        // replay. None: no row, and the file is what it was before.
+        if let handOver = activeRouteProvider?() {
+            rec.sink.record(LogEvent(timestamp: clock.now(), payload: .route(RouteSample(
+                reason: .restored, route: handOver.route, origin: handOver.origin))))
+        }
         // Still the same synchronous step: no suspension since `polling` was
         // read, so no link event can be consumed between the reads and the
         // replay rows, and no live link row precedes them.
@@ -871,6 +921,53 @@ final class RecordingSession {
     func mark(_ text: String) {
         guard let rec = recording, rec.isWritable else { return }
         rec.sink.record(.marker(text, at: rec.clock.now()))
+    }
+
+    // MARK: - Route rows (v7, prompt 52 item 5)
+
+    /// Records that `route` was set or replaced: one `route` row (format v7)
+    /// with `reason` and `origin`, stamped `clock.now()` of the recording and
+    /// written through its sink like a marker. A later call replaces the
+    /// route without a `routeCleared` in between (`RouteSample`).
+    ///
+    /// - Parameters:
+    ///   - route: as built by the provider; `route.label` is the destination
+    ///     label as shown to the user (it goes into the row unchanged;
+    ///     recordings are private).
+    ///   - reason: `.user` (a new destination), `.alternative` (another of
+    ///     the offered routes), `.offRoute` (a rebuild from where the car
+    ///     is). `.restored` is what Start writes for a hand-over
+    ///     (`activeRouteProvider`); pass it only for a route put back
+    ///     without a new request.
+    ///   - origin: where the request started and what the position came
+    ///     from (`fix`, `estimate`, `pin`); nil when not known.
+    /// - Returns: the row's `t`, or nil when nothing was written: Record is
+    ///   not calibrating or recording (idle, starting, Navigate only), or the
+    ///   recording takes no more rows (its `stop` row is queued, a write
+    ///   failure). The route itself is the caller's state either way: a
+    ///   later Start picks it up through `activeRouteProvider`.
+    @discardableResult
+    func recordRoute(_ route: Route, reason: RouteSample.Reason, origin: RouteOrigin?) -> MonotonicTimestamp? {
+        guard let rec = recording, rec.isWritable else { return nil }
+        let t = rec.clock.now()
+        rec.sink.record(LogEvent(timestamp: t, payload: .route(RouteSample(reason: reason, route: route, origin: origin))))
+        return t
+    }
+
+    /// Records that the route `routeID` (`Route.id` of the route the latest
+    /// `recordRoute` or the Start hand-over set) ended and none replaced
+    /// it: one `routeCleared` row (format v7), stamped `clock.now()` of the
+    /// recording. `reason`: `.cancelled` (the driver ended it), `.arrived`,
+    /// or `.failed` (the app dropped a route it could not keep). Same
+    /// conditions and result as `recordRoute`: nil and no row outside a
+    /// writable recording. The id is written as given, not checked against
+    /// the file (`inspect_log` warns about a mismatch).
+    @discardableResult
+    func recordRouteCleared(routeID: String, reason: RouteClearedSample.Reason) -> MonotonicTimestamp? {
+        guard let rec = recording, rec.isWritable else { return nil }
+        let t = rec.clock.now()
+        rec.sink.record(LogEvent(timestamp: t, payload: .routeCleared(RouteClearedSample(reason: reason, routeID: routeID))))
+        return t
     }
 
     // MARK: - GPS switch (UX-9a)

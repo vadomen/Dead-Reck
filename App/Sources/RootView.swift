@@ -27,6 +27,9 @@ struct RootView: View {
     @State private var demoFeed: NavigationFeed
     @State private var demoWarning: RoadsWarningModel
     @State private var demoLayers: DemoRoadLayers?
+    /// Destination, route and guidance (prompt 52): app-session scoped, so the
+    /// route survives the Navigate → Record hand-over.
+    @State private var route: RouteFlowModel
 
     init(services: AppServices) {
         _recording = State(initialValue: RecordingViewModel(services: services))
@@ -36,6 +39,7 @@ struct RootView: View {
         let service = services.navigation
         _navigation = State(initialValue: NavigationFeed(
             source: { await service.snapshot() }, generation: { await service.currentGeneration }))
+        _route = State(initialValue: Self.makeRouteFlow(services))
         _demoFeed = State(initialValue: Self.makeDemoFeed(services))
         _demoWarning = State(initialValue: Self.makeDemoWarning(services))
         _sessions = State(initialValue: SessionsViewModel(services: services))
@@ -135,6 +139,29 @@ struct RootView: View {
         _nav = State(initialValue: initial)
     }
 
+    /// The flow the map gets; DEBUG `-uiNoRouteBar 1` hides it (the layout before prompt 52, for measuring).
+    private var routeForMap: RouteFlowModel? {
+        #if DEBUG
+        if UserDefaults.standard.bool(forKey: "uiNoRouteBar") { return nil }
+        #endif
+        return route
+    }
+
+    /// The live route flow: MapKit services, recents on the device, rows into
+    /// the recording; Record asks it for the active route at Start.
+    private static func makeRouteFlow(_ services: AppServices) -> RouteFlowModel {
+        var flow = RouteFlowModel(
+            searcher: MapKitDestinationSearcher(), director: MapKitRouteDirector(),
+            saved: SavedDestinationsStore(directory: SavedDestinationsStore.defaultDirectory()),
+            sink: RecordingSessionRouteSink(session: services.session),
+            edgeMatcher: RouteEdgeMatching.makeMatcher(library: services.roadPacks))
+        #if DEBUG
+        // `-uiRouteStub search|place|alternatives|guiding|uncertain|away|arrived|offline` (screenshots).
+        if let stub = RouteDebugStubs.flow(argument: UserDefaults.standard.string(forKey: "uiRouteStub")) { flow = stub }
+        #endif
+        return flow
+    }
+
     /// The demo's feed: its own navigation service, no shared state with the app's.
     private static func makeDemoFeed(_ services: AppServices) -> NavigationFeed {
         let service = services.demo.navigation
@@ -189,7 +216,8 @@ struct RootView: View {
             offers: bound.offers,
             link: bound.link,
             mountConfirmation: bound.mountConfirmation,
-            demo: bound.demo
+            demo: bound.demo,
+            routeFlow: routeForMap
         )
         .fullScreenCover(isPresented: $nav.isSettingsPresented) {
             SettingsScreen(
@@ -216,11 +244,15 @@ struct RootView: View {
                 AdapterSettingsScreen(model: console)
                 #endif
             }
+            .environment(\.savedDestinations, route.saved)
+            .environment(\.routeFlow, route)
         }
         // Ingest at the root so the track keeps filling while Settings is open. The
         // feed is its own view so only it observes the 16 Hz `live` status.
         .background(MapFeed(session: bound.session, model: map, mount: bound.mountConfirmation))
         .task { await roadsWarning.run() }
+        // The route the map uses is the one Record asks at Start.
+        .onAppear { RouteWiring.install(flow: route, on: services.session, navigation: navigation, model: map) }
         // The demo's own roads warning, polled only while it runs.
         .task(id: services.demo.isRunning) {
             if services.demo.isRunning { await demoWarning.run() }

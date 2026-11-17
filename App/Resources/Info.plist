@@ -48,7 +48,7 @@
 	<key>NSMotionUsageDescription</key>
 	<string>FuGPS records barometric altitude changes when you record a test drive; it stays in the recording on your phone.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>FuGPS uses your location to show where you are and to keep estimating your position when GPS is jammed, also with the screen locked while you drive, and to pick the road map for your area. If you record a drive, your route is saved in the recording on your phone.</string>
+	<string>FuGPS uses your location to show where you are and to keep estimating your position when GPS is jammed, also with the screen locked while you drive, to pick the road map for your area, and to find places and build routes from your position (through Apple Maps).</string>
 
 	<!-- Record and Navigate have to survive the screen locking mid-drive
 	     (D7 revised): location keeps the GNSS fixes and the estimate running,

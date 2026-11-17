@@ -62,7 +62,7 @@ struct MapBottomLayoutTests {
         let frames = MapBottomLayout.frames(
             container: container,
             items: [(.statusLine, CGSize(width: 900, height: 56)), (.roadsWarning, CGSize(width: 100, height: 48))],
-            railSize: Self.rail, creditWidth: 190)
+            railSize: Self.rail, creditWidth: 190, slot: 0)
         let band = CGFloat(667 - MapLayout.attributionBand)
         let gap = CGFloat(MapLayout.aboveCreditGap)
         #expect(frames.items.map(\.item) == [.statusLine, .roadsWarning])
@@ -87,7 +87,7 @@ struct MapBottomLayoutTests {
 
     @Test("the layout's bottom inset is the band plus the gap the view pads by")
     func insetMatchesView() {
-        #expect(MapLayout.bottomInset() == MapLayout.attributionBand + MapLayout.aboveCreditGap)
+        #expect(MapLayout.bottomInset(slot: 0) == MapLayout.attributionBand + MapLayout.aboveCreditGap)
         #expect(MapBottomLayout.creditHeight <= MapLayout.attributionBand)
     }
 }
