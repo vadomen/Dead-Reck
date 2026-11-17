@@ -385,6 +385,64 @@ struct RouteFlowTests {
         #expect(rig.sink.rows.last == .cleared(id: "r1", reason: "arrived"))
     }
 
+    /// A snapshot with an estimate at `lat` (a manual fix initialises a small engine).
+    static func snapshot(lat: Double) -> NavigationSnapshot {
+        var config = NavigationConfig()
+        config.particleCount = 20
+        var engine = NavigationEngine(config: config)
+        let t = MonotonicTimestamp(seconds: 1)
+        engine.ingest(.manualFix(ManualFixSample(latitude: lat, longitude: 0, pressedT: t, speedSource: "unknown"), at: t))
+        return NavigationSnapshot(t: t, sessionID: UUID(), estimate: engine.estimate(at: t), stats: .init())
+    }
+
+    actor Script {
+        var snapshots: [NavigationSnapshot]
+        var index = 0
+        init(_ snapshots: [NavigationSnapshot]) { self.snapshots = snapshots }
+        func set(_ i: Int) { index = i }
+        func next() -> NavigationSnapshot { snapshots[index] }
+    }
+
+    /// The map's `poll()` results over a scripted drive, optionally with a guidance read
+    /// before each one (as the 2 Hz loop does between two map polls).
+    static func publishedSequence(guidance: ((NavigationFeed) async -> Void)?) async -> [Bool] {
+        // Moves of 0 m and 5 m at 0.3 s steps: the gate says yes for the 5 m moves only.
+        let lats = [0.0, 0.0, 0.00005, 0.00005, 0.0001, 0.0001, 0.0001, 0.00015]
+        let script = Script(lats.map { snapshot(lat: $0) })
+        let feed = NavigationFeed(display: nil, source: { await script.next() })
+        let start = ContinuousClock.now
+        var published: [Bool] = []
+        for i in lats.indices {
+            await script.set(i)
+            await guidance?(feed)
+            published.append(await feed.poll(at: start + .milliseconds(300 * i)))
+        }
+        return published
+    }
+
+    @Test("Guidance reads the estimate without the write gate: the map's camera gets every write it gets without guidance (R91.4-2)")
+    func guidanceDoesNotTakeTheGateSlot() async {
+        let alone = await Self.publishedSequence(guidance: nil)
+        #expect(alone.contains(true) && alone.contains(false), "the script exercises the gate both ways")
+        let source = RouteEstimate.source
+        let withGuidance = await Self.publishedSequence { feed in
+            let read = source(feed)
+            #expect(await read() != nil, "guidance still gets a fresh estimate")
+            _ = await read()
+        }
+        #expect(withGuidance == alone)
+        // Control: a guidance that polls the feed (the old behaviour) steals the slot.
+        let polling = await Self.publishedSequence { feed in await feed.poll() }
+        #expect(polling != alone)
+    }
+
+    @Test("A feed with no run gives guidance no estimate, and the read does not change the feed")
+    func guidanceReadHasNoSideEffects() async {
+        let feed = NavigationFeed(display: nil, source: { NavigationSnapshot.idle(at: .zero) })
+        #expect(await RouteEstimate.source(feed: feed)() == nil)
+        #expect(feed.latest == nil && feed.latestAppliedAt == nil && feed.display == nil)
+    }
+
     @Test("A source with no fresh estimate means no estimate: guidance says uncertain and never arrives")
     func noFreshEstimate() async {
         let rig = Rig()

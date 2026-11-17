@@ -85,12 +85,26 @@ final class NavigationFeed {
     /// estimate moved or turned enough): the caller may write the camera.
     @discardableResult
     func poll(at now: ContinuousClock.Instant = .now) async -> Bool {
-        guard let source else { return false }
+        guard let (snapshot, run) = await fetch() else { return false }
+        return apply(snapshot, run: run, at: now)
+    }
+
+    /// The newest estimate without touching any feed state: no write gate, no
+    /// `latest`/`display`/stats writes. Guidance reads through this so its own
+    /// polling never takes the map camera's write slot (R91.4-2). Same run
+    /// check as `poll`: nil across a run change or after cancellation.
+    func peekEstimate() async -> NavDisplay? {
+        guard let (snapshot, _) = await fetch() else { return nil }
+        return NavDisplay(snapshot)
+    }
+
+    private func fetch() async -> (NavigationSnapshot, Int?)? {
+        guard let source else { return nil }
         let before = await generation?()
         let snapshot = await source()
         let after = await generation?()
-        guard !Task.isCancelled, before == after else { return false }
-        return apply(snapshot, run: after, at: now)
+        guard !Task.isCancelled, before == after else { return nil }
+        return (snapshot, after)
     }
 
     /// Forgets the engine's GPS state and the restore status (UX-20): the
