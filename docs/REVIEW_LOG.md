@@ -1410,3 +1410,25 @@ Reviewer side note (not a finding): with the peek, `RouteEstimate.fresh`'s 1 s r
 ### Run 92 summary
 
 1 round (the user asked for one round); 0 BLOCKER, 0 MAJOR; 0 fixed; 0 rejected; 1 deferred (R92.1-1). Closes R91.4-1 (0f63302), R91.4-2 (56be463, tests `guidanceDoesNotTakeTheGateSlot`, `guidanceReadHasNoSideEffects`) and R91.4-3 (e1f0727, test `stubInputsStayFixed`); the place card moved from a sheet with guessed detents to an in-map card (1e5b8a2). Final tests at 1e5b8a2: Core 1316 passed (36 known issues), app 960 passed (iPhone SE 3rd gen simulator). Screenshot QA: 64 shots retaken (`logs/p52b/screens`, `QA.md`), backlog rows P52B-QA-1, P52B-QA-2. replay_nav acceptance matrix 101/101 identical (wall-time fields masked) vs prompt 52 head outputs (Core/Sources tree unchanged since 349d36c); d1102 roads as-live exits 4 on both sides, as in prompt 52; `logs/p52b/hash`. Outcome: closed, ready to merge into `routing` (merge: pending).
+
+## Run 93: Follow-up 52c route card layout (follow camera above the card, bar cap under the compass, away/arrived padding) (routing..r2-card-layout: e05487a..7d3dab5), started 2026-11-17
+
+Note: on branch `routing` (decision D6), not `main`. App only; Core/Sources tree unchanged (566755169dd7).
+
+### Round 1
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R93.1-1 | MAJOR | `App/Sources/UI/Map/MapBottomLayout.swift:64-67`: `maxRouteBarHeight` capped the rail top at `MapLayout.hudReserved` (150 pt, the left HUD card's reserve), so on SE the cap was 215 pt, below default-type cards that fitted in 52b (uncertain place card 240 pt bar, three alternatives 226 pt): the uncertain note scrolled out of view and the third route clipped ~11 pt at default text. | CONFIRMED, FIXED | e58992b: cap at `MapLayout.compassReserved(topSafe:)` (top safe area + 50 + 8; 287 pt on SE), `MapGeometry.safeTop`. Test `defaultCardsFitWithoutScrolling` (fails with `hudReserved`), `railUnderCap` adds a notch case. The 50 pt compass offset is not measured against MapKit's compass (stub shots draw no compass). |
+| R93.1-2 | MAJOR | `App/Sources/UI/Route/RouteSheets.swift:184-190`: the failure message and Retry were inside `ScrollCard`'s scrolling part although its doc said Retry stays on screen; SE uncertain + offline: "Route anyway" brought back an identical-looking card with the message below the fold. | CONFIRMED, FIXED | e58992b: `PlaceCardRow` pure split (scrolling = header, origin note; pinned = failure, actions), pinned part `fixedSize(vertical:)`, `minScrollRoom` floor removed (it pushed the bar past the cap at accessibility-medium). Test `failureIsPinned` (fails with the failure row scrolling); `scrollRoomHoldsCap` covers pinned 108/164/230. |
+| R93.1-3 | MINOR | `App/Sources/UI/Map/MapCameraLogic.swift:257-261` with `MapView.swift` `onChange(of: routeBarHeight)`: the guidance bar now counts as a card; on SE at xxxLarge..AX2 a one-line vs two-line instruction crosses the placement threshold, so the car jumps ~135 pt (2/3 ↔ middle, 0.4 s recenter and fit zoom change) at maneuver changes. Default text unaffected. | DEFERRED | BACKLOG. Suggested fix: hysteresis, or the phase's tallest guidance bar height. |
+
+Reviewer status of older rows: R75.2-2 still open (`bottomObstruction` leaves out the bottom-zone lines); R91.1-10 partly fixed (guidance-at-a-stop offer case now stacks the bar's extra height onto the offer card; REL-DEMO case, no bar but a 60 pt slot reserved, still open). P52B-QA-1 closed for the car marker in every card state; alternatives keep the held region framing (capped card ≤ 0.355 of the SE screen, under its 0.4 reserve).
+
+Orchestrator screenshot QA of e58992b found a regression the round had introduced: `ScrollCard` (`ViewThatFits` under `.frame(maxHeight: room)`) stretched every place/offline/alternatives card to the cap (Plus place card ~150 pt of empty space). Fixed in 29a7903 (ios-ui-engineer): the info's ideal height is measured on a hidden `fixedSize` copy and a ScrollView of `room` is used only past it. Tests `RouteCardHugTests/hugsContent` (fails at e58992b, 4 issues) and `stretchesOnlyPastCap`.
+
+The fix commits were not re-reviewed (the user asked for one round).
+
+### Run 93 summary
+
+1 round (the user asked for one round); 0 BLOCKER, 2 MAJOR, 1 MINOR; 2 fixed (R93.1-1, R93.1-2) plus the QA regression fix-up (29a7903); 0 rejected; 1 deferred (R93.1-3). Closes R92.1-1, P52B-QA-1, P52B-QA-2 (moved to the archive). Final tests at 29a7903: app 970 tests in 143 suites passed (iPhone SE 3rd gen simulator); Core 1316 passed (36 known issues; Core/Sources tree 566755169dd7 unchanged). Screenshot QA: 72 shots (56 default + 16 accessibility-medium, `logs/p52c/screens`, `QA.md`), backlog rows P52C-QA-1..3. replay_nav acceptance matrix 101/101 identical (wall-time fields masked) vs prompt 52 head outputs; d1102 roads as-live exits 4 as in prompts 52 and 52b; `logs/p52c/hash`. Outcome: closed, ready to merge into `routing` (merge: pending).
