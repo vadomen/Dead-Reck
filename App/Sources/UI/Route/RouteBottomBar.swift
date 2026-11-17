@@ -15,8 +15,6 @@ enum RouteBarLayout {
     /// Above and below the content of the guidance bar, and so of the away and
     /// arrived bars too (P52B-QA-2).
     static let verticalPadding: Double = 6
-    /// A card's scrolling part never shrinks below this (the title and a line).
-    static let minScrollRoom: Double = 60
 
     /// The room for a card's scrolling part under `maxHeight` (the bar's cap,
     /// including its gap above the credit band): what is left after the
@@ -24,13 +22,16 @@ enum RouteBarLayout {
     static func scrollRoom(maxHeight: Double?, pinnedHeight: Double, spacing: Double, chrome: Double) -> Double? {
         guard let maxHeight, maxHeight.isFinite else { return nil }
         let surface = maxHeight - MapLayout.aboveCreditGap
-        return max(minScrollRoom, surface - chrome - pinnedHeight - spacing)
+        // No floor: at the largest type the pinned actions take it all, and the rail must still clear the compass.
+        return max(0, surface - chrome - pinnedHeight - spacing)
     }
 }
 
-/// A card whose information part scrolls when the card would pass its cap
-/// (R92.1-1), with the actions pinned below it so Route, Start and Retry stay
-/// on screen. Within the cap nothing scrolls: `ViewThatFits` takes the plain content.
+/// A card whose information part (`info`) scrolls when the card would pass its
+/// cap (R92.1-1); `pinned` sits below it and never scrolls. The place card pins
+/// the failure message with Retry and the actions (`PlaceCardRow.pinned`), the
+/// alternatives card pins Cancel and Start. Within the cap nothing scrolls:
+/// `ViewThatFits` takes the plain content.
 struct ScrollCard<Info: View, Pinned: View>: View {
     var maxHeight: Double?
     var spacing: Double
@@ -48,7 +49,9 @@ struct ScrollCard<Info: View, Pinned: View>: View {
                 ScrollView { info }.scrollIndicators(.visible)
             }
             .frame(maxHeight: room ?? .infinity)
-            pinned.onGeometryChange(for: Double.self, of: { Double($0.size.height) }) { pinnedHeight = $0 }
+            // Its own height, never squeezed by the cap: the scrolling part takes what is left.
+            pinned.fixedSize(horizontal: false, vertical: true)
+                .onGeometryChange(for: Double.self, of: { Double($0.size.height) }) { pinnedHeight = $0 }
         }
     }
 }

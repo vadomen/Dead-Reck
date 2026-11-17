@@ -447,6 +447,7 @@ struct GPSMapView: View {
     struct MapGeometry: Equatable {
         var size = CGSize.zero
         var safeBottom = 0.0
+        var safeTop = 0.0
     }
 
     @MainActor
@@ -558,7 +559,8 @@ struct GPSMapView: View {
 
     /// The most the route bar may grow: the rail above it stays under the HUD reserve.
     private var routeBarMaxHeight: Double {
-        MapBottomLayout.maxRouteBarHeight(containerHeight: mapGeometry.size.height - mapGeometry.safeBottom)
+        MapBottomLayout.maxRouteBarHeight(
+            containerHeight: mapGeometry.size.height - mapGeometry.safeBottom, topSafe: mapGeometry.safeTop)
     }
 
     /// Hands the ellipse fit the map's size and what covers it (the offer card
@@ -583,7 +585,7 @@ struct GPSMapView: View {
     var body: some View {
         content
             .onGeometryChange(for: MapGeometry.self) { proxy in
-                MapGeometry(size: proxy.size, safeBottom: proxy.safeAreaInsets.bottom)
+                MapGeometry(size: proxy.size, safeBottom: proxy.safeAreaInsets.bottom, safeTop: proxy.safeAreaInsets.top)
             } action: { geometry in
                 mapGeometry = geometry
                 applyViewport()

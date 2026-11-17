@@ -308,6 +308,13 @@ enum MapLayout {
     /// Height from the top of the map covered by the safe area and the HUD
     /// card (speed, indicators): the ellipse fit keeps clear of it.
     static let hudReserved: Double = 150
+    /// MapKit's compass sits at the top right, this far below the top safe area
+    /// at its bottom edge (measured: about 25-70 pt from the top on an iPhone SE
+    /// with a 20 pt status bar), and the rail keeps a gap under it.
+    static let compassBelowSafeTop: Double = 50
+    static let compassGap: Double = 8
+    /// From the top of the map to where the rail may start (status bar, compass, gap).
+    static func compassReserved(topSafe: Double) -> Double { topSafe + compassBelowSafeTop + compassGap }
     /// Height above the bottom inset covered by the offer card (the compact
     /// card, its three actions in one row): the fit keeps clear of it.
     static let offerCardReserved: Double = 140

@@ -205,7 +205,8 @@ struct RouteCardLayoutTests {
     static let se = CGSize(width: 375, height: 667)
     /// The tallest card measured: uncertain position and an offline failure, uk (R92.1-1), ~304 pt plus the 8 pt gap.
     static let tallestBar = 304.0 + MapLayout.aboveCreditGap
-    static var cap: Double { MapBottomLayout.maxRouteBarHeight(containerHeight: Double(se.height)) }
+    static let topSafe = 20.0
+    static var cap: Double { MapBottomLayout.maxRouteBarHeight(containerHeight: Double(se.height), topSafe: topSafe) }
 
     /// The card's top edge, points from the map's top (the bar ends at the credit band).
     private func cardTop(barHeight: Double) -> Double {
@@ -276,25 +277,52 @@ struct RouteCardLayoutTests {
         func railTop(barHeight: Double) -> Double {
             Double(MapBottomLayout.frames(container: Self.se, items: [], railSize: rail, creditWidth: 190, slot: barHeight).rail.minY)
         }
-        #expect(railTop(barHeight: Self.tallestBar) < MapLayout.hudReserved, "uncapped: over the compass, the reported bug")
-        #expect(railTop(barHeight: Self.cap) >= MapLayout.hudReserved - 0.001)
+        let reserve = MapLayout.compassReserved(topSafe: Self.topSafe)
+        #expect(railTop(barHeight: Self.tallestBar) < reserve, "uncapped: over the compass, the reported bug")
+        #expect(railTop(barHeight: Self.cap) >= reserve - 0.001)
         #expect(Self.cap > MapLayout.bottomSlotHeight)
         // Taller screens leave more room; a tiny container still keeps the idle slot.
-        #expect(MapBottomLayout.maxRouteBarHeight(containerHeight: 852) > Self.cap)
-        #expect(MapBottomLayout.maxRouteBarHeight(containerHeight: 100) == MapLayout.bottomSlotHeight)
+        #expect(MapBottomLayout.maxRouteBarHeight(containerHeight: 852, topSafe: Self.topSafe) > Self.cap)
+        #expect(MapBottomLayout.maxRouteBarHeight(containerHeight: 852, topSafe: 59) < MapBottomLayout.maxRouteBarHeight(containerHeight: 852, topSafe: 20), "a notch pushes the compass down")
+        #expect(MapBottomLayout.maxRouteBarHeight(containerHeight: 100, topSafe: Self.topSafe) == MapLayout.bottomSlotHeight)
+    }
+
+    @Test("R93.1-1: at default type the uncertain place card (240 pt bar) and the three-route card (226 pt bar) fit under the cap on the SE, and the rail stays below the compass")
+    func defaultCardsFitWithoutScrolling() {
+        // Measured from the 52b screenshots at 2x, default type, uk: surface 232 + 8 gap; alternatives 218 + 8.
+        let reserve = MapLayout.compassReserved(topSafe: Self.topSafe)
+        for barHeight in [240.0, 226.0] {
+            #expect(barHeight <= Self.cap, "bar \(barHeight) pt, cap \(Self.cap)")
+            let rail = CGSize(width: 56, height: MapLayout.railHeight)
+            let frames = MapBottomLayout.frames(container: Self.se, items: [], railSize: rail, creditWidth: 190, slot: barHeight)
+            #expect(Double(frames.rail.minY) >= reserve, "rail top \(frames.rail.minY) under the compass reserve \(reserve)")
+        }
+        // The compass reserve is the status bar plus the compass, not the HUD card on the left.
+        #expect(reserve < MapLayout.hudReserved)
+    }
+
+    @Test("R93.1-2: the failure message and Retry are pinned with the actions, never in the scrolling part")
+    func failureIsPinned() {
+        #expect(PlaceCardRow.pinned.contains(.failure) && PlaceCardRow.pinned.contains(.actions))
+        #expect(!PlaceCardRow.scrolling.contains(.failure) && !PlaceCardRow.scrolling.contains(.actions))
+        #expect(Set(PlaceCardRow.pinned + PlaceCardRow.scrolling) == Set(PlaceCardRow.allCases), "every row is somewhere, once")
+        #expect(PlaceCardRow.pinned.count + PlaceCardRow.scrolling.count == PlaceCardRow.allCases.count)
+        #expect(PlaceCardRow.pinned.firstIndex(of: .failure)! < PlaceCardRow.pinned.firstIndex(of: .actions)!, "above the actions")
     }
 
     @Test("R92.1-1: whatever the text size, the card's surface stays within the cap; the actions stay outside the scroll")
     func scrollRoomHoldsCap() {
-        // Pinned: Pin and Route (56), Route anyway (44) and their gap: the tallest actions.
         let chrome = 20.0, spacing = 10.0, pinned = 108.0
+        // Pinned: the actions (108), with the failure row (about 56) and at large type (about 230).
         // Info heights from default type to AX2 with the uk uncertain + offline texts.
-        for info in [60.0, 150, 250, 400, 700] {
-            let room = RouteBarLayout.scrollRoom(maxHeight: Self.cap, pinnedHeight: pinned, spacing: spacing, chrome: chrome)
-            let surface = chrome + min(info, room ?? .infinity) + spacing + pinned + MapLayout.aboveCreditGap
-            #expect(surface <= Self.cap + 0.001, "info \(info) pt")
+        for pinned in [pinned, 164, 230] {
+            for info in [60.0, 150, 250, 400, 700] {
+                let room = RouteBarLayout.scrollRoom(maxHeight: Self.cap, pinnedHeight: pinned, spacing: spacing, chrome: chrome)
+                let surface = chrome + min(info, room ?? .infinity) + spacing + pinned + MapLayout.aboveCreditGap
+                #expect(surface <= Self.cap + 0.001, "pinned \(pinned), info \(info) pt")
+            }
         }
         #expect(RouteBarLayout.scrollRoom(maxHeight: nil, pinnedHeight: pinned, spacing: spacing, chrome: chrome) == nil)
-        #expect(RouteBarLayout.scrollRoom(maxHeight: 100, pinnedHeight: 200, spacing: spacing, chrome: chrome) == RouteBarLayout.minScrollRoom)
+        #expect(RouteBarLayout.scrollRoom(maxHeight: 100, pinnedHeight: 200, spacing: spacing, chrome: chrome) == 0, "never negative, no floor that would push the bar past the cap")
     }
 }
