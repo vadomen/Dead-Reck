@@ -443,6 +443,23 @@ struct RouteFlowTests {
         #expect(feed.latest == nil && feed.latestAppliedAt == nil && feed.display == nil)
     }
 
+    @Test("Stub flows keep their fixed inputs: install does not set an estimate source (R91.4-3)")
+    func stubInputsStayFixed() throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let session = RecordingFixtures.session(store: scratch.store)
+        let flow = RouteFlowModel(
+            searcher: StubSearcher(), director: StubDirector(), saved: SavedDestinationsStore.preview())
+        flow.fixInputs { RouteLiveInputs() }
+        let model = MapViewModel(track: GPSTrack(), latest: nil)
+        RouteWiring.install(flow: flow, on: session, navigation: NavigationFeed(display: nil), model: model)
+        #expect(flow.estimateSource == nil)
+        let live = RouteFlowModel(
+            searcher: StubSearcher(), director: StubDirector(), saved: SavedDestinationsStore.preview())
+        RouteWiring.install(flow: live, on: session, navigation: NavigationFeed(display: nil), model: model)
+        #expect(live.estimateSource != nil)
+    }
+
     @Test("A source with no fresh estimate means no estimate: guidance says uncertain and never arrives")
     func noFreshEstimate() async {
         let rig = Rig()

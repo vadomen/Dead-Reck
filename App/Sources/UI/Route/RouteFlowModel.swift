@@ -96,7 +96,7 @@ final class RouteFlowModel {
     /// Reads the estimate, the fix, the GPS switch and the speed. Set by the map
     /// (`bindLiveInputs`); screenshot stubs fix it.
     @ObservationIgnored private(set) var liveInputs: () -> RouteLiveInputs = { RouteLiveInputs() }
-    @ObservationIgnored private var inputsAreFixed = false
+    @ObservationIgnored private(set) var inputsAreFixed = false
     /// A fresh estimate for guidance, independent of the map: nil when none could be
     /// had just now (a stale one is none). Unset (tests, stubs): the estimate in `liveInputs`.
     @ObservationIgnored var estimateSource: (@MainActor () async -> NavDisplay?)?

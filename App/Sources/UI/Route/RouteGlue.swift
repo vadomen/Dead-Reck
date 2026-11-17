@@ -89,7 +89,8 @@ enum RouteWiring {
     ) {
         session.activeRouteProvider = { [weak flow] in flow?.handOver }
         if let navigation, let model {
-            flow.estimateSource = RouteEstimate.source(feed: navigation)
+            // Stub flows (`-uiRouteStub`) fix their inputs: a live source would override them.
+            if !flow.inputsAreFixed { flow.estimateSource = RouteEstimate.source(feed: navigation) }
             flow.bindLiveInputs { [weak session, weak model, weak navigation] in
                 guard let session, let model, let navigation else { return RouteLiveInputs() }
                 return RouteInputs.make(session: session, model: model, navigation: navigation)
