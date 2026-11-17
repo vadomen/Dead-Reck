@@ -800,12 +800,12 @@
         }
       }
     },
-    "Allow location to suggest your region's map. It stays on the phone." : {
+    "Allow location to suggest your region's map. This is worked out on the phone." : {
       "localizations" : {
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Дозвольте доступ до геолокації, щоб ми запропонували карту вашого регіону. Дані лишаються на телефоні."
+            "value" : "Дозвольте доступ до геолокації, щоб ми запропонували карту вашого регіону. Це визначається на телефоні."
           }
         }
       }

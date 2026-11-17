@@ -53,13 +53,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "FuGPS uses your location to show where you are and to keep estimating your position when GPS is jammed, also with the screen locked while you drive, and to pick the road map for your area. If you record a drive, your route is saved in the recording on your phone."
+            "value" : "FuGPS uses your location to show where you are and to keep estimating your position when GPS is jammed, also with the screen locked while you drive, to pick the road map for your area, and to find places and build routes from your position (through Apple Maps)."
           }
         },
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "FuGPS використовує вашу геолокацію, щоб показувати, де ви перебуваєте, продовжувати визначати позицію, коли GPS глушать (також із заблокованим екраном під час руху), і вибирати карту доріг для вашого району. Якщо ви записуєте поїздку, ваш маршрут зберігається в записі на вашому телефоні."
+            "value" : "FuGPS використовує вашу геолокацію, щоб показувати, де ви перебуваєте, продовжувати визначати позицію, коли GPS глушать (також із заблокованим екраном під час руху), вибирати карту доріг для вашого району та знаходити місця й будувати маршрути від вашої позиції (через Apple Maps)."
           }
         }
       }
