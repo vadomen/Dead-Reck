@@ -12,6 +12,9 @@ enum RouteBarLayout {
     static let minTapTarget = MapLayout.minTapTarget
     /// The surface's left and right padding, shared by every bar.
     static let horizontalPadding: Double = 14
+    /// Above and below the content of the guidance bar, and so of the away and
+    /// arrived bars too (P52B-QA-2).
+    static let verticalPadding: Double = 6
     /// A card's scrolling part never shrinks below this (the title and a line).
     static let minScrollRoom: Double = 60
 
@@ -222,6 +225,7 @@ struct GuidanceBar: View {
                             .background(HUDColors.accent, in: Capsule())
                             .foregroundStyle(HUDColors.onAccent)
                             .padding(.top, 4)
+                            .padding(.bottom, RouteBarLayout.verticalPadding)
                     }
                 }
                 Spacer(minLength: 0)
@@ -234,7 +238,7 @@ struct GuidanceBar: View {
                 .accessibilityLabel(Text("End route"))
             }
             .frame(minHeight: RouteBarLayout.fieldHeight, alignment: .top)
-            .padding(.vertical, 6)
+            .padding(.vertical, RouteBarLayout.verticalPadding)
         }
     }
 
@@ -301,6 +305,7 @@ struct ArrivedBar: View {
                     .frame(minWidth: RouteBarLayout.minTapTarget, minHeight: RouteBarLayout.fieldHeight)
             }
             .frame(minHeight: RouteBarLayout.fieldHeight)
+            .padding(.vertical, RouteBarLayout.verticalPadding)
         }
         // Closes itself: nothing stays on the map once the trip is over.
         .task {
