@@ -1366,3 +1366,17 @@ Reviewers: two fresh opus reviewers. A: logic; all round-1 fixes verified correc
 | R91.2-5 | MAJOR | `App/Sources/UI/Map/MapView.swift:146`: the route flow's live inputs are bound in `MapScreen.onAppear` to MapScreen's current session/feed, which during the demo are the demo's; if `onAppear` fires then (Settings cover closing after Demo drive), the flow stays bound to the demo session after the demo ends (no estimate, "Position uncertain", no arrival). | FIXED | 0a34849: live inputs bound once in `RootView.onAppear` to the app's session, feed and map model via `RouteWiring.install(flow:on:navigation:model:)`, binding removed from `MapView`; test `inputsFromAppObjects`. Raised by reviewer A as an unverified risk; confirmed by the orchestrator from the code path (trigger not device-verified). |
 
 Tests after round 2 (0a34849): app 953 passed, Core 1316 (36 known issues).
+
+### Round 3
+
+Reviewers: two fresh opus reviewers. A: logic; R91.2-5 verified fixed. B: UI, docs; R91.2-2 verified fixed.
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R91.3-1 | MAJOR | `App/Sources/UI/Route/RouteGlue.swift:36`, `RouteFlowModel.swift:366-368`: guidance and arrival read `navigation.latest`, written only by the map's poll (map selected and scene active), so with the phone locked during Record the estimate froze: `routeCleared` arrived stamped late or never written. | FIXED | 62feb5d: the flow polls the app `NavigationFeed` itself via `RouteEstimate.source(feed:)`; an estimate older than 1 s counts as none; speed from the session via `RouteInputs.sessionSpeed`; tests `arrivalFromOwnSource`, `noFreshEstimate`, `freshness`, `feedStamp`. Tests after: app 957, Core 1316 (36 known issues). |
+| R91.3-2 | MAJOR | `site/public/privacy.html:17,31` and uk: the R91.2-1 rewrite said the only data leaving the phone is MapKit requests, contradicting the page's own Map downloads section (our site via Cloudflare sees IP and region); Review Notes the same. | FIXED | 7984fce (APP_STORE_METADATA and RELEASE_PLAN parts in the round-3 ledger commit): site en/uk short version and bullet as decided by the user, meta description, saved-position line, effective date November 17, 2026. | Third privacy-text finding after R91.1-5 and R91.2-1: the loop stopped and asked the user; the user decided the wording on 2026-11-17 (no "no servers"; network used only for road-map downloads from our site, whose hosting sees IP and region, and Apple Maps tiles, search and route requests). |
+| R91.3-3 | MINOR | `App/Resources/Info.plist:51` + `InfoPlist.xcstrings`: the location purpose string does not cover place search and routing (item 7 asked for a proposal). | FIXED | 7984fce: `NSLocationWhenInUseUsageDescription` en/uk as decided by the user 2026-11-17 (no Always key exists); onboarding "This is worked out on the phone." |
+| R91.3-4 | MINOR | `README.md:614`, `docs/RELEASE_PLAN.md:180`: still say no location / no personal data leaves the phone. | FIXED | 7984fce (`docs/RELEASE_PLAN.md` part in the round-3 ledger commit): README:614; fixed with R91.3-2. |
+| R91.3-5 | MINOR | `App/Sources/UI/Route/RouteBottomBar.swift:77-79,98-100,168-174,249-251`, `RouteSheets.swift:76-77,129-131,254-256`: frame/padding/background applied on the Button, not inside its label, so the tappable area is smaller than the drawn 44 pt capsule (clear-text icon ~20 pt); the `tapTargets` test checks constants only. | DEFERRED | BACKLOG. |
+
+Tests after round 3 (7984fce): app 957 passed, Core 1316 (36 known issues).

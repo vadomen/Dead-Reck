@@ -23,7 +23,7 @@ Done / in code / open, per item. "In code (prompt N)" = merged work that has not
 | Demo mode for App Review (Phase 1 item 5) | done in code (prompt 36, branch `rel-demo`); device checks open (PLAN §6) | REL-DEMO |
 | Export of recordings vs the privacy-manifest reason codes (2.2) | done in code (prompt 36): codes kept, Record, Sessions and Console behind the 7-tap gate in Release; device checks open (PLAN §6) | REL-EXPORT |
 | Ukrainian + English localisation (D5, 2.3) | done in code (prompt 41, branch `ux15-localization`); device checks open (PLAN §6) | UX-15 |
-| App Store metadata draft (uk + en) | draft in `docs/APP_STORE_METADATA.md`. Routing settled (no routing; background modes justified as live position on the map while driving); privacy label Data Not Collected (no site analytics, no server logs kept; check Cloudflare Web Analytics is off). Open points: demo steps not yet checked on a Release build; name availability, copyright holder, video, screenshots | UX-15 |
+| App Store metadata draft (uk + en) | draft in `docs/APP_STORE_METADATA.md`. Routing settled (no routing; background modes justified as live position on the map while driving) — superseded by prompt 52 (routes via MapKit), see APP_STORE_METADATA open point 11; privacy label Data Not Collected (no site analytics, no server logs kept; check Cloudflare Web Analytics is off). Open points: demo steps not yet checked on a Release build; name availability, copyright holder, video, screenshots | UX-15 |
 | First launch as instructions (Phase 1 item 3) | done in code (prompt 32, follow-up prompt 36); device checks open (PLAN §6) | UX-18 |
 | Manual "GPS off" + GPS state chip + spoken GPS changes (D8) | done in code (prompt 37); device checks open (PLAN §6) | UX-9 (a) + UX-22 |
 | Restore the estimate after a relaunch (D8) | done in code (prompt 39); device checks open (PLAN §6) | UX-20 |
@@ -120,7 +120,7 @@ Also: `NSPrivacyTracking = false`, no tracking domains, `NSPrivacyCollectedDataT
 - **Wording in the description.** Write "navigation when GPS is absent or distorted"; do not present the app as a countermeasure against electronic warfare.
 
 ### 2.5 App Store Connect: legal and metadata
-- [ ] **Privacy policy URL** (mandatory). Content: what is recorded on the device, that nothing is sent, the IP on pack download, how to delete data. Hosting: GitHub Pages etc. *(drafted: `site/public/privacy.html`, served from Cloudflare Pages)*
+- [ ] **Privacy policy URL** (mandatory). Content: what is recorded on the device, that nothing is sent to us (what goes to Apple Maps and the IP on pack download), how to delete data. Hosting: GitHub Pages etc. *(drafted: `site/public/privacy.html`, served from Cloudflare Pages)*
 - [ ] **App Privacy (nutrition label)**: "Data Not Collected", if that is the case. If the pack server keeps logs with IPs, that must also be reflected in the questionnaire.
 - [ ] **Age rating**: a new questionnaire, including questions about social media (mandatory from September 2026). Expected 4+.
 - [ ] **DSA trader status** (if the EU is in the country list, D3).
@@ -177,7 +177,7 @@ Normal use needs an OBD-II Bluetooth LE adapter in the car, so you can test with
 4. Tap Stop demo to return to the normal map.
 The demo works offline and stores nothing. A video of a real drive: <VIDEO LINK>
 
-Bluetooth is used only to talk to the OBD-II adapter. Location (When In Use) gives the map position and GPS fixes. Navigate keeps a background location activity session so the position continues while the screen is locked during a drive. No personal data leaves the phone. The map uses Apple Maps (MapKit); road maps are downloaded from our website, which reveals the requested region and the IP address. There are no accounts or analytics.
+Bluetooth is used only to talk to the OBD-II adapter. Location (When In Use) gives the map position and GPS fixes, and the start point for place search and routes (through Apple Maps). Navigate keeps a background location activity session so the position continues while the screen is locked during a drive. FuGPS has no accounts and sells no data; recordings, position and searches are never sent to us. The network is used only for two things: road-map downloads from our website — our hosting (Cloudflare) sees the IP address and which region's map is downloaded — and Apple Maps (MapKit): map tiles, and place search and route requests, which send Apple the search text, the route's start and end, and the current position. There are no analytics.
 ```
 
 ## Phase 7. Submission and release
