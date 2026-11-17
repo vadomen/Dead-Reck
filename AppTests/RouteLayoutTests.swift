@@ -2,6 +2,7 @@ import CoreGraphics
 import DriveLoggerCore
 import Foundation
 import MapKit
+import SwiftUI
 import Testing
 import UIKit
 
@@ -324,5 +325,73 @@ struct RouteCardLayoutTests {
         }
         #expect(RouteBarLayout.scrollRoom(maxHeight: nil, pinnedHeight: pinned, spacing: spacing, chrome: chrome) == nil)
         #expect(RouteBarLayout.scrollRoom(maxHeight: 100, pinnedHeight: 200, spacing: spacing, chrome: chrome) == 0, "never negative, no floor that would push the bar past the cap")
+    }
+}
+
+/// Review round 1 fix-up: the cards hug their content (as in 52b) and stretch to
+/// the cap only when the content passes it. Rendered in a window of finite height,
+/// like the bottom column: a ScrollView or ViewThatFits would take all of it.
+@MainActor
+@Suite("Route card hugs content")
+struct RouteCardHugTests {
+    final class Box { var height = 0.0 }
+
+    private struct Probe: View {
+        var flow: RouteFlowModel
+        var cap: Double?
+        var size: CGSize
+        var box: Box
+        var body: some View {
+            VStack(spacing: 0) {
+                Spacer(minLength: 0)
+                RouteBottomBar(flow: flow, maxHeight: cap)
+                    .onGeometryChange(for: Double.self, of: { Double($0.size.height) }) { box.height = $0 }
+            }
+            .frame(width: size.width, height: size.height)
+        }
+    }
+
+    private func spin(_ seconds: Double) async {
+        try? await Task.sleep(for: .seconds(seconds))
+    }
+
+    /// The bar's height for the stub `state` (a place card without a failure for "place") in a screen of `size`.
+    private func barHeight(state: String, cap: Double?, size: CGSize) async throws -> Double {
+        let flow = try #require(RouteDebugStubs.flow(argument: state))
+        for _ in 0..<100 where flow.phase != .placeCard { await spin(0.1) }
+        #expect(flow.phase == .placeCard)
+        let box = Box()
+        let window = UIWindow(frame: CGRect(origin: .zero, size: size))
+        let host = UIHostingController(rootView: Probe(flow: flow, cap: cap, size: size, box: box))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        for _ in 0..<5 {
+            await spin(0.15)
+            host.view.setNeedsLayout()
+            host.view.layoutIfNeeded()
+        }
+        window.isHidden = true
+        return box.height
+    }
+
+    @Test("A plain place card is as high with the cap as without it, and well under it, on the SE and a Plus")
+    func hugsContent() async throws {
+        for size in [CGSize(width: 375, height: 667), CGSize(width: 414, height: 896)] {
+            let cap = MapBottomLayout.maxRouteBarHeight(containerHeight: Double(size.height), topSafe: 20)
+            let free = try await barHeight(state: "place", cap: nil, size: size)
+            let capped = try await barHeight(state: "place", cap: cap, size: size)
+            #expect(free > 100, "measured at all: \(free)")
+            #expect(abs(capped - free) <= 1, "capped \(capped) vs free \(free) at \(size.height)")
+            #expect(capped < cap - 40, "well under the cap \(cap): \(capped)")
+        }
+    }
+
+    @Test("A card taller than the cap is exactly the cap (the info scrolls)")
+    func stretchesOnlyPastCap() async throws {
+        let size = CGSize(width: 375, height: 667)
+        let free = try await barHeight(state: "place", cap: nil, size: size)
+        let cap = free - 40
+        let capped = try await barHeight(state: "place", cap: cap, size: size)
+        #expect(abs(capped - cap) <= 1, "capped \(capped), cap \(cap)")
     }
 }
