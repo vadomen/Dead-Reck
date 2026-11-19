@@ -156,16 +156,43 @@ struct DestinationSearchSheet: View {
 enum PlaceCardRow: Equatable, CaseIterable {
     case header, originNote, failure, actions
 
-    /// The rows that scroll past the bar's cap (R92.1-1): what the card says about the place and the origin.
-    static let scrolling: [PlaceCardRow] = [.header, .originNote]
-    /// The rows that never scroll (R93.1-2): the failure message with Retry, then the actions, so a
-    /// tap on Route that fails is always answered on screen.
-    static let pinned: [PlaceCardRow] = [.failure, .actions]
+    /// The rows that scroll past the bar's cap (R92.1-1): what the card says about the place (title, address, distance).
+    static let scrolling: [PlaceCardRow] = [.header]
+    /// The rows that never scroll, top to bottom: the origin note (P52C-QA-1: why Route is grey, always
+    /// visible, directly above the buttons it explains), the failure message with Retry (R93.1-2: a tap on
+    /// Route that fails is always answered on screen), then the actions. They keep their natural height
+    /// (and `pinnedTypeLimit`), so the header's room, at least Close's 44 pt, is what scrolls.
+    static let pinned: [PlaceCardRow] = [.originNote, .failure, .actions]
+    /// The largest Dynamic Type size the pinned rows scale to: the default. Measured on the SE with the uk strings
+    /// (the longest, uncertain + offline): at xxLarge the header's room is 32 pt, Close (44 pt) would cover the note,
+    /// and from accessibility-medium up (xxxLarge too) the pinned part passes the cap on its own. The header scales.
+    static let pinnedTypeLimit = DynamicTypeSize.large
+}
+
+/// Tests only (P52C-QA-1): receives the UIView behind the origin note ("note") and the Close button ("close"), so a test can read where the
+/// note really is and whether a scroll view clips it. Nil, and a clear background, in the app.
+private struct OriginNoteProbeKey: EnvironmentKey { static let defaultValue: (@MainActor (String, UIView) -> Void)? = nil }
+extension EnvironmentValues {
+    var originNoteProbe: (@MainActor (String, UIView) -> Void)? {
+        get { self[OriginNoteProbeKey.self] }
+        set { self[OriginNoteProbeKey.self] = newValue }
+    }
+}
+
+private struct OriginNoteProbe: UIViewRepresentable {
+    var name = "note"
+    @Environment(\.originNoteProbe) private var probe
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.isUserInteractionEnabled = false
+        return view
+    }
+    func updateUIView(_ view: UIView, context: Context) { probe?(name, view) }
 }
 
 struct PlaceCard: View {
     var flow: RouteFlowModel
-    /// The bar's cap (`RouteBottomBar.maxHeight`): the rows in `PlaceCardRow.scrolling` scroll past it, `pinned` stay.
+    /// The bar's cap (`RouteBottomBar.maxHeight`): only `PlaceCardRow.scrolling` (the header) scrolls past it; `pinned` stays.
     var maxHeight: Double?
 
     var body: some View {
@@ -178,6 +205,18 @@ struct PlaceCard: View {
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(PlaceCardRow.pinned, id: \.self) { row($0, place: place) }
                 }
+                // The pinned rows never grow past what the cap holds (P52C-QA-1): at the largest sizes the
+                // bar would pass the cap and the rail would cover the compass. The header scrolls and still scales.
+                .dynamicTypeSize(...PlaceCardRow.pinnedTypeLimit)
+            }
+            // Close is not text: it stays put at the top trailing corner, outside the scrolling header.
+            .overlay(alignment: .topTrailing) {
+                Button { flow.dismiss() } label: {
+                    Image(systemName: "xmark.circle.fill").font(.system(size: 28)).foregroundStyle(.secondary)
+                        .frame(width: RouteBarLayout.minTapTarget, height: RouteBarLayout.minTapTarget)
+                }
+                .accessibilityLabel(Text("Close"))
+                .background { OriginNoteProbe(name: "close") }
             }
             .padding(.vertical, 10)
         }
@@ -198,15 +237,11 @@ struct PlaceCard: View {
                             .font(.subheadline).foregroundStyle(.secondary)
                     }
                 }
-                Spacer(minLength: 0)
-                Button { flow.dismiss() } label: {
-                    Image(systemName: "xmark.circle.fill").font(.system(size: 28)).foregroundStyle(.secondary)
-                        .frame(width: RouteBarLayout.minTapTarget, height: RouteBarLayout.minTapTarget)
-                }
-                .accessibilityLabel(Text("Close"))
             }
+            .padding(.trailing, RouteBarLayout.minTapTarget)
+            .frame(maxWidth: .infinity, minHeight: RouteBarLayout.minTapTarget, alignment: .topLeading)
         case .originNote:
-            originNote
+            originNote.background { OriginNoteProbe() }
         case .failure:
             if let failure = flow.failure {
                 HStack {

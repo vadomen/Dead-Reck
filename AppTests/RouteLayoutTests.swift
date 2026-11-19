@@ -302,13 +302,12 @@ struct RouteCardLayoutTests {
         #expect(reserve < MapLayout.hudReserved)
     }
 
-    @Test("R93.1-2: the failure message and Retry are pinned with the actions, never in the scrolling part")
+    @Test("R93.1-2, P52C-QA-1: the origin note, the failure message and Retry are pinned with the actions (in that order), only the header scrolls")
     func failureIsPinned() {
-        #expect(PlaceCardRow.pinned.contains(.failure) && PlaceCardRow.pinned.contains(.actions))
-        #expect(!PlaceCardRow.scrolling.contains(.failure) && !PlaceCardRow.scrolling.contains(.actions))
+        #expect(PlaceCardRow.pinned == [.originNote, .failure, .actions], "the note directly above the buttons it explains")
+        #expect(PlaceCardRow.scrolling == [.header])
         #expect(Set(PlaceCardRow.pinned + PlaceCardRow.scrolling) == Set(PlaceCardRow.allCases), "every row is somewhere, once")
         #expect(PlaceCardRow.pinned.count + PlaceCardRow.scrolling.count == PlaceCardRow.allCases.count)
-        #expect(PlaceCardRow.pinned.firstIndex(of: .failure)! < PlaceCardRow.pinned.firstIndex(of: .actions)!, "above the actions")
     }
 
     @Test("R92.1-1: whatever the text size, the card's surface stays within the cap; the actions stay outside the scroll")
@@ -394,4 +393,63 @@ struct RouteCardHugTests {
         let capped = try await barHeight(state: "place", cap: cap, size: size)
         #expect(abs(capped - cap) <= 1, "capped \(capped), cap \(cap)")
     }
+
+    @Test("P52C-QA-1: on the tallest card (uncertain + offline) on the SE, at every type size, the bar stays under the cap and the uncertain line and Close are fully visible")
+    func uncertainLineStaysVisible() async throws {
+        let size = CGSize(width: 375, height: 667)
+        let cap = MapBottomLayout.maxRouteBarHeight(containerHeight: Double(size.height), topSafe: 20)
+        for type in [UIContentSizeCategory.large, .accessibilityMedium, .accessibilityExtraLarge, .accessibilityExtraExtraExtraLarge] {
+            let flow = try #require(RouteDebugStubs.flow(argument: "uncertainOffline"))
+            for _ in 0..<100 where flow.failure == nil || flow.phase != .placeCard { await spin(0.1) }
+            #expect(flow.failure != nil && flow.phase == .placeCard, "the tallest card is up")
+            let box = Box()
+            let found = Weak()
+            let window = UIWindow(frame: CGRect(origin: .zero, size: size))
+            let host = UIHostingController(
+                rootView: Probe(flow: flow, cap: cap, size: size, box: box)
+                    .environment(\.originNoteProbe) { found.views.append(($0, $1)) })
+            host.traitOverrides.preferredContentSizeCategory = type
+            window.rootViewController = host
+            window.makeKeyAndVisible()
+            for _ in 0..<5 {
+                await spin(0.15)
+                host.view.setNeedsLayout()
+                host.view.layoutIfNeeded()
+            }
+            // The info part is also laid out once, invisibly, to measure it: only the shown copy counts.
+            func shown(_ name: String) -> UIView? {
+                found.views.filter { entry in
+                    var n: UIView? = entry.1
+                    while let x = n { if x.alpha == 0 || x.isHidden { return false }; n = x.superview }
+                    return entry.0 == name && entry.1.window != nil
+                }.last?.1
+            }
+            // The bar (its gap above the credit band included) fits under the cap.
+            #expect(box.height <= cap + 0.5, "\(type): bar \(box.height) over the cap \(cap)")
+            let card = CGRect(x: 0, y: size.height - box.height, width: size.width, height: box.height)
+            var frames: [String: CGRect] = [:]
+            for name in ["note", "close"] {
+                let view = try #require(shown(name), "\(name) is on the card (\(type))")
+                let frame = view.convert(view.bounds, to: host.view)
+                frames[name] = frame
+                #expect(frame.height > 10, "\(type) \(name) measured: \(frame)")
+                #expect(card.insetBy(dx: -0.5, dy: -0.5).contains(frame), "\(type): \(name) \(frame) inside card \(card)")
+                // No scroll view above it clips any of it.
+                var ancestor = view.superview
+                while let v = ancestor {
+                    if let scroll = v as? UIScrollView {
+                        let inScroll = scroll.convert(view.bounds, from: view)
+                        #expect(scroll.bounds.insetBy(dx: -0.5, dy: -0.5).contains(inScroll), "\(type): \(name) \(inScroll) clipped by the scroll room \(scroll.bounds)")
+                    }
+                    ancestor = v.superview
+                }
+            }
+            if let note = frames["note"], let close = frames["close"] {
+                #expect(!note.intersects(close.insetBy(dx: 1, dy: 1)), "\(type): Close \(close) over the uncertain line \(note)")
+            }
+            window.isHidden = true
+        }
+    }
+
+    private final class Weak { var views: [(String, UIView)] = [] }
 }
