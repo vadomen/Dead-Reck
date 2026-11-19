@@ -156,16 +156,38 @@ struct DestinationSearchSheet: View {
 enum PlaceCardRow: Equatable, CaseIterable {
     case header, originNote, failure, actions
 
-    /// The rows that scroll past the bar's cap (R92.1-1): what the card says about the place and the origin.
-    static let scrolling: [PlaceCardRow] = [.header, .originNote]
-    /// The rows that never scroll (R93.1-2): the failure message with Retry, then the actions, so a
-    /// tap on Route that fails is always answered on screen.
-    static let pinned: [PlaceCardRow] = [.failure, .actions]
+    /// The rows that scroll past the bar's cap (R92.1-1): what the card says about the place (title, address, distance).
+    static let scrolling: [PlaceCardRow] = [.header]
+    /// The rows that never scroll, top to bottom: the origin note (P52C-QA-1: why Route is grey, always
+    /// visible, directly above the buttons it explains), the failure message with Retry (R93.1-2: a tap on
+    /// Route that fails is always answered on screen), then the actions. They keep their natural height; at
+    /// the largest type the header's room shrinks to what is left, possibly nothing.
+    static let pinned: [PlaceCardRow] = [.originNote, .failure, .actions]
+}
+
+/// Tests only (P52C-QA-1): receives the UIView behind the origin note, so a test can read where the
+/// note really is and whether a scroll view clips it. Nil, and a clear background, in the app.
+private struct OriginNoteProbeKey: EnvironmentKey { static let defaultValue: (@MainActor (UIView) -> Void)? = nil }
+extension EnvironmentValues {
+    var originNoteProbe: (@MainActor (UIView) -> Void)? {
+        get { self[OriginNoteProbeKey.self] }
+        set { self[OriginNoteProbeKey.self] = newValue }
+    }
+}
+
+private struct OriginNoteProbe: UIViewRepresentable {
+    @Environment(\.originNoteProbe) private var probe
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.isUserInteractionEnabled = false
+        return view
+    }
+    func updateUIView(_ view: UIView, context: Context) { probe?(view) }
 }
 
 struct PlaceCard: View {
     var flow: RouteFlowModel
-    /// The bar's cap (`RouteBottomBar.maxHeight`): the rows in `PlaceCardRow.scrolling` scroll past it, `pinned` stay.
+    /// The bar's cap (`RouteBottomBar.maxHeight`): only `PlaceCardRow.scrolling` (the header) scrolls past it; `pinned` stays.
     var maxHeight: Double?
 
     var body: some View {
@@ -206,7 +228,7 @@ struct PlaceCard: View {
                 .accessibilityLabel(Text("Close"))
             }
         case .originNote:
-            originNote
+            originNote.background { OriginNoteProbe() }
         case .failure:
             if let failure = flow.failure {
                 HStack {

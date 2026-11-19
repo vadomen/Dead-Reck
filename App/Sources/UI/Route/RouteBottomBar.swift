@@ -29,7 +29,7 @@ enum RouteBarLayout {
 
 /// A card whose information part (`info`) scrolls when the card would pass its
 /// cap (R92.1-1); `pinned` sits below it and never scrolls. The place card pins
-/// the failure message with Retry and the actions (`PlaceCardRow.pinned`), the
+/// the origin note, the failure message with Retry and the actions (`PlaceCardRow.pinned`), the
 /// alternatives card pins Cancel and Start. The card hugs its content: `info` is
 /// as high as it needs, and only an `info` taller than the room left under the
 /// cap becomes a `ScrollView` of exactly that room (a ScrollView or ViewThatFits

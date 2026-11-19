@@ -302,13 +302,12 @@ struct RouteCardLayoutTests {
         #expect(reserve < MapLayout.hudReserved)
     }
 
-    @Test("R93.1-2: the failure message and Retry are pinned with the actions, never in the scrolling part")
+    @Test("R93.1-2, P52C-QA-1: the origin note, the failure message and Retry are pinned with the actions (in that order), only the header scrolls")
     func failureIsPinned() {
-        #expect(PlaceCardRow.pinned.contains(.failure) && PlaceCardRow.pinned.contains(.actions))
-        #expect(!PlaceCardRow.scrolling.contains(.failure) && !PlaceCardRow.scrolling.contains(.actions))
+        #expect(PlaceCardRow.pinned == [.originNote, .failure, .actions], "the note directly above the buttons it explains")
+        #expect(PlaceCardRow.scrolling == [.header])
         #expect(Set(PlaceCardRow.pinned + PlaceCardRow.scrolling) == Set(PlaceCardRow.allCases), "every row is somewhere, once")
         #expect(PlaceCardRow.pinned.count + PlaceCardRow.scrolling.count == PlaceCardRow.allCases.count)
-        #expect(PlaceCardRow.pinned.firstIndex(of: .failure)! < PlaceCardRow.pinned.firstIndex(of: .actions)!, "above the actions")
     }
 
     @Test("R92.1-1: whatever the text size, the card's surface stays within the cap; the actions stay outside the scroll")
@@ -394,4 +393,53 @@ struct RouteCardHugTests {
         let capped = try await barHeight(state: "place", cap: cap, size: size)
         #expect(abs(capped - cap) <= 1, "capped \(capped), cap \(cap)")
     }
+
+    @Test("P52C-QA-1: the uncertain line is fully visible on the tallest card (uncertain + offline) on the SE, at default type and at accessibility-medium")
+    func uncertainLineStaysVisible() async throws {
+        let size = CGSize(width: 375, height: 667)
+        let cap = MapBottomLayout.maxRouteBarHeight(containerHeight: Double(size.height), topSafe: 20)
+        for type in [DynamicTypeSize.large, .accessibility1] {
+            let flow = try #require(RouteDebugStubs.flow(argument: "uncertainOffline"))
+            for _ in 0..<100 where flow.failure == nil || flow.phase != .placeCard { await spin(0.1) }
+            #expect(flow.failure != nil && flow.phase == .placeCard, "the tallest card is up")
+            let box = Box()
+            let note = Weak()
+            let window = UIWindow(frame: CGRect(origin: .zero, size: size))
+            let host = UIHostingController(
+                rootView: Probe(flow: flow, cap: cap, size: size, box: box)
+                    .environment(\.dynamicTypeSize, type)
+                    .environment(\.originNoteProbe) { note.views.append($0) })
+            window.rootViewController = host
+            window.makeKeyAndVisible()
+            for _ in 0..<5 {
+                await spin(0.15)
+                host.view.setNeedsLayout()
+                host.view.layoutIfNeeded()
+            }
+            // The info part is also laid out once, invisibly, to measure it: only the shown copy counts.
+            let shown = note.views.filter { v in
+                var n: UIView? = v
+                while let x = n { if x.alpha == 0 || x.isHidden { return false }; n = x.superview }
+                return v.window != nil
+            }
+            let view = try #require(shown.last, "the uncertain line is on the card (\(type)); \(note.views.count) copies")
+            let frame = view.convert(view.bounds, to: host.view)
+            // The card is the bottom `box.height` of the window; the line lies inside it...
+            let card = CGRect(x: 0, y: size.height - box.height, width: size.width, height: box.height)
+            #expect(frame.height > 10, "measured: \(frame)")
+            #expect(card.insetBy(dx: -0.5, dy: -0.5).contains(frame), "\(type): line \(frame) inside card \(card)")
+            // ...and no scroll view above it clips any of it.
+            var ancestor = view.superview
+            while let v = ancestor {
+                if let scroll = v as? UIScrollView {
+                    let inScroll = scroll.convert(view.bounds, from: view)
+                    #expect(scroll.bounds.insetBy(dx: -0.5, dy: -0.5).contains(inScroll), "\(type): line \(inScroll) clipped by the scroll room \(scroll.bounds)")
+                }
+                ancestor = v.superview
+            }
+            window.isHidden = true
+        }
+    }
+
+    private final class Weak { var views: [UIView] = [] }
 }
