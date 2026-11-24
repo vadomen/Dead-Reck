@@ -8,7 +8,13 @@ import Foundation
 /// place names. States: `search`, `place`, `uncertain` (place card, uncertain
 /// position), `alternatives`, `guiding`, `guidingUncertain`, `away`, `arrived`,
 /// `offline`, `uncertainOffline` (the tallest card: uncertain position, then
-/// Route anyway fails offline).
+/// Route anyway fails offline). Prompt 53a, in the search sheet: `coordinates`
+/// (the Coordinates row), `coordinatesSwapped` (the "swapped" row),
+/// `coordinatesInvalid` (the out-of-range message), `openLink` (the "Open link"
+/// row for a short link), `linkNoPoint` (a short link was tapped and led to no
+/// point), `linkNoPointTyped` (a full link typed with no point), `coordinatesCard`
+/// (the place card for coordinates), `linkCard` (the card for a pasted full link
+/// that names the place).
 @MainActor
 enum RouteDebugStubs {
     /// Start of every stub route: where `MapPreviewData.fakeNav` puts the estimate.
@@ -91,6 +97,17 @@ enum RouteDebugStubs {
         func resolve(_ completion: DestinationCompletion) async throws -> RoutePlace { RouteDebugStubs.destination }
     }
 
+    /// Invented values near (0, 0), like every stub place.
+    static let coordinatesText = "0.0231, 0.0182"
+    static let shortLink = "https://maps.app.goo.gl/AbCd1234"
+    static let linkWithName = "https://www.google.com/maps/place/Harbour+Caf%C3%A9/@0.0231,0.0182,17z/data=!3d0.0231!4d0.0182"
+    nonisolated static let linkWithoutPoint = "https://www.google.com/maps/place/Harbour+Caf%C3%A9/data=!4m2"
+
+    /// A short link that ends on a page with no point.
+    final class LinkResolver: MapLinkResolving {
+        func resolve(_ url: URL) async throws -> URL { URL(string: RouteDebugStubs.linkWithoutPoint)! }
+    }
+
     final class Director: RouteDirecting {
         var failure: RouteServiceError?
 
@@ -125,7 +142,7 @@ enum RouteDebugStubs {
             home: RoutePlace(name: "Home", addressLine: "3 Lantern Way", latitude: 0.005, longitude: 0.03))
         let flow = RouteFlowModel(
             searcher: Searcher(), director: director, pacer: RequestPacer(clock: clock, debounce: 0, minInterval: 0),
-            saved: saved)
+            saved: saved, linkResolver: LinkResolver())
         let first = routes()[0]
         let uncertain = state == "uncertain" || state == "uncertainOffline"
         let at: GeoPoint = switch state {
@@ -146,6 +163,9 @@ enum RouteDebugStubs {
                 flow.openSearch()
                 flow.updateQuery("harb")
             case "place", "uncertain": flow.longPress(at: destination.coordinate)
+            case "coordinates", "coordinatesSwapped", "coordinatesInvalid", "openLink", "linkNoPoint", "linkNoPointTyped",
+                 "coordinatesCard", "linkCard":
+                await coordinateState(state, flow)
             case "alternatives", "offline": step(flow)
             case "uncertainOffline":
                 flow.longPress(at: destination.coordinate)
@@ -160,6 +180,26 @@ enum RouteDebugStubs {
             }
         }
         return flow
+    }
+
+    private static func coordinateState(_ state: String, _ flow: RouteFlowModel) async {
+        flow.openSearch()
+        switch state {
+        case "coordinatesSwapped": flow.updateQuery("120.25, 0.02")
+        case "coordinatesInvalid": flow.updateQuery("95.5, 200.5")
+        case "openLink": flow.updateQuery(shortLink)
+        case "linkNoPoint":
+            flow.updateQuery(shortLink)
+            flow.openLink()
+        case "linkNoPointTyped": flow.updateQuery(linkWithoutPoint)
+        case "linkCard":
+            flow.updateQuery(linkWithName)
+            flow.selectCoordinates()
+        case "coordinatesCard":
+            flow.updateQuery(coordinatesText)
+            flow.selectCoordinates()
+        default: flow.updateQuery(coordinatesText)
+        }
     }
 
     /// place card → Route → (Start).

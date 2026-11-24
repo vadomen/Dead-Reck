@@ -41,6 +41,8 @@ final class RouteFlowModel {
         /// Throttled and gave up after the backoffs (still not "nothing found").
         case busy
         case failed
+        /// An opened short link led to no point (or stopped at a host that is not a map).
+        case linkNoPoint
     }
 
     enum SearchStatus: Equatable, Sendable {
@@ -66,6 +68,8 @@ final class RouteFlowModel {
     private(set) var query = ""
     private(set) var completions: [DestinationCompletion] = []
     private(set) var searchStatus: SearchStatus = .idle
+    /// What the typed text means (coordinates, a link, a short link): the row above the completions.
+    private(set) var input: CoordinateInput = .none
     private(set) var place: RoutePlace?
     /// The driver's "I'm here" pin for this request (origin source `pin`).
     private(set) var originPin: GeoPoint?
@@ -93,6 +97,8 @@ final class RouteFlowModel {
     @ObservationIgnored let saved: SavedDestinationsStore
     @ObservationIgnored private var sink: (any RouteEventSink)?
     @ObservationIgnored private let edgeMatcher: (@Sendable (Route) async -> RouteEdgeMatch?)?
+    /// Follows a short link after the driver taps "Open link"; nil: the row fails (tests, previews).
+    @ObservationIgnored private let linkResolver: (any MapLinkResolving)?
     /// Reads the estimate, the fix, the GPS switch and the speed. Set by the map
     /// (`bindLiveInputs`); screenshot stubs fix it.
     @ObservationIgnored private(set) var liveInputs: () -> RouteLiveInputs = { RouteLiveInputs() }
@@ -112,7 +118,8 @@ final class RouteFlowModel {
     init(
         searcher: any DestinationSearching, director: any RouteDirecting, pacer: RequestPacer = RequestPacer(),
         saved: SavedDestinationsStore, sink: (any RouteEventSink)? = nil,
-        edgeMatcher: (@Sendable (Route) async -> RouteEdgeMatch?)? = nil
+        edgeMatcher: (@Sendable (Route) async -> RouteEdgeMatch?)? = nil,
+        linkResolver: (any MapLinkResolving)? = nil
     ) {
         self.searcher = searcher
         self.director = director
@@ -120,6 +127,7 @@ final class RouteFlowModel {
         self.saved = saved
         self.sink = sink
         self.edgeMatcher = edgeMatcher
+        self.linkResolver = linkResolver
     }
 
     func attach(sink: any RouteEventSink) { self.sink = sink }
@@ -164,6 +172,7 @@ final class RouteFlowModel {
     func openSearch() {
         cancelWork()
         query = ""
+        input = .none
         completions = []
         searchStatus = .idle
         place = nil
@@ -179,7 +188,9 @@ final class RouteFlowModel {
         query = text
         searchTask?.cancel()
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
+        input = CoordinateParser.parse(trimmed)
+        guard !trimmed.isEmpty, !CoordinateParser.isLinkLike(trimmed) else {
+            // Empty, or a link: a link is read here and never sent to the completer.
             completions = []
             searchStatus = .idle
             return
@@ -224,6 +235,47 @@ final class RouteFlowModel {
         }
     }
 
+    /// The coordinates row was tapped (typed values, a `geo:` URI, a full map link, or the swapped
+    /// reading): the same card a long press opens, with no request and no reverse geocoding.
+    func selectCoordinates() {
+        guard phase == .search, let point = input.point else { return }
+        openPlaceCard(Self.place(for: point))
+    }
+
+    static func place(for point: ParsedPoint) -> RoutePlace {
+        RoutePlace(
+            name: point.name ?? String(localized: "Coordinates"), addressLine: point.formatted,
+            latitude: point.latitude, longitude: point.longitude)
+    }
+
+    /// "Open link" was tapped: follow the short link (paced like every request), parse where it ends.
+    func openLink() {
+        guard phase == .search, case .shortLink(let url) = input else { return }
+        searchTask?.cancel()
+        guard let linkResolver else {
+            searchStatus = .failure(.failed)
+            return
+        }
+        searchStatus = .loading
+        let typed = query
+        searchTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let final = try await pacer.perform { try await linkResolver.resolve(url) }
+                guard !Task.isCancelled, phase == .search, query == typed else { return }
+                if case .point(let point) = CoordinateParser.parse(final.absoluteString) {
+                    openPlaceCard(Self.place(for: point))
+                } else {
+                    searchStatus = .failure(.linkNoPoint)
+                }
+            } catch is CancellationError {
+            } catch {
+                guard !Task.isCancelled, phase == .search, query == typed else { return }
+                searchStatus = .failure(error as? RouteServiceError == .nothingFound ? .linkNoPoint : Self.failure(of: error))
+            }
+        }
+    }
+
     /// A saved place (recent, Home, Work) was tapped: straight to its card.
     func select(_ saved: RoutePlace) {
         guard phase == .search else { return }
@@ -234,6 +286,10 @@ final class RouteFlowModel {
     /// Retry in the search sheet: the same query again.
     func retrySearch() {
         guard phase == .search else { return }
+        if case .shortLink = input {
+            openLink()
+            return
+        }
         let text = query
         query = ""
         updateQuery(text)
@@ -241,8 +297,13 @@ final class RouteFlowModel {
 
     /// A long press on the map: the point as it is, no snapping to road packs.
     func longPress(at point: GeoPoint) {
-        let found = RoutePlace(
-            name: String(localized: "Dropped pin"), addressLine: "", latitude: point.latitude, longitude: point.longitude)
+        openPlaceCard(RoutePlace(
+            name: String(localized: "Dropped pin"), addressLine: "", latitude: point.latitude, longitude: point.longitude))
+    }
+
+    /// One path to the place card for every point the driver names without a search result: a
+    /// long press, typed coordinates, a map link. The place is as given, never snapped.
+    private func openPlaceCard(_ found: RoutePlace) {
         guard found.isValid else { return }
         cancelWork()
         showCard(found)

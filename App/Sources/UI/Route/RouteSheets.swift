@@ -41,7 +41,13 @@ struct DestinationSearchSheet: View {
     var body: some View {
         NavigationStack {
             List {
-                if text.trimmingCharacters(in: .whitespaces).isEmpty { savedRows } else { resultRows }
+                if text.trimmingCharacters(in: .whitespaces).isEmpty {
+                    SearchPasteButton { text = $0 }
+                    savedRows
+                } else {
+                    CoordinateInputRow(flow: flow)
+                    resultRows
+                }
             }
             .listStyle(.plain)
             .navigationTitle("Destination")
@@ -122,7 +128,7 @@ struct DestinationSearchSheet: View {
         case .failure(let failure):
             VStack(alignment: .leading, spacing: 10) {
                 Text(RouteFormat.message(failure)).font(.headline)
-                if failure != .nothingFound {
+                if failure != .nothingFound, failure != .linkNoPoint {
                     Button("Retry") { flow.retrySearch() }
                         .buttonStyle(.borderedProminent)
                         .frame(minHeight: RouteBarLayout.fieldHeight)

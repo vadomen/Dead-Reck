@@ -323,6 +323,26 @@
         }
       }
     },
+    "Coordinates" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Координати"
+          }
+        }
+      }
+    },
+    "Coordinates, swapped" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Координати, поміняні місцями"
+          }
+        }
+      }
+    },
     "Could not rebuild. The current route stays." : {
       "localizations" : {
         "uk" : {
@@ -439,6 +459,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Лише на цьому iPhone, нам не надсилаються."
+          }
+        }
+      }
+    },
+    "Latitude is between −90 and 90, longitude between −180 and 180." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Широта — від −90 до 90, довгота — від −180 до 180."
           }
         }
       }
@@ -3397,6 +3427,16 @@
         }
       }
     },
+    "Open link" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Відкрити посилання"
+          }
+        }
+      }
+    },
     "Open-source licences" : {
       "localizations" : {
         "uk" : {
@@ -4848,6 +4888,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Застосунок не містить стороннього коду."
+          }
+        }
+      }
+    },
+    "This link has no point. Paste the full link or the coordinates instead." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "У цьому посиланні немає точки. Вставте повне посилання або координати."
           }
         }
       }
