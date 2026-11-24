@@ -60,7 +60,8 @@ public enum RecordingCSV {
             // request origin, then the whole `Route` as its on-disk JSON
             // (polyline included), so the file stays lossless.
             ["t", "reason", "routeID", "source", "label", "distanceM", "expectedTravelTimeS", "points", "steps",
-             "originLatitude", "originLongitude", "originSource", "route"]
+             "originLatitude", "originLongitude", "originSource", "route",
+             "destinationLatitude", "destinationLongitude", "destinationSource"]
         case .routeCleared:
             ["t", "reason", "routeID"]
         case nil:
@@ -123,7 +124,8 @@ public enum RecordingCSV {
             return [t, r.reason.rawValue, r.route.id, r.route.source.rawValue, r.route.label ?? "",
                     d(r.route.distanceM), d(r.route.expectedTravelTimeS),
                     String(r.route.polyline.count), String(r.route.steps.count),
-                    d(r.origin?.latitude), d(r.origin?.longitude), r.origin?.source?.rawValue ?? "", json(r.route)]
+                    d(r.origin?.latitude), d(r.origin?.longitude), r.origin?.source?.rawValue ?? "", json(r.route),
+                    d(r.destination?.latitude), d(r.destination?.longitude), r.destination?.source?.rawValue ?? ""]
         case .routeCleared(let c):
             return [t, c.reason.rawValue, c.routeID]
         case .unrecognized(_, let data):
