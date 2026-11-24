@@ -63,6 +63,34 @@ struct RouteDestinationTests {
         #expect(RouteDestination.Source.known.map(\.rawValue) == ["search", "pin", "coordinates", "link", "saved", "recent"])
     }
 
+    /// Each known on-disk string maps to its own case, not just to some known
+    /// case (R94.1-3): from the raw string, from a full `route` row decoded
+    /// through `LogCodec`, and through an encode -> decode round trip.
+    @Test("Each known source decodes to its own case and round-trips through a route row", arguments: RouteDestination.Source.known)
+    func knownSourceIsItself(source: RouteDestination.Source) throws {
+        let raw = source.rawValue
+        #expect(RouteDestination.Source(rawValue: raw) == source)
+        #expect(RouteDestination.Source(rawValue: raw).rawValue == raw)
+        let codec = LogCodec()
+
+        // A full row as written on disk, with this source's string.
+        let json = Self.line.replacingOccurrences(of: #""source":"coordinates""#, with: #""source":"\#(raw)""#)
+        #expect(json.contains(#""destination":{"latitude":-45.0031,"longitude":-120.0007,"source":"\#(raw)"}"#))
+        guard case .route(let decoded) = try codec.event(from: Data(json.utf8)).payload else { Issue.record("not a route"); return }
+        #expect(decoded.destination?.source == source)
+        #expect(decoded.destination?.source?.rawValue == raw)
+        #expect(String(decoding: try codec.line(for: Self.event(decoded)).dropLast(), as: UTF8.self) == json)
+
+        // Encode -> decode: the line carries the same raw string and the same case comes back.
+        let sample = try Self.sample(destination: RouteDestination(latitude: -45.0031, longitude: -120.0007, source: source))
+        let bytes = try codec.line(for: Self.event(sample))
+        #expect(String(decoding: bytes, as: UTF8.self).contains(#""source":"\#(raw)""#))
+        let back = try codec.event(from: bytes.dropLast())
+        #expect(back.payload == .route(sample))
+        guard case .route(let s) = back.payload else { Issue.record("not a route"); return }
+        #expect(s.destination?.source?.rawValue == raw)
+    }
+
     @Test("An out-of-range destination is checked like the origin: it decodes as written, isValid is false and inspect_log warns")
     func rangeLikeOrigin() throws {
         #expect(RouteDestination(latitude: 90, longitude: -180).isValid)
