@@ -1472,3 +1472,18 @@ Orchestrator screenshot QA before the run (80 shots, `logs/p53a/screens`) found:
 | Plus codes | MINOR (needs decision) | Plus codes reached the completer while the texts promised pasted coordinates are never sent. | DECIDED | User: searched like an address; texts say so; PLAN §6 check 9; BACKLOG ROUTE-PLUSCODE. |
 
 Reviewer B: no BLOCKER/MAJOR (round-2 fixes verified: route-ends text after the last manoeuvre, leg drawn with the active route, ≤ 50 m unchanged, no voice turn guidance exists).
+
+### Round 4
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R94.4-1 | MINOR | `App/Sources/Route/CoordinateInput.swift:121-123`: the compass rule (N/S/E/W letter + 3 or more numbers) holds back bare plus codes made only of digits and W (`22W2+22`, `W2W3+22`), so the sheet stays blank although the texts say plus codes go to Apple's search (with a locality they are searched). | DEFERRED | BACKLOG. Skip plus-code-shaped text before the compass rule; test `22W2+22` searches. |
+| R94.4-2 | MINOR | `CoordinateInput.swift:96,115`: `isCoordinateLike` has no length cap and runs on the main actor per keystroke; the label pattern `\s*[:=]?\s*` is quadratic in a whitespace run after a label: "lat" + 5,000 spaces 0.77 s, + 20,000 NBSP 62 s (release). | DEFERRED | BACKLOG. Cap the text (e.g. at `maxLinkLength`) before the regexes; separator `\s*(?:[:=]\s*)?`. |
+| R94.4-3 | MINOR | `CoordinateInput.swift:96`: rule (e) holds back names like "Latitude 41", "Hotel Lat 52" (blank sheet), and misses `Lat. 45.1, Lon. 120.2` and `Long: 120.5` (~11 km precision). | DEFERRED | BACKLOG. Count a label only with a fraction/sign value or both labels present; accept `.` after the label and `long`. |
+| R94.4-4 | MINOR | `docs/ROUTING.md:380`: "Decimal coordinates and map links are still never sent to the completer" is absolute; one-fraction-digit decimals in free text (`Pin 45.1N 120.2W`) and a scheme-less link in free text (R94.3-4) are sent. | FIXED | Ledger commit of round 4: qualified to "that the gate recognises". |
+
+Reviewer: ready to merge (0 BLOCKER, 0 MAJOR). Round 4 reviewed the coordinates/links file set and the round-3 fixes; reviewer B's set was clean in round 3 and unchanged since (code).
+
+### Run 94 summary
+
+4 rounds (rounds 1–3 two parallel reviewers each, A: parser/resolver/search UI/privacy texts, B: last leg/route row/map/bar/stubs; round 4 one reviewer on A's set). Findings: 0 BLOCKER; 7 MAJOR, all fixed (R94.1-1, R94.1-3, R94.1-4, R94.2-1, R94.2-2, R94.3-1, R94.3-2); MINOR: fixed R94.2-3, R94.2-4, R94.4-4; deferred R94.1-2, R94.1-5, R94.2-5, R94.3-3..6, R94.4-1..3; plus-code question decided by the user (searched like an address, ROUTE-PLUSCODE). The privacy-gate finding came back after two fixes; the loop stopped and the user decided (2026-11-24): extend the gate and make the privacy texts exact (recognised coordinates and links never sent; other text incl. plus codes goes to Apple's place search). Final tests at 364b15a: app 1026 tests in 148 suites passed (iPhone 15 Pro simulator); Core 1323 passed (36 known issues). replay_nav acceptance matrix 101/101 identical vs cb3d036 (wall-time fields masked; Core sources unchanged since 1686798; d1102 roads as-live exits 4 as before; `logs/p53a/hash`). Screenshot QA: 80 shots (`logs/p53a/screens`), backlog rows P53A-QA-1..5. Outcome: closed, ready to merge into `routing` (merge: pending).

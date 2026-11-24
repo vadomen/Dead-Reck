@@ -377,7 +377,7 @@ this "no point in this link" message.**
 search completer; they go nowhere until a route is requested from Apple (`MKDirections`
 with the point). Plus codes (Open Location Code) are searched like an address, so they go
 to the completer as typed (user decision 2026-11-24; local decoding is `ROUTE-PLUSCODE`,
-BACKLOG). Decimal coordinates and map links are still never sent to the completer. The
+BACKLOG). Decimal coordinates and map links that the gate recognises are never sent to the completer. The
 privacy texts promise only what the gate recognises. Opening a short link sends one request chain to that link's host or hosts (for
 example Google): that host sees the request and the device IP address. No reverse
 geocoding. The empty search state has the system `PasteButton`, so iOS shows no
