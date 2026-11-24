@@ -202,8 +202,10 @@ final class RouteFlowModel {
         searchTask?.cancel()
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         input = CoordinateParser.parse(trimmed)
-        guard !trimmed.isEmpty, !CoordinateParser.isLinkLike(trimmed), !input.isCoordinateText else {
-            // Empty, a link, or coordinates (valid, swapped or out of range): read here and never sent
+        guard !trimmed.isEmpty, !CoordinateParser.isLinkLike(trimmed), !input.isCoordinateText,
+              !CoordinateParser.isCoordinateLike(trimmed) else {
+            // Empty, a link, coordinates (valid, swapped or out of range) or text that is coordinates in
+            // progress or in another format (isCoordinateLike): read here and never sent
             // to the completer; nothing typed or pasted leaves the phone until a route is requested.
             completions = []
             searchStatus = .idle

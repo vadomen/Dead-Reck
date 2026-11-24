@@ -120,6 +120,40 @@ struct CoordinateFlowTests {
         #expect(rig.searcher.queries == ["500 600", "221 Test Lane", "12", "Test 45"])
     }
 
+    @Test("R94.1-1: coordinates in progress, other formats and free text with a coordinate pair never reach the completer: typed one character at a time, or pasted")
+    func coordinateLikeNeverSent() async {
+        let rig = Rig()
+        rig.searcher.completionResult = .success([DestinationCompletion(id: "1", title: "Test Café", subtitle: "Test Lane")])
+        // Typed one character at a time, with and without letters: every prefix that has a fraction is held.
+        for full in ["-45.1234, -120.5678", "45.1234S 120.5678W", "S 45.1234 W 120.5678"] {
+            var typed = ""
+            for ch in full {
+                typed.append(ch)
+                rig.flow.updateQuery(typed)
+                if CoordinateParser.isCoordinateLike(typed) {
+                    #expect(rig.flow.completions.isEmpty && rig.flow.searchStatus == .idle, "\(typed)")
+                }
+            }
+        }
+        // Pastes: in-progress, letters, DMS (ASCII and typographic marks), a pair inside free text.
+        let pasted = ["-45.1234", "-45.1234,", "45.1234S 120.5678", "45.1234S 120.5678W", "45\u{00B0}07'24.2\"S 120\u{00B0}34'04.1\"W",
+                      "45\u{00B0}07\u{2032}24.2\u{2033}S 120\u{00B0}34\u{2032}04.1\u{2033}W", "45\u{00B0}", "\u{2212}45.1234, \u{2212}120.5678",
+                      "Meet at -45.1234, -120.5678 now", "Meet at 45.1234 120.5678", "pin 45.1234;120.5678."]
+        for text in pasted {
+            rig.flow.updateQuery(text)
+            #expect(rig.flow.completions.isEmpty && rig.flow.searchStatus == .idle, "\(text)")
+        }
+        try? await Task.sleep(for: .milliseconds(100))
+        #expect(rig.searcher.queries.isEmpty, "\(rig.searcher.queries)")
+        // Ordinary addresses and numbers still search.
+        let searches = ["12", "500 600", "221 Test Lane", "Test 45", "Flat 3, 12 Test Street", "45 N 12", "Meet at 95.5, 200.5 now"]
+        for text in searches {
+            rig.flow.updateQuery(text)
+            await waitUntil("completions for \(text)") { rig.flow.searchStatus == .ready }
+        }
+        #expect(rig.searcher.queries == searches)
+    }
+
     @Test("A full link opens the card at once, titled with the place name from the link")
     func fullLink() {
         let rig = Rig()

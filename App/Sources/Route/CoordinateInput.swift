@@ -80,6 +80,43 @@ enum CoordinateParser {
         linkCandidate(raw.trimmingCharacters(in: .whitespacesAndNewlines)) != nil
     }
 
+    // MARK: Coordinates in progress (R94.1-1)
+
+    private static let coordinateCharacters: CharacterSet = {
+        var set = CharacterSet(charactersIn: "0123456789+-.,;\u{2212}\u{00B0}\u{2032}\u{2033}'\"NSEWnsew \t\u{00A0}")
+        set.formUnion(.whitespacesAndNewlines)
+        return set
+    }()
+    private static let fractionPattern = "[0-9][.,][0-9]"
+    private static let embeddedPairPattern =
+        #"(?<![0-9.,])([+\-\u2212]?[0-9]{1,3}\.[0-9]+)(?:\s*[,;]\s*|\s+)([+\-\u2212]?[0-9]{1,3}\.[0-9]+)(?![0-9])"#
+
+    /// Text that is, or may become, coordinates that the parser does not read as a point yet: held back
+    /// from the completer so nothing typed or pasted leaves the phone until a route is requested. True for
+    /// (a) text made only of coordinate characters (digits, sign, `.,;`, spaces, degree/minute/second marks
+    /// incl. ASCII quotes, N/S/E/W) that has a decimal fraction (digit, point or comma, digit) or a
+    /// degree/minute/second mark: "-45.1234", "-45.1234,", "45.1234S 120.5678", DMS; and (b) free text
+    /// that embeds a decimal pair (two in-range decimals with a fraction each, separated by comma,
+    /// semicolon or space): "Meet at -45.1234, -120.5678 now". Whole numbers ("12", "500 600") and
+    /// addresses ("221 Test Lane", "Flat 3, 12 Test Street") are searches.
+    static func isCoordinateLike(_ raw: String) -> Bool {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return false }
+        if text.unicodeScalars.allSatisfy(coordinateCharacters.contains) {
+            let marks = text.unicodeScalars.contains { "\u{00B0}\u{2032}\u{2033}'\"".unicodeScalars.contains($0) }
+            if marks || text.range(of: fractionPattern, options: .regularExpression) != nil { return true }
+        }
+        guard let regex = try? NSRegularExpression(pattern: embeddedPairPattern) else { return false }
+        let ns = text as NSString
+        for m in regex.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+            func value(_ i: Int) -> Double? {
+                Double(ns.substring(with: m.range(at: i)).replacingOccurrences(of: "\u{2212}", with: "-"))
+            }
+            if let a = value(1), let b = value(2), inRange(a, b) || inRange(b, a) { return true }
+        }
+        return false
+    }
+
     // MARK: Link detection
 
     private static let dangerousSchemes: Set<String> = ["javascript", "data", "file", "vbscript", "mailto", "tel", "sms", "blob", "about"]
@@ -131,7 +168,7 @@ enum CoordinateParser {
                 if !part.isEmpty { tokens.append(part) }
             }
         }
-        // "50.45,30.52" with no space: one token with one comma between two numbers.
+        // "-45.12,-120.56" with no space: one token with one comma between two numbers.
         if tokens.count == 1, tokens[0].filter({ $0 == "," }).count == 1, let comma = tokens[0].firstIndex(of: ",") {
             let single = tokens[0]
             tokens = [String(single[..<comma]), String(single[single.index(after: comma)...])]
@@ -144,7 +181,7 @@ enum CoordinateParser {
             return classify(first: a, second: b, deliberate: deliberate, allowSwap: true)
         }
         guard letters.count == 2, tokens.count == 4 else { return .none }
-        // Letters before their numbers (N 50.1 E 30.2) or after them (50.1 N 30.2 E).
+        // Letters before their numbers (N 45.1 E 120.2) or after them (45.1 N 120.2 E).
         let prefix = isLetterToken(tokens[0])
         let pairs: [(letter: String, value: String)] = prefix
             ? [(tokens[0], tokens[1]), (tokens[2], tokens[3])]
@@ -177,7 +214,7 @@ enum CoordinateParser {
         token.count == 1 && "NSEWnsew".contains(token)
     }
 
-    /// "50.45N" -> ["50.45", "N"]; "N50.45" -> ["N", "50.45"]; a word with a longer letter run stays whole (and fails later).
+    /// "45.45S" -> ["45.45", "S"]; "S45.45" -> ["S", "45.45"]; a word with a longer letter run stays whole (and fails later).
     private static func splitLetters(_ word: String) -> [String] {
         var out: [String] = []
         var current = ""

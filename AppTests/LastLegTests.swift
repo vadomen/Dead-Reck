@@ -180,6 +180,40 @@ struct LastLegTests {
         #expect(plain.status == .awayFromRoute)
     }
 
+    /// A destination beside the route end, so the leg bends away from the route's line: points on it are
+    /// far from the route (cross-track over the 150 m guard) while still on the leg.
+    static func besidePlace() -> RoutePlace {
+        let p = RouteFixtures.point(alongM: 1_850, offsetM: 250)
+        return RoutePlace(name: "Far Café", addressLine: "", latitude: p.latitude, longitude: p.longitude)
+    }
+
+    @Test("R94.1-4: once the route end is reached the leg is sticky: a point on the leg over 30 m from the end along the route and over 150 m off it is the last leg, not away")
+    func stickyLastLeg() async {
+        let rig = Rig(routes: [RouteFixtures.route(id: "a", lengthM: 2_000)])
+        await rig.toGuiding(Self.besidePlace())
+        #expect(rig.flow.active?.lastLeg != nil)
+        let onLeg = RouteFixtures.point(alongM: 1_886, offsetM: 190)
+        #expect(rig.flow.active?.lastLeg?.contains(onLeg) == true)
+        rig.tick(alongM: 1_886, offsetM: 190)
+        #expect(rig.flow.guidance?.status == .awayFromRoute, "not yet at the route end: the guard applies")
+        rig.tick(alongM: 2_000)
+        #expect(rig.flow.guidance?.status == .lastLeg, "at the route end")
+        rig.tick(alongM: 1_886, offsetM: 190)
+        #expect(rig.flow.guidance?.status == .lastLeg, "remembered: 114 m from the end along the route, 190 m off it")
+    }
+
+    @Test("R94.1-4: the memory is cleared by driving back onto the route over 150 m from its end: re-entering the leg's corridor without reaching the end is away again")
+    func stickyLastLegResets() async {
+        let rig = Rig(routes: [RouteFixtures.route(id: "a", lengthM: 2_000)])
+        await rig.toGuiding(Self.besidePlace())
+        rig.tick(alongM: 2_000)
+        #expect(rig.flow.guidance?.status == .lastLeg)
+        rig.tick(alongM: 1_500)
+        #expect(rig.flow.guidance?.status == .onRoute)
+        rig.tick(alongM: 1_886, offsetM: 190)
+        #expect(rig.flow.guidance?.status == .awayFromRoute, "reset: the end was not reached again")
+    }
+
     @Test("Mid-route the leg changes nothing: a car near the leg's corridor but far from the route end is not on the last leg")
     func leavesRouteMidway() {
         let route = RouteFixtures.route(lengthM: 2_000)
