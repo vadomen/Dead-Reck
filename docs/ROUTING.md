@@ -377,7 +377,13 @@ completer; they go nowhere until a route is requested from Apple (`MKDirections`
 point). Opening a short link sends one request chain to that link's host or hosts (for
 example Google): that host sees the request and the device IP address. No reverse
 geocoding. The empty search state has the system `PasteButton`, so iOS shows no
-pasteboard prompt. Texts: About → "Data and services", the site privacy pages (en, uk),
+pasteboard prompt. Text held back from the place search (never sent to the completer, no
+completions): text of only coordinate characters with a fraction or a mark; free text
+embedding a decimal pair; any text with a digit followed by a degree, minute or second
+mark; any decimal with 2 or more fraction digits. Held-back text that is not a recognised
+point shows nothing (no row, no message); DMS is not read as a point (R94.2-5, BACKLOG).
+Accepted side effect: dotted dates, "Price 1,500" and dotted phone numbers are not
+searched. Texts: About → "Data and services", the site privacy pages (en, uk),
 `docs/APP_STORE_METADATA.md` (point 12).
 
 **Last leg.** Apple can end a route short of the destination (no roads there). After a
@@ -388,10 +394,14 @@ nothing changes. Above it:
   alternative that has one (the chosen route at full strength, the others muted; the
   active route while guiding).
 - The alternatives card says "Route ends N m before the destination" for each such route.
-- The manoeuvre bar guides normally until the route end. Then it shows the last-leg
-  state: the big number is the straight-line distance to the destination (counting
-  down), the text is "Route ends N m before the destination" (N is the fixed gap), the
-  glyph is an arrow, and the remaining-time line is hidden.
+- The leg is drawn whenever the active route is drawn, including while a rebuild waits
+  for an origin.
+- The manoeuvre bar has four states. Before the last manoeuvre: normal guidance. After
+  the last manoeuvre on a route with a last leg: the glyph is `arrow.up.forward`, the text
+  is "Route ends N m before the destination" (N is the fixed gap) and the big number is
+  the straight-line distance to the destination (never below the gap). On the leg: the
+  same, counting down, and the remaining-time line is hidden. With a gap of 50 m or less:
+  Apple's arrive step as before.
 - On-last-leg rule: within 150 m (the away margin) of the straight segment route end to
   destination, and the route end has been reached (within 30 m along the route; a sticky
   flag). The "Away from the route" guard is checked after this rule, so more than 150 m
