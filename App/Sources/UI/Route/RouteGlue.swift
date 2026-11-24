@@ -88,6 +88,13 @@ enum RouteWiring {
         flow: RouteFlowModel, on session: RecordingSession, navigation: NavigationFeed? = nil, model: MapViewModel? = nil
     ) {
         session.activeRouteProvider = { [weak flow] in flow?.handOver }
+        // The no-speed rule's inputs (prompt 53d): the same speed the chip and arrival use.
+        navigation?.speedProbe = { [weak session] in
+            guard let session else { return NoSpeedSourceRule.Probe(now: 0, runActive: false, hasSpeedSource: true) }
+            return NoSpeedSourceRule.Probe(
+                now: session.currentUptimeSeconds, runActive: session.hasActiveRun,
+                hasSpeedSource: RouteInputs.sessionSpeed(session).source != .none)
+        }
         if let navigation, let model {
             // Stub flows (`-uiRouteStub`) fix their inputs: a live source would override them.
             if !flow.inputsAreFixed { flow.estimateSource = RouteEstimate.source(feed: navigation) }

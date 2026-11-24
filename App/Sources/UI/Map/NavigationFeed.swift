@@ -47,6 +47,12 @@ final class NavigationFeed {
     /// `display` writes.
     private(set) var restore: RestoreDisplay?
 
+    /// What the no-speed rule (prompt 53d) reads: the session's clock, whether a run is active and
+    /// whether a speed source is present. Bound by `RouteWiring.install`; nil (previews, the demo's
+    /// feed, tests): the state is never set.
+    @ObservationIgnored var speedProbe: (@MainActor () -> NoSpeedSourceRule.Probe)?
+    @ObservationIgnored private var noSpeedRule = NoSpeedSourceRule()
+
     @ObservationIgnored private(set) var latest: NavDisplay?
     /// When `latest` was last written from a snapshot (guidance treats an older one as none).
     @ObservationIgnored private(set) var latestAppliedAt: ContinuousClock.Instant?
@@ -95,7 +101,19 @@ final class NavigationFeed {
     /// check as `poll`: nil across a run change or after cancellation.
     func peekEstimate() async -> NavDisplay? {
         guard let (snapshot, _) = await fetch() else { return nil }
-        return NavDisplay(snapshot)
+        return stamped(NavDisplay(snapshot))
+    }
+
+    /// `display` with the no-speed state (prompt 53d) as of now. Both readers (the map's poll and
+    /// guidance's peek) call it, on the main actor; the rule's clock only counts, so the order does not matter.
+    func stamped(_ display: NavDisplay?) -> NavDisplay? {
+        guard var display else {
+            if let speedProbe { _ = noSpeedRule.evaluate(speedProbe(), hasEstimate: false, stationary: false) }
+            return nil
+        }
+        guard let speedProbe else { return display }
+        display.noSpeedSource = noSpeedRule.evaluate(speedProbe(), hasEstimate: true, stationary: display.stationary)
+        return display
     }
 
     private func fetch() async -> (NavigationSnapshot, Int?)? {
@@ -134,7 +152,7 @@ final class NavigationFeed {
         if nextGPS != gps { gps = nextGPS }
         let nextRestore = snapshot.sessionID == nil ? nil : RestoreDisplay(snapshot.restore, run: run)
         if nextRestore != restore { restore = nextRestore }
-        let next = NavDisplay(snapshot)
+        let next = stamped(NavDisplay(snapshot))
         latest = next
         latestAppliedAt = now
         writeStats(snapshot, at: now)

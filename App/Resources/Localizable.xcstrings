@@ -5304,6 +5304,16 @@
           }
         }
       }
+    },
+    "No speed source — position not updating" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Немає джерела швидкості — позиція не оновлюється"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

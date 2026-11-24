@@ -296,6 +296,12 @@ struct GuidanceBar: View {
                 .font(.system(size: 32, weight: .bold).monospacedDigit())
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
+        case .uncertain where guidance?.noSpeedSource == true:
+            // The reason in words in place of the distance (prompt 53d).
+            Label(NoSpeedSourceText.text, systemImage: NoSpeedSourceText.symbol)
+                .font(.title3.weight(.bold))
+                .foregroundStyle(HUDColors.warn)
+                .fixedSize(horizontal: false, vertical: true)
         case .uncertain:
             Label("Position uncertain", systemImage: "location.magnifyingglass")
                 .font(.title3.weight(.bold))

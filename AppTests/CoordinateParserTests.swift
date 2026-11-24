@@ -341,3 +341,72 @@ struct MapLinkHostsTests {
         #expect(MapLinkHosts.documented.count == 4)
     }
 }
+
+/// R94.4-2: the search field's text is parsed on the main actor at every keystroke, so no input may cost
+/// more than a scan. Worst cases of 100,000 characters (a label then a long whitespace run, long runs of
+/// digits, marks and words, long links) return at once; overlong text is not coordinates and not a link.
+@Suite("Coordinate input is bounded (R94.4-2)")
+struct CoordinateInputBoundTests {
+    static let size = 100_000
+    static func repeated(_ unit: String, _ count: Int = size) -> String { String(repeating: unit, count: count) }
+
+    static let worst: [String] = [
+        "lat" + repeated(" "),
+        "lon:" + repeated("\u{00A0}"),
+        "longitude =" + repeated("\u{2003}"),
+        "lat" + repeated(" \t"),
+        repeated("lat "),
+        repeated("1"),
+        "1" + repeated(" "),
+        repeated("1 "),
+        repeated("1.5 "),
+        "1.5" + repeated(" ") + "x",
+        repeated("1\u{00A0}"),
+        repeated("N 1 "),
+        repeated("a"),
+        repeated("a "),
+        "https://maps.apple.com/?q=" + repeated("a"),
+        "maps.apple.com/" + repeated("a"),
+        "geo:" + repeated("1,"),
+        "https://www.google.com/maps/place/" + repeated("%41"),
+        "https://maps.app.goo.gl/" + repeated("a"),
+        "title " + repeated("word ") + "https://maps.apple.com/?ll=1,2",
+        repeated("a.") + "com",
+    ]
+
+    @Test("100,000 characters of each worst case are read in under 50 ms by every entry point", arguments: Array(worst.indices))
+    func fast(_ index: Int) {
+        let text = Self.worst[index]
+        let clock = ContinuousClock()
+        let elapsed = clock.measure {
+            _ = CoordinateParser.isCoordinateLike(text)
+            _ = CoordinateParser.isLinkLike(text)
+            _ = CoordinateParser.parse(text)
+        }
+        #expect(elapsed < .milliseconds(50), "case \(index) took \(elapsed)")
+    }
+
+    @Test("Text over the link bound is not coordinates; a link over it has no point")
+    func overlong() {
+        let limit = CoordinateParser.maxLinkLength
+        let text = "lat 45.1234 " + Self.repeated("x", limit)
+        #expect(text.utf8.count > limit)
+        #expect(!CoordinateParser.isCoordinateLike(text))
+        #expect(CoordinateParser.parse(text) == .none)
+        #expect(CoordinateParser.parse("https://maps.apple.com/?q=" + Self.repeated("a", limit)) == .noPoint)
+        // The bound itself is inclusive: text at the limit is still read.
+        let atLimit = "lat 45.1234" + Self.repeated(" ", limit - 11)
+        #expect(atLimit.trimmingCharacters(in: .whitespaces).utf8.count < limit)
+        #expect(CoordinateParser.isCoordinateLike(atLimit))
+    }
+
+    @Test("The label pattern still finds labels, with and without a separator")
+    func labelsStillWork() {
+        for text in ["Lat 45", "lon: -120.5", "lng=7", "latitude :  -3", "довгота=7", "ШИРОТА 1", "lat\u{00A0}\u{00A0}5", "lat:\u{2212}5"] {
+            #expect(CoordinateParser.isCoordinateLike(text), "\(text)")
+        }
+        for text in ["latte 5", "Flat 3", "lat", "lat x5", "lat : : 5"] {
+            #expect(!CoordinateParser.isCoordinateLike(text), "\(text)")
+        }
+    }
+}
