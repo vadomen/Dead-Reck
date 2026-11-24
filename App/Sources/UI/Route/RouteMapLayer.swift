@@ -28,6 +28,10 @@ enum RouteColors {
     static let chosenWidth = 7.0
     static let otherWidth = 5.0
     static let casingExtra = 4.0
+    /// The straight last leg: thin, round dots/dashes, so it does not read as a continuation of the route.
+    static let lastLegWidth = 4.0
+    /// Dash pattern of the straight last leg (MapKit scales it by the line width).
+    static let lastLegDash: [CGFloat] = [2.5, 4]
 }
 
 /// The route on the map: the offered alternatives (chosen one emphasised) or
@@ -46,6 +50,9 @@ struct RouteOverlay: MapContent {
         } else if let active = flow.active {
             line(active.route, chosen: true)
         }
+        ForEach(Array(flow.lastLegSegments.enumerated()), id: \.offset) { _, segment in
+            lastLeg(segment)
+        }
         if let place = flow.destinationShown {
             Annotation("", coordinate: CLLocationCoordinate2D(latitude: place.latitude, longitude: place.longitude), anchor: .bottom) {
                 Image(systemName: "mappin.circle.fill")
@@ -55,6 +62,18 @@ struct RouteOverlay: MapContent {
                     .accessibilityHidden(true)
             }
         }
+    }
+
+    /// The straight last leg: dashed, same colour family as the route, so it reads as "no road known here".
+    @MapContentBuilder
+    private func lastLeg(_ segment: LastLegSegment) -> some MapContent {
+        let coordinates = [segment.leg.end, segment.leg.destination].map {
+            CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude)
+        }
+        MapPolyline(coordinates: coordinates)
+            .stroke(
+                RouteColors.color(RouteColors.line(dark: dark, chosen: segment.chosen)),
+                style: StrokeStyle(lineWidth: RouteColors.lastLegWidth, lineCap: .round, dash: RouteColors.lastLegDash))
     }
 
     @MapContentBuilder

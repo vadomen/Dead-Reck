@@ -477,6 +477,10 @@ public struct RecordingSummary: Hashable, Sendable {
         if invalidOrigins > 0 {
             warnings.append("\(invalidOrigins) route row(s) with an origin out of range")
         }
+        let invalidDestinations = routes.filter { $0.sample.destination.map { !$0.isValid } ?? false }.count
+        if invalidDestinations > 0 {
+            warnings.append("\(invalidDestinations) route row(s) with a destination out of range")
+        }
         for clear in routeClears where clear.activeRouteID != clear.sample.routeID {
             let active = clear.activeRouteID.map { "route \"\($0)\" was active" } ?? "no route was active"
             warnings.append("routeCleared at \(Self.format(clear.t.seconds, 3)) s ends route \"\(clear.sample.routeID)\", but \(active)")

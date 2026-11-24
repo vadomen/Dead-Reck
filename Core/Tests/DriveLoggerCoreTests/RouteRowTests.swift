@@ -227,6 +227,7 @@ struct RouteRowTests {
         #expect(RecordingCSV.columns(for: "route") == [
             "t", "reason", "routeID", "source", "label", "distanceM", "expectedTravelTimeS", "points", "steps",
             "originLatitude", "originLongitude", "originSource", "route",
+            "destinationLatitude", "destinationLongitude", "destinationSource",
         ])
         #expect(RecordingCSV.columns(for: "routeCleared") == ["t", "reason", "routeID"])
 
@@ -234,7 +235,7 @@ struct RouteRowTests {
         let withOrigin = Self.at(1_500, .route(RouteSample(reason: .user, route: small, origin: RouteOrigin(latitude: -45.00012, longitude: -120.00003, source: .estimate))))
         #expect(RecordingCSV.values(for: withOrigin) == [
             "1500000000", "user", "r1", "synthetic", "Home", "99.5", "20.0", "3", "3", "-45.00012", "-120.00003",
-            "estimate", RouteCodingTests.smallJSON,
+            "estimate", RouteCodingTests.smallJSON, "", "", "",
         ])
         let unsourced = Self.at(0, .route(RouteSample(reason: .user, route: small, origin: RouteOrigin(latitude: 1, longitude: 2))))
         #expect(RecordingCSV.values(for: unsourced)[9...11] == ["1.0", "2.0", ""])

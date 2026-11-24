@@ -91,6 +91,7 @@ struct RecordingRouteRowsTests {
         let rig = NavigateRig(store: scratch.store, undoWindow: .milliseconds(50))
         let first = try Self.route("route-a", label: "Test Point Б", distanceM: 1_200)
         let firstOrigin = RouteOrigin(latitude: -0.0201, longitude: -0.0301, source: .estimate)
+        let firstDestination = RouteDestination(latitude: -0.0501, longitude: -0.0601, source: .coordinates)
         let probe = RouteHandOverProbe()
         probe.install(on: rig.session)
         await rig.connect(speed: 0)
@@ -100,7 +101,7 @@ struct RecordingRouteRowsTests {
 
         // Navigate only: the route is the app's; the session writes nothing.
         #expect(rig.session.recordRoute(first, reason: .user, origin: firstOrigin) == nil)
-        probe.active = RecordingRouteHandOver(route: first, origin: firstOrigin)
+        probe.active = RecordingRouteHandOver(route: first, origin: firstOrigin, destination: firstDestination)
         #expect(probe.asks.isEmpty, "a Navigate run never asks")
 
         rig.uptime.set(NavigateRig.base + 50)
@@ -112,7 +113,7 @@ struct RecordingRouteRowsTests {
         let third = try Self.route("route-c", label: "Test Point В", distanceM: 1_500, latOffset: 0.002)
         let pinOrigin = RouteOrigin(latitude: -0.0190, longitude: -0.0290, source: .pin)
         rig.uptime.set(NavigateRig.base + 52)
-        let tSecond = rig.session.recordRoute(second, reason: .alternative, origin: firstOrigin)
+        let tSecond = rig.session.recordRoute(second, reason: .alternative, origin: firstOrigin, destination: firstDestination)
         rig.uptime.set(NavigateRig.base + 53.5)
         let tThird = rig.session.recordRoute(third, reason: .user, origin: pinOrigin)
         rig.uptime.set(NavigateRig.base + 55.25)
@@ -135,8 +136,8 @@ struct RecordingRouteRowsTests {
 
         let routes = Self.routeRows(events)
         #expect(routes.map(\.sample) == [
-            RouteSample(reason: .restored, route: first, origin: firstOrigin),
-            RouteSample(reason: .alternative, route: second, origin: firstOrigin),
+            RouteSample(reason: .restored, route: first, origin: firstOrigin, destination: firstDestination),
+            RouteSample(reason: .alternative, route: second, origin: firstOrigin, destination: firstDestination),
             RouteSample(reason: .user, route: third, origin: pinOrigin),
         ], "written field for field, the label as given")
         #expect(routes.first?.index == 1, "the restored row right after the start row")

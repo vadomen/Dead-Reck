@@ -41,6 +41,8 @@ final class RouteFlowModel {
         /// Throttled and gave up after the backoffs (still not "nothing found").
         case busy
         case failed
+        /// An opened short link led to no point (or stopped at a host that is not a map).
+        case linkNoPoint
     }
 
     enum SearchStatus: Equatable, Sendable {
@@ -54,6 +56,10 @@ final class RouteFlowModel {
         var geometry: RouteGeometry
         var place: RoutePlace
         var origin: RouteOrigin
+        /// How the destination was chosen (the `route` row's `destination.source`).
+        var placeSource: RouteDestination.Source?
+        /// Set when the route ends more than `LastLeg.thresholdM` short of the destination.
+        var lastLeg: LastLeg?
         /// `RouteEdgeMatcher` run once on the chosen route when road packs cover
         /// it; nil: not covered or not run. Shown only in Diagnostics.
         var edgeMatch: RouteEdgeMatch?
@@ -66,7 +72,11 @@ final class RouteFlowModel {
     private(set) var query = ""
     private(set) var completions: [DestinationCompletion] = []
     private(set) var searchStatus: SearchStatus = .idle
+    /// What the typed text means (coordinates, a link, a short link): the row above the completions.
+    private(set) var input: CoordinateInput = .none
     private(set) var place: RoutePlace?
+    /// How `place` was chosen: goes into the route row's `destination`.
+    private(set) var placeSource: RouteDestination.Source?
     /// The driver's "I'm here" pin for this request (origin source `pin`).
     private(set) var originPin: GeoPoint?
     private(set) var routeAnyway = false
@@ -93,6 +103,8 @@ final class RouteFlowModel {
     @ObservationIgnored let saved: SavedDestinationsStore
     @ObservationIgnored private var sink: (any RouteEventSink)?
     @ObservationIgnored private let edgeMatcher: (@Sendable (Route) async -> RouteEdgeMatch?)?
+    /// Follows a short link after the driver taps "Open link"; nil: the row fails (tests, previews).
+    @ObservationIgnored private let linkResolver: (any MapLinkResolving)?
     /// Reads the estimate, the fix, the GPS switch and the speed. Set by the map
     /// (`bindLiveInputs`); screenshot stubs fix it.
     @ObservationIgnored private(set) var liveInputs: () -> RouteLiveInputs = { RouteLiveInputs() }
@@ -106,13 +118,16 @@ final class RouteFlowModel {
     @ObservationIgnored private var loopTask: Task<Void, Never>?
     @ObservationIgnored private var arrival = ArrivalDetector()
     @ObservationIgnored private var lastAlongM: Double?
+    /// The car got to the end of a route that ends short of the destination (see `RouteGuidance.compute`).
+    @ObservationIgnored private var lastLegReached = false
     /// Time source of the guidance loop (tests step it by hand through `tick`).
     @ObservationIgnored var tickInterval: Duration = .milliseconds(500)
 
     init(
         searcher: any DestinationSearching, director: any RouteDirecting, pacer: RequestPacer = RequestPacer(),
         saved: SavedDestinationsStore, sink: (any RouteEventSink)? = nil,
-        edgeMatcher: (@Sendable (Route) async -> RouteEdgeMatch?)? = nil
+        edgeMatcher: (@Sendable (Route) async -> RouteEdgeMatch?)? = nil,
+        linkResolver: (any MapLinkResolving)? = nil
     ) {
         self.searcher = searcher
         self.director = director
@@ -120,6 +135,7 @@ final class RouteFlowModel {
         self.saved = saved
         self.sink = sink
         self.edgeMatcher = edgeMatcher
+        self.linkResolver = linkResolver
     }
 
     func attach(sink: any RouteEventSink) { self.sink = sink }
@@ -156,7 +172,10 @@ final class RouteFlowModel {
 
     /// What Record writes right after its header rows (`restored`): nil when no route is active.
     var handOver: RecordingRouteHandOver? {
-        active.map { RecordingRouteHandOver(route: $0.route, origin: $0.origin) }
+        active.map {
+            RecordingRouteHandOver(
+                route: $0.route, origin: $0.origin, destination: Self.destination($0.place, source: $0.placeSource))
+        }
     }
 
     // MARK: Search
@@ -164,6 +183,7 @@ final class RouteFlowModel {
     func openSearch() {
         cancelWork()
         query = ""
+        input = .none
         completions = []
         searchStatus = .idle
         place = nil
@@ -175,11 +195,18 @@ final class RouteFlowModel {
     }
 
     func updateQuery(_ text: String) {
-        guard phase == .search else { return }
+        // The sheet re-sends its text when it appears: the same text again changes nothing (a failure
+        // already shown, such as a short link that led to no point, must stay).
+        guard phase == .search, text != query else { return }
         query = text
         searchTask?.cancel()
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
+        input = CoordinateParser.parse(trimmed)
+        guard !trimmed.isEmpty, !CoordinateParser.isLinkLike(trimmed), !input.isCoordinateText,
+              !CoordinateParser.isCoordinateLike(trimmed) else {
+            // Empty, a link, coordinates (valid, swapped or out of range) or text that is coordinates in
+            // progress or in another format (isCoordinateLike): read here and never sent
+            // to the completer; nothing typed or pasted leaves the phone until a route is requested.
             completions = []
             searchStatus = .idle
             return
@@ -215,7 +242,7 @@ final class RouteFlowModel {
             do {
                 let resolved = try await pacer.perform { try await searcher.resolve(completion) }
                 guard !Task.isCancelled, phase == .search else { return }
-                showCard(resolved)
+                showCard(resolved, source: .search)
             } catch is CancellationError {
             } catch {
                 guard !Task.isCancelled, phase == .search else { return }
@@ -224,16 +251,62 @@ final class RouteFlowModel {
         }
     }
 
+    /// The coordinates row was tapped (typed values, a `geo:` URI, a full map link, or the swapped
+    /// reading): the same card a long press opens, with no request and no reverse geocoding.
+    func selectCoordinates() {
+        guard phase == .search, let point = input.point else { return }
+        openPlaceCard(Self.place(for: point), source: CoordinateParser.isLinkLike(query) ? .link : .coordinates)
+    }
+
+    static func place(for point: ParsedPoint) -> RoutePlace {
+        RoutePlace(
+            name: point.name ?? String(localized: "Coordinates"), addressLine: point.formatted,
+            latitude: point.latitude, longitude: point.longitude)
+    }
+
+    /// "Open link" was tapped: follow the short link (paced like every request), parse where it ends.
+    func openLink() {
+        guard phase == .search, case .shortLink(let url) = input else { return }
+        searchTask?.cancel()
+        guard let linkResolver else {
+            searchStatus = .failure(.failed)
+            return
+        }
+        searchStatus = .loading
+        let typed = query
+        searchTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let final = try await pacer.perform { try await linkResolver.resolve(url) }
+                guard !Task.isCancelled, phase == .search, query == typed else { return }
+                if case .point(let point) = CoordinateParser.parse(final.absoluteString) {
+                    openPlaceCard(Self.place(for: point), source: .link)
+                } else {
+                    searchStatus = .failure(.linkNoPoint)
+                }
+            } catch is CancellationError {
+            } catch {
+                guard !Task.isCancelled, phase == .search, query == typed else { return }
+                searchStatus = .failure(error as? RouteServiceError == .nothingFound ? .linkNoPoint : Self.failure(of: error))
+            }
+        }
+    }
+
     /// A saved place (recent, Home, Work) was tapped: straight to its card.
     func select(_ saved: RoutePlace) {
         guard phase == .search else { return }
         searchTask?.cancel()
-        showCard(saved)
+        let isSaved = [self.saved.home, self.saved.work].contains { $0?.dedupKey == saved.dedupKey }
+        showCard(saved, source: isSaved ? .saved : .recent)
     }
 
     /// Retry in the search sheet: the same query again.
     func retrySearch() {
         guard phase == .search else { return }
+        if case .shortLink = input {
+            openLink()
+            return
+        }
         let text = query
         query = ""
         updateQuery(text)
@@ -241,15 +314,22 @@ final class RouteFlowModel {
 
     /// A long press on the map: the point as it is, no snapping to road packs.
     func longPress(at point: GeoPoint) {
-        let found = RoutePlace(
-            name: String(localized: "Dropped pin"), addressLine: "", latitude: point.latitude, longitude: point.longitude)
-        guard found.isValid else { return }
-        cancelWork()
-        showCard(found)
+        openPlaceCard(RoutePlace(
+            name: String(localized: "Dropped pin"), addressLine: "", latitude: point.latitude, longitude: point.longitude),
+            source: .pin)
     }
 
-    private func showCard(_ found: RoutePlace) {
+    /// One path to the place card for every point the driver names without a search result: a
+    /// long press, typed coordinates, a map link. The place is as given, never snapped.
+    private func openPlaceCard(_ found: RoutePlace, source: RouteDestination.Source) {
+        guard found.isValid else { return }
+        cancelWork()
+        showCard(found, source: source)
+    }
+
+    private func showCard(_ found: RoutePlace, source: RouteDestination.Source) {
         place = found
+        placeSource = source
         originPin = nil
         routeAnyway = false
         failure = nil
@@ -335,16 +415,19 @@ final class RouteFlowModel {
         guard phase == .alternatives, let route = chosenRoute, let place, let origin = requestOrigin else { return }
         let reason: RouteSample.Reason = active?.place.dedupKey == place.dedupKey ? .alternative : .user
         let logOrigin = origin.logOrigin
-        active = ActiveRoute(route: route, geometry: RouteGeometry(route: route), place: place, origin: logOrigin)
+        active = ActiveRoute(
+            route: route, geometry: RouteGeometry(route: route), place: place, origin: logOrigin,
+            placeSource: placeSource, lastLeg: LastLeg.measure(route: route, to: place.coordinate))
         alternatives = []
         isRebuild = false
         rebuildFailure = nil
         guidance = nil
         lastAlongM = nil
+        lastLegReached = false
         arrival.reset()
         phase = .guiding
         saved.addRecent(place)
-        sink?.routeSet(route, reason: reason, origin: logOrigin)
+        sink?.routeSet(route, reason: reason, origin: logOrigin, destination: Self.destination(place, source: placeSource))
         runEdgeMatch(for: route)
         startLoop()
     }
@@ -384,15 +467,25 @@ final class RouteFlowModel {
     /// One guidance step: progress along the route, the away guard and arrival.
     func tick(estimate: NavDisplay?, speedMS: Double?, now: TimeInterval) {
         guard phase == .guiding, let active else { return }
-        var next = RouteGuidance.compute(geometry: active.geometry, estimate: estimate, previousAlongM: lastAlongM)
+        var next = RouteGuidance.compute(
+            geometry: active.geometry, estimate: estimate, previousAlongM: lastAlongM,
+            lastLeg: active.lastLeg, lastLegReached: lastLegReached)
         if let along = next.alongM { lastAlongM = along }
-        if next.status != .onRoute, let old = guidance, next.next == nil {
+        if next.status == .lastLeg {
+            lastLegReached = true
+        } else if next.status == .onRoute, (next.remainingM ?? 0) > LastLeg.corridorM {
+            lastLegReached = false
+        }
+        if next.status != .onRoute, next.status != .lastLeg, let old = guidance, next.next == nil {
             // Uncertain or away: keep the last known instruction on screen.
             next.next = old.next
             next.nextStep = old.nextStep
         }
         if next != guidance { guidance = next }
-        if arrival.update(remainingM: next.remainingM, speedMS: speedMS, now: now) { arrive() }
+        // Arrival is measured to the destination point when the route ends short of it; reaching
+        // the route's end alone never clears the route. A route that reaches it: along the route, as before.
+        let toGo = active.lastLeg == nil ? next.remainingM : next.distanceToDestinationM
+        if arrival.update(remainingM: toGo, speedMS: speedMS, now: now) { arrive() }
     }
 
     private func arrive() {
@@ -416,6 +509,7 @@ final class RouteFlowModel {
         guard phase == .guiding, let active else { return }
         rebuildFailure = nil
         place = active.place
+        placeSource = active.placeSource
         originPin = nil
         routeAnyway = false
         failure = nil
@@ -458,6 +552,7 @@ final class RouteFlowModel {
         active = nil
         guidance = nil
         lastAlongM = nil
+        lastLegReached = false
         arrival.reset()
         rebuildFailure = nil
     }
@@ -468,6 +563,11 @@ final class RouteFlowModel {
     }
 
     // MARK: Helpers
+
+    /// The `route` row's destination: the place as named, never snapped.
+    static func destination(_ place: RoutePlace, source: RouteDestination.Source?) -> RouteDestination {
+        RouteDestination(latitude: place.latitude, longitude: place.longitude, source: source)
+    }
 
     static func failure(of error: Error) -> Failure {
         switch error as? RouteServiceError {

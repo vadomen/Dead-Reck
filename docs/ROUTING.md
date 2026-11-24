@@ -315,3 +315,114 @@ or the pasteboard.
 **Not in prompt 52:** engine use of the route (53), automatic off-route detection
 and rebuild (UX-45), voice (54), a share extension, route restore after an app
 relaunch (UX-44), offline routing.
+
+## Coordinates, map links and the last leg (prompt 53a)
+
+Done in code on branch `r2-coords-links` (cut from `routing`); device checks in
+`docs/PLAN.md` §6 "Added by prompt 53a". Code: `App/Sources/Route/CoordinateInput.swift`
+(typed values), `MapLinkResolver.swift` (links), `RouteLastLeg.swift` (last leg),
+`App/Sources/UI/Route/RouteLastLegModel.swift`; the log field is
+`Core/Sources/DriveLoggerCore/Log/RouteDestination.swift`.
+
+**Input shapes in the search field** (no network; a recognised value is one row above
+the completer's results, then the normal place card with the title "Coordinates"):
+- Decimal latitude and longitude separated by comma, semicolon or whitespace; decimal
+  comma (`-45,0031 -120,0007`); an `N`/`S`/`E`/`W` prefix or suffix (the letters decide
+  the axis; a sign together with `S` or `W` is rejected); a `°` sign; U+2212 as minus.
+  A bare whitespace-only pair of integers (for example `500 600`) is not a coordinate.
+- A `geo:lat,lon[,alt][;params][?q=…]` URI, including `geo:0,0?q=lat,lon`.
+- Out of range: a short message ("Latitude is between −90 and 90, longitude between
+  −180 and 180."). A pair that is valid only when swapped is never taken silently: it is
+  a separate row "Coordinates, swapped".
+- A name in the input (or in a link) becomes the card title, control characters stripped
+  and capped at 80 characters; without a name the title is "Coordinates".
+- The place goes through the same path as a long-press pin: origin rules, alternatives,
+  recents, saved places. No reverse geocoding.
+
+**Links** (parsed without a network request; precedence, first match wins):
+- Apple Maps: `coordinate=`, then `q=lat,lon`, then `ll=`, then `sll=`. `name=` or a
+  `q=` that is not a coordinate gives the title.
+- Google Maps: `!3d<lat>!4d<lon>` (the last pair), then `q`, `query` or `destination`
+  with `lat,lon`, then `/place/lat,lon` or `/search/lat,lon`, then `@lat,lon` (the view
+  centre, the weakest). `/place/<name>/` gives the title.
+- OpenStreetMap: `mlat`/`mlon`, then `#map=z/lat/lon`.
+- Share text with words before the link works; a link without a scheme works when the
+  host is allowlisted and the link is the whole text (R94.3-4, BACKLOG: with words before
+  it, the text goes to the completer and gets no Open link row).
+- Not accepted ("This link has no point…"): unknown hosts, `http`, `javascript:`,
+  `data:`, a URL with user info, a port other than 443, more than 2048 bytes.
+
+**Host allowlist** (https, default port, no user info; the same rule on every hop of a
+short link):
+- Google: `google.com`, `google.co.xx`, `google.com.xx`, `google.xx`, with or without
+  `www.`, path starting `/maps`; `maps.google.*` with any path; short `maps.app.goo.gl`,
+  `goo.gl/maps…`, `g.co/kgs…`.
+- Apple: `maps.apple.com` (also `maps.apple.com/p/<token>`) and the short `maps.apple`.
+- OpenStreetMap: `openstreetmap.org`, `www.openstreetmap.org`, `osm.org`, `www.osm.org`
+  (`osm.org/go/…` is the short form).
+- `consent.google.com`, `accounts.google.com` and look-alike hosts are not followed.
+
+**Short links.** The row says "Open link"; nothing is requested until the user taps it.
+Then: an ephemeral `URLSession` (no cache, cookies or credentials), 8 s timeout, `HEAD`
+first and one `GET` fallback on 400, 403, 405 or 501, at most 5 redirects, every hop
+https and allowlisted. The request is cancelled when the final headers arrive and the
+body is never read. `RequestPacer` pacing and failure rules apply (429 backs off as
+throttled; offline or timeout gives the usual offline message). A stopped hop, a 404, a
+final URL with no point, or another short link ends with "This link has no point. Paste
+the full link or the coordinates instead." **A consent or sign-in redirect to a host that
+is not on the allowlist (for example an EU consent page) is not followed and ends with
+this "no point in this link" message.**
+
+**Privacy.** Coordinates and links that the gate recognises are never sent to the MapKit
+search completer; they go nowhere until a route is requested from Apple (`MKDirections`
+with the point). Plus codes (Open Location Code) are searched like an address, so they go
+to the completer as typed (user decision 2026-11-24; local decoding is `ROUTE-PLUSCODE`,
+BACKLOG). Decimal coordinates and map links that the gate recognises are never sent to the completer. The
+privacy texts promise only what the gate recognises. Opening a short link sends one request chain to that link's host or hosts (for
+example Google): that host sees the request and the device IP address. No reverse
+geocoding. The empty search state has the system `PasteButton`, so iOS shows no
+pasteboard prompt. Text held back from the place search (never sent to the completer, no
+completions): text of only coordinate characters with a fraction or a mark; free text
+embedding a decimal pair; any text with a digit followed by a degree, minute or second
+mark; any decimal with 2 or more fraction digits; and, since round 3 (R94.3-1), text with
+any of the angle marks `° º ′ ″ ' " ˚ ‘ ’ “ ” ´ ʹ ʺ` after a digit, text made only of
+coordinate characters with an N/S/E/W letter and 3 or more numbers (unmarked DMS), and
+text with a lat/lon label followed by a number (`lat`, `lon`, `lng`, `latitude`,
+`longitude`, `широта`, `довгота`). Fractions up to 20 digits are read (full-precision
+doubles; R94.3-2). Held-back text that is not a recognised
+point shows nothing (no row, no message); DMS is not read as a point (R94.2-5, BACKLOG).
+Accepted side effect: dotted dates, "Price 1,500" and dotted phone numbers are not
+searched. Texts: About → "Data and services", the site privacy pages (en, uk),
+`docs/APP_STORE_METADATA.md` (point 12).
+
+**Last leg.** Apple can end a route short of the destination (no roads there). After a
+route is built or rebuilt, the straight distance from the route's last point to the
+destination is measured (`LastLeg.thresholdM` = 50 m, one constant). At or below it
+nothing changes. Above it:
+- A dashed straight leg is drawn from the route end to the destination pin, for every
+  alternative that has one (the chosen route at full strength, the others muted; the
+  active route while guiding).
+- The alternatives card says "Route ends N m before the destination" for each such route.
+- The leg is drawn whenever the active route is drawn, including while a rebuild waits
+  for an origin.
+- The manoeuvre bar has four states. Before the last manoeuvre: normal guidance. After
+  the last manoeuvre on a route with a last leg: the glyph is `arrow.up.forward`, the text
+  is "Route ends N m before the destination" (N is the fixed gap) and the big number is
+  the straight-line distance to the destination (it can be below the gap when the
+  destination lies beside the route; R94.3-6, BACKLOG). On the leg: the
+  same, counting down, and the remaining-time line is hidden. With a gap of 50 m or less:
+  Apple's arrive step as before.
+- On-last-leg rule: within 150 m (the away margin) of the straight segment route end to
+  destination, and the route end has been reached (within 30 m along the route; a sticky
+  flag). The "Away from the route" guard is checked after this rule, so more than 150 m
+  beside the leg is still away. The flag resets when the car is back on the route more
+  than 150 m from its end.
+
+**Arrival.** For a route with a last leg: stopped (below 1 m/s for 3 s, unchanged) within
+50 m of the destination point, straight line. Reaching the route end alone never clears
+the route. With a gap of 50 m or less, arrival is unchanged (remaining below 50 m along
+the route and stopped).
+
+**The row.** The `route` row carries the optional `destination` (`latitude`, `longitude`,
+`source` `search`, `pin`, `coordinates`, `link`, `saved`, `recent`) so a recording can be
+replayed with the leg; `docs/LOG_FORMAT.md` "`route`, `routeCleared`". No version bump.

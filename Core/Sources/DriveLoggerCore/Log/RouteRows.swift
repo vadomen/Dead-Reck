@@ -30,11 +30,18 @@ public struct RouteSample: Hashable, Sendable, Codable {
     /// absent when there was no request
     /// (a route restored from storage) or the app did not record it.
     public var origin: RouteOrigin?
+    /// The place the driver asked to be routed to (optional, no format
+    /// version change; same shape and checks as `origin`). The route can end
+    /// short of it (the provider has no road to the point): this is where
+    /// arrival is measured. Absent when the app did not record it, as in a
+    /// recording written before it existed.
+    public var destination: RouteDestination?
 
-    public init(reason: Reason, route: Route, origin: RouteOrigin? = nil) {
+    public init(reason: Reason, route: Route, origin: RouteOrigin? = nil, destination: RouteDestination? = nil) {
         self.reason = reason
         self.route = route
         self.origin = origin
+        self.destination = destination
     }
 
     /// `reason` vocabulary. The raw strings are on disk: never change one.

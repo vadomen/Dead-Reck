@@ -180,6 +180,12 @@ struct AlternativesCard: View {
         }
     }
 
+    private static func accessibility(index: Int, count: Int, route: Route, leg: LastLeg?) -> String {
+        let base = String(localized: "Route \(index + 1) of \(count), \(RouteFormat.summary(route))")
+        guard let leg else { return base }
+        return "\(base). \(RouteFormat.routeEnds(gapM: leg.gapM))"
+    }
+
     private func row(index: Int, route: Route) -> some View {
         let chosen = index == flow.chosenIndex
         return Button { flow.chooseAlternative(index) } label: {
@@ -187,9 +193,17 @@ struct AlternativesCard: View {
                 Capsule()
                     .fill(Color.violetLine(chosen: chosen))
                     .frame(width: chosen ? 8 : 5, height: 30)
-                Text(RouteFormat.summary(route))
-                    .font(chosen ? .title3.weight(.bold) : .body)
-                    .foregroundStyle(chosen ? HUDColors.text : HUDColors.muted)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(RouteFormat.summary(route))
+                        .font(chosen ? .title3.weight(.bold) : .body)
+                        .foregroundStyle(chosen ? HUDColors.text : HUDColors.muted)
+                    if let leg = flow.lastLeg(ofAlternative: index) {
+                        Text(RouteFormat.routeEnds(gapM: leg.gapM))
+                            .font(.subheadline)
+                            .foregroundStyle(HUDColors.muted)
+                            .lineLimit(2)
+                    }
+                }
                 Spacer(minLength: 0)
                 if chosen { Image(systemName: "checkmark.circle.fill").foregroundStyle(HUDColors.accentOnCard) }
             }
@@ -197,7 +211,7 @@ struct AlternativesCard: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(Text("Route \(index + 1) of \(flow.alternatives.count), \(RouteFormat.summary(route))"))
+        .accessibilityLabel(Text(Self.accessibility(index: index, count: flow.alternatives.count, route: route, leg: flow.lastLeg(ofAlternative: index))))
         .accessibilityAddTraits(chosen ? .isSelected : [])
     }
 }
@@ -220,7 +234,12 @@ struct GuidanceBar: View {
         let guidance = flow.guidance
         barSurface {
             HStack(alignment: .top, spacing: 12) {
-                if let step = guidance?.nextStep {
+                if flow.routeEndsGapM != nil {
+                    Image(systemName: RouteFlowModel.routeEndsGlyph)
+                        .font(.system(size: 34, weight: .bold))
+                        .frame(width: 44, height: 44)
+                        .accessibilityHidden(true)
+                } else if let step = guidance?.nextStep {
                     Image(systemName: RouteFormat.symbol(step.maneuver))
                         .font(.system(size: 34, weight: .bold))
                         .frame(width: 44, height: 44)
@@ -259,12 +278,24 @@ struct GuidanceBar: View {
     private func primary(_ guidance: RouteGuidance?) -> some View {
         switch guidance?.status {
         case .onRoute:
-            if let next = guidance?.next {
+            if let toEnd = flow.routeEndsDistanceM {
+                // Last manoeuvre passed (R94.2-2): the straight line to the destination, as on the leg.
+                Text(RouteFormat.distance(toEnd))
+                    .font(.system(size: 32, weight: .bold).monospacedDigit())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+            } else if let next = guidance?.next {
                 Text(RouteFormat.distance(next.distanceToM))
                     .font(.system(size: 32, weight: .bold).monospacedDigit())
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
             }
+        case .lastLeg:
+            // The straight-line distance to the destination, counting down.
+            Text(RouteFormat.distance(guidance?.distanceToDestinationM ?? 0))
+                .font(.system(size: 32, weight: .bold).monospacedDigit())
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
         case .uncertain:
             Label("Position uncertain", systemImage: "location.magnifyingglass")
                 .font(.title3.weight(.bold))
@@ -282,7 +313,14 @@ struct GuidanceBar: View {
     /// while the position is uncertain (the last one known).
     @ViewBuilder
     private func instruction(_ guidance: RouteGuidance?) -> some View {
-        if let step = guidance?.nextStep, guidance?.status != .awayFromRoute {
+        if let gap = flow.routeEndsGapM {
+            Text(RouteFormat.routeEnds(gapM: gap))
+                .font(.headline)
+                .foregroundStyle(HUDColors.text)
+                .lineLimit(3)
+                .minimumScaleFactor(0.85)
+                .fixedSize(horizontal: false, vertical: true)
+        } else if let step = guidance?.nextStep, guidance?.status != .awayFromRoute {
             Text(RouteFormat.instruction(step))
                 .font(guidance?.status == .onRoute ? .headline : .subheadline)
                 .foregroundStyle(guidance?.status == .onRoute ? HUDColors.text : HUDColors.muted)

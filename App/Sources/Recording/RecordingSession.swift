@@ -203,10 +203,13 @@ struct RecordingRouteHandOver: Hashable, Sendable {
     /// The origin of the request that built `route`, as it would have been
     /// passed to `recordRoute`; nil when not known.
     let origin: RouteOrigin?
+    /// The destination of the route request (the place as named, never snapped); nil when not known.
+    let destination: RouteDestination?
 
-    init(route: Route, origin: RouteOrigin? = nil) {
+    init(route: Route, origin: RouteOrigin? = nil, destination: RouteDestination? = nil) {
         self.route = route
         self.origin = origin
+        self.destination = destination
     }
 }
 
@@ -880,7 +883,7 @@ final class RecordingSession {
         // replay. None: no row, and the file is what it was before.
         if let handOver = activeRouteProvider?() {
             rec.sink.record(LogEvent(timestamp: clock.now(), payload: .route(RouteSample(
-                reason: .restored, route: handOver.route, origin: handOver.origin))))
+                reason: .restored, route: handOver.route, origin: handOver.origin, destination: handOver.destination))))
         }
         // Still the same synchronous step: no suspension since `polling` was
         // read, so no link event can be consumed between the reads and the
@@ -941,16 +944,22 @@ final class RecordingSession {
     ///     without a new request.
     ///   - origin: where the request started and what the position came
     ///     from (`fix`, `estimate`, `pin`); nil when not known.
+    ///   - destination: the place the driver asked for and how it was chosen
+    ///     (`search`, `pin`, `coordinates`, `link`, `saved`, `recent`); nil
+    ///     when not known. The route may end short of it.
     /// - Returns: the row's `t`, or nil when nothing was written: Record is
     ///   not calibrating or recording (idle, starting, Navigate only), or the
     ///   recording takes no more rows (its `stop` row is queued, a write
     ///   failure). The route itself is the caller's state either way: a
     ///   later Start picks it up through `activeRouteProvider`.
     @discardableResult
-    func recordRoute(_ route: Route, reason: RouteSample.Reason, origin: RouteOrigin?) -> MonotonicTimestamp? {
+    func recordRoute(
+        _ route: Route, reason: RouteSample.Reason, origin: RouteOrigin?, destination: RouteDestination? = nil
+    ) -> MonotonicTimestamp? {
         guard let rec = recording, rec.isWritable else { return nil }
         let t = rec.clock.now()
-        rec.sink.record(LogEvent(timestamp: t, payload: .route(RouteSample(reason: reason, route: route, origin: origin))))
+        rec.sink.record(LogEvent(timestamp: t, payload: .route(RouteSample(
+            reason: reason, route: route, origin: origin, destination: destination))))
         return t
     }
 

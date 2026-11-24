@@ -80,12 +80,18 @@ enum RouteFormat {
         step.instruction.isEmpty ? name(step.maneuver) : step.instruction
     }
 
+    /// A link with no point: what to paste instead.
+    static var noPointMessage: String {
+        String(localized: "This link has no point. Paste the full link or the coordinates instead.")
+    }
+
     static func message(_ failure: RouteFlowModel.Failure) -> String {
         switch failure {
         case .offline: String(localized: "No internet connection")
         case .nothingFound: String(localized: "Nothing found")
         case .busy: String(localized: "Apple Maps is busy. Try again in a moment.")
         case .failed: String(localized: "Something went wrong.")
+        case .linkNoPoint: noPointMessage
         }
     }
 }

@@ -642,7 +642,7 @@ struct GPSMapView: View {
             .onChange(of: routeFlow?.phase) { old, new in
                 switch RouteCameraRule.action(from: old, to: new) {
                 case .frameRoute:
-                    guard let points = routeFlow?.chosenRoute?.polyline.map({ ($0.latitude, $0.longitude) }),
+                    guard let points = routeFlow?.framingPoints,
                           let region = RouteFraming.region(points: points, coveredFraction: 0.4, coveredTop: 0.18, usableWidth: 0.8) else { return }
                     // Held off (no 8 s auto-resume, no countdown) while the alternatives are shown.
                     updateFollow { $0.hold() }
@@ -1487,7 +1487,7 @@ enum MapPreviewData {
     @MainActor
     static func fakeNav(_ mode: HUDFakes.FakeNav, restored: Bool = false) -> NavigationFeed {
         let restore = restored ? RestoreDisplay(status: .unconfirmed, ageAtStartS: 720) : nil
-        let position = GeoPoint(latitude: 0.0004, longitude: 0.0004)
+        let position = carOverride ?? GeoPoint(latitude: 0.0004, longitude: 0.0004)
         switch mode {
         case .finding:
             return NavigationFeed(display: NavDisplay(
