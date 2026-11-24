@@ -100,6 +100,8 @@ struct CoordinateParserTests {
         Case(input: "-45.1 S, 10.2 E", expect: .none),
         Case(input: "NE 5 10", expect: .none),
         Case(input: "N 45.1 120.2", expect: .none),
+        // R94.3-2: a full-precision double under 10 degrees has 16-17 fraction digits.
+        Case(input: "-45.50735091542385, -0.12775829999999998", expect: p(-45.50735091542385, -0.12775829999999998)),
         Case(input: "5,", expect: .none),
         Case(input: ",", expect: .none),
         Case(input: ";;;", expect: .none),
@@ -120,6 +122,7 @@ struct CoordinateParserTests {
         Case(input: "geo:-45.12345,-120.54321;crs=wgs84;u=35", expect: p(-45.12345, -120.54321)),
         Case(input: "geo:-45.12345,-120.54321?q=Test+Cove", expect: p(-45.12345, -120.54321, "Test Cove")),
         Case(input: "geo:0,0?q=-45.12345,-120.54321", expect: p(-45.12345, -120.54321)),
+        Case(input: "geo:-45.5,-0.12775829999999998", expect: p(-45.5, -0.12775829999999998)),
         Case(input: "geo:0,0?q=Test+Cove", expect: .noPoint),
         Case(input: "geo:95.5,20.5", expect: .outOfRange),
         Case(input: "geo:-45.12345", expect: .noPoint),
@@ -140,6 +143,8 @@ struct CoordinateParserTests {
 
     static let links: [Case] = [
         // Apple Maps
+        Case(input: "https://maps.apple.com/?ll=-45.5,-0.12775829999999998", expect: p(-45.5, -0.12775829999999998)),
+        Case(input: "https://www.google.com/maps?q=-45.5,-0.12775829999999998", expect: p(-45.5, -0.12775829999999998)),
         Case(input: "https://maps.apple.com/?ll=-45.12345,-120.54321", expect: p(-45.12345, -120.54321)),
         Case(input: "https://maps.apple.com/?ll=-45.12345%2C-120.54321&q=Test%20Cove", expect: p(-45.12345, -120.54321, "Test Cove")),
         Case(input: "https://maps.apple.com/?q=-45.12345,-120.54321", expect: p(-45.12345, -120.54321)),

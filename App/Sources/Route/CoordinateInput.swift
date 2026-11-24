@@ -82,14 +82,20 @@ enum CoordinateParser {
 
     // MARK: Coordinates in progress (R94.1-1)
 
+    /// Degree, minute and second marks as keyboards and Smart Punctuation produce them: `° º ˚ ′ ″ ' " ‘ ’ “ ” ´ ʹ ʺ`.
+    private static let angleMarks = "\u{00B0}\u{00BA}\u{02DA}\u{2032}\u{2033}'\"\u{2018}\u{2019}\u{201C}\u{201D}\u{00B4}\u{02B9}\u{02BA}"
     private static let coordinateCharacters: CharacterSet = {
-        var set = CharacterSet(charactersIn: "0123456789+-.,;\u{2212}\u{00B0}\u{2032}\u{2033}'\"NSEWnsew \t\u{00A0}")
+        var set = CharacterSet(charactersIn: "0123456789+-.,;\u{2212}NSEWnsew \t\u{00A0}" + angleMarks)
         set.formUnion(.whitespacesAndNewlines)
         return set
     }()
     private static let fractionPattern = "[0-9][.,][0-9]"
     /// (c) A digit, optionally spaces, then a degree / minute / second mark (incl. ASCII quotes, `º`).
-    private static let angleMarkPattern = "[0-9]\\s*[\u{00B0}\u{00BA}\u{2032}\u{2033}'\"]"
+    private static let angleMarkPattern = "[0-9]\\s*[\u{00B0}\u{00BA}\u{02DA}\u{2032}\u{2033}'\"\u{2018}\u{2019}\u{201C}\u{201D}\u{00B4}\u{02B9}\u{02BA}]"
+    /// (e) A latitude / longitude label followed by a number: "Lat 45.1", "lon: -120.5", "довгота=7".
+    private static let labelPattern = "(?i)(?<![\\p{L}])(lat|lon|lng|latitude|longitude|\u{0448}\u{0438}\u{0440}\u{043E}\u{0442}\u{0430}|\u{0434}\u{043E}\u{0432}\u{0433}\u{043E}\u{0442}\u{0430})(?![\\p{L}])\\s*[:=]?\\s*[+\\-\u{2212}]?[0-9]"
+    /// A run of digits (with an optional fraction): counts the numbers in a text.
+    private static let numberRunPattern = "[0-9]+(?:[.,][0-9]+)?"
     /// (d) A decimal number with 2+ fraction digits, not the tail of a longer digit run: "45.1234", "7,5678".
     private static let decimalPattern = "(?<![0-9])[0-9]{1,3}[.,][0-9]{2,}"
     private static let embeddedPairPattern =
@@ -110,9 +116,13 @@ enum CoordinateParser {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return false }
         if text.unicodeScalars.allSatisfy(coordinateCharacters.contains) {
-            let marks = text.unicodeScalars.contains { "\u{00B0}\u{2032}\u{2033}'\"".unicodeScalars.contains($0) }
+            let marks = text.unicodeScalars.contains { angleMarks.unicodeScalars.contains($0) }
             if marks || text.range(of: fractionPattern, options: .regularExpression) != nil { return true }
+            // Whole-second DMS with no marks ("45 07 24 N 120 32 36 W", "N45 07 24 W120 32 36"): a compass letter and 3+ numbers.
+            let hasCompass = text.unicodeScalars.contains { "NSEWnsew".unicodeScalars.contains($0) }
+            if hasCompass, numberCount(text) >= 3 { return true }
         }
+        if text.range(of: labelPattern, options: .regularExpression) != nil { return true }
         // (c), (d): anywhere in the text, whatever the shape around them (R94.2-1).
         if text.range(of: angleMarkPattern, options: .regularExpression) != nil
             || text.range(of: decimalPattern, options: .regularExpression) != nil { return true }
@@ -125,6 +135,11 @@ enum CoordinateParser {
             if let a = value(1), let b = value(2), inRange(a, b) || inRange(b, a) { return true }
         }
         return false
+    }
+
+    private static func numberCount(_ text: String) -> Int {
+        guard let regex = try? NSRegularExpression(pattern: numberRunPattern) else { return 0 }
+        return regex.numberOfMatches(in: text, range: NSRange(location: 0, length: (text as NSString).length))
     }
 
     // MARK: Link detection
@@ -150,7 +165,7 @@ enum CoordinateParser {
 
     // MARK: Typed coordinates
 
-    private static let numberPattern = #"^[+-]?[0-9]{1,7}([.,][0-9]{1,15})?$"#
+    private static let numberPattern = #"^[+-]?[0-9]{1,7}([.,][0-9]{1,20})?$"#
 
     /// A decimal number, point or comma, as typed. Nil for anything else (NaN, inf, exponents, groups).
     static func number(_ token: String, allowComma: Bool = true) -> Double? {
@@ -445,7 +460,7 @@ enum MapLinkParser {
 
     // MARK: Helpers
 
-    private static let pairPattern = #"^[ ]*([+-]?[0-9]{1,7}([.][0-9]{1,15})?)[ ]*,[ ]*([+-]?[0-9]{1,7}([.][0-9]{1,15})?)[ ]*$"#
+    private static let pairPattern = #"^[ ]*([+-]?[0-9]{1,7}([.][0-9]{1,20})?)[ ]*,[ ]*([+-]?[0-9]{1,7}([.][0-9]{1,20})?)[ ]*$"#
 
     /// "lat,lon" with decimal points; nil for anything else.
     static func pair(_ s: String) -> (Double, Double)? {

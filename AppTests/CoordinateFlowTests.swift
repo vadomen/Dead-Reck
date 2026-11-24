@@ -143,7 +143,16 @@ struct CoordinateFlowTests {
                       "45\u{00B0}07\u{2032}24\u{2033}N 120\u{00B0}34\u{2032}04\u{2033}W / 45.1234\u{00B0}N 120.5678\u{00B0}W",
                       "Coordinates: 45\u{00B0}07\u{2032}24\u{2033}N 120\u{00B0}34\u{2032}04\u{2033}W", "Pin: 45.1234\u{00B0} N, 120.5678\u{00B0} W",
                       "Pin 45.1234N 120.5678W", "Pin S45.1234 E120.5678", "Pin 45.1234/120.5678", "\u{0414}\u{0430}\u{0447}\u{0430} 45,1234 7,5678",
-                      "Pin 45\u{00BA}07'24\"N", "Pin 45 \u{00B0} N"]
+                      "Pin 45\u{00BA}07'24\"N", "Pin 45 \u{00B0} N",
+                      // R94.3-1: other marks, no marks, lat/lon labels.
+                      "45\u{02DA}07\u{2019}24\u{201D}N 120\u{02DA}32\u{2019}36\u{201D}W",
+                      "Meet here: 45\u{02DA}07\u{2019}24\u{201D}N 120\u{02DA}32\u{2019}36\u{201D}W",
+                      "45 07\u{2019} 24\u{201D} N 120 32\u{2019} 36\u{201D} W",
+                      "45\u{02DA}07\u{00B4}24\u{00B4}\u{00B4}N 120\u{02DA}32\u{00B4}36\u{00B4}\u{00B4}W",
+                      "45\u{02DA}07\u{02B9}24\u{02BA}N 120\u{02DA}32\u{02B9}36\u{02BA}W",
+                      "45 07 24 N 120 32 36 W", "N45 07 24 W120 32 36", "45 07 24 N",
+                      "Lat 45.1 Lon -120.5", "lat: 45.1 lon: -120.5", "lat=45 lng=120", "Latitude 45", "LONGITUDE: -12",
+                      "\u{0428}\u{0438}\u{0440}\u{043E}\u{0442}\u{0430} 45 \u{0434}\u{043E}\u{0432}\u{0433}\u{043E}\u{0442}\u{0430} 30"]
         for text in pasted {
             rig.flow.updateQuery(text)
             #expect(rig.flow.completions.isEmpty && rig.flow.searchStatus == .idle, "\(text)")
@@ -152,7 +161,9 @@ struct CoordinateFlowTests {
         #expect(rig.searcher.queries.isEmpty, "\(rig.searcher.queries)")
         // Ordinary addresses and numbers still search.
         let searches = ["12", "500 600", "221 Test Lane", "Test 45", "Flat 3, 12 Test Street", "45 N 12", "Meet at 95.5, 200.5 now",
-                        "Street 12/3", "12:30", "Unit 4.5", "SW1A 1AA", "+380 44 123 45 67", "00-950 Test Town"]
+                        "Street 12/3", "12:30", "Unit 4.5", "SW1A 1AA", "+380 44 123 45 67", "00-950 Test Town",
+                        // R94.3-1: Plus codes are searched (user decision); labels as part of words are not labels.
+                        "6PH57VP3+PR", "V75V+8Q Test Town", "Flat 3", "London 5", "Platform 4", "45 W 12"]
         for text in searches {
             rig.flow.updateQuery(text)
             await waitUntil("completions for \(text)") { rig.flow.searchStatus == .ready }
