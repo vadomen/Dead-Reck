@@ -5153,12 +5153,12 @@
         }
       }
     },
-    "When you search for a place or ask for a route, your search text, the start and end of the route, and your current position (to rank nearby places) are sent to Apple (MapKit). Nothing is sent to us." : {
+    "When you search for a place or ask for a route, your search text, the start and end of the route, and your current position (to rank nearby places) are sent to Apple (MapKit). Nothing is sent to us. Coordinates and links you type or paste are not sent anywhere until you ask for a route; then the point goes to Apple. If you tap Open link on a short map link (for example from Google Maps), the app contacts that link's website to follow it; that site sees the request and your IP address." : {
       "localizations" : {
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Коли ви шукаєте місце або просите маршрут, текст пошуку, початок і кінець маршруту та ваша поточна позиція (щоб показати ближчі місця) надсилаються до Apple (MapKit). Нам нічого не надсилається."
+            "value" : "Коли ви шукаєте місце або просите маршрут, текст пошуку, початок і кінець маршруту та ваша поточна позиція (щоб показати ближчі місця) надсилаються до Apple (MapKit). Нам нічого не надсилається. Координати та посилання, які ви вводите або вставляєте, нікуди не надсилаються, доки ви не попросите маршрут; тоді точку отримує Apple. Якщо ви торкнетеся «Відкрити посилання» для короткого посилання на карту (наприклад, із Google Maps), застосунок звернеться до сайту цього посилання, щоб його розкрити; сайт бачить запит і вашу IP-адресу."
           }
         }
       }
