@@ -163,6 +163,49 @@ struct LastLegTests {
         #expect(rig.flow.guidance?.status == .onRoute)
     }
 
+    @Test("R94.2-2: once the last manoeuvre is passed the bar says the route ends N m short, with a non-flag glyph and the straight-line distance to the destination; before it, the normal instruction")
+    func routeEndsAfterLastManeuver() async throws {
+        let rig = Rig(routes: [RouteFixtures.route(id: "a", lengthM: 2_000)])
+        await rig.toGuiding(Self.place(alongM: 2_300))
+        rig.tick(alongM: 900)
+        #expect(rig.flow.guidance?.nextStep?.maneuver == .right)
+        #expect(rig.flow.routeEndsGapM == nil && rig.flow.routeEndsDistanceM == nil, "before the last turn: the turn's own instruction")
+        rig.tick(alongM: 1_900)
+        #expect(rig.flow.guidance?.status == .onRoute && rig.flow.guidance?.nextStep?.maneuver == .arrive)
+        let gap = try #require(rig.flow.routeEndsGapM)
+        #expect(abs(gap - 300) < 1)
+        #expect(RouteFormat.routeEnds(gapM: gap).contains("300"))
+        #expect(RouteFlowModel.routeEndsGlyph != RouteFormat.symbol(.arrive) && !RouteFlowModel.routeEndsGlyph.contains("flag"))
+        // The distance is the straight line to the destination (as on the leg): 400 m here, never under the gap.
+        let distance = try #require(rig.flow.routeEndsDistanceM)
+        #expect(abs(distance - 400) < 1 && distance >= gap)
+        rig.tick(alongM: 1_990)
+        #expect(rig.flow.guidance?.status == .lastLeg)
+        #expect(rig.flow.routeEndsGapM == gap && abs((rig.flow.routeEndsDistanceM ?? 0) - 310) < 1, "on the leg: same text and quantity")
+        // Away or uncertain: not this text.
+        rig.tick(alongM: 1_900, offsetM: 400)
+        #expect(rig.flow.routeEndsGapM == nil)
+    }
+
+    @Test("R94.2-2: a route that reaches the destination (50 m or less) keeps Apple's arrive step after the last turn")
+    func arriveStepWhenRouteReaches() async {
+        let rig = Rig(routes: [RouteFixtures.route(id: "a", lengthM: 2_000)])
+        await rig.toGuiding(Self.place(alongM: 2_040))
+        rig.tick(alongM: 1_900)
+        #expect(rig.flow.guidance?.nextStep?.maneuver == .arrive)
+        #expect(rig.flow.routeEndsGapM == nil && rig.flow.routeEndsDistanceM == nil)
+    }
+
+    @Test("The active route's leg is drawn whenever the route is: also while a rebuild waits for an origin (place card)")
+    func legDrawnWithActiveRoute() async {
+        let rig = Rig(routes: [RouteFixtures.route(id: "a", lengthM: 2_000)])
+        await rig.toGuiding(Self.place(alongM: 2_300))
+        rig.flow.fixInputs { RouteLiveInputs(origin: RouteOriginInputs(runActive: true, estimate: nil), speedMS: 0) }
+        rig.flow.rebuild()
+        #expect(rig.flow.phase == .placeCard && rig.flow.active != nil)
+        #expect(rig.flow.lastLegSegments.count == 1 && rig.flow.lastLegSegments[0].chosen)
+    }
+
     @Test("\"Away from the route\" does not fire on the last leg: 200 m past the route end is on the leg, 200 m beside it is away")
     func noAwayOnLastLeg() async {
         let rig = Rig(routes: [RouteFixtures.route(id: "a", lengthM: 2_000)])

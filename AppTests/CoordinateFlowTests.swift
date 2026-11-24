@@ -138,7 +138,12 @@ struct CoordinateFlowTests {
         // Pastes: in-progress, letters, DMS (ASCII and typographic marks), a pair inside free text.
         let pasted = ["-45.1234", "-45.1234,", "45.1234S 120.5678", "45.1234S 120.5678W", "45\u{00B0}07'24.2\"S 120\u{00B0}34'04.1\"W",
                       "45\u{00B0}07\u{2032}24.2\u{2033}S 120\u{00B0}34\u{2032}04.1\u{2033}W", "45\u{00B0}", "\u{2212}45.1234, \u{2212}120.5678",
-                      "Meet at -45.1234, -120.5678 now", "Meet at 45.1234 120.5678", "pin 45.1234;120.5678."]
+                      "Meet at -45.1234, -120.5678 now", "Meet at 45.1234 120.5678", "pin 45.1234;120.5678.",
+                      // R94.2-1: other shapes, still held back.
+                      "45\u{00B0}07\u{2032}24\u{2033}N 120\u{00B0}34\u{2032}04\u{2033}W / 45.1234\u{00B0}N 120.5678\u{00B0}W",
+                      "Coordinates: 45\u{00B0}07\u{2032}24\u{2033}N 120\u{00B0}34\u{2032}04\u{2033}W", "Pin: 45.1234\u{00B0} N, 120.5678\u{00B0} W",
+                      "Pin 45.1234N 120.5678W", "Pin S45.1234 E120.5678", "Pin 45.1234/120.5678", "\u{0414}\u{0430}\u{0447}\u{0430} 45,1234 7,5678",
+                      "Pin 45\u{00BA}07'24\"N", "Pin 45 \u{00B0} N"]
         for text in pasted {
             rig.flow.updateQuery(text)
             #expect(rig.flow.completions.isEmpty && rig.flow.searchStatus == .idle, "\(text)")
@@ -146,7 +151,8 @@ struct CoordinateFlowTests {
         try? await Task.sleep(for: .milliseconds(100))
         #expect(rig.searcher.queries.isEmpty, "\(rig.searcher.queries)")
         // Ordinary addresses and numbers still search.
-        let searches = ["12", "500 600", "221 Test Lane", "Test 45", "Flat 3, 12 Test Street", "45 N 12", "Meet at 95.5, 200.5 now"]
+        let searches = ["12", "500 600", "221 Test Lane", "Test 45", "Flat 3, 12 Test Street", "45 N 12", "Meet at 95.5, 200.5 now",
+                        "Street 12/3", "12:30", "Unit 4.5", "SW1A 1AA", "+380 44 123 45 67", "00-950 Test Town"]
         for text in searches {
             rig.flow.updateQuery(text)
             await waitUntil("completions for \(text)") { rig.flow.searchStatus == .ready }

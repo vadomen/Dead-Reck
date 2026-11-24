@@ -24,11 +24,34 @@ extension RouteFlowModel {
             alternatives.indices.compactMap { index in
                 lastLeg(ofAlternative: index).map { LastLegSegment(leg: $0, chosen: index == chosenIndex) }
             }
-        case .guiding:
-            active?.lastLeg.map { [LastLegSegment(leg: $0, chosen: true)] } ?? []
         default:
-            []
+            // Whenever the active route is drawn (guiding, and requesting / place card while a rebuild
+            // waits), its leg is drawn with it.
+            active?.lastLeg.map { [LastLegSegment(leg: $0, chosen: true)] } ?? []
         }
+    }
+
+    /// The glyph of the bar while the text is "Route ends N m before the destination".
+    static let routeEndsGlyph = "arrow.up.forward"
+
+    /// The gap for the bar's "Route ends N m before the destination" (R94.2-2): on the last leg, and
+    /// once the last manoeuvre is passed (the next announced step is Apple's `arrive`, which counts down
+    /// to a route end that is short of the destination). Nil otherwise: the normal instruction.
+    /// The bar shows `routeEndsDistanceM` with it.
+    var routeEndsGapM: Double? {
+        guard let gap = active?.lastLeg?.gapM, let guidance else { return nil }
+        switch guidance.status {
+        case .lastLeg: return gap
+        case .onRoute: return guidance.nextStep?.maneuver == .arrive ? gap : nil
+        case .uncertain, .awayFromRoute: return nil
+        }
+    }
+
+    /// The distance shown with `routeEndsGapM`: the straight line to the destination, the same quantity
+    /// on the route end's approach and on the leg (it counts down without a jump at the route end, and
+    /// is never less than the gap the text names).
+    var routeEndsDistanceM: Double? {
+        routeEndsGapM == nil ? nil : guidance?.distanceToDestinationM
     }
 
     /// The points the camera frames when the alternatives appear: the chosen route and, when it ends

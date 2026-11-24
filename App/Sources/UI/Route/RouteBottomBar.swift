@@ -234,8 +234,8 @@ struct GuidanceBar: View {
         let guidance = flow.guidance
         barSurface {
             HStack(alignment: .top, spacing: 12) {
-                if guidance?.status == .lastLeg {
-                    Image(systemName: "arrow.up.forward")
+                if flow.routeEndsGapM != nil {
+                    Image(systemName: RouteFlowModel.routeEndsGlyph)
                         .font(.system(size: 34, weight: .bold))
                         .frame(width: 44, height: 44)
                         .accessibilityHidden(true)
@@ -278,7 +278,13 @@ struct GuidanceBar: View {
     private func primary(_ guidance: RouteGuidance?) -> some View {
         switch guidance?.status {
         case .onRoute:
-            if let next = guidance?.next {
+            if let toEnd = flow.routeEndsDistanceM {
+                // Last manoeuvre passed (R94.2-2): the straight line to the destination, as on the leg.
+                Text(RouteFormat.distance(toEnd))
+                    .font(.system(size: 32, weight: .bold).monospacedDigit())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+            } else if let next = guidance?.next {
                 Text(RouteFormat.distance(next.distanceToM))
                     .font(.system(size: 32, weight: .bold).monospacedDigit())
                     .lineLimit(1)
@@ -307,7 +313,7 @@ struct GuidanceBar: View {
     /// while the position is uncertain (the last one known).
     @ViewBuilder
     private func instruction(_ guidance: RouteGuidance?) -> some View {
-        if guidance?.status == .lastLeg, let gap = flow.active?.lastLeg?.gapM {
+        if let gap = flow.routeEndsGapM {
             Text(RouteFormat.routeEnds(gapM: gap))
                 .font(.headline)
                 .foregroundStyle(HUDColors.text)

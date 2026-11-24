@@ -88,6 +88,10 @@ enum CoordinateParser {
         return set
     }()
     private static let fractionPattern = "[0-9][.,][0-9]"
+    /// (c) A digit, optionally spaces, then a degree / minute / second mark (incl. ASCII quotes, `º`).
+    private static let angleMarkPattern = "[0-9]\\s*[\u{00B0}\u{00BA}\u{2032}\u{2033}'\"]"
+    /// (d) A decimal number with 2+ fraction digits, not the tail of a longer digit run: "45.1234", "7,5678".
+    private static let decimalPattern = "(?<![0-9])[0-9]{1,3}[.,][0-9]{2,}"
     private static let embeddedPairPattern =
         #"(?<![0-9.,])([+\-\u2212]?[0-9]{1,3}\.[0-9]+)(?:\s*[,;]\s*|\s+)([+\-\u2212]?[0-9]{1,3}\.[0-9]+)(?![0-9])"#
 
@@ -98,7 +102,10 @@ enum CoordinateParser {
     /// degree/minute/second mark: "-45.1234", "-45.1234,", "45.1234S 120.5678", DMS; and (b) free text
     /// that embeds a decimal pair (two in-range decimals with a fraction each, separated by comma,
     /// semicolon or space): "Meet at -45.1234, -120.5678 now". Whole numbers ("12", "500 600") and
-    /// addresses ("221 Test Lane", "Flat 3, 12 Test Street") are searches.
+    /// addresses ("221 Test Lane", "Flat 3, 12 Test Street") are searches. Privacy wins over search for
+    /// rare address shapes: (c) ANY text with a digit followed (spaces allowed) by a degree, minute or second
+    /// mark, and (d) ANY text with a decimal number of 2+ fraction digits (`[0-9]{1,3}[.,][0-9]{2,}`, not
+    /// part of a longer digit run) is held back, whatever surrounds it ("Pin 45.1234N 120.5678W", "Дача 45,1234 7,5678").
     static func isCoordinateLike(_ raw: String) -> Bool {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return false }
@@ -106,6 +113,9 @@ enum CoordinateParser {
             let marks = text.unicodeScalars.contains { "\u{00B0}\u{2032}\u{2033}'\"".unicodeScalars.contains($0) }
             if marks || text.range(of: fractionPattern, options: .regularExpression) != nil { return true }
         }
+        // (c), (d): anywhere in the text, whatever the shape around them (R94.2-1).
+        if text.range(of: angleMarkPattern, options: .regularExpression) != nil
+            || text.range(of: decimalPattern, options: .regularExpression) != nil { return true }
         guard let regex = try? NSRegularExpression(pattern: embeddedPairPattern) else { return false }
         let ns = text as NSString
         for m in regex.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
