@@ -86,6 +86,6 @@ protocol RouteDirecting: AnyObject {
 /// recording.
 @MainActor
 protocol RouteEventSink: AnyObject {
-    func routeSet(_ route: Route, reason: RouteSample.Reason, origin: RouteOrigin?)
+    func routeSet(_ route: Route, reason: RouteSample.Reason, origin: RouteOrigin?, destination: RouteDestination?)
     func routeCleared(routeID: String, reason: RouteClearedSample.Reason)
 }

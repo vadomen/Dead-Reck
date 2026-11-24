@@ -14,7 +14,9 @@ import Foundation
 /// row for a short link), `linkNoPoint` (a short link was tapped and led to no
 /// point), `linkNoPointTyped` (a full link typed with no point), `coordinatesCard`
 /// (the place card for coordinates), `linkCard` (the card for a pasted full link
-/// that names the place).
+/// that names the place). Prompt 53a item 3, routes that end 300 m short of the destination:
+/// `alternativesLastLeg` (the alternatives card with "Route ends 300 m before the destination" and
+/// the dashed leg on the map) and `guidingLastLeg` (the bar past the route end, on the last leg).
 @MainActor
 enum RouteDebugStubs {
     /// Start of every stub route: where `MapPreviewData.fakeNav` puts the estimate.
@@ -27,13 +29,25 @@ enum RouteDebugStubs {
         var maneuver: RouteManeuver
     }
 
+    /// How far short of the destination the last-leg stubs end their routes, metres.
+    static let shortM = 300.0
+
     /// A route from `origin` along `legs`; the first step is the empty `depart`, the last `arrive`.
-    private static func route(id: String, legs: [Leg], timeS: Double) -> Route {
+    /// With `endingAt`, the last leg is replaced by a straight run to that point (so the offered
+    /// routes end together, as Apple's do, and only the last-leg states differ from the destination).
+    private static func route(id: String, legs: [Leg], timeS: Double, endingAt target: GeoPoint? = nil) -> Route {
         var points = [RoutePoint(latitude: origin.latitude, longitude: origin.longitude)!]
         var lat = origin.latitude, lon = origin.longitude
         var steps = [RouteStep(instruction: "", distanceM: 0, polylineRange: 0...0, maneuver: .depart)]
         var total = 0.0
-        for leg in legs {
+        for (index, original) in legs.enumerated() {
+            var leg = original
+            if let target, index == legs.count - 1 {
+                let dy = (target.latitude - lat) * NavGeometry.metersPerDegree
+                let dx = (target.longitude - lon) * NavGeometry.metersPerDegree * cos(lat * .pi / 180)
+                leg.lengthM = (dx * dx + dy * dy).squareRoot()
+                leg.headingDeg = atan2(dx, dy) * 180 / .pi
+            }
             let from = points.count - 1
             let n = max(1, Int(leg.lengthM / 50))
             let rad = leg.headingDeg * .pi / 180
@@ -57,23 +71,31 @@ enum RouteDebugStubs {
             source: .synthetic, label: "Harbour Café")
     }
 
+    /// Where the first route ends; the others end here too.
+    static let routeEnd: GeoPoint = {
+        let end = route(id: "end", legs: firstLegs, timeS: 0).polyline.last!
+        return GeoPoint(latitude: end.latitude, longitude: end.longitude)
+    }()
+
+    private static let firstLegs = [
+        Leg(headingDeg: 40, lengthM: 700, instruction: "Turn right onto Orchard Lane", maneuver: .right),
+        Leg(headingDeg: 130, lengthM: 500, instruction: "Turn left onto Harbour Street", maneuver: .left),
+        Leg(headingDeg: 40, lengthM: 900, instruction: "Continue to Harbour Café", maneuver: .straight),
+    ]
+
     static func routes() -> [Route] {
         [
-            route(id: "stub-1", legs: [
-                Leg(headingDeg: 40, lengthM: 700, instruction: "Turn right onto Orchard Lane", maneuver: .right),
-                Leg(headingDeg: 130, lengthM: 500, instruction: "Turn left onto Harbour Street", maneuver: .left),
-                Leg(headingDeg: 40, lengthM: 900, instruction: "Continue to Harbour Café", maneuver: .straight),
-            ], timeS: 540),
+            route(id: "stub-1", legs: firstLegs, timeS: 540),
             route(id: "stub-2", legs: [
                 Leg(headingDeg: 40, lengthM: 1_200, instruction: "Turn right onto Mill Road", maneuver: .right),
                 Leg(headingDeg: 130, lengthM: 900, instruction: "Turn left onto Harbour Street", maneuver: .left),
                 Leg(headingDeg: 40, lengthM: 600, instruction: "Continue to Harbour Café", maneuver: .straight),
-            ], timeS: 660),
+            ], timeS: 660, endingAt: routeEnd),
             route(id: "stub-3", legs: [
                 Leg(headingDeg: 40, lengthM: 300, instruction: "Turn left onto Lantern Way", maneuver: .left),
                 Leg(headingDeg: -50, lengthM: 800, instruction: "Turn right onto Harbour Street", maneuver: .right),
                 Leg(headingDeg: 40, lengthM: 1_500, instruction: "Continue to Harbour Café", maneuver: .straight),
-            ], timeS: 780),
+            ], timeS: 780, endingAt: routeEnd),
         ]
     }
 
@@ -87,14 +109,25 @@ enum RouteDebugStubs {
         init(_ value: RouteLiveInputs) { self.value = value }
     }
 
+    /// The destination of the last-leg states: `shortM` beyond where every stub route ends, on the
+    /// heading of the last leg.
+    static var destinationShort: RoutePlace {
+        let rad = 40.0 * Double.pi / 180
+        let lat = routeEnd.latitude + shortM * cos(rad) / NavGeometry.metersPerDegree
+        let lon = routeEnd.longitude + shortM * sin(rad) / (NavGeometry.metersPerDegree * cos(lat * .pi / 180))
+        return RoutePlace(name: "Harbour Café", addressLine: "12 Orchard Lane", latitude: lat, longitude: lon)
+    }
+
     final class Searcher: DestinationSearching {
+        var place = RouteDebugStubs.destination
+
         func completions(for query: String, region: SearchRegion) async throws -> [DestinationCompletion] {
             ["Harbour Café", "Harbour Books", "Harbour Street 8", "Harbour Park"].enumerated().map {
                 DestinationCompletion(id: "\($0.offset)", title: $0.element, subtitle: $0.offset == 2 ? "Lantern Way" : "Orchard Lane")
             }
         }
 
-        func resolve(_ completion: DestinationCompletion) async throws -> RoutePlace { RouteDebugStubs.destination }
+        func resolve(_ completion: DestinationCompletion) async throws -> RoutePlace { place }
     }
 
     /// Invented values near (0, 0), like every stub place.
@@ -129,6 +162,15 @@ enum RouteDebugStubs {
         return GeoPoint(latitude: p.latitude + offsetM / NavGeometry.metersPerDegree, longitude: p.longitude)
     }
 
+    /// A point `fromDestinationM` from `destination` on the segment towards `end`.
+    private static func point(_ destination: GeoPoint, towards end: GeoPoint, fromDestinationM: Double) -> GeoPoint {
+        let total = LastLeg.distanceM(destination, end)
+        let t = total > 0 ? fromDestinationM / total : 0
+        return GeoPoint(
+            latitude: destination.latitude + (end.latitude - destination.latitude) * t,
+            longitude: destination.longitude + (end.longitude - destination.longitude) * t)
+    }
+
     /// The flow for a stub state, or nil when `argument` is nil or unknown.
     static func flow(argument: String?) -> RouteFlowModel? {
         guard let state = argument else { return nil }
@@ -140,14 +182,18 @@ enum RouteDebugStubs {
                 RoutePlace(name: "Lantern Park", addressLine: "Mill Road", latitude: 0.02, longitude: 0.0),
             ],
             home: RoutePlace(name: "Home", addressLine: "3 Lantern Way", latitude: 0.005, longitude: 0.03))
+        let searcher = Searcher()
+        let lastLegState = state == "alternativesLastLeg" || state == "guidingLastLeg"
+        if lastLegState { searcher.place = destinationShort }
         let flow = RouteFlowModel(
-            searcher: Searcher(), director: director, pacer: RequestPacer(clock: clock, debounce: 0, minInterval: 0),
+            searcher: searcher, director: director, pacer: RequestPacer(clock: clock, debounce: 0, minInterval: 0),
             saved: saved, linkResolver: LinkResolver())
         let first = routes()[0]
         let uncertain = state == "uncertain" || state == "uncertainOffline"
         let at: GeoPoint = switch state {
         case "away": point(first, alongM: 600, offsetM: 400)
         case "arrived": point(first, alongM: first.distanceM - 10)
+        case "guidingLastLeg": point(destinationShort.coordinate, towards: routeEnd, fromDestinationM: 150)
         default: origin
         }
         let speed: Double? = state == "arrived" ? 0 : 12
@@ -166,13 +212,13 @@ enum RouteDebugStubs {
             case "coordinates", "coordinatesSwapped", "coordinatesInvalid", "openLink", "linkNoPoint", "linkNoPointTyped",
                  "coordinatesCard", "linkCard":
                 await coordinateState(state, flow)
-            case "alternatives", "offline": step(flow)
+            case "alternatives", "offline", "alternativesLastLeg": step(flow, place: searcher.place)
             case "uncertainOffline":
                 flow.longPress(at: destination.coordinate)
                 try? await Task.sleep(for: .milliseconds(300))
                 flow.route(anyway: true)
             default:
-                step(flow, start: true)
+                step(flow, place: searcher.place, start: true)
                 if state == "guidingUncertain" {
                     try? await Task.sleep(for: .seconds(1))
                     box.value.origin.estimate = estimate(at: origin, uncertain: true)
@@ -203,11 +249,11 @@ enum RouteDebugStubs {
     }
 
     /// place card → Route → (Start).
-    private static func step(_ flow: RouteFlowModel, start: Bool = false) {
+    private static func step(_ flow: RouteFlowModel, place: RoutePlace, start: Bool = false) {
         Task { @MainActor in
             if flow.phase != .placeCard {
                 flow.openSearch()
-                flow.select(destination)
+                flow.select(place)
                 try? await Task.sleep(for: .milliseconds(200))
             }
             flow.route()

@@ -109,8 +109,8 @@ final class RecordingSessionRouteSink: RouteEventSink {
 
     init(session: RecordingSession) { self.session = session }
 
-    func routeSet(_ route: Route, reason: RouteSample.Reason, origin: RouteOrigin?) {
-        session.recordRoute(route, reason: reason, origin: origin)
+    func routeSet(_ route: Route, reason: RouteSample.Reason, origin: RouteOrigin?, destination: RouteDestination?) {
+        session.recordRoute(route, reason: reason, origin: origin, destination: destination)
     }
 
     func routeCleared(routeID: String, reason: RouteClearedSample.Reason) {

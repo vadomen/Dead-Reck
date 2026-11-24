@@ -4097,6 +4097,16 @@
         }
       }
     },
+    "Route ends %@ before the destination" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Маршрут закінчується за %@ до пункту призначення"
+          }
+        }
+      }
+    },
     "Route %lld of %lld, %@" : {
       "localizations" : {
         "uk" : {

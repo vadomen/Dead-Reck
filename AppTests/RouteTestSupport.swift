@@ -111,8 +111,10 @@ final class SinkRecorder: RouteEventSink {
 
     private(set) var rows: [Row] = []
     private(set) var origins: [RouteOrigin?] = []
+    private(set) var destinations: [RouteDestination?] = []
 
-    func routeSet(_ route: Route, reason: RouteSample.Reason, origin: RouteOrigin?) {
+    func routeSet(_ route: Route, reason: RouteSample.Reason, origin: RouteOrigin?, destination: RouteDestination?) {
+        destinations.append(destination)
         rows.append(.route(id: route.id, reason: reason.rawValue, source: origin?.source?.rawValue))
         origins.append(origin)
     }
@@ -125,7 +127,8 @@ final class SinkRecorder: RouteEventSink {
 enum RouteFixtures {
     static let origin = GeoPoint(latitude: 0.0004, longitude: 0.0004)
 
-    static let place = RoutePlace(name: "Test Café", addressLine: "1 Test Lane", latitude: 0.02, longitude: 0.02)
+    /// Where `route()` ends (2.2 km east of (0, 0)), so the routes reach their destination (no last leg).
+    static let place = RoutePlace(name: "Test Café", addressLine: "1 Test Lane", latitude: 0, longitude: 0.0198)
     static let otherPlace = RoutePlace(name: "Other Café", addressLine: "2 Test Lane", latitude: 0.03, longitude: 0.01)
 
     static func nav(

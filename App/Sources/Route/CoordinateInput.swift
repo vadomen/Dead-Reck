@@ -39,6 +39,15 @@ enum CoordinateInput: Equatable, Sendable {
     /// A link (or `geo:`) with no usable point, or one that is not a known https map link.
     case noPoint
 
+    /// Text read as coordinates (valid, swapped, or numbers out of range): its row shows alone and the
+    /// text is never sent to the completer.
+    var isCoordinateText: Bool {
+        switch self {
+        case .point, .swapped, .outOfRange: true
+        default: false
+        }
+    }
+
     var point: ParsedPoint? {
         switch self {
         case .point(let p), .swapped(let p): p

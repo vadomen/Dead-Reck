@@ -98,20 +98,26 @@ struct CoordinateFlowTests {
         #expect(typed.store.home?.coordinate == GeoPoint(latitude: -45.12345, longitude: -120.54321))
     }
 
-    @Test("Plain coordinates still reach the completer (the row sits above its results); links never do")
+    @Test("Coordinate text (valid, swapped, out of range) and links never reach the completer; numbers that are not coordinates do")
     func completerSplit() async {
         let rig = Rig()
         rig.searcher.completionResult = .success([DestinationCompletion(id: "1", title: "Test Café", subtitle: "Test Lane")])
-        rig.flow.updateQuery("-45.12345, -120.54321")
-        await waitUntil("completions") { rig.flow.searchStatus == .ready }
-        #expect(rig.searcher.queries == ["-45.12345, -120.54321"])
-        #expect(rig.flow.completions.count == 1)
-        for link in [Self.short, Self.full.absoluteString, "geo:-45.1,-120.5", "https://evil.example/x", "javascript:alert(1)"] {
-            rig.flow.updateQuery(link)
-            #expect(rig.flow.completions.isEmpty && rig.flow.searchStatus == .idle, "\(link)")
+        let neverSent = ["-45.12345, -120.54321", "-120.54321, -45.12345", "95.5, 200.5", "N 45.5 W 120.5",
+                         Self.short, Self.full.absoluteString, "geo:-45.1,-120.5", "https://evil.example/x", "javascript:alert(1)"]
+        for text in neverSent {
+            rig.flow.updateQuery(text)
+            #expect(rig.flow.completions.isEmpty && rig.flow.searchStatus == .idle, "\(text)")
+            #expect(rig.flow.input != .none || CoordinateParser.isLinkLike(text), "\(text) is read here")
         }
         try? await Task.sleep(for: .milliseconds(50))
-        #expect(rig.searcher.queries == ["-45.12345, -120.54321"], "no link text was sent to the completer")
+        #expect(rig.searcher.queries.isEmpty, "no coordinate or link text was sent to the completer")
+        // Ordinary text that only contains numbers is a search.
+        for text in ["500 600", "221 Test Lane", "12", "Test 45"] {
+            rig.flow.updateQuery(text)
+            await waitUntil("completions for \(text)") { rig.flow.searchStatus == .ready }
+            #expect(rig.flow.input == .none, "\(text)")
+        }
+        #expect(rig.searcher.queries == ["500 600", "221 Test Lane", "12", "Test 45"])
     }
 
     @Test("A full link opens the card at once, titled with the place name from the link")
