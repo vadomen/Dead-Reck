@@ -347,7 +347,8 @@ the completer's results, then the normal place card with the title "Coordinates"
   centre, the weakest). `/place/<name>/` gives the title.
 - OpenStreetMap: `mlat`/`mlon`, then `#map=z/lat/lon`.
 - Share text with words before the link works; a link without a scheme works when the
-  host is allowlisted.
+  host is allowlisted and the link is the whole text (R94.3-4, BACKLOG: with words before
+  it, the text goes to the completer and gets no Open link row).
 - Not accepted ("This link has no point…"): unknown hosts, `http`, `javascript:`,
   `data:`, a URL with user info, a port other than 443, more than 2048 bytes.
 
@@ -372,15 +373,23 @@ the full link or the coordinates instead." **A consent or sign-in redirect to a 
 is not on the allowlist (for example an EU consent page) is not followed and ends with
 this "no point in this link" message.**
 
-**Privacy.** Typed or pasted coordinates and links are never sent to the MapKit search
-completer; they go nowhere until a route is requested from Apple (`MKDirections` with the
-point). Opening a short link sends one request chain to that link's host or hosts (for
+**Privacy.** Coordinates and links that the gate recognises are never sent to the MapKit
+search completer; they go nowhere until a route is requested from Apple (`MKDirections`
+with the point). Plus codes (Open Location Code) are searched like an address, so they go
+to the completer as typed (user decision 2026-11-24; local decoding is `ROUTE-PLUSCODE`,
+BACKLOG). Decimal coordinates and map links are still never sent to the completer. The
+privacy texts promise only what the gate recognises. Opening a short link sends one request chain to that link's host or hosts (for
 example Google): that host sees the request and the device IP address. No reverse
 geocoding. The empty search state has the system `PasteButton`, so iOS shows no
 pasteboard prompt. Text held back from the place search (never sent to the completer, no
 completions): text of only coordinate characters with a fraction or a mark; free text
 embedding a decimal pair; any text with a digit followed by a degree, minute or second
-mark; any decimal with 2 or more fraction digits. Held-back text that is not a recognised
+mark; any decimal with 2 or more fraction digits; and, since round 3 (R94.3-1), text with
+any of the angle marks `° º ′ ″ ' " ˚ ‘ ’ “ ” ´ ʹ ʺ` after a digit, text made only of
+coordinate characters with an N/S/E/W letter and 3 or more numbers (unmarked DMS), and
+text with a lat/lon label followed by a number (`lat`, `lon`, `lng`, `latitude`,
+`longitude`, `широта`, `довгота`). Fractions up to 20 digits are read (full-precision
+doubles; R94.3-2). Held-back text that is not a recognised
 point shows nothing (no row, no message); DMS is not read as a point (R94.2-5, BACKLOG).
 Accepted side effect: dotted dates, "Price 1,500" and dotted phone numbers are not
 searched. Texts: About → "Data and services", the site privacy pages (en, uk),
@@ -399,7 +408,8 @@ nothing changes. Above it:
 - The manoeuvre bar has four states. Before the last manoeuvre: normal guidance. After
   the last manoeuvre on a route with a last leg: the glyph is `arrow.up.forward`, the text
   is "Route ends N m before the destination" (N is the fixed gap) and the big number is
-  the straight-line distance to the destination (never below the gap). On the leg: the
+  the straight-line distance to the destination (it can be below the gap when the
+  destination lies beside the route; R94.3-6, BACKLOG). On the leg: the
   same, counting down, and the remaining-time line is hidden. With a gap of 50 m or less:
   Apple's arrive step as before.
 - On-last-leg rule: within 150 m (the away margin) of the straight segment route end to
