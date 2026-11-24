@@ -712,10 +712,10 @@ before prompt 52; the app writes them since, only while Record runs. Core types:
 `RouteSample`, `RouteClearedSample`, `Route`. When Record starts with an active route
 (the Navigate to Record hand-over), a `route` row with reason `restored` is written
 right after `start` (and after `navPrior`, if present); it carries the original
-request's `origin`. No schema change.
+request's `origin` and `destination` (prompt 53a, when known). No version change.
 
 ```json
-{"data":{"origin":{"latitude":-45.00012,"longitude":-120.00003,"source":"fix"},"reason":"user","route":{"distanceM":512.5,"expectedTravelTimeS":61,"id":"r1","label":"Harbour","polylineE7":[-450001200,-1200000300,0,4500,-3000,0,-1500,1200],"source":"appleMaps","steps":[{"distanceM":0,"from":0,"instruction":"","maneuver":"depart","to":0},{"distanceM":35.4,"from":0,"instruction":"Tournez à droite / Rue 2","maneuver":"right","to":1},{"distanceM":477.1,"from":1,"instruction":"Arrive","maneuver":"arrive","to":3}]}},"kind":"route","t":1500000000}
+{"data":{"destination":{"latitude":-45.0031,"longitude":-120.0007,"source":"coordinates"},"origin":{"latitude":-45.00012,"longitude":-120.00003,"source":"fix"},"reason":"user","route":{"distanceM":512.5,"expectedTravelTimeS":61,"id":"r1","label":"Harbour","polylineE7":[-450001200,-1200000300,0,4500,-3000,0,-1500,1200],"source":"appleMaps","steps":[{"distanceM":0,"from":0,"instruction":"","maneuver":"depart","to":0},{"distanceM":35.4,"from":0,"instruction":"Tournez à droite / Rue 2","maneuver":"right","to":1},{"distanceM":477.1,"from":1,"instruction":"Arrive","maneuver":"arrive","to":3}]}},"kind":"route","t":1500000000}
 {"data":{"reason":"arrived","routeID":"r5"},"kind":"routeCleared","t":8000000000}
 ```
 
@@ -728,6 +728,8 @@ ends (`routeCleared`).
 | `route` | object | The `Route`: `id`, `label` (optional), `source`, `distanceM` (m), `expectedTravelTimeS` (s), `polylineE7`, `steps`. |
 | `origin` | object, optional | Where the route was requested from: `latitude`, `longitude` (degrees, WGS 84) and optional `source`. Absent when not known. |
 | `origin.source` | string, optional | What the origin was: `fix`, `estimate` or `pin`. Open set; omitted when unknown, an unknown string is kept. |
+| `destination` | object, optional | Where the route was requested to (prompt 53a): `latitude`, `longitude` (degrees, WGS 84) and optional `source`. Same shape and checks as `origin`. Absent when not known; a row without it is byte-identical to one written before. Written on every route row (`user`, `alternative`, `offRoute`, `restored`) when known; the Record hand-over carries it into `restored`. Out of range decodes (like `origin`) and `inspect_log` warns; a wrong type or missing key fails the row. |
+| `destination.source` | string, optional | What the destination was: `search`, `pin`, `coordinates`, `link`, `saved`, `recent`. Open set; omitted when unknown, an unknown string is kept verbatim. |
 | `route.source` | string | `appleMaps`, `synthetic`; open, an unknown string is kept. |
 | `steps[].maneuver` | string | `depart`, `straight`, `slightLeft`, `left`, `sharpLeft`, `slightRight`, `right`, `sharpRight`, `uTurn`, `roundaboutExit`, `merge`, `exitRamp`, `arrive`; open, an unknown string is kept (with its `exitNumber`). |
 | `steps[].from`, `to` | int | Closed range of polyline point indexes. The maneuver happens at `to`. |
@@ -777,7 +779,7 @@ Semantics:
 | 4 | New kind `gpsSwitch` (`on`, `source`; `source` vocabulary `driver`, open). Nothing else changed: every v3 row is written and read exactly as before. A v3 reader refuses a v4 file rather than keep the switch rows as unrecognized and replay the drive as if GPS had stayed on. |
 | 5 | New kind `navPrior` (the Navigate to Record hand-over estimate; `restoreClass` vocabulary `moving`, `standingStop`, `parked`; `source` vocabulary `navigate`, open). Nothing else changed: every v4 row is written and read exactly as before. A v4 reader refuses a v5 file rather than keep the row as unrecognized and replay the drive from a fresh start. |
 | 6 | `manualFix` gains the optional `tapLatitude`, `tapLongitude` (the raw tap of a pin that snapped to a road; `latitude`/`longitude` are then the snapped point), and `mapSpanM` may be up to 1500 m for a snapped pin. No new kind; every v5 row is written and read exactly as before. Pin truth is the tap when present (see `manualFix`). A v5 reader refuses a v6 file rather than take the snapped point for the place the driver marked and drop the tap on re-export. |
-| 7 | New kinds `route` (`reason` vocabulary `user`, `offRoute`, `alternative`, `restored`, open; optional `origin` with optional `source` `fix`, `estimate`, `pin`, open) and `routeCleared` (`reason` `arrived`, `cancelled`, `failed`, open; `routeID`). Nothing else changed: every v6 row is written and read exactly as before. A v6 reader refuses a v7 file rather than keep the rows as unrecognized. |
+| 7 | New kinds `route` (`reason` vocabulary `user`, `offRoute`, `alternative`, `restored`, open; optional `origin` with optional `source` `fix`, `estimate`, `pin`, open) and `routeCleared` (`reason` `arrived`, `cancelled`, `failed`, open; `routeID`). Within v7, before it shipped outside the routing branch (user decision 2026-11-24), `route` gained the optional `destination` (`latitude`, `longitude`, optional `source` `search`, `pin`, `coordinates`, `link`, `saved`, `recent`, open); a row without it is byte-identical to before. Nothing else changed: every v6 row is written and read exactly as before. A v6 reader refuses a v7 file rather than keep the rows as unrecognized. |
 
 Within v2, without a version bump (both read unchanged by every v2 reader):
 M4 added the `lifecycle` value `locationAuthorization` (`event` is an open
@@ -843,11 +845,12 @@ unknown kinds. `--strict` stops at the first damaged member or malformed line.
   A v7 file without any: `Routes        none`. The line is absent before v7. It
   prints no coordinates, labels or ids. The total length is the sum of each row's
   `distanceM` (each rebuild adds its whole route). Warnings: a `routeCleared` whose
-  `routeID` is not the active route's, and an origin out of range.
+  `routeID` is not the active route's, an origin out of range, and `N route row(s)
+  with a destination out of range`.
 
   | CSV | Columns |
   |---|---|
-  | `route.csv` | `t,reason,routeID,source,label,distanceM,expectedTravelTimeS,points,steps,originLatitude,originLongitude,originSource,route` (`route` is the full Route JSON) |
+  | `route.csv` | `t,reason,routeID,source,label,distanceM,expectedTravelTimeS,points,steps,originLatitude,originLongitude,originSource,route,destinationLatitude,destinationLongitude,destinationSource` (`route` is the full Route JSON; the three destination columns follow it, empty when the row has no destination) |
   | `routeCleared.csv` | `t,reason,routeID` |
 
   (`detour` and `superseded` in the sample line are unknown reasons from a fixture,

@@ -144,6 +144,10 @@ Done as observe-only (commit cf42628 on branch `fix-jump-gate`; the gate was dro
 **Not in R2:**
 - "Share → FuGPS" from Apple Maps or Google Maps. This needs a share extension (a new target, App Review risk), so it gets its own prompt after R4.
 
+### 53a: Coordinates, pasted map links, the last leg (on `routing`)
+
+**Status: done in code on branch `r2-coords-links` (merges into `routing`, 2026-11-24); device checks open (PLAN §6 "Added by prompt 53a").** What was built: `docs/ROUTING.md` "Coordinates, map links and the last leg (prompt 53a)". The optional `destination` on the v7 `route` row is within v7, no version bump (user decision 2026-11-24; `docs/LOG_FORMAT.md`). These are the last features before `routing` goes into `main` as release 1.1. **Next: prompt 54 (release 1.1).** The remaining drive findings are in `logs/PROMPT_53c_drive_findings_rest.md`.
+
 ### 53 = R3: Route in the engine (OBD mode first)
 
 **From prompt 51:**
