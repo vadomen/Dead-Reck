@@ -1487,7 +1487,7 @@ enum MapPreviewData {
     @MainActor
     static func fakeNav(_ mode: HUDFakes.FakeNav, restored: Bool = false) -> NavigationFeed {
         let restore = restored ? RestoreDisplay(status: .unconfirmed, ageAtStartS: 720) : nil
-        let position = GeoPoint(latitude: 0.0004, longitude: 0.0004)
+        let position = carOverride ?? GeoPoint(latitude: 0.0004, longitude: 0.0004)
         switch mode {
         case .finding:
             return NavigationFeed(display: NavDisplay(

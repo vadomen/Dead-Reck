@@ -195,7 +195,9 @@ final class RouteFlowModel {
     }
 
     func updateQuery(_ text: String) {
-        guard phase == .search else { return }
+        // The sheet re-sends its text when it appears: the same text again changes nothing (a failure
+        // already shown, such as a short link that led to no point, must stay).
+        guard phase == .search, text != query else { return }
         query = text
         searchTask?.cancel()
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)

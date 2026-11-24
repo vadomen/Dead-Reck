@@ -28,8 +28,10 @@ enum RouteColors {
     static let chosenWidth = 7.0
     static let otherWidth = 5.0
     static let casingExtra = 4.0
-    /// Dash pattern of the straight last leg, in points.
-    static let lastLegDash: [CGFloat] = [9, 7]
+    /// The straight last leg: thin, round dots/dashes, so it does not read as a continuation of the route.
+    static let lastLegWidth = 4.0
+    /// Dash pattern of the straight last leg (MapKit scales it by the line width).
+    static let lastLegDash: [CGFloat] = [2.5, 4]
 }
 
 /// The route on the map: the offered alternatives (chosen one emphasised) or
@@ -68,11 +70,10 @@ struct RouteOverlay: MapContent {
         let coordinates = [segment.leg.end, segment.leg.destination].map {
             CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude)
         }
-        let width = segment.chosen ? RouteColors.chosenWidth : RouteColors.otherWidth
         MapPolyline(coordinates: coordinates)
             .stroke(
                 RouteColors.color(RouteColors.line(dark: dark, chosen: segment.chosen)),
-                style: StrokeStyle(lineWidth: width - 1, lineCap: .butt, dash: RouteColors.lastLegDash))
+                style: StrokeStyle(lineWidth: RouteColors.lastLegWidth, lineCap: .round, dash: RouteColors.lastLegDash))
     }
 
     @MapContentBuilder

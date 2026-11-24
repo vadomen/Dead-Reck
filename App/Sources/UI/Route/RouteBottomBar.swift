@@ -311,7 +311,9 @@ struct GuidanceBar: View {
             Text(RouteFormat.routeEnds(gapM: gap))
                 .font(.headline)
                 .foregroundStyle(HUDColors.text)
-                .lineLimit(2)
+                .lineLimit(3)
+                .minimumScaleFactor(0.85)
+                .fixedSize(horizontal: false, vertical: true)
         } else if let step = guidance?.nextStep, guidance?.status != .awayFromRoute {
             Text(RouteFormat.instruction(step))
                 .font(guidance?.status == .onRoute ? .headline : .subheadline)

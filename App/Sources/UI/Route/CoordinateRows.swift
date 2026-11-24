@@ -20,7 +20,7 @@ struct CoordinateInputRow: View {
         case .shortLink(let url):
             row(title: String(localized: "Open link"), subtitle: url.host ?? "", symbol: "link") { flow.openLink() }
         case .outOfRange:
-            message(String(localized: "Latitude is between −90 and 90, longitude between −180 and 180."))
+            message(String(localized: "Latitude is between −90 and 90, longitude between −180 and 180."))
         case .noPoint:
             message(RouteFormat.noPointMessage)
         }

@@ -161,6 +161,19 @@ struct CoordinateFlowTests {
         #expect(rig.flow.place?.coordinate == GeoPoint(latitude: -45.12345, longitude: -120.54321))
     }
 
+    @Test("The sheet sends its text again when it appears: the same text changes nothing, a shown failure stays")
+    func sameTextAgainKeepsFailure() async {
+        let rig = Rig([.success(Self.noPoint)])
+        rig.flow.updateQuery(Self.short)
+        rig.flow.openLink()
+        await waitUntil("failure") { rig.flow.searchStatus == .failure(.linkNoPoint) }
+        rig.flow.updateQuery(Self.short)
+        #expect(rig.flow.searchStatus == .failure(.linkNoPoint))
+        #expect(rig.flow.input == .shortLink(URL(string: Self.short)!))
+        rig.flow.updateQuery(Self.short + "x")
+        #expect(rig.flow.searchStatus != .failure(.linkNoPoint), "different text is a new reading")
+    }
+
     @Test("A short link that ends with no point says so and offers no retry; the text stays")
     func shortLinkNoPoint() async {
         let rig = Rig([.success(Self.noPoint)])

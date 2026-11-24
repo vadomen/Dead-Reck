@@ -463,12 +463,12 @@
         }
       }
     },
-    "Latitude is between −90 and 90, longitude between −180 and 180." : {
+    "Latitude is between −90 and 90, longitude between −180 and 180." : {
       "localizations" : {
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Широта — від −90 до 90, довгота — від −180 до 180."
+            "value" : "Широта — від −90 до 90, довгота — від −180 до 180."
           }
         }
       }
