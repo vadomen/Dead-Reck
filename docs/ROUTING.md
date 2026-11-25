@@ -439,8 +439,11 @@ driving" would be wrong advice. The app says so instead.
 With Navigate idle nothing new is shown, with or without an adapter.
 
 **Speed source.** The speed chip's own rule, `MapSpeedRule.resolve`: a fresh OBD reply
-(at most 2 s old) or a fix at most 2 s old with a valid speed. Network fixes and GPS off
-give none.
+(at most 2 s old) or a fix at most 2 s old with a valid speed. A fix counts only while the
+driver's GPS switch (the session's switch) is on: location rows keep being recorded while
+it is off, but they are not a speed source for this rule, and the speed chip drops the fix
+the same way. The guidance probe reads the session's switch, so it works with the map
+hidden or the phone locked. Network fixes and GPS off give none.
 
 **The state.** No speed source for more than 5 s (`NoSpeedSourceRule.thresholdS`, strict
 `>`) and the car not shown standing. Standing is the engine's own
