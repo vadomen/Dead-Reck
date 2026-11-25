@@ -586,3 +586,11 @@ Items 1-7 above (demo pipeline) and the airplane-mode check (item 1) cover the d
 7. **The system Paste control:** in the empty search state the Paste button pastes the pasteboard text and iOS shows no pasteboard prompt before the tap.
 8. **A recording with a destination:** record a drive with such a route, then read it with `inspect_log --csv`: `route.csv` has the `destinationLatitude`, `destinationLongitude`, `destinationSource` columns filled, including on the `restored` row after a Navigate to Record hand-over.
 9. **Plus codes:** a full plus code, and a short one with a locality, typed into the destination field: Apple's search returns the right point (plus codes are searched like an address).
+
+### Added by prompt 53d, no speed source (branch `r2-no-speed`) — not verified on a device
+1. **Adapter unplugged and GPS off while moving:** with a route active and the car moving, unplug the adapter and switch GPS off (or have only network fixes). Within a few seconds (5 s of no speed source) the HUD status line shows "No speed source — position not updating" and the guidance bar shows the same reason in place of the distance, with no remaining distance or time, and "Arrived" cannot appear. Plugging the adapter back in clears it on the first fresh speed.
+2. **Fuel stop with the engine off:** stop, switch the engine off, wait over 10 s: no change (the car is shown standing).
+3. **Red light with OBD answering 0:** wait through a red light: no change.
+4. **Adapter reconnect at a stop:** drop and restore the adapter link while standing: no change.
+5. **Navigate-only run, GPS on then off:** with Navigate running (no Record), GPS on and no adapter, then switch GPS off: the state appears within seconds (checks the fix-age clock in Navigate).
+6. **Navigate idle, no adapter:** nothing new on the map.
