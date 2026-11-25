@@ -245,8 +245,8 @@ enum RouteDebugStubs {
                     box.value.origin.estimate = estimate(at: origin, uncertain: true)
                 }
                 if noSpeed {
-                    // Guidance starts on a good estimate; the speed source then goes away.
-                    try? await Task.sleep(for: .seconds(1))
+                    // Guidance starts on a good estimate (so the bar has its last instruction); the speed source then goes away.
+                    try? await Task.sleep(for: .seconds(3))
                     box.value.origin.estimate = estimate(at: origin, uncertain: false, noSpeed: true)
                 }
             }
