@@ -1499,3 +1499,15 @@ Reviewer: ready to merge (0 BLOCKER, 0 MAJOR). Round 4 reviewed the coordinates/
 | R95.1-3 | MINOR | `App/Sources/Route/CoordinateInput.swift:119,158-160` with `RouteFlowModel.swift:205` and `docs/ROUTING.md` held-back list: text over `maxLinkLength` (2,048 UTF-8 bytes) is now "not coordinates, not a link" and goes to Apple search even if it holds coordinates or a map link after the cap (a long pasted share text ending in a link); before this range the patterns held it back. Units: the cap is bytes in `isCoordinateLike`/`parse` and Characters in the link-scan head. | DEFERRED | BACKLOG. Proposed fix: do not search text over `maxLinkLength` at all in `updateQuery`, or state the length condition in ROUTING.md and the privacy text. |
 
 Round 1 summary: 2 MAJOR fixed, 1 MINOR deferred. Tests after fix: Core 1323 passed, App 1051 passed.
+
+### Round 2 (3730e16..e321f6b)
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R95.2-1 | MINOR | `App/Sources/UI/Route/RouteGlue.swift:107`: no test covers the probe `RouteWiring.install` binds to `feed.speedProbe`; `probeHonoursTheGPSSwitch` calls `RouteInputs.speedProbe(session)` directly and `wiring` runs on an idle session with no fix, so reverting line 107 to the pre-fix inline probe would pass every test (R95.1-1 regression unguarded). | DEFERRED | BACKLOG. Proposed fix: in `probeHonoursTheGPSSwitch` call `RouteWiring.install(flow:on:navigation:)` with a `NavigationFeed` and read `feed.speedProbe?()` while the switch is off. |
+
+Fresh reviewer: ready to merge (0 BLOCKER, 0 MAJOR). Round-1 fixes verified correct (R95.1-1, R95.1-2). No mutations run (App-only, Core untouched). Hash proof: replay_nav 101/101 identical.
+
+### Run 95 summary
+
+2 rounds. Findings: 0 BLOCKER; 2 MAJOR, both fixed (R95.1-1, R95.1-2 in 5e7df2b); MINOR: deferred R95.1-3, R95.2-1; 0 rejected. Final tests: Core 1323 passed, App 1051 passed. replay_nav acceptance matrix 101/101 identical vs 3730e16. Outcome: closed, ready to merge.
