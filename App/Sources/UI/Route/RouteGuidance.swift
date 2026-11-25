@@ -33,6 +33,9 @@ struct RouteGuidance: Equatable, Sendable {
     /// Straight-line to the destination; set only for a route with a last leg (the
     /// estimate known, any status but uncertain). Arrival is measured on it.
     var distanceToDestinationM: Double?
+    /// `.uncertain` because there is no speed source while not standing (`NoSpeedSourceRule`): the
+    /// bar names the reason instead of a distance.
+    var noSpeedSource = false
 
     /// `previousAlongM`: where the car was last, so a route that passes the
     /// same place twice is read in order (a window around the last progress,
@@ -47,6 +50,7 @@ struct RouteGuidance: Equatable, Sendable {
         geometry: RouteGeometry, estimate: NavDisplay?, previousAlongM: Double? = nil,
         lastLeg: LastLeg? = nil, lastLegReached: Bool = false
     ) -> RouteGuidance {
+        if estimate?.noSpeedSource == true { return RouteGuidance(status: .uncertain, noSpeedSource: true) }
         guard let estimate, !PositionStatus.isFinding(estimate) else {
             return RouteGuidance(status: .uncertain)
         }

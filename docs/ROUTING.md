@@ -426,3 +426,51 @@ the route and stopped).
 **The row.** The `route` row carries the optional `destination` (`latitude`, `longitude`,
 `source` `search`, `pin`, `coordinates`, `link`, `saved`, `recent`) so a recording can be
 replayed with the leg; `docs/LOG_FORMAT.md` "`route`, `routeCleared`". No version bump.
+
+## No speed source (prompt 53d)
+
+Done in code on branch `r2-no-speed` (cut from `routing`); device checks in
+`docs/PLAN.md` §6 "Added by prompt 53d". Code: `App/Sources/UI/Map/NoSpeedSourceRule.swift`
+(pure, injected clock). Without a speed the engine does not move the position, and the
+ellipse can stay small while the car drives on, so "Finding your position… · keep
+driving" would be wrong advice. The app says so instead.
+
+**Scope.** Only while a Navigate or Record run is active and the engine has an estimate.
+With Navigate idle nothing new is shown, with or without an adapter.
+
+**Speed source.** The speed chip's own rule, `MapSpeedRule.resolve`: a fresh OBD reply
+(at most 2 s old) or a fix at most 2 s old with a valid speed. A fix counts only while the
+driver's GPS switch (the session's switch) is on: location rows keep being recorded while
+it is off, but they are not a speed source for this rule, and the speed chip drops the fix
+the same way. The guidance probe reads the session's switch, so it works with the map
+hidden or the phone locked. Network fixes and GPS off give none.
+
+**The state.** No speed source for more than 5 s (`NoSpeedSourceRule.thresholdS`, strict
+`>`) and the car not shown standing. Standing is the engine's own
+`NavigationEstimate.stationary`: a fresh OBD 0 (a zero-velocity update), or OBD stale
+after an OBD 0 while the engine's IMU motion check has not cleared the parked latch. No
+new motion detector. Ignition off (the Navigate auto-stop) ends the run, so the state
+ends with it.
+
+**Where it shows.**
+- When `PositionStatus.isFinding` is true, the HUD status line says "No speed source —
+  position not updating" (speedometer symbol) instead of "Finding your position… · keep
+  driving" for as long as the state lasts. Driving on finds nothing without a speed
+  source (user decision 2026-11-24); the "Connect OBD…" banner says what to do.
+- The place card origin check (origin rule (b)) offers "I'm here" first.
+- The guidance manoeuvre bar shows the reason in place of the distance, in the uncertain
+  (warn) styling; remaining distance and time are hidden.
+- Arrival cannot fire in the state (the remaining distance is nil).
+- No banner and no sound.
+
+**Clearing.** On the first fresh speed source, with no hysteresis. The estimate is not
+reset.
+
+**Does not trigger:** a fuel stop with the engine off, a red light with OBD answering 0,
+reconnect gaps while standing. **Triggers:** the adapter unplugged or never connected,
+GPS off or only network fixes, the car moving. This includes the 2026-11-02 case (OBD
+lost at a stop with the last reply 0, then moving on network fixes): the state starts
+within 5 s once the motion check clears `stationary`.
+
+The engine, `NavigationConfig`, the sidecar and the log format are unchanged; the
+`replay_nav` acceptance matrix is unchanged (hash proof).

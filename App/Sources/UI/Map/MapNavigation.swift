@@ -24,6 +24,11 @@ struct NavDisplay: Hashable, Sendable {
     var headingStdDeg: Double?
     /// False while the heading is still being calibrated.
     var converged: Bool
+    /// The engine's last step was frozen (`NavigationEstimate.stationary`): the car is shown to be standing.
+    var stationary: Bool = false
+    /// No speed source while not standing (`NoSpeedSourceRule`): set by `NavigationFeed`, which owns the
+    /// clock and the session's speed. Counts as uncertain (`PositionStatus.isFinding`).
+    var noSpeedSource: Bool = false
 
     /// nil without a recording, before initialisation, or for a non-finite estimate.
     init?(_ snapshot: NavigationSnapshot) {
@@ -39,11 +44,13 @@ struct NavDisplay: Hashable, Sendable {
         headingDeg = snapshot.headingDeg.flatMap { $0.isFinite ? $0 : nil }
         headingStdDeg = snapshot.headingStdDeg
         converged = snapshot.converged
+        stationary = snapshot.estimate?.stationary ?? false
     }
 
     init(
         position: GeoPoint, semiMajorM: Double, semiMinorM: Double, orientationDeg: Double,
-        headingDeg: Double? = nil, headingStdDeg: Double? = nil, converged: Bool
+        headingDeg: Double? = nil, headingStdDeg: Double? = nil, converged: Bool,
+        stationary: Bool = false, noSpeedSource: Bool = false
     ) {
         self.position = position
         self.semiMajorM = semiMajorM
@@ -52,6 +59,8 @@ struct NavDisplay: Hashable, Sendable {
         self.headingDeg = headingDeg
         self.headingStdDeg = headingStdDeg
         self.converged = converged
+        self.stationary = stationary
+        self.noSpeedSource = noSpeedSource
     }
 }
 
@@ -134,7 +143,7 @@ struct NavWriteGate: Equatable, Sendable {
 
     private func decide(_ value: NavDisplay, at now: ContinuousClock.Instant) -> Bool {
         guard let last, let lastTime else { return true }
-        if value.converged != last.converged { return true }
+        if value.converged != last.converged || value.noSpeedSource != last.noSpeedSource { return true }
         guard now - lastTime >= Self.minInterval else { return false }
         if NavGeometry.distanceM(from: last.position, to: value.position) > Self.minMoveM { return true }
         switch (last.headingDeg, value.headingDeg) {

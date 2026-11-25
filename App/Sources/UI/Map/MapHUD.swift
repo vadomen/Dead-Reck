@@ -462,7 +462,8 @@ struct HUDFakes: Equatable, Sendable {
 
     /// `navFinding`: not converged, a km-wide ellipse. `navEllipse`: converged,
     /// 90 x 20 m across the track. `navRoad`: converged on a road, with the matched edge.
-    enum FakeNav: String, Equatable, Sendable { case finding = "navFinding", ellipse = "navEllipse", road = "navRoad" }
+    /// `navNoSpeed`: converged and narrow, but no speed source (prompt 53d): the status line says so.
+    enum FakeNav: String, Equatable, Sendable { case finding = "navFinding", ellipse = "navEllipse", road = "navRoad", noSpeed = "navNoSpeed" }
 
     static func parse(_ value: String?) -> HUDFakes {
         var out = HUDFakes()
@@ -482,7 +483,7 @@ struct HUDFakes: Equatable, Sendable {
             case "stopped": out.isActive = true; out.stopped = true
             case "restored": out.isActive = true; out.restored = true
             case "locationDenied": out.isActive = true; out.access.locationDenied = true
-            case "navFinding", "navEllipse", "navRoad":
+            case "navFinding", "navEllipse", "navRoad", "navNoSpeed":
                 out.isActive = true
                 out.nav = FakeNav(rawValue: token)
             default: break

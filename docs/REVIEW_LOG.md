@@ -1478,7 +1478,7 @@ Reviewer B: no BLOCKER/MAJOR (round-2 fixes verified: route-ends text after the 
 | ID | Tag | Finding | Status | Note |
 |---|---|---|---|---|
 | R94.4-1 | MINOR | `App/Sources/Route/CoordinateInput.swift:121-123`: the compass rule (N/S/E/W letter + 3 or more numbers) holds back bare plus codes made only of digits and W (`22W2+22`, `W2W3+22`), so the sheet stays blank although the texts say plus codes go to Apple's search (with a locality they are searched). | DEFERRED | BACKLOG. Skip plus-code-shaped text before the compass rule; test `22W2+22` searches. |
-| R94.4-2 | MINOR | `CoordinateInput.swift:96,115`: `isCoordinateLike` has no length cap and runs on the main actor per keystroke; the label pattern `\s*[:=]?\s*` is quadratic in a whitespace run after a label: "lat" + 5,000 spaces 0.77 s, + 20,000 NBSP 62 s (release). | DEFERRED | BACKLOG. Cap the text (e.g. at `maxLinkLength`) before the regexes; separator `\s*(?:[:=]\s*)?`. |
+| R94.4-2 | MINOR | `CoordinateInput.swift:96,115`: `isCoordinateLike` has no length cap and runs on the main actor per keystroke; the label pattern `\s*[:=]?\s*` is quadratic in a whitespace run after a label: "lat" + 5,000 spaces 0.77 s, + 20,000 NBSP 62 s (release). | FIXED | Prompt 53d (commit 00e8487): `isCoordinateLike` returns false for trimmed text over `maxLinkLength` (2,048 UTF-8 bytes) before any regex; label separator now linear `\s*(?:[:=]\s*)?`; link scan bounded to the limit; tests: 100,000 characters of worst cases under 50 ms. |
 | R94.4-3 | MINOR | `CoordinateInput.swift:96`: rule (e) holds back names like "Latitude 41", "Hotel Lat 52" (blank sheet), and misses `Lat. 45.1, Lon. 120.2` and `Long: 120.5` (~11 km precision). | DEFERRED | BACKLOG. Count a label only with a fraction/sign value or both labels present; accept `.` after the label and `long`. |
 | R94.4-4 | MINOR | `docs/ROUTING.md:380`: "Decimal coordinates and map links are still never sent to the completer" is absolute; one-fraction-digit decimals in free text (`Pin 45.1N 120.2W`) and a scheme-less link in free text (R94.3-4) are sent. | FIXED | Ledger commit of round 4: qualified to "that the gate recognises". |
 
@@ -1487,3 +1487,27 @@ Reviewer: ready to merge (0 BLOCKER, 0 MAJOR). Round 4 reviewed the coordinates/
 ### Run 94 summary
 
 4 rounds (rounds 1–3 two parallel reviewers each, A: parser/resolver/search UI/privacy texts, B: last leg/route row/map/bar/stubs; round 4 one reviewer on A's set). Findings: 0 BLOCKER; 7 MAJOR, all fixed (R94.1-1, R94.1-3, R94.1-4, R94.2-1, R94.2-2, R94.3-1, R94.3-2); MINOR: fixed R94.2-3, R94.2-4, R94.4-4; deferred R94.1-2, R94.1-5, R94.2-5, R94.3-3..6, R94.4-1..3; plus-code question decided by the user (searched like an address, ROUTE-PLUSCODE). The privacy-gate finding came back after two fixes; the loop stopped and the user decided (2026-11-24): extend the gate and make the privacy texts exact (recognised coordinates and links never sent; other text incl. plus codes goes to Apple's place search). Final tests at 364b15a: app 1026 tests in 148 suites passed (iPhone 15 Pro simulator); Core 1323 passed (36 known issues). replay_nav acceptance matrix 101/101 identical vs cb3d036 (wall-time fields masked; Core sources unchanged since 1686798; d1102 roads as-live exits 4 as before; `logs/p53a/hash`). Screenshot QA: 80 shots (`logs/p53a/screens`), backlog rows P53A-QA-1..5. Outcome: closed, ready to merge into `routing` (merge: pending).
+
+## Run 95: Prompt 53d no speed source + R94.4-2 (routing..r2-no-speed: 3730e16..541b339), started 2026-11-25
+
+### Round 1
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R95.1-1 | MAJOR | `App/Sources/UI/Route/RouteGlue.swift` speed probe ignored the driver's GPS switch: `RecordingSession.referenceFixArrived` keeps updating `latestFix` while the switch is off, so with the adapter unplugged and GPS switched off under clear sky a fresh valid-speed fix kept `.gps` as the source and the state never flipped (the 2026-11-22 case). | CONFIRMED, FIXED | 5e7df2b: new `RouteInputs.speedProbe(session)` calls `sessionSpeed(session, fixAllowed: session.isGPSSwitchOn)` (session switch, works with the map hidden or the phone locked); arrival's speed unchanged. Test `probeHonoursTheGPSSwitch` (fails with the fix reverted). |
+| R95.1-2 | MAJOR | `App/Sources/UI/Map/NavigationFeed.swift` `peekEstimate` (guidance's own read path) had no test with a speed probe; the mutation `return NavDisplay(snapshot)` passed every test. | CONFIRMED, FIXED | 5e7df2b: test `peekPathCarriesTheState` (feed with scripted probe + real-engine snapshot through `RouteEstimate.source(feed:)` and `flow.loopStep`: reason shown, no distance/time, no arrival, clears when a source returns); fails under the mutation. |
+| R95.1-3 | MINOR | `App/Sources/Route/CoordinateInput.swift:119,158-160` with `RouteFlowModel.swift:205` and `docs/ROUTING.md` held-back list: text over `maxLinkLength` (2,048 UTF-8 bytes) is now "not coordinates, not a link" and goes to Apple search even if it holds coordinates or a map link after the cap (a long pasted share text ending in a link); before this range the patterns held it back. Units: the cap is bytes in `isCoordinateLike`/`parse` and Characters in the link-scan head. | DEFERRED | BACKLOG. Proposed fix: do not search text over `maxLinkLength` at all in `updateQuery`, or state the length condition in ROUTING.md and the privacy text. |
+
+Round 1 summary: 2 MAJOR fixed, 1 MINOR deferred. Tests after fix: Core 1323 passed, App 1051 passed.
+
+### Round 2 (3730e16..e321f6b)
+
+| ID | Tag | Finding | Status | Note |
+|---|---|---|---|---|
+| R95.2-1 | MINOR | `App/Sources/UI/Route/RouteGlue.swift:107`: no test covers the probe `RouteWiring.install` binds to `feed.speedProbe`; `probeHonoursTheGPSSwitch` calls `RouteInputs.speedProbe(session)` directly and `wiring` runs on an idle session with no fix, so reverting line 107 to the pre-fix inline probe would pass every test (R95.1-1 regression unguarded). | DEFERRED | BACKLOG. Proposed fix: in `probeHonoursTheGPSSwitch` call `RouteWiring.install(flow:on:navigation:)` with a `NavigationFeed` and read `feed.speedProbe?()` while the switch is off. |
+
+Fresh reviewer: ready to merge (0 BLOCKER, 0 MAJOR). Round-1 fixes verified correct (R95.1-1, R95.1-2). No mutations run (App-only, Core untouched). Hash proof: replay_nav 101/101 identical.
+
+### Run 95 summary
+
+2 rounds. Findings: 0 BLOCKER; 2 MAJOR, both fixed (R95.1-1, R95.1-2 in 5e7df2b); MINOR: deferred R95.1-3, R95.2-1; 0 rejected. Final tests: Core 1323 passed, App 1051 passed. replay_nav acceptance matrix 101/101 identical vs 3730e16. Outcome: closed, ready to merge.

@@ -66,8 +66,8 @@ enum CoordinateParser {
     static func parse(_ raw: String) -> CoordinateInput {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return .none }
-        if let candidate = linkCandidate(text) {
-            guard candidate.utf8.count <= maxLinkLength else { return .noPoint }
+        if let (candidate, overlong) = linkCandidate(text) {
+            guard !overlong, candidate.utf8.count <= maxLinkLength else { return .noPoint }
             if candidate.lowercased().hasPrefix("geo:") { return parseGeo(candidate) }
             return MapLinkParser.parse(candidate.contains("://") ? candidate : "https://" + candidate)
         }
@@ -93,7 +93,7 @@ enum CoordinateParser {
     /// (c) A digit, optionally spaces, then a degree / minute / second mark (incl. ASCII quotes, `º`).
     private static let angleMarkPattern = "[0-9]\\s*[\u{00B0}\u{00BA}\u{02DA}\u{2032}\u{2033}'\"\u{2018}\u{2019}\u{201C}\u{201D}\u{00B4}\u{02B9}\u{02BA}]"
     /// (e) A latitude / longitude label followed by a number: "Lat 45.1", "lon: -120.5", "довгота=7".
-    private static let labelPattern = "(?i)(?<![\\p{L}])(lat|lon|lng|latitude|longitude|\u{0448}\u{0438}\u{0440}\u{043E}\u{0442}\u{0430}|\u{0434}\u{043E}\u{0432}\u{0433}\u{043E}\u{0442}\u{0430})(?![\\p{L}])\\s*[:=]?\\s*[+\\-\u{2212}]?[0-9]"
+    private static let labelPattern = "(?i)(?<![\\p{L}])(lat|lon|lng|latitude|longitude|\u{0448}\u{0438}\u{0440}\u{043E}\u{0442}\u{0430}|\u{0434}\u{043E}\u{0432}\u{0433}\u{043E}\u{0442}\u{0430})(?![\\p{L}])\\s*(?:[:=]\\s*)?[+\\-\u{2212}]?[0-9]"
     /// A run of digits (with an optional fraction): counts the numbers in a text.
     private static let numberRunPattern = "[0-9]+(?:[.,][0-9]+)?"
     /// (d) A decimal number with 2+ fraction digits, not the tail of a longer digit run: "45.1234", "7,5678".
@@ -114,7 +114,9 @@ enum CoordinateParser {
     /// part of a longer digit run) is held back, whatever surrounds it ("Pin 45.1234N 120.5678W", "Дача 45,1234 7,5678").
     static func isCoordinateLike(_ raw: String) -> Bool {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return false }
+        // Cap before any pattern (R94.4-2): this runs on the main actor at every keystroke, and a
+        // hostile or accidental paste must not cost more than a scan. Longer text is not coordinates.
+        guard !text.isEmpty, text.utf8.count <= maxLinkLength else { return false }
         if text.unicodeScalars.allSatisfy(coordinateCharacters.contains) {
             let marks = text.unicodeScalars.contains { angleMarks.unicodeScalars.contains($0) }
             if marks || text.range(of: fractionPattern, options: .regularExpression) != nil { return true }
@@ -148,19 +150,49 @@ enum CoordinateParser {
 
     /// The part of `text` that is a link: the whole text, or the first whitespace-separated word with
     /// a scheme (a share text can carry a title before the link). Nil when it is not link-like.
-    private static func linkCandidate(_ text: String) -> String? {
-        if text.lowercased().hasPrefix("geo:") { return text }
-        let words = text.split(whereSeparator: { $0.isWhitespace }).map(String.init)
-        for word in words {
-            if word.contains("://") { return word.trimmingCharacters(in: CharacterSet(charactersIn: ".,;)>\"'")) }
-            if let colon = word.firstIndex(of: ":"), dangerousSchemes.contains(word[..<colon].lowercased()) { return word }
+    ///
+    /// Bounded (R94.4-2): text longer than `maxLinkLength` is read only up to that bound, so a huge
+    /// paste costs a short scan. A link that runs past the bound is `overlong` (the caller says "no
+    /// point"); a link that ends inside it is read as usual; a link that starts after it is not found.
+    private static func linkCandidate(_ text: String) -> (candidate: String, overlong: Bool)? {
+        if text.prefix(4).lowercased() == "geo:" { return (text, text.utf8.count > maxLinkLength) }
+        let bounded = text.utf8.count > maxLinkLength
+        let head = bounded ? String(text.prefix(maxLinkLength)) : text
+        // The head's last word is cut by the bound unless whitespace follows it.
+        let cut = bounded && !(text.dropFirst(head.count).first?.isWhitespace ?? true)
+        // Substrings, no copies and no Foundation searches.
+        let words = head.split(whereSeparator: { $0.isWhitespace })
+        for (index, word) in words.enumerated() {
+            let overlong = cut && index == words.count - 1
+            if hasSchemeSeparator(word) {
+                return (word.trimmingCharacters(in: CharacterSet(charactersIn: ".,;)>\"'")), overlong)
+            }
+            if let colon = word.firstIndex(of: ":"), dangerousSchemes.contains(word[..<colon].lowercased()) {
+                return (String(word), overlong)
+            }
         }
-        if words.count == 1, let first = text.first, first.isLetter, text.contains("."),
-           let components = URLComponents(string: "https://" + text), let host = components.host?.lowercased(),
+        if words.count == 1, !bounded || cut, let first = head.first, first.isLetter, head.contains("."),
+           let components = URLComponents(string: "https://" + head), let host = components.host?.lowercased(),
            MapLinkHosts.match(host: host, path: components.percentEncodedPath) != nil {
-            return text
+            return (head, cut)
         }
         return nil
+    }
+
+    /// `://` anywhere in `word`.
+    private static func hasSchemeSeparator(_ word: Substring) -> Bool {
+        var colons = 0
+        var slashes = 0
+        for byte in word.utf8 {
+            switch byte {
+            case UInt8(ascii: ":"): colons = 1; slashes = 0
+            case UInt8(ascii: "/") where colons == 1:
+                slashes += 1
+                if slashes == 2 { return true }
+            default: colons = 0; slashes = 0
+            }
+        }
+        return false
     }
 
     // MARK: Typed coordinates

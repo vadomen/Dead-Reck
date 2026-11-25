@@ -43,11 +43,21 @@ enum PositionStatus {
 
     static func isFinding(_ nav: NavDisplay?) -> Bool {
         guard let nav else { return false }
-        return !nav.converged || !(nav.semiMajorM <= maxSemiMajorM)
+        // No speed source while not standing (prompt 53d) is uncertain for every consumer.
+        return nav.noSpeedSource || !nav.converged || !(nav.semiMajorM <= maxSemiMajorM)
     }
 
-    /// The line for the estimate on the map, or nil.
-    static func line(_ nav: NavDisplay?) -> String? { isFinding(nav) ? text : nil }
+    /// The line for the estimate on the map, or nil. While there is no speed source the reason
+    /// replaces "Finding your position…": driving on finds nothing without one.
+    static func line(_ nav: NavDisplay?) -> String? {
+        guard isFinding(nav) else { return nil }
+        return nav?.noSpeedSource == true ? NoSpeedSourceText.text : text
+    }
+
+    /// The status line's symbol.
+    static func symbol(_ nav: NavDisplay?) -> String {
+        nav?.noSpeedSource == true ? NoSpeedSourceText.symbol : "location.magnifyingglass"
+    }
 }
 
 /// The status line. Its own view, so only it observes the feed's `display`
@@ -58,7 +68,7 @@ struct PositionStatusLine: View {
 
     var body: some View {
         if let text = PositionStatus.line(feed.display) {
-            Label(text, systemImage: "location.magnifyingglass")
+            Label(text, systemImage: PositionStatus.symbol(feed.display))
                 .font(.subheadline.weight(.semibold))
                 // Wraps in full (Ukrainian is longer; large Dynamic Type longer still): never cut.
                 .padding(.horizontal, 16)

@@ -160,8 +160,13 @@ enum RouteDebugStubs {
         }
     }
 
-    private static func estimate(at point: GeoPoint, uncertain: Bool) -> NavDisplay {
-        uncertain
+    private static func estimate(at point: GeoPoint, uncertain: Bool, noSpeed: Bool = false) -> NavDisplay {
+        if noSpeed {
+            return NavDisplay(
+                position: point, semiMajorM: 40, semiMinorM: 12, orientationDeg: 130, headingDeg: 40, headingStdDeg: 3,
+                converged: true, noSpeedSource: true)
+        }
+        return uncertain
             ? NavDisplay(position: point, semiMajorM: 2_400, semiMinorM: 1_800, orientationDeg: 20, converged: false)
             : NavDisplay(position: point, semiMajorM: 40, semiMinorM: 12, orientationDeg: 130, headingDeg: 40, headingStdDeg: 3, converged: true)
     }
@@ -203,6 +208,7 @@ enum RouteDebugStubs {
             saved: saved, linkResolver: LinkResolver())
         let first = routes(scale: director.scale)[0]
         let uncertain = state == "uncertain" || state == "uncertainOffline"
+        let noSpeed = state == "guidingNoSpeed"
         let at: GeoPoint = switch state {
         case "away": point(first, alongM: 600, offsetM: 400)
         case "arrived": point(first, alongM: first.distanceM - 10)
@@ -237,6 +243,11 @@ enum RouteDebugStubs {
                 if state == "guidingUncertain" {
                     try? await Task.sleep(for: .seconds(1))
                     box.value.origin.estimate = estimate(at: origin, uncertain: true)
+                }
+                if noSpeed {
+                    // Guidance starts on a good estimate (so the bar has its last instruction); the speed source then goes away.
+                    try? await Task.sleep(for: .seconds(3))
+                    box.value.origin.estimate = estimate(at: origin, uncertain: false, noSpeed: true)
                 }
             }
         }

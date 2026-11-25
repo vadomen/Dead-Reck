@@ -24,17 +24,30 @@ enum RouteInputs {
 
     /// The speed from the session itself (OBD, else the latest fix): the map model's speed
     /// is not fed GPS while the scene is inactive, and arrival must work with the phone locked.
+    ///
+    /// `fixAllowed: false` drops the fix (the speed probe, R95.1-1: the session keeps showing fixes
+    /// while the driver's GPS switch is off, and navigation must not count them as a speed source).
     @MainActor
-    static func sessionSpeed(_ session: RecordingSession) -> MapSpeedReadout {
+    static func sessionSpeed(_ session: RecordingSession, fixAllowed: Bool = true) -> MapSpeedReadout {
         let uptime = session.currentUptimeSeconds
         let obdAge = session.obdSpeedReplyUptime.map { uptime - $0 }
-        let fix = session.latestFix
+        let fix = fixAllowed ? session.latestFix : nil
         var fixAge: Double?
         if let fix, let received = fix.receivedT {
             let elapsed = session.manualFixTapTime()?.seconds ?? session.live.elapsed
             fixAge = max(0, elapsed - (received.seconds - (fix.ageS ?? 0)))
         }
         return MapSpeedRule.resolve(obdKmh: session.live.obdSpeedKmh, obdAgeS: obdAge, fix: fix, fixAgeS: fixAge)
+    }
+
+    /// The no-speed rule's reading of the session (prompt 53d): the map chip's speed, but with no fix
+    /// while the driver's GPS switch is off. The session's own switch, not the map's: it is right with
+    /// the map hidden or the phone locked, and it is what `make` already hands the origin rule.
+    @MainActor
+    static func speedProbe(_ session: RecordingSession) -> NoSpeedSourceRule.Probe {
+        NoSpeedSourceRule.Probe(
+            now: session.currentUptimeSeconds, runActive: session.hasActiveRun,
+            hasSpeedSource: sessionSpeed(session, fixAllowed: session.isGPSSwitchOn).source != .none)
     }
 
     /// From the live objects, on demand (nothing observed: the flow calls it when it needs it).
@@ -88,6 +101,11 @@ enum RouteWiring {
         flow: RouteFlowModel, on session: RecordingSession, navigation: NavigationFeed? = nil, model: MapViewModel? = nil
     ) {
         session.activeRouteProvider = { [weak flow] in flow?.handOver }
+        // The no-speed rule's inputs (prompt 53d): the same speed the chip and arrival use.
+        navigation?.speedProbe = { [weak session] in
+            guard let session else { return NoSpeedSourceRule.Probe(now: 0, runActive: false, hasSpeedSource: true) }
+            return RouteInputs.speedProbe(session)
+        }
         if let navigation, let model {
             // Stub flows (`-uiRouteStub`) fix their inputs: a live source would override them.
             if !flow.inputsAreFixed { flow.estimateSource = RouteEstimate.source(feed: navigation) }

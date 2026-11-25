@@ -1499,6 +1499,11 @@ enum MapPreviewData {
                 position: position, semiMajorM: 90, semiMinorM: 20, orientationDeg: 130, headingDeg: 40,
                 headingStdDeg: 3, converged: true),
                 restore: restore)
+        case .noSpeed:
+            return NavigationFeed(display: NavDisplay(
+                position: position, semiMajorM: 90, semiMinorM: 20, orientationDeg: 130, headingDeg: 40,
+                headingStdDeg: 3, converged: true, noSpeedSource: true),
+                restore: restore)
         case .road:
             let along = 150.0 / NavGeometry.metersPerDegree
             let (s, c) = (sin(40 * Double.pi / 180), cos(40 * Double.pi / 180))
