@@ -350,4 +350,81 @@ struct NoSpeedSourceTests {
         // Idle: no run, so the state stays false whatever the (absent) speed says.
         #expect(feed.stamped(RouteFixtures.nav())?.noSpeedSource == false)
     }
+
+    // MARK: R95.1-1: the driver's GPS switch
+
+    @Test("The probe drops the fix while the driver's GPS switch is off: a fresh valid-speed fix every second is no source, and the state flips after 5 s; switched on, the fix is a source again")
+    func probeHonoursTheGPSSwitch() async throws {
+        let scratch = try ScratchStore()
+        defer { scratch.remove() }
+        let location = FakeReferenceFixSource(name: "fakeLocation")
+        let rig = NavigateRig(store: scratch.store, extraSources: [location])
+        await rig.connect(speed: nil)
+        rig.session.enableNavigate(RecordingSessionNavigateTests.quick)
+        let session = rig.session
+        func fixArrives(at seconds: Double) {
+            rig.uptime.set(NavigateRig.base + seconds)
+            location.show(location.fix(speed: 14))
+        }
+
+        fixArrives(at: 0)
+        #expect(RouteInputs.speedProbe(session).hasSpeedSource, "GPS on: the fix is the speed")
+        #expect(RouteInputs.speedProbe(session).runActive)
+
+        session.setGPSSwitch(on: false)
+        var rule = NoSpeedSourceRule()
+        var states: [Bool] = []
+        for second in 1...8 {
+            fixArrives(at: Double(second))
+            #expect(session.latestFix != nil, "the session keeps showing fixes while the switch is off")
+            let probe = RouteInputs.speedProbe(session)
+            #expect(!probe.hasSpeedSource, "second \(second)")
+            states.append(rule.evaluate(probe, hasEstimate: true, stationary: false))
+        }
+        #expect(states.firstIndex(of: true) == 6, "flips once more than 5 s have passed since the first look: \(states)")
+        // Arrival's own speed is not changed: it still reads the fix.
+        #expect(RouteInputs.sessionSpeed(session).source == .gps)
+
+        session.setGPSSwitch(on: true)
+        fixArrives(at: 9)
+        #expect(RouteInputs.speedProbe(session).hasSpeedSource)
+        let cleared = rule.evaluate(RouteInputs.speedProbe(session), hasEstimate: true, stationary: false)
+        #expect(!cleared, "clears at once")
+    }
+
+    // MARK: R95.1-2: guidance's own read path
+
+    @Test("Guidance's read path (`RouteEstimate.source` over `peekEstimate`) carries the state from the probe: the bar gets the reason, no distance or time, and no arrival")
+    func peekPathCarriesTheState() async {
+        let snapshot = Self.engineSnapshot(obdKmh: 36)   // not stationary
+        let rig = Rig()
+        let feed = NavigationFeed(display: nil, source: { snapshot })
+        feed.speedProbe = { [unowned rig] in
+            NoSpeedSourceRule.Probe(now: rig.now, runActive: rig.runActive, hasSpeedSource: rig.source)
+        }
+        let read = RouteEstimate.source(feed: feed)
+
+        let first = await read()
+        #expect(first != nil && first?.noSpeedSource == false, "the count starts at the first look")
+        rig.now += 6
+        let later = await read()
+        #expect(later?.noSpeedSource == true, "past 5 s with no source and not standing")
+        #expect(later?.stationary == false)
+
+        // The flow's loop reads it itself, with no map polling.
+        let flowRig = RouteFlowTests.Rig()
+        await flowRig.toGuiding()
+        flowRig.flow.estimateSource = read
+        flowRig.flow.fixInputs {
+            RouteLiveInputs(origin: RouteOriginInputs(runActive: true, estimate: nil), speedMS: 0)
+        }
+        for second in 0...12 { await flowRig.flow.loopStep(now: Double(second)) }
+        #expect(flowRig.flow.guidance?.status == .uncertain && flowRig.flow.guidance?.noSpeedSource == true)
+        #expect(flowRig.flow.guidance?.remainingM == nil && flowRig.flow.guidance?.remainingTimeS == nil)
+        #expect(flowRig.flow.phase == .guiding, "no arrival")
+
+        // A source returns: the peek clears the state at once.
+        rig.source = true
+        #expect(await read()?.noSpeedSource == false)
+    }
 }
