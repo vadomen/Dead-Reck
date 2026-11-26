@@ -63,6 +63,12 @@ enum CoordinateParser {
     static let maxTextLength = 128
     static let maxNameLength = 80
 
+    /// The one overlong decision (R95.1-3): the trimmed text is over `maxLinkLength` UTF-8 bytes. The
+    /// search field neither parses nor searches such text; it says "nothing found" and sends nothing.
+    static func isOverlong(_ raw: String) -> Bool {
+        raw.trimmingCharacters(in: .whitespacesAndNewlines).utf8.count > maxLinkLength
+    }
+
     static func parse(_ raw: String) -> CoordinateInput {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return .none }
@@ -157,9 +163,10 @@ enum CoordinateParser {
     private static func linkCandidate(_ text: String) -> (candidate: String, overlong: Bool)? {
         if text.prefix(4).lowercased() == "geo:" { return (text, text.utf8.count > maxLinkLength) }
         let bounded = text.utf8.count > maxLinkLength
-        let head = bounded ? String(text.prefix(maxLinkLength)) : text
+        // Bytes, like every other length check here; a cut inside a scalar only ends the last word.
+        let head = bounded ? String(decoding: text.utf8.prefix(maxLinkLength), as: UTF8.self) : text
         // The head's last word is cut by the bound unless whitespace follows it.
-        let cut = bounded && !(text.dropFirst(head.count).first?.isWhitespace ?? true)
+        let cut = bounded && !Self.isASCIISpace(text.utf8[text.utf8.index(text.utf8.startIndex, offsetBy: maxLinkLength)])
         // Substrings, no copies and no Foundation searches.
         let words = head.split(whereSeparator: { $0.isWhitespace })
         for (index, word) in words.enumerated() {
@@ -178,6 +185,8 @@ enum CoordinateParser {
         }
         return nil
     }
+
+    private static func isASCIISpace(_ byte: UInt8) -> Bool { byte == 0x20 || (0x09...0x0D).contains(byte) }
 
     /// `://` anywhere in `word`.
     private static func hasSchemeSeparator(_ word: Substring) -> Bool {
