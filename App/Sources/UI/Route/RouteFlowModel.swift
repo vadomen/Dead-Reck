@@ -168,6 +168,9 @@ final class RouteFlowModel {
         return Self.straightLineM(from, place.coordinate)
     }
 
+    /// The guidance bar is showing the "No speed source" reason (the HUD status line then drops the sentence).
+    var barShowsNoSpeedReason: Bool { phase == .guiding && guidance?.noSpeedSource == true }
+
     var chosenRoute: Route? { alternatives.indices.contains(chosenIndex) ? alternatives[chosenIndex] : nil }
 
     /// What Record writes right after its header rows (`restored`): nil when no route is active.

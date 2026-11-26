@@ -496,8 +496,10 @@ struct HUDFakes: Equatable, Sendable {
     /// The OBD indicator: lost with `obdLost`, "No OBD" with `obdNone`, else connected.
     var obd: HUDOBD { obdLost ? .lost : (obdNone ? .none : .connected) }
 
-    /// The speed shown: 27 km/h from OBD, or from GPS when OBD is "lost".
+    /// The speed shown: 27 km/h from OBD (a dash with `navNoSpeed`), or from GPS when OBD is "lost".
     var speed: MapSpeedReadout {
+        // No speed source (`navNoSpeed`): the card shows what the real app shows with none, a dash and no chip.
+        if nav == .noSpeed { return .none }
         // GPS off and no OBD: no fallback to GPS speed, a dash (the model's rule).
         if gpsOff && (obdLost || obdNone) { return .none }
         return MapSpeedReadout(source: (obdLost || obdNone) ? .gps : .obd, kmh: stopped ? 0 : 27, quality: .good)

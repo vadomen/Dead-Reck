@@ -232,6 +232,56 @@ struct NoSpeedSourceTests {
         #expect(NoSpeedSourceText.text == "No speed source — position not updating")
     }
 
+    @Test("HUD capsule: with the bar showing the reason it is the glyph alone, the sentence kept as the accessibility label")
+    func capsuleGlyphOnlyWhileBarSaysIt() {
+        let shape = PositionStatus.presentation(noSpeedNav(), barShowsNoSpeedReason: true)
+        #expect(shape == .glyphOnly(symbol: NoSpeedSourceText.symbol, accessibilityLabel: NoSpeedSourceText.text))
+        #expect(shape?.symbol == "speedometer" && shape?.accessibilityLabel == NoSpeedSourceText.text)
+        // The state itself is unchanged for every consumer.
+        #expect(PositionStatus.isFinding(noSpeedNav()) && PositionStatus.line(noSpeedNav()) == NoSpeedSourceText.text)
+    }
+
+    @Test("HUD capsule: outside guidance the no-speed state shows the sentence, as before")
+    func capsuleSentenceOutsideGuidance() {
+        let shape = PositionStatus.presentation(noSpeedNav(), barShowsNoSpeedReason: false)
+        #expect(shape == .sentence(symbol: NoSpeedSourceText.symbol, text: NoSpeedSourceText.text))
+        #expect(shape?.accessibilityLabel == NoSpeedSourceText.text)
+    }
+
+    @Test("HUD capsule: guiding without the state is unchanged, and Finding your position keeps its sentence in both cases")
+    func capsuleOtherStatesUnchanged() {
+        let finding = RouteFixtures.nav(major: 2_400, converged: false)
+        for barSays in [false, true] {
+            #expect(PositionStatus.presentation(finding, barShowsNoSpeedReason: barSays)
+                == .sentence(symbol: "location.magnifyingglass", text: PositionStatus.text))
+            #expect(PositionStatus.presentation(RouteFixtures.nav(), barShowsNoSpeedReason: barSays) == nil)
+            #expect(PositionStatus.presentation(nil, barShowsNoSpeedReason: barSays) == nil)
+        }
+    }
+
+    @Test("The flow says the bar shows the reason only while guiding with the state; it clears with the state")
+    func barShowsReasonFlag() async {
+        let rig = RouteFlowTests.Rig()
+        #expect(!rig.flow.barShowsNoSpeedReason, "no route")
+        await rig.toGuiding()
+        rig.flow.tick(estimate: RouteFixtures.nav(RouteFixtures.point(alongM: 400)), speedMS: 10, now: 0)
+        #expect(!rig.flow.barShowsNoSpeedReason, "guiding, speed present")
+        rig.flow.tick(estimate: RouteFixtures.nav(RouteFixtures.point(alongM: 400), major: 2_400, converged: false), speedMS: 10, now: 1)
+        #expect(!rig.flow.barShowsNoSpeedReason, "guiding, uncertain for another reason")
+        rig.flow.tick(estimate: noSpeedNav(at: RouteFixtures.point(alongM: 400)), speedMS: nil, now: 2)
+        #expect(rig.flow.barShowsNoSpeedReason)
+        rig.flow.tick(estimate: RouteFixtures.nav(RouteFixtures.point(alongM: 400)), speedMS: 10, now: 3)
+        #expect(!rig.flow.barShowsNoSpeedReason)
+    }
+
+    @Test("The debug stub's speed card shows no speed in the no-speed state, 27 km/h OBD otherwise")
+    func fakeHUDSpeed() {
+        #expect(HUDFakes.parse("ok,navNoSpeed").speed == .none)
+        #expect(HUDFakes.parse("ok,navNoSpeed").speed.sourceText == nil)
+        #expect(HUDFakes.parse("ok,navEllipse").speed.kmh == 27)
+        #expect(HUDFakes.parse("ok").speed.sourceText == "OBD")
+    }
+
     @Test("Guidance: the bar gets the reason, no distance and no time; the last known instruction stays")
     func guidanceReason() async {
         let geometry = RouteGeometry(route: RouteFixtures.route())

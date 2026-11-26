@@ -60,26 +60,77 @@ enum PositionStatus {
     }
 }
 
+extension PositionStatus {
+    /// What the status capsule draws.
+    enum Presentation: Equatable {
+        /// Symbol and the sentence.
+        case sentence(symbol: String, text: String)
+        /// The symbol alone; the sentence stays as the accessibility label.
+        case glyphOnly(symbol: String, accessibilityLabel: String)
+
+        var symbol: String {
+            switch self {
+            case .sentence(let symbol, _), .glyphOnly(let symbol, _): symbol
+            }
+        }
+
+        /// What VoiceOver reads, in both shapes.
+        var accessibilityLabel: String {
+            switch self {
+            case .sentence(_, let text): text
+            case .glyphOnly(_, let label): label
+            }
+        }
+    }
+
+    /// The capsule for `nav`, or nil when there is nothing to say (same rule as `line`). While the guidance
+    /// bar shows the "No speed source" reason (`barShowsNoSpeedReason`), the capsule keeps the uncertain
+    /// glyph and drops the sentence the bar already says; every other state is unchanged.
+    static func presentation(_ nav: NavDisplay?, barShowsNoSpeedReason: Bool) -> Presentation? {
+        guard let text = line(nav) else { return nil }
+        let symbol = symbol(nav)
+        if barShowsNoSpeedReason, nav?.noSpeedSource == true {
+            return .glyphOnly(symbol: symbol, accessibilityLabel: text)
+        }
+        return .sentence(symbol: symbol, text: text)
+    }
+}
+
 /// The status line. Its own view, so only it observes the feed's `display`
 /// (the map's body does not re-render with the estimate). Empty when there is
 /// nothing to say.
 struct PositionStatusLine: View {
     var feed: NavigationFeed
+    /// The route flow, read here (not by the map's body) for whether the guidance bar shows the reason.
+    var flow: RouteFlowModel?
 
     var body: some View {
-        if let text = PositionStatus.line(feed.display) {
-            Label(text, systemImage: PositionStatus.symbol(feed.display))
-                .font(.subheadline.weight(.semibold))
-                // Wraps in full (Ukrainian is longer; large Dynamic Type longer still): never cut.
-                .padding(.horizontal, 16)
+        if let shape = PositionStatus.presentation(feed.display, barShowsNoSpeedReason: flow?.barShowsNoSpeedReason ?? false) {
+            capsule(shape)
                 .padding(.vertical, 6)
                 .frame(minHeight: 44)
                 .hudSurface(RoundedRectangle(cornerRadius: 22))
                 // Like the other map cards: wraps in full, but does not grow past AX2 (R67.1-5).
                 .dynamicTypeSize(...DynamicTypeSize.accessibility2)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityLabel(text)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(shape.accessibilityLabel)
                 .transition(.opacity)
+        }
+    }
+
+    @ViewBuilder
+    private func capsule(_ shape: PositionStatus.Presentation) -> some View {
+        switch shape {
+        case .sentence(let symbol, let text):
+            // Wraps in full (Ukrainian is longer; large Dynamic Type longer still): never cut.
+            Label(text, systemImage: symbol)
+                .font(.subheadline.weight(.semibold))
+                .padding(.horizontal, 16)
+        case .glyphOnly(let symbol, _):
+            Image(systemName: symbol)
+                .font(.subheadline.weight(.semibold))
+                .padding(.horizontal, 16)
         }
     }
 }

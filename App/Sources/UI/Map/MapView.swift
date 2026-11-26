@@ -900,7 +900,7 @@ struct GPSMapView: View {
         case .statusLine: statusLine
         case .permissionLine:
             if let permissionNotice { MapPermissionLine(notice: permissionNotice, showsNote: !typeSize.isAccessibilitySize) }
-        case .positionStatus: if let estimate { PositionStatusLine(feed: estimate) }
+        case .positionStatus: if let estimate { PositionStatusLine(feed: estimate, flow: routeFlow) }
         case .restoreStatus: if let estimate { RestoreStatusLine(feed: estimate) }
         case .roadsWarning: if let roadsWarning { roadsWarningView(roadsWarning) }
         case .resumeHint: resumeHint
