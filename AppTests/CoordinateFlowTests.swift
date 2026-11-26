@@ -53,6 +53,112 @@ struct CoordinateFlowTests {
         }
     }
 
+    // MARK: Overlong text (R95.1-3)
+
+    /// Over the cap, with a map link and a coordinate pair after it (what a long share text can carry).
+    static func overlong(tail: String) -> String {
+        String(repeating: "x", count: CoordinateParser.maxLinkLength) + " " + tail
+    }
+
+    nonisolated static let tails = [
+        "-45.12345, -120.54321", "https://www.google.com/maps/place/Test+Cove/@-45.5,-120.5,17z/data=!3d-45.12345!4d-120.54321",
+        "https://maps.app.goo.gl/AbCd1234", "geo:-45.1,-120.5", "harbour",
+    ]
+
+    /// Nothing was parsed, resolved or searched: "nothing found", no completions, no pacer sleep, no request.
+    func expectHeldBack(_ rig: Rig, _ text: String) async {
+        await Task.yield()
+        #expect(rig.flow.searchStatus == .failure(.nothingFound), "\(text.prefix(8))")
+        #expect(rig.flow.input == .none && rig.flow.completions.isEmpty)
+        #expect(rig.searcher.queries.isEmpty && rig.searcher.resolved == 0)
+        #expect(rig.resolver.calls.isEmpty && rig.director.calls.isEmpty)
+        #expect(rig.clock.sleeps.isEmpty)
+    }
+
+    @Test("Typed text over the cap is not searched, parsed or resolved, whatever follows the cap", arguments: tails)
+    func overlongTyped(_ tail: String) async {
+        let rig = Rig()
+        let text = Self.overlong(tail: tail)
+        // Typed: the field keeps growing after it has passed the cap (a paste into it, then more keystrokes).
+        rig.flow.updateQuery(String(text.prefix(CoordinateParser.maxLinkLength + 2)))
+        rig.flow.updateQuery(text)
+        await expectHeldBack(rig, text)
+    }
+
+    @Test("Pasted text over the cap (the Paste button sets the whole text at once) is held back", arguments: tails)
+    func overlongPasted(_ tail: String) async {
+        let rig = Rig()
+        let text = Self.overlong(tail: tail)
+        rig.flow.updateQuery(text)
+        await expectHeldBack(rig, text)
+        rig.flow.selectCoordinates()
+        #expect(rig.flow.phase == .search, "no coordinates row to tap")
+        rig.flow.openLink()
+        await expectHeldBack(rig, text)
+    }
+
+    @Test("Submitted, re-sent or retried text over the cap makes no request")
+    func overlongSubmitted() async {
+        let rig = Rig()
+        let text = Self.overlong(tail: Self.short)
+        rig.flow.updateQuery(text)
+        rig.flow.updateQuery(text)  // the sheet re-sends its text on appear
+        rig.flow.retrySearch()
+        await expectHeldBack(rig, text)
+    }
+
+    @Test("The cap is in UTF-8 bytes of the trimmed text: multi-byte text over it is held back, text at it is searched")
+    func capIsBytes() async {
+        let limit = CoordinateParser.maxLinkLength
+        // 1,025 two-byte characters = 2,050 bytes, only 1,025 Characters.
+        let wide = String(repeating: "\u{00E9}", count: limit / 2 + 1)
+        #expect(wide.count < limit && wide.utf8.count > limit)
+        #expect(CoordinateParser.isOverlong(wide))
+        let rig = Rig()
+        rig.flow.updateQuery(wide)
+        await expectHeldBack(rig, wide)
+        // Surrounding whitespace is not counted.
+        #expect(!CoordinateParser.isOverlong("  " + String(repeating: "x", count: limit) + "\n"))
+        #expect(CoordinateParser.isOverlong(String(repeating: "x", count: limit + 1)))
+    }
+
+    @Test("Text at exactly the cap is searched as before; editing back under the cap searches again")
+    func atCapAndBackUnder() async {
+        let rig = Rig()
+        rig.searcher.completionResult = .success([DestinationCompletion(id: "1", title: "A", subtitle: "")])
+        let atCap = String(repeating: "x", count: CoordinateParser.maxLinkLength)
+        rig.flow.updateQuery(atCap)
+        #expect(rig.flow.searchStatus == .loading)
+        await waitUntil("at the cap") { rig.flow.searchStatus == .ready }
+        #expect(rig.searcher.queries == [atCap])
+        rig.flow.updateQuery(atCap + "x")
+        #expect(rig.flow.searchStatus == .failure(.nothingFound) && rig.flow.completions.isEmpty)
+        #expect(rig.searcher.queries == [atCap])
+        rig.flow.updateQuery("harbour")
+        await waitUntil("back under the cap") { rig.flow.searchStatus == .ready }
+        #expect(rig.searcher.queries == [atCap, "harbour"])
+    }
+
+    @Test("A short link at the cap is still an Open link row; over the cap nothing is offered")
+    func linkAtCap() {
+        let rig = Rig()
+        rig.flow.updateQuery(Self.short)
+        #expect(rig.flow.input == .shortLink(URL(string: Self.short)!))
+        rig.flow.updateQuery(Self.short + String(repeating: "a", count: CoordinateParser.maxLinkLength))
+        #expect(rig.flow.input == .none && rig.flow.searchStatus == .failure(.nothingFound))
+    }
+
+    @Test("The bounded link scan counts bytes: a link whose end passes the bound in bytes only is overlong")
+    func linkScanBytes() {
+        let limit = CoordinateParser.maxLinkLength
+        // 1,100 two-byte characters before the link: fewer Characters than the cap, more bytes.
+        let text = String(repeating: "\u{00E9}", count: 1_100) + " https://maps.apple.com/?ll=1,2"
+        #expect(text.count < limit && text.utf8.count > limit)
+        #expect(CoordinateParser.parse(text) == .none, "a link that starts past the bound in bytes is not found")
+        let link = "https://maps.apple.com/?q=" + String(repeating: "\u{00E9}", count: limit)
+        #expect(CoordinateParser.parse(link) == .noPoint)
+    }
+
     @Test("Typed coordinates are one row; the card is titled Coordinates with the values, no request but the completer's")
     func typedCoordinates() async {
         let rig = Rig()

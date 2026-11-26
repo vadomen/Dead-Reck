@@ -350,7 +350,8 @@ the completer's results, then the normal place card with the title "Coordinates"
   host is allowlisted and the link is the whole text (R94.3-4, BACKLOG: with words before
   it, the text goes to the completer and gets no Open link row).
 - Not accepted ("This link has no point…"): unknown hosts, `http`, `javascript:`,
-  `data:`, a URL with user info, a port other than 443, more than 2048 bytes.
+  `data:`, a URL with user info, a port other than 443. Text over 2048 UTF-8 bytes (trimmed) is
+  not read at all in the search field: see Privacy (R95.1-3).
 
 **Host allowlist** (https, default port, no user info; the same rule on every hop of a
 short link):
@@ -389,7 +390,10 @@ any of the angle marks `° º ′ ″ ' " ˚ ‘ ’ “ ” ´ ʹ ʺ` after a d
 coordinate characters with an N/S/E/W letter and 3 or more numbers (unmarked DMS), and
 text with a lat/lon label followed by a number (`lat`, `lon`, `lng`, `latitude`,
 `longitude`, `широта`, `довгота`). Fractions up to 20 digits are read (full-precision
-doubles; R94.3-2). Held-back text that is not a recognised
+doubles; R94.3-2). Text over 2048 UTF-8 bytes (trimmed; one byte-based check, `CoordinateParser.isOverlong`) is
+never parsed, never resolved and never sent to the completer, whatever it holds after the cap: the
+field shows "nothing found" and no request is made (typed, pasted, re-sent or retried; R95.1-3).
+Text at exactly 2048 bytes is handled as before. Held-back text that is not a recognised
 point shows nothing (no row, no message); DMS is not read as a point (R94.2-5, BACKLOG).
 Accepted side effect: dotted dates, "Price 1,500" and dotted phone numbers are not
 searched. Texts: About → "Data and services", the site privacy pages (en, uk),

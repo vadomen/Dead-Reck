@@ -201,6 +201,15 @@ final class RouteFlowModel {
         query = text
         searchTask?.cancel()
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Over the cap (R95.1-3): never parsed, never resolved, never sent to Apple's search, whatever the
+        // text holds after the cap. The field shows "nothing found". Every query path ends here: typing,
+        // paste, the Paste button and Retry all arrive through this method.
+        guard !CoordinateParser.isOverlong(trimmed) else {
+            input = .none
+            completions = []
+            searchStatus = .failure(.nothingFound)
+            return
+        }
         input = CoordinateParser.parse(trimmed)
         guard !trimmed.isEmpty, !CoordinateParser.isLinkLike(trimmed), !input.isCoordinateText,
               !CoordinateParser.isCoordinateLike(trimmed) else {
